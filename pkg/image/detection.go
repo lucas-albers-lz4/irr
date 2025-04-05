@@ -1,6 +1,7 @@
 package image
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -21,6 +22,17 @@ var (
 	// Precompiled regular expressions for image references
 	tagRegex    = regexp.MustCompile(tagPattern)
 	digestRegex = regexp.MustCompile(digestPattern)
+
+	ErrInvalidImageMapRepo     = errors.New("repository is not a string")
+	ErrInvalidImageMapRegistry = errors.New("registry is not a string")
+	ErrInvalidImageMapTag      = errors.New("tag is not a string")
+	ErrEmptyImageString        = errors.New("empty string")
+	ErrInvalidDigestFormat     = errors.New("invalid digest format")
+	ErrInvalidTagFormat        = errors.New("invalid tag format")
+	ErrInvalidRepoName         = errors.New("invalid repository name")
+	ErrInvalidImageRefFormat   = errors.New("invalid image reference format")
+	ErrUnsupportedImageType    = errors.New("unsupported image reference type")
+	ErrRepoNotFound            = errors.New("repository not found or not a string")
 )
 
 // ImageReference represents a container image reference
@@ -390,7 +402,7 @@ func (d *ImageDetector) tryExtractImageFromMap(m map[string]interface{}) (*Image
 	// Validate repository is a string
 	repoStr, ok := repository.(string)
 	if !ok {
-		return nil, "", fmt.Errorf("repository is not a string")
+		return nil, "", ErrInvalidImageMapRepo
 	}
 
 	// Skip "repository" keys that don't look like image repositories
@@ -412,7 +424,7 @@ func (d *ImageDetector) tryExtractImageFromMap(m map[string]interface{}) (*Image
 		if regStr, ok := registry.(string); ok {
 			ref.Registry = regStr
 		} else {
-			return nil, "", fmt.Errorf("registry is not a string")
+			return nil, "", ErrInvalidImageMapRegistry
 		}
 	} else if d.context.GlobalRegistry != "" {
 		ref.Registry = d.context.GlobalRegistry
@@ -429,7 +441,7 @@ func (d *ImageDetector) tryExtractImageFromMap(m map[string]interface{}) (*Image
 			// Handle nil tag by setting empty string
 			ref.Tag = ""
 		} else {
-			return nil, "", fmt.Errorf("tag is not a string")
+			return nil, "", ErrInvalidImageMapTag
 		}
 	}
 
@@ -443,9 +455,8 @@ func (d *ImageDetector) tryExtractImageFromMap(m map[string]interface{}) (*Image
 
 // tryExtractImageFromString tries to extract an image reference from a string.
 func tryExtractImageFromString(s string) (*ImageReference, error) {
-	// Basic validation
 	if s == "" {
-		return nil, fmt.Errorf("empty string")
+		return nil, ErrEmptyImageString
 	}
 
 	// Try to parse as a Docker image reference
@@ -457,7 +468,7 @@ func tryExtractImageFromString(s string) (*ImageReference, error) {
 		ref.Digest = parts[1]
 		// Validate digest format - allow any length for flexibility
 		if !strings.HasPrefix(ref.Digest, "sha256:") {
-			return nil, fmt.Errorf("invalid digest format")
+			return nil, ErrInvalidDigestFormat
 		}
 	}
 
@@ -473,7 +484,7 @@ func tryExtractImageFromString(s string) (*ImageReference, error) {
 			repoAndTag = repoAndTag[:lastColonIdx]
 			// Validate tag format - more flexible validation
 			if !isValidTag(ref.Tag) {
-				return nil, fmt.Errorf("invalid tag format")
+				return nil, ErrInvalidTagFormat
 			}
 		}
 	}
@@ -495,7 +506,7 @@ func tryExtractImageFromString(s string) (*ImageReference, error) {
 	} else {
 		// No registry or organization
 		if !isValidDockerLibraryName(repoStr) {
-			return nil, fmt.Errorf("invalid repository name")
+			return nil, ErrInvalidRepoName
 		}
 		ref.Registry = defaultRegistry
 		ref.Repository = fmt.Sprintf("library/%s", repoStr)
@@ -513,7 +524,7 @@ func tryExtractImageFromString(s string) (*ImageReference, error) {
 		if ref.Registry == defaultRegistry && strings.HasPrefix(ref.Repository, "library/") {
 			return ref, nil
 		}
-		return nil, fmt.Errorf("invalid image reference format")
+		return nil, ErrInvalidImageRefFormat
 	}
 
 	return ref, nil
@@ -530,7 +541,7 @@ func ParseImageReference(value interface{}) (*ImageReference, error) {
 	case map[string]interface{}:
 		return parseImageMap(v)
 	default:
-		return nil, fmt.Errorf("unsupported image reference type: %T", value)
+		return nil, fmt.Errorf("%w: %T", ErrUnsupportedImageType, value)
 	}
 }
 
@@ -600,7 +611,7 @@ func parseImageMap(m map[string]interface{}) (*ImageReference, error) {
 			ref.Repository = repo
 		}
 	} else {
-		return nil, fmt.Errorf("repository not found or not a string")
+		return nil, nil
 	}
 
 	// Get tag
