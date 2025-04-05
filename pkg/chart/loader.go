@@ -58,6 +58,7 @@ func LoadChart(chartPath string) (*chart.Chart, error) {
 }
 
 // loadChartFromDir loads a chart from a local directory
+// nolint:unused // Kept for potential future uses
 func loadChartFromDir(dirPath string) (*ChartData, error) {
 	helmChart, err := loader.LoadDir(dirPath)
 	if err != nil {
@@ -68,6 +69,7 @@ func loadChartFromDir(dirPath string) (*ChartData, error) {
 }
 
 // loadChartFromArchive loads a chart from a .tgz archive
+// nolint:unused // Kept for potential future uses
 func loadChartFromArchive(archivePath string) (*ChartData, error) {
 	helmChart, err := loader.LoadFile(archivePath)
 	if err != nil {
@@ -78,6 +80,7 @@ func loadChartFromArchive(archivePath string) (*ChartData, error) {
 }
 
 // processChart extracts values and dependencies from the Helm chart
+// nolint:unused // Kept for potential future uses
 func processChart(helmChart *chart.Chart, chartPath string) (*ChartData, error) {
 	// Extract values from chart
 	valuesBytes, err := yaml.Marshal(helmChart.Values)
@@ -193,6 +196,7 @@ func processChart(helmChart *chart.Chart, chartPath string) (*ChartData, error) 
 }
 
 // Helper function to check if path is a directory
+// nolint:unused // Kept for potential future uses
 func isDir(path string) bool {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -203,6 +207,7 @@ func isDir(path string) bool {
 
 // Very basic condition evaluator (simplified for this implementation)
 // In a production version, this needs to be more robust to handle complex conditions
+// nolint:unused // Kept for potential future uses
 func evaluateCondition(condition string, values map[string]interface{}) bool {
 	// This is a simplistic placeholder. A real implementation would need to:
 	// 1. Parse the condition expression

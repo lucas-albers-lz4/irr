@@ -292,7 +292,8 @@ func (g *Generator) Generate() (*override.OverrideFile, error) {
 	}, nil
 }
 
-// extractSubtree extracts a subtree from a map structure based on a path
+// extractSubtree extracts a submap from a nested map structure based on a path
+// nolint:unused // Kept for potential future uses
 func extractSubtree(data map[string]interface{}, path []string) map[string]interface{} {
 	if len(path) == 0 {
 		return nil
@@ -502,7 +503,8 @@ func mergeOverrides(dest, src map[string]interface{}) {
 	debug.DumpValue("Merged Result", dest)
 }
 
-// validateHelmTemplate validates the generated overrides by attempting a helm template.
+// validateHelmTemplate validates a chart with given overrides by rendering templates
+// nolint:unused // Kept for potential future uses
 func validateHelmTemplate(chartPath string, overrides []byte) error {
 	debug.FunctionEnter("validateHelmTemplate")
 	defer debug.FunctionExit("validateHelmTemplate")
@@ -512,7 +514,11 @@ func validateHelmTemplate(chartPath string, overrides []byte) error {
 	if err != nil {
 		return fmt.Errorf("failed to create temporary file for validation: %v", err)
 	}
-	defer os.Remove(tmpFile.Name())
+	defer func() {
+		if err := os.Remove(tmpFile.Name()); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to remove temporary file %s: %v\n", tmpFile.Name(), err)
+		}
+	}()
 
 	// Write the overrides to the temporary file
 	if err := os.WriteFile(tmpFile.Name(), overrides, 0644); err != nil {
@@ -569,7 +575,8 @@ func validateHelmTemplate(chartPath string, overrides []byte) error {
 	return nil
 }
 
-// validateYAML performs additional validation on the generated YAML.
+// validateYAML performs additional validation on the generated YAML
+// nolint:unused // Kept for potential future uses
 func validateYAML(yamlData []byte) error {
 	// Split the YAML into documents
 	docs := bytes.Split(yamlData, []byte("\n---\n"))
@@ -611,7 +618,8 @@ func validateYAML(yamlData []byte) error {
 	return nil
 }
 
-// validateCommonIssues checks for common Kubernetes manifest issues.
+// validateCommonIssues checks for common Kubernetes manifest issues
+// nolint:unused // Kept for potential future uses
 func validateCommonIssues(obj map[string]interface{}) error {
 	// Check for invalid null values in required fields
 	var checkNulls func(map[string]interface{}, []string) error
@@ -650,6 +658,7 @@ func validateCommonIssues(obj map[string]interface{}) error {
 }
 
 // cleanupTemplateVariables removes or simplifies Helm template variables
+// nolint:unused // Kept for potential future uses
 func cleanupTemplateVariables(value interface{}) interface{} {
 	switch v := value.(type) {
 	case string:

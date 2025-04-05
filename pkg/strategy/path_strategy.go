@@ -14,7 +14,7 @@ type PathStrategy interface {
 	Transform(imgRef *image.ImageReference, targetRegistry string) string
 }
 
-// strategyRegistry holds the available strategies
+// nolint:unused // Kept for potential future uses
 var strategyRegistry = map[string]PathStrategy{
 	"prefix-source-registry": NewPrefixSourceRegistryStrategy(nil),
 }

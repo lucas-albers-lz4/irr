@@ -38,7 +38,9 @@ func NewTestHarness(t *testing.T) *TestHarness {
 // Cleanup removes temporary test files
 func (h *TestHarness) Cleanup() {
 	if h.tempDir != "" {
-		os.RemoveAll(h.tempDir)
+		if err := os.RemoveAll(h.tempDir); err != nil {
+			fmt.Printf("Warning: failed to remove temporary directory %s: %v\n", h.tempDir, err)
+		}
 	}
 }
 

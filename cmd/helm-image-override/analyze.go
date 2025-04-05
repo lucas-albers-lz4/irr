@@ -74,7 +74,10 @@ func formatTextOutput(analysis *analysis.ChartAnalysis) string {
 	if len(analysis.ImagePatterns) > 0 {
 		sb.WriteString("Image Patterns:\n")
 		w := tabwriter.NewWriter(&sb, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "PATH\tTYPE\tDETAILS\tCOUNT")
+		_, err := fmt.Fprintln(w, "PATH\tTYPE\tDETAILS\tCOUNT")
+		if err != nil {
+			return fmt.Sprintf("Error writing output: %v", err)
+		}
 		for _, p := range analysis.ImagePatterns {
 			details := ""
 			if p.Type == "map" {
@@ -85,9 +88,14 @@ func formatTextOutput(analysis *analysis.ChartAnalysis) string {
 			} else {
 				details = p.Value
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%d\n", p.Path, p.Type, details, p.Count)
+			_, err := fmt.Fprintf(w, "%s\t%s\t%s\t%d\n", p.Path, p.Type, details, p.Count)
+			if err != nil {
+				return fmt.Sprintf("Error writing output: %v", err)
+			}
 		}
-		w.Flush()
+		if err := w.Flush(); err != nil {
+			return fmt.Sprintf("Error flushing output: %v", err)
+		}
 		sb.WriteString("\n")
 	}
 

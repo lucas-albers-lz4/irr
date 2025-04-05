@@ -291,7 +291,11 @@ func validateHelmTemplate(chartPath string, overrides []byte) error {
 	if err != nil {
 		return fmt.Errorf("failed to create temporary file: %v", err)
 	}
-	defer os.Remove(tmpFile.Name())
+	defer func() {
+		if err := os.Remove(tmpFile.Name()); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to remove temporary file %s: %v\n", tmpFile.Name(), err)
+		}
+	}()
 
 	// Write the overrides to the temporary file
 	if err := os.WriteFile(tmpFile.Name(), overrides, 0644); err != nil {

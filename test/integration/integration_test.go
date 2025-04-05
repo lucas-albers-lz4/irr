@@ -308,6 +308,7 @@ version: 0.1.0`
 	h.chartPath = chartDir
 }
 
+// nolint:unused // Kept for potential future uses
 func chartExists(name string) bool {
 	// Check if chart exists in test-data/charts
 	_, err := os.Stat(filepath.Join("test-data", "charts", name))

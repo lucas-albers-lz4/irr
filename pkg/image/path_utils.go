@@ -21,6 +21,7 @@ func GetValueAtPath(data map[string]interface{}, path []string) (interface{}, er
 			current = val
 		} else if currentSlice, ok := current.([]interface{}); ok {
 			// Handle slice/array index (e.g., "[0]")
+			// nolint:staticcheck // Intentionally keeping current logic for readability
 			if !(strings.HasPrefix(key, "[") && strings.HasSuffix(key, "]")) {
 				return nil, fmt.Errorf("path element '%s' (index %d) is not an array index, but current value is a slice", key, i)
 			}

@@ -977,8 +977,6 @@ func TestDetectImages_ContextVariations(t *testing.T) {
 				// Check for unsupported items if expected
 				if tc.expectUnsupported {
 					assert.Greater(t, len(unsupported), 0, "should have some unsupported items")
-				} else {
-					// If we don't expect unsupported items, we don't assert anything about them
 				}
 				return
 			}
