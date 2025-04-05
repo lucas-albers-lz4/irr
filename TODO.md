@@ -866,4 +866,53 @@ Implement a tiered classification system within the Python test script (`test/to
 
 4. Target a minimum 80% test coverage for all core packages.
 
+## 18. Python Test Script (`test-charts.py`) Stabilization
+
+**Goal:** Ensure `test/tools/test-charts.py` can reliably extract various chart structures, execute override generation, validate results with `helm template`, and handle chart pulling errors gracefully.
+
+**Note:** Items 18.1, 18.2, and 18.3 must be addressed together. Fixing extraction (18.1) without implementing override/validation (18.2, 18.3) previously led to tests halting. Implementing override/validation without fixing extraction leads to the current state where tests fail early.
+
+### 18.1 Fix Chart Extraction Logic (High Priority)
+- [ ] **Modify `test_chart_override`:** Re-implement robust logic to find the correct chart directory after extraction.
+  - [ ] Check for `Chart.yaml` directly within the `temp_dir`.
+  - [ ] If not found, reliably iterate through *potential* subdirectories within `temp_dir` to locate the one containing `Chart.yaml`.
+  - [ ] Gracefully handle errors if `Chart.yaml` cannot be located after extraction.
+
+### 18.2 Complete Override Generation Testing (High Priority)
+- [ ] **Modify `test_chart_override`:** Implement the full process of running the `irr override` command after successful chart extraction:
+  - [ ] Construct the `irr override` command using the *correctly identified* `extracted_chart_dir`, `--chart-path`, `--target-registry`, `--source-registries`, and `--output-file` arguments.
+  - [ ] Execute the `irr override` command using `asyncio.create_subprocess_exec`, capturing stdout/stderr.
+  - [ ] Check the exit code of the `irr` process. Report failure clearly if non-zero, including stderr.
+  - [ ] Verify the specified `output_file` (e.g., `TEST_OUTPUT_DIR / f"{chart_name}-override.yaml"`) exists *and* is not empty after a successful `irr` command execution. Report error if not.
+
+### 18.3 Implement Template Validation Step (Medium Priority)
+- [ ] **Modify `test_chart_override`:** Add the `helm template` validation step *only after* successful override file generation (18.2):
+  - [ ] Determine chart `classification` using `get_chart_classification`.
+  - [ ] Generate the appropriate temporary values file (`temp_class_values.yaml`) using `get_values_content`.
+  - [ ] Construct the `helm template` command using the *correctly identified* `extracted_chart_dir`, the temporary classification values (`-f temp_class_values.yaml`), and the generated override file (`-f output_file`). Ensure the override file is the *last* `-f` argument.
+  - [ ] Execute the `helm template` command using `asyncio.create_subprocess_exec`, capturing stdout/stderr.
+  - [ ] Check the exit code of the `helm` process. Report failure clearly if non-zero, including stderr.
+
+### 18.4 Improve Chart Pulling Robustness (Medium Priority)
+- [ ] **Enhance `main` / `pull_chart`:** (Separate from extraction/override logic)
+  - [ ] Ensure `helm repo update` is called reliably before chart listing/pulling begins (consider adding it in `main`).
+  - [ ] Refine error handling in `pull_chart` to better differentiate between potentially recoverable errors (timeouts, rate limits) and unrecoverable ones (404s, chart not found).
+  - [ ] (Optional) Implement a simple retry mechanism for `helm pull` on specific, transient error types.
+  - [ ] Clearly log and potentially skip charts that consistently fail to pull after updates/retries, reporting these skips in the summary.
+
+### 18.5 Refine Error Reporting (Low Priority)
+- [ ] **Enhance `categorize_error` and `TestResult`:**
+  - [ ] Ensure distinct statuses/categories exist for failures during extraction, override generation, and template validation (e.g., `EXTRACTION_ERROR`, `OVERRIDE_CMD_FAILED`, `OVERRIDE_FILE_MISSING`, `TEMPLATE_VALIDATION_FAILED`).
+  - [ ] Include relevant command output (stderr primarily) in `TestResult.details` for easier debugging.
+
+### 18.6 (Optional) Add Verbose Logging
+- [ ] Add `print` statements within `test_chart_override` to log key steps:
+    - Path to the identified extracted chart directory.
+    - Chart classification result.
+    - Specific `irr override` command being executed.
+    - Specific `helm template` command being executed.
+    - Outcome of each command execution (success/failure + exit code).
+    - Path to the generated override file.
+    - Path to the temporary classification values file used.
+
    
