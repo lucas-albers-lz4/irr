@@ -26,8 +26,8 @@ func newAnalyzeCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			chartPath := args[0]
 
-			// Create analyzer
-			analyzer := analysis.NewAnalyzer(chartPath)
+			// Create analyzer, passing nil for default chart loader
+			analyzer := analysis.NewAnalyzer(chartPath, nil)
 
 			// Perform analysis
 			result, err := analyzer.Analyze()

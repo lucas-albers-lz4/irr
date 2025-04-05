@@ -4,18 +4,40 @@ import (
 	"fmt"
 	"strings"
 
+	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
 )
+
+// ChartLoader defines the interface for loading Helm charts.
+// This allows mocking the loader for testing.
+type ChartLoader interface {
+	Load(path string) (*chart.Chart, error)
+}
+
+// HelmChartLoader implements ChartLoader using the actual Helm loader.
+type HelmChartLoader struct{}
+
+// Load uses the Helm library to load a chart.
+func (h *HelmChartLoader) Load(path string) (*chart.Chart, error) {
+	return loader.Load(path)
+}
 
 // Analyzer provides functionality for analyzing Helm charts
 type Analyzer struct {
 	chartPath string
+	loader    ChartLoader // Use the interface instead of direct dependency
 }
 
 // NewAnalyzer creates a new Analyzer
-func NewAnalyzer(chartPath string) *Analyzer {
+// It now takes a ChartLoader as a dependency.
+func NewAnalyzer(chartPath string, loader ChartLoader) *Analyzer {
+	// If no loader provided, use the default Helm loader.
+	if loader == nil {
+		loader = &HelmChartLoader{}
+	}
 	return &Analyzer{
 		chartPath: chartPath,
+		loader:    loader,
 	}
 }
 
@@ -23,8 +45,8 @@ func NewAnalyzer(chartPath string) *Analyzer {
 func (a *Analyzer) Analyze() (*ChartAnalysis, error) {
 	analysis := NewChartAnalysis()
 
-	// Load the chart
-	chart, err := loader.Load(a.chartPath)
+	// Load the chart using the loader interface
+	chart, err := a.loader.Load(a.chartPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load chart: %w", err)
 	}
@@ -71,13 +93,29 @@ func (a *Analyzer) normalizeImageValues(val map[string]interface{}) (string, str
 	}
 
 	// Default to docker.io if registry is missing or empty
+	isDockerRegistry := false
 	if !hasRegistry || registry == "" {
 		registry = "docker.io"
+		isDockerRegistry = true
+	} else if registry == "docker.io" {
+		isDockerRegistry = true
 	}
 
-	// Normalize registry format
+	// Add library/ prefix ONLY if registry is docker.io and repo is simple (no /)
+	if isDockerRegistry && hasRepository && !strings.Contains(repository, "/") {
+		repository = "library/" + repository
+	}
+
+	// Normalize registry format (trim slash)
 	registry = strings.TrimSuffix(registry, "/")
-	if !strings.Contains(registry, ".") && !strings.Contains(registry, ":") {
+
+	// Handle registries specified without a TLD (e.g., "myregistry")
+	// This should happen AFTER defaulting to docker.io if needed
+	if !isDockerRegistry && !strings.Contains(registry, ".") && !strings.Contains(registry, ":") {
+		// It's not docker.io, and looks like a hostname without TLD or port.
+		// Assume it's meant to be on docker hub under that name? This is ambiguous.
+		// Let's revert to the previous logic for this specific case for now.
+		// Consider if this case needs clearer definition or should be disallowed.
 		registry = "docker.io/" + registry
 	}
 
@@ -158,49 +196,44 @@ func (a *Analyzer) analyzeArray(val []interface{}, path string, analysis *ChartA
 
 		switch v := item.(type) {
 		case map[string]interface{}:
-			// Check if this map entry contains an image
+			foundPatternInMapItem := false // Flag to prevent duplicate processing
+			// Check if this map entry IS an image map
 			if a.isImageMap(v) {
 				registry, repository, tag := a.normalizeImageValues(v)
-
-				if repository != "" { // Only repository is required
+				if repository != "" {
 					pattern := ImagePattern{
-						Path: itemPath,
-						Type: PatternTypeMap,
-						Structure: map[string]interface{}{
-							"registry":   registry,
-							"repository": repository,
-							"tag":        tag,
-						},
-						Value: fmt.Sprintf("%s/%s:%s", registry, repository, tag),
-						Count: 1,
+						Path: itemPath, Type: PatternTypeMap,
+						Structure: map[string]interface{}{"registry": registry, "repository": repository, "tag": tag},
+						Value:     fmt.Sprintf("%s/%s:%s", registry, repository, tag), Count: 1,
 					}
 					analysis.ImagePatterns = append(analysis.ImagePatterns, pattern)
+					foundPatternInMapItem = true
 				}
 			} else {
-				// Check for image field in the map
+				// Check if it CONTAINS an image field (but isn't an image map itself)
 				if img, ok := v["image"].(string); ok && a.isImageString("image", img) {
 					pattern := ImagePattern{
-						Path:  itemPath + ".image",
-						Type:  PatternTypeString,
-						Value: img,
-						Count: 1,
+						Path: itemPath + ".image", Type: PatternTypeString, Value: img, Count: 1,
 					}
 					analysis.ImagePatterns = append(analysis.ImagePatterns, pattern)
+					foundPatternInMapItem = true // Count this as found to avoid full recursion duplication
 				}
+			}
 
-				// Recurse into the map
+			// Recurse into the map ONLY IF we didn't find a primary pattern within it already.
+			// This prevents adding duplicates when a map contains `image:` but also nested images.
+			if !foundPatternInMapItem {
 				if err := a.analyzeValues(v, itemPath, analysis); err != nil {
 					return err
 				}
-			}
+			} // <<< Logic Change: Only recurse if no direct pattern found
+
 		case string:
 			// Check if the string itself is an image reference
-			if a.isImageString(path, v) {
+			if a.isImageString(path, v) { // Pass original path context for string check? Or itemPath?
+				// Let's use itemPath for consistency with map logic path construction
 				pattern := ImagePattern{
-					Path:  itemPath,
-					Type:  PatternTypeString,
-					Value: v,
-					Count: 1,
+					Path: itemPath, Type: PatternTypeString, Value: v, Count: 1,
 				}
 				analysis.ImagePatterns = append(analysis.ImagePatterns, pattern)
 			}

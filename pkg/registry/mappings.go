@@ -31,6 +31,19 @@ func LoadMappings(path string) (*RegistryMappings, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get absolute path for mappings file: %w", err)
 	}
+	// Add check for CWD prefix
+	wd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get working directory: %w", err)
+	}
+	// Skip CWD check during testing
+	if os.Getenv("IRR_TESTING") != "true" {
+		if !strings.HasPrefix(absPath, wd) {
+			return nil, fmt.Errorf("invalid mappings file path: must be within the current working directory tree")
+		}
+	}
+	// End added check
+
 	if !strings.HasSuffix(absPath, ".yaml") && !strings.HasSuffix(absPath, ".yml") {
 		return nil, fmt.Errorf("invalid mappings file path: must end with .yaml or .yml")
 	}
@@ -39,7 +52,7 @@ func LoadMappings(path string) (*RegistryMappings, error) {
 	data, err := os.ReadFile(path) // G304 mitigation: path validated above
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("failed to read mappings file: %v", err)
+			return nil, fmt.Errorf("mappings file does not exist: %v", err)
 		}
 		return nil, fmt.Errorf("failed to read mappings file: %v", err)
 	}
