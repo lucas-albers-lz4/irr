@@ -67,30 +67,30 @@
 *   **Target Coverage:** Aim for >75% in these packages, focusing on uncovered functions and common code paths.
 *   **Specific Actions:**
     *   **`pkg/image` (`detection.go`, `path_utils.go`):** High priority. **[PARTIALLY DONE]**
-        *   `TestParseImageMap` (0%): Essential helper. **[TODO]**
+        *   `TestParseImageMap` (0%): Essential helper. **[DONE]**
         *   `TestParseImageReference`: **[DONE]** (Main parsing/validation logic fixed and tested).
-        *   `TestIsValid*`: Focus on common validation rules. **[TODO]**
-        *   `TestDetectImages` (Line 834 vs 256): Investigate/test/remove. **[TODO]**
+        *   `TestIsValid*`: Focus on common validation rules. **[DONE]** // Covered by TestIsValidImageReference
+        *   `TestDetectImages` (Line 834 vs 256): Investigate/test/remove. **[DONE]** // Added comprehensive tests
         *   `TestGetValueAtPath`, `TestSetValueAtPath` (in `path_utils_test.go`): **[DONE]**
     *   **`pkg/override` (`override.go`, `path_utils.go`):** Focus on core structure manipulation.
         *   *(Note: `path_utils.go` functions are now tested via `pkg/image/path_utils_test.go`)*
-        *   `TestConstructPath` (0%): Basic path construction. **[TODO]**
-        *   `TestConstructSubchartPath` (0%): Basic subchart path handling. **[TODO]**
-        *   `TestMergeInto` (0%): Core merging logic. **[TODO]**
+        *   // `TestConstructPath` skipped - function is trivial (identity function).
+        *   `TestConstructSubchartPath` (0%): Basic subchart path handling. **[DONE]**
+        *   `TestMergeInto` (0%): Core merging logic. **[DONE]**
         *   *(Lower Priority Functions initially):* `TestGenerateYAML`, `TestToYAML`/`TestJSONToYAML`, `TestDeepCopy`/`TestSetValueAtPath` unless proven critical.
     *   **`pkg/strategy` (`path_strategy.go`):** Ensure default strategy is well-tested.
-        *   `TestPrefixSourceRegistryStrategy`: Enhance tests (review coverage gaps). **[TODO]**
-        *   `TestFlatStrategy` (0%): *(Lower Priority)* Implement tests only if/when used.
+        *   `TestPrefixSourceRegistryStrategy`: Enhance tests (review coverage gaps). **[DONE]** // Consolidated & enhanced tests
+        *   `TestFlatStrategy` (0%): *(Lower Priority)* Implement tests only if/when used. **[DONE]**
 
-### Phase 3: Test Command-Line Interface (`cmd/irr`) - **[TODO]**
+### Phase 3: Test Command-Line Interface (`cmd/irr`) - **[DONE]**
 
-*   **Package:** `cmd/irr` (`main.go`, `analyze.go`, `override.go`).
+*   **Package:** `cmd/irr` (`main.go`, `analyze.go`, `override.go` -> refactored to `root.go`, `main.go`, etc.)
 *   **Target Coverage:** Aim for >60%.
 *   **Specific Actions:** Use Cobra's testing helpers or `bytes.Buffer`. Mock core packages.
-    *   **Command Setup:** **[TODO]**
-    *   **Flag Parsing & Validation:** **[TODO]**
-    *   **Core Logic Execution (`runDefault`):** **[TODO]**
-    *   **Helper Functions:** *(Likely covered elsewhere)*
+    *   Command Setup: **[DONE]**
+    *   Flag Parsing & Validation: **[DONE]**
+    *   Core Logic Execution (`runDefault`, `runAnalyze`): **[DONE]**
+    *   Helper Functions: *(Covered implicitly or in other packages)*
 
 ### Phase 4: Address Utility/Supporting Packages - **[TODO]**
 
@@ -156,7 +156,7 @@
 *   **Image Parsing (`pkg/image`):** **[NEXT - Phase 2]**
 *   **Override Logic (`pkg/override`):** **[NEXT - Phase 2]**
 *   **Strategy Pattern (`pkg/strategy`):** **[NEXT - Phase 2]**
-*   **CLI Testing (`cmd/irr`):** **[TODO - Phase 3]**
+*   **CLI Testing (`cmd/irr`):** **[DONE]**
 *   **Existing Integration Tests:** Review `test/integration/*_test.go`. **[NOTE: Integration handled by Python scripts now]** Ensure unit tests cover logic identified by integration failures.
 *   **Table-Driven Tests:** **[APPLIED]**
 *   **Utility Packages (`pkg/log`, `pkg/debug`):** **[TODO - Phase 4]**
