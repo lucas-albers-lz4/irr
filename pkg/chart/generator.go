@@ -9,13 +9,14 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/lalbers/helm-image-override/pkg/debug"
-	"github.com/lalbers/helm-image-override/pkg/image"
-	"github.com/lalbers/helm-image-override/pkg/override"
-	"github.com/lalbers/helm-image-override/pkg/strategy"
+	"gopkg.in/yaml.v3"
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
-	"sigs.k8s.io/yaml"
+
+	"github.com/lalbers/irr/pkg/debug"
+	"github.com/lalbers/irr/pkg/image"
+	"github.com/lalbers/irr/pkg/override"
+	"github.com/lalbers/irr/pkg/strategy"
 )
 
 // Package chart provides functionality for handling Helm charts and generating image override values.

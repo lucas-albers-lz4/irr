@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lalbers/helm-image-override/pkg/testutil"
+	"github.com/lalbers/irr/pkg/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -230,7 +230,7 @@ func TestDryRunFlag(t *testing.T) {
 	}
 
 	// Run the command
-	cmd := exec.Command("../../build/helm-image-override", args...)
+	cmd := exec.Command("../../bin/irr", args...)
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "Dry run should succeed")
 
@@ -263,7 +263,7 @@ func TestStrictMode(t *testing.T) {
 		"--strict",
 	}
 
-	cmd := exec.Command("../../build/helm-image-override", args...)
+	cmd := exec.Command("../../bin/irr", args...)
 	_, err = cmd.CombinedOutput()
 	assert.Error(t, err, "Should fail in strict mode")
 }

@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/lalbers/helm-image-override/pkg/debug"
+	"github.com/lalbers/irr/pkg/debug"
 )
 
 // LogLevel represents the logging level

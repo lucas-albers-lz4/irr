@@ -3,7 +3,7 @@ package integration
 import (
 	"testing"
 
-	"github.com/lalbers/helm-image-override/pkg/testutil"
+	"github.com/lalbers/irr/pkg/testutil"
 )
 
 func TestCertManagerOverrides(t *testing.T) {

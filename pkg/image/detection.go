@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/lalbers/helm-image-override/pkg/debug"
+	"github.com/lalbers/irr/pkg/debug"
 )
 
 // Constants for image detection

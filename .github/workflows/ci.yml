@@ -24,7 +24,7 @@ jobs:
       run: golangci-lint run
     
     - name: Build
-      run: go build -v ./cmd/helm-image-override
+      run: go build -v ./cmd/irr
     
     - name: Test
       run: go test -v ./... 

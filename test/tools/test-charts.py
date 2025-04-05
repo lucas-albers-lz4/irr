@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Test script for helm-image-override.
+Test script for irr (Image Registry Rewrite).
 
 This script tests the override generation and template validation for Helm charts.
 It assumes charts have already been downloaded to the cache directory (e.g., by pull-charts.py).
@@ -68,7 +68,7 @@ registry:
 ERROR_CATEGORIES = {
     "PULL_ERROR": "Helm chart pull/fetch failed",
     "SETUP_ERROR": "Chart path or prerequisite error",
-    "OVERRIDE_ERROR": "helm-image-override command failed",
+    "OVERRIDE_ERROR": "irr command failed",
     "TEMPLATE_ERROR": "Helm template rendering failed",
     "SCHEMA_ERROR": "Chart schema validation error",
     "YAML_ERROR": "YAML parsing or syntax error",
@@ -224,7 +224,7 @@ def categorize_error(error_msg: str) -> str:
         return "SETUP_ERROR"
     if (
         "returned non-zero exit status" in error_msg_lower
-        and "helm-image-override override" in error_msg_lower
+        and "irr override" in error_msg_lower
     ):
         return "OVERRIDE_ERROR"
     if "override file not created or empty" in error_msg_lower:
@@ -453,9 +453,7 @@ def save_classification_stats():
     print("-" * 40)
 
 
-async def test_chart_override(
-    chart_info, target_registry, helm_override_binary, session
-):
+async def test_chart_override(chart_info, target_registry, irr_binary, session):
     chart_name, chart_path = chart_info
     output_file = TEST_OUTPUT_DIR / f"{chart_name}-values.yaml"
 
@@ -463,7 +461,7 @@ async def test_chart_override(
     classification = "UNKNOWN"
     override_duration = 0
     validation_duration = 0
-    stdout, stderr = None, None  # For helm-image-override process
+    stdout, stderr = None, None  # For irr process
     override_stdout_str, override_stderr_str = "", ""  # Decoded strings
     template_stdout_str, template_stderr_str = "", ""  # For helm template process
     result = None  # For override process result
@@ -501,7 +499,7 @@ async def test_chart_override(
         print(f"  Generating overrides for {chart_name}...")
         start_time = time.time()
         override_cmd = [
-            str(helm_override_binary),
+            str(irr_binary),
             "override",
             "--chart-path",
             str(chart_path),
@@ -527,7 +525,9 @@ async def test_chart_override(
             override_stderr_str = stderr.decode().strip() if stderr else ""
         except Exception as override_exec_err:
             override_duration = time.time() - start_time  # Capture time until error
-            error_msg = f"Error during helm-image-override execution for {chart_name}: {override_exec_err}"
+            error_msg = (
+                f"Error during irr execution for {chart_name}: {override_exec_err}"
+            )
             print(f"Error: {error_msg}")
             category = categorize_error(str(override_exec_err))
             # stdout/stderr might be None here, use already initialized empty strings
@@ -546,7 +546,7 @@ async def test_chart_override(
         # Check return code AFTER trying to communicate
         if result is None or result.returncode != 0:
             return_code = result.returncode if result is not None else "N/A"
-            error_msg = f"helm-image-override failed (code {return_code}):\nStderr: {override_stderr_str}\nStdout: {override_stdout_str}"
+            error_msg = f"irr failed (code {return_code}):\nStderr: {override_stderr_str}\nStdout: {override_stdout_str}"
             print(f"  Error generating overrides for {chart_name}.")
             category = categorize_error(
                 override_stderr_str or override_stdout_str
@@ -1088,11 +1088,9 @@ async def main():
     DETAILED_LOGS_DIR.mkdir(parents=True, exist_ok=True)
     CHART_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-    helm_override_binary = BASE_DIR / "build" / "helm-image-override"
-    if not helm_override_binary.exists():
-        print(
-            f"Error: helm-image-override binary not found at {helm_override_binary}. Please build it first."
-        )
+    irr_binary = BASE_DIR / "bin" / "irr"
+    if not irr_binary.exists():
+        print(f"Error: irr binary not found at {irr_binary}. Please build it first.")
         sys.exit(1)
 
     print("Adding Helm repositories...")
@@ -1207,7 +1205,7 @@ async def main():
     async def run_with_limit(chart_info):
         async with limiter:
             return await test_chart_override(
-                chart_info, args.target_registry, helm_override_binary, None
+                chart_info, args.target_registry, irr_binary, None
             )
 
     for chart_name, chart_path in charts_to_process_info:

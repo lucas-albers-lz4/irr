@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/lalbers/helm-image-override/pkg/image"
+	"github.com/lalbers/irr/pkg/image"
 	"sigs.k8s.io/yaml"
 )
 

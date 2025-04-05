@@ -1,4 +1,4 @@
-module github.com/lalbers/helm-image-override
+module github.com/lalbers/irr
 
 go 1.24.2
 
@@ -49,4 +49,4 @@ require (
 	sigs.k8s.io/structured-merge-diff/v4 v4.4.2 // indirect
 )
 
-replace github.com/lalbers/helm-image-override => ./
+replace github.com/lalbers/irr => ./

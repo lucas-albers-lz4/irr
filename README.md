@@ -1,10 +1,10 @@
-# Helm Image Override
+# IRR (Image Registry Rewrite)
 
 A command-line tool to automate the generation of Helm chart override files for redirecting container images to private or local registries.
 
 ## Overview
 
-The `helm-image-override` tool analyzes Helm charts and automatically generates `values.yaml` override files to redirect container image pulls from specified public registries to a target registry. This is especially useful when:
+The `irr` tool analyzes Helm charts and automatically generates `values.yaml` override files to redirect container image pulls from specified public registries to a target registry. This is especially useful when:
 
 - Using a private registry like Harbor with pull-through cache
 - Working in air-gapped environments
@@ -15,26 +15,26 @@ The `helm-image-override` tool analyzes Helm charts and automatically generates 
 
 ### Binary Installation (not available yet)
 
-Download the latest release for your platform from the [releases page](https://github.com/lalbers/helm-image-override/releases).
+Download the latest release for your platform from the [releases page](https://github.com/lalbers/irr/releases).
 
 ```bash
 # Linux
-curl -LO https://github.com/lalbers/helm-image-override/releases/latest/download/helm-image-override-linux-amd64
-chmod +x helm-image-override-linux-amd64
-mv helm-image-override-linux-amd64 /usr/local/bin/helm-image-override
+curl -LO https://github.com/lalbers/irr/releases/latest/download/irr-linux-amd64
+chmod +x irr-linux-amd64
+mv irr-linux-amd64 /usr/local/bin/irr
 
 # macOS
-curl -LO https://github.com/lalbers/helm-image-override/releases/latest/download/helm-image-override-darwin-amd64
-chmod +x helm-image-override-darwin-amd64
-mv helm-image-override-darwin-amd64 /usr/local/bin/helm-image-override
+curl -LO https://github.com/lalbers/irr/releases/latest/download/irr-darwin-amd64
+chmod +x irr-darwin-amd64
+mv irr-darwin-amd64 /usr/local/bin/irr
 ```
 
 ### Building from Source
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/lalbers/helm-image-override.git
-cd helm-image-override
+git clone https://github.com/lalbers/irr.git
+cd irr
 ```
 
 2. Build the binary:
@@ -42,11 +42,11 @@ cd helm-image-override
 make build
 ```
 
-The binary will be created at `build/helm-image-override`. You can optionally add it to your PATH:
+The binary will be created at `bin/irr`. You can optionally add it to your PATH:
 
 ```bash
 # Optional: Install to /usr/local/bin
-sudo cp build/helm-image-override /usr/local/bin/
+sudo cp bin/irr /usr/local/bin/
 ```
 
 ## Usage
@@ -54,7 +54,7 @@ sudo cp build/helm-image-override /usr/local/bin/
 ### Basic Usage
 
 ```bash
-helm-image-override \
+irr override \
   --chart-path ./my-chart \
   --target-registry harbor.example.com:5000 \
   --source-registries docker.io,quay.io \
@@ -84,7 +84,7 @@ helm install my-release ./my-chart -f overrides.yaml
 
 ### Example: Redirecting Images to Harbor
 
-Harbor is a commonly used private registry with pull-through cache capabilities. To use `helm-image-override` with Harbor:
+Harbor is a commonly used private registry with pull-through cache capabilities. To use `irr` with Harbor:
 
 1. First, set up pull-through caching in Harbor:
    - Create projects in Harbor for each source registry (e.g., `dockerio`, `quayio`)
@@ -92,7 +92,7 @@ Harbor is a commonly used private registry with pull-through cache capabilities.
 
 2. Generate overrides for a chart:
    ```bash
-   helm-image-override \
+   irr \
      --chart-path ./prometheus \
      --target-registry harbor.example.com \
      --source-registries docker.io,quay.io \
@@ -188,7 +188,7 @@ go tool cover -func=coverage.out
 
 ## Prerequisites
 - Helm CLI installed
-- helm-image-override binary built
+- irr binary built
 
 ## Steps
 
@@ -200,7 +200,7 @@ go tool cover -func=coverage.out
 
 2. **Run the override tool**
    ```bash
-   ./build/helm-image-override \
+   ./bin/irr \
      --chart-path ./tmp/nginx \
      --target-registry my-registry.example.com \
      --source-registries docker.io,quay.io \
@@ -250,7 +250,7 @@ mappings:
 Use the mappings file with the tool:
 
 ```bash
-helm-image-override \
+irr \
   --chart-path ./my-chart \
   --target-registry my-registry.example.com \
   --source-registries docker.io,quay.io \

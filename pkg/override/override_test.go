@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/lalbers/helm-image-override/pkg/image"
+	"github.com/lalbers/irr/pkg/image"
 	"github.com/stretchr/testify/assert"
 	"gopkg.in/yaml.v3"
 )

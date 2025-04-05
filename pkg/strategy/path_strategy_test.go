@@ -3,8 +3,8 @@ package strategy
 import (
 	"testing"
 
-	"github.com/lalbers/helm-image-override/pkg/image"
-	"github.com/lalbers/helm-image-override/pkg/registry"
+	"github.com/lalbers/irr/pkg/image"
+	"github.com/lalbers/irr/pkg/registry"
 	"github.com/stretchr/testify/assert"
 )
 

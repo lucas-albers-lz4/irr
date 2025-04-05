@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/lalbers/helm-image-override/pkg/debug"
-	"github.com/lalbers/helm-image-override/pkg/image"
-	"github.com/lalbers/helm-image-override/pkg/registry"
+	"github.com/lalbers/irr/pkg/debug"
+	"github.com/lalbers/irr/pkg/image"
+	"github.com/lalbers/irr/pkg/registry"
 )
 
 // PathStrategy defines the interface for transforming image paths

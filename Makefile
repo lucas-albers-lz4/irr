@@ -1,6 +1,6 @@
 .PHONY: build test lint clean run helm-lint test-charts
 
-BINARY_NAME=helm-image-override
+BINARY_NAME=irr
 BUILD_DIR=bin
 GO_FILES=$(shell find . -name "*.go" -type f)
 TEST_CHARTS_DIR=test-data/charts
@@ -13,7 +13,7 @@ all: lint helm-lint test build
 build:
 	@echo "Building..."
 	@mkdir -p $(BUILD_DIR)
-	@go build -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/helm-image-override
+	@go build -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/irr
 
 test:
 	@echo "Running unit tests..."
