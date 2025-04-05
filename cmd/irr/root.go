@@ -166,9 +166,8 @@ func newDefaultCmd() *cobra.Command {
 		Short: "Generate Helm overrides for redirecting container images (default action)",
 		Long: `Generate Helm value overrides that redirect container images from source registries
 to a target registry. This is the original functionality of IRR. If no subcommand is specified, this command runs by default.`,
-		// If this is truly the default, the root command might handle it.
-		// If it's an explicit subcommand, keep RunE.
-		RunE:          runDefault,
+		RunE: runDefault,
+		// Restore default silencing for production behavior
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
@@ -188,9 +187,16 @@ to a target registry. This is the original functionality of IRR. If no subcomman
 	f.StringVar(&registryMappingsFile, "registry-mappings", "", "Path to YAML file containing registry mappings")
 
 	// Mark required flags for override command
-	_ = cmd.MarkFlagRequired("chart-path")
-	_ = cmd.MarkFlagRequired("target-registry")
-	_ = cmd.MarkFlagRequired("source-registries")
+	if err := cmd.MarkFlagRequired("chart-path"); err != nil {
+		// This should never happen, but log it in case it does
+		fmt.Fprintf(os.Stderr, "Error marking chart-path as required: %v\n", err)
+	}
+	if err := cmd.MarkFlagRequired("target-registry"); err != nil {
+		fmt.Fprintf(os.Stderr, "Error marking target-registry as required: %v\n", err)
+	}
+	if err := cmd.MarkFlagRequired("source-registries"); err != nil {
+		fmt.Fprintf(os.Stderr, "Error marking source-registries as required: %v\n", err)
+	}
 
 	return cmd
 }
@@ -267,19 +273,27 @@ func runDefault(cmd *cobra.Command, args []string) error {
 	// Restore Output results logic
 	if dryRun {
 		if verbose {
-			fmt.Println("Dry run enabled, printing overrides to stdout:")
+			// Use cmd.OutOrStdout() for verbose output as well
+			fmt.Fprintln(cmd.OutOrStdout(), "Dry run enabled, printing overrides to stdout:")
 		}
-		fmt.Println(string(yamlOutput))
+		// Write directly to the command's output stream
+		_, err = cmd.OutOrStdout().Write(yamlOutput)
 	} else if outputFile != "" {
 		// Use afero WriteFile
-		if err := afero.WriteFile(AppFs, outputFile, yamlOutput, 0644); err != nil {
-			return wrapExitCodeError(ExitGeneralRuntimeError, "error writing output file", err)
-		}
-		if verbose {
-			fmt.Printf("Overrides written to: %s\n", outputFile)
+		err = afero.WriteFile(AppFs, outputFile, yamlOutput, 0644)
+		if err == nil && verbose {
+			fmt.Fprintf(cmd.OutOrStdout(), "Overrides written to: %s\n", outputFile)
 		}
 	} else {
-		fmt.Println(string(yamlOutput))
+		// Write directly to the command's output stream
+		_, err = cmd.OutOrStdout().Write(yamlOutput)
+		// Add a newline for consistency with fmt.Println
+		if err == nil {
+			_, _ = cmd.OutOrStdout().Write([]byte("\n"))
+		}
+	}
+	if err != nil {
+		return wrapExitCodeError(ExitGeneralRuntimeError, "error writing output", err)
 	}
 
 	return nil
@@ -334,13 +348,19 @@ func newAnalyzeCmd() *cobra.Command {
 				}
 			} else {
 				debug.Println("Writing analysis output to stdout")
-				fmt.Println(output)
+				// Write directly to the command's output stream
+				_, err = cmd.OutOrStdout().Write([]byte(output))
+				// Add a newline for consistency with fmt.Println
+				if err == nil {
+					_, _ = cmd.OutOrStdout().Write([]byte("\n"))
+				}
+				if err != nil {
+					return wrapExitCodeError(ExitGeneralRuntimeError, "error writing analysis output", err)
+				}
 			}
 
 			return nil
 		},
-		SilenceUsage:  true,
-		SilenceErrors: true,
 	}
 
 	// Add flags specific to the analyze command

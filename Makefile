@@ -19,6 +19,22 @@ test: build
 	@echo "Running unit tests..."
 	@IRR_TESTING=true go test -v ./...
 
+test-packages: build
+	@echo "Running package tests (skipping cmd/irr)..."
+	@IRR_TESTING=true go test -v ./pkg/... ./test/...
+
+test-pkg-image: build
+	@echo "Running image package tests..."
+	@IRR_TESTING=true go test -v ./pkg/image/...
+
+test-pkg-override: build
+	@echo "Running override package tests..."
+	@IRR_TESTING=true go test -v ./pkg/override/...
+
+test-pkg-strategy: build
+	@echo "Running strategy package tests..."
+	@IRR_TESTING=true go test -v ./pkg/strategy/...
+
 test-charts: build
 	@echo "Running chart tests..."
 	@mkdir -p $(TEST_RESULTS_DIR)
