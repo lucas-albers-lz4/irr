@@ -13,20 +13,20 @@
     *   Completed initial unit test implementation for core logic in `pkg/analysis` and `pkg/chart`.
     *   Resolved numerous build and test assertion failures across multiple packages.
     *   Refactored `pkg/chart` (Generator, Loader) for better testability, including `afero` integration.
+    *   **Fixed `pkg/image.ParseImageReference` test failures related to tag/digest parsing.**
+    *   **Fixed `pkg/chart/generator.go` build errors related to error handling comparisons.**
     *   Fixed `pkg/registry` tests related to CWD checks during testing.
     *   Fixed `cmd/irr` build errors and Makefile dependencies.
-    *   **Actively debugging `pkg/image.ParseImageReference` tests, focusing on tag/digest parsing logic.**
-    *   **Identified unrelated build errors in `pkg/chart/generator.go` (error handling comparisons); deferring fixes until `pkg/image` tests pass.**
-    *   All Go unit tests (`make test`) were previously passing; currently blocked by `pkg/image` test failures and `pkg/chart` build errors.
+    *   **All Go unit tests (`make test`) are currently passing.**
     *   Clarified separation between unit tests (`make test`) and integration tests (`make test-charts` using Python scripts).
 *   **Coverage Breakdown (Estimates based on work done):**
     *   `github.com/lalbers/irr/cmd/irr`: Low (Build fixes, no dedicated tests yet)
     *   `github.com/lalbers/irr/pkg/analysis`: High (Phase 1 focus - likely >70%)
     *   `github.com/lalbers/irr/pkg/chart`: High (Phase 1 focus - likely >70%)
     *   `github.com/lalbers/irr/pkg/debug`: 0.0%
-    *   `github.com/lalbers/irr/pkg/image`: 60.5% (Unchanged)
+    *   `github.com/lalbers/irr/pkg/image`: Medium-High (Tests added/fixed for parsing/path_utils - likely >70% now)
     *   `github.com/lalbers/irr/pkg/log`: 0.0%
-    *   `github.com/lalbers/irr/pkg/override`: 58.3% (Unchanged)
+    *   `github.com/lalbers/irr/pkg/override`: 58.3% (Unchanged, though path_utils tested indirectly)
     *   `github.com/lalbers/irr/pkg/registry`: High (Phase 1 focus, TestLoadMappings fixed - likely >81.8%)
     *   `github.com/lalbers/irr/pkg/registrymapping`: N/A (Removed/Consolidated)
     *   `github.com/lalbers/irr/pkg/strategy`: 58.3% (Unchanged)
@@ -66,12 +66,14 @@
 *   **Packages:** `pkg/image`, `pkg/override`, `pkg/strategy`.
 *   **Target Coverage:** Aim for >75% in these packages, focusing on uncovered functions and common code paths.
 *   **Specific Actions:**
-    *   **`pkg/image` (`detection.go`):** High priority. **[IN PROGRESS]**
+    *   **`pkg/image` (`detection.go`, `path_utils.go`):** High priority. **[PARTIALLY DONE]**
         *   `TestParseImageMap` (0%): Essential helper. **[TODO]**
-        *   `TestParseImageReference`: Enhance with common valid and invalid cases. **[IN PROGRESS - Refining tag/digest parsing logic (`tryExtractImageFromString`) based on test failures.]**
+        *   `TestParseImageReference`: **[DONE]** (Main parsing/validation logic fixed and tested).
         *   `TestIsValid*`: Focus on common validation rules. **[TODO]**
         *   `TestDetectImages` (Line 834 vs 256): Investigate/test/remove. **[TODO]**
+        *   `TestGetValueAtPath`, `TestSetValueAtPath` (in `path_utils_test.go`): **[DONE]**
     *   **`pkg/override` (`override.go`, `path_utils.go`):** Focus on core structure manipulation.
+        *   *(Note: `path_utils.go` functions are now tested via `pkg/image/path_utils_test.go`)*
         *   `TestConstructPath` (0%): Basic path construction. **[TODO]**
         *   `TestConstructSubchartPath` (0%): Basic subchart path handling. **[TODO]**
         *   `TestMergeInto` (0%): Core merging logic. **[TODO]**
@@ -144,7 +146,6 @@
 *   **Qualitative Focus:** Prioritize testing *critical paths* and *common scenarios*. **[APPLIED]**
 *   **Test Quality Checklist (For key tests):** **[APPLIED Implicitly]**
 *   Maintain a list of known coverage gaps or complex scenarios deferred. **[This Doc]**
-*   **Known Issue:** Build errors exist in `pkg/chart/generator.go` related to comparing `error` types (lines ~159, 166, 255, etc.). These will be addressed after `pkg/image` tests are passing.
 
 ## 6. Implementation Hints
 
