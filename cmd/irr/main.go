@@ -1,9 +1,10 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
-	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/lalbers/irr/pkg/chart"
@@ -130,6 +131,36 @@ to a target registry. This is the original functionality of IRR (Image Registry 
 	return cmd
 }
 
+// newExitCodeError creates an error associated with an exit code
+// Note: This requires a custom error type or wrapping logic to properly handle exit codes.
+// For simplicity, just wrapping standard errors for now.
+type ExitCodeError struct {
+	Code int
+	Err  error
+}
+
+func (e *ExitCodeError) Error() string {
+	return e.Err.Error()
+}
+
+func (e *ExitCodeError) Unwrap() error {
+	return e.Err
+}
+
+func newExitCodeError(code int, msg string) error {
+	// Create the base error message first using errors.New
+	baseErr := errors.New(msg)
+	return &ExitCodeError{Code: code, Err: baseErr}
+}
+
+// Helper function to wrap existing errors with an exit code
+func wrapExitCodeError(code int, baseMsg string, originalErr error) error {
+	// Format the combined message safely
+	combinedMsg := fmt.Sprintf("%s: %s", baseMsg, originalErr.Error())
+	// Wrap the formatted message string using errors.New
+	return &ExitCodeError{Code: code, Err: errors.New(combinedMsg)}
+}
+
 // runDefault implements the original functionality
 func runDefault(cmd *cobra.Command, args []string) error {
 	// Initialize debug logging
@@ -170,14 +201,18 @@ func runDefault(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Loading chart from: %s\n", chartPath)
 	}
 	debug.Printf("Loading chart from: %s", chartPath)
-	chartData, err := chart.LoadChart(chartPath)
+	// Use the new Loader interface
+	loader := chart.NewLoader()
+	chartData, err := loader.Load(chartPath)
 	if err != nil {
-		return fmt.Errorf("error loading chart: %v", err)
+		// Return chart parsing error exit code using wrapper
+		return wrapExitCodeError(ExitChartParsingError, "error loading chart", err)
 	}
 
 	// Print values for debugging if verbose
 	if verbose {
 		fmt.Println("Chart values:")
+		// Use chartData directly now
 		fmt.Printf("%+v\n", chartData.Values)
 	}
 	debug.DumpValue("Chart Values", chartData.Values)
@@ -185,10 +220,10 @@ func runDefault(cmd *cobra.Command, args []string) error {
 	// Load registry mappings if provided
 	var registryMappings *registry.RegistryMappings
 	if registryMappingsFile != "" {
-		var err error
-		registryMappings, err = registry.LoadMappings(registryMappingsFile)
-		if err != nil {
-			return fmt.Errorf("error loading registry mappings: %v", err)
+		var mapErr error // Renamed to avoid shadowing
+		registryMappings, mapErr = registry.LoadMappings(registryMappingsFile)
+		if mapErr != nil {
+			return wrapExitCodeError(ExitInputConfigurationError, "error loading registry mappings", mapErr)
 		}
 		if verbose {
 			fmt.Printf("Loaded registry mappings from: %s\n", registryMappingsFile)
@@ -198,15 +233,16 @@ func runDefault(cmd *cobra.Command, args []string) error {
 		}
 	} else if verbose {
 		fmt.Println("No registry mappings file provided, using default mapping behavior:")
-		fmt.Printf("  docker.io -> %s/dockerio\n", targetRegistry)
-		fmt.Printf("  quay.io -> %s/quayio\n", targetRegistry)
-		fmt.Printf("  gcr.io -> %s/gcrio\n", targetRegistry)
+		// Example mapping info (actual logic is in strategy)
+		// fmt.Printf("  docker.io -> %s/dockerio\n", targetRegistry)
+		// fmt.Printf("  quay.io -> %s/quayio\n", targetRegistry)
+		// fmt.Printf("  gcr.io -> %s/gcrio\n", targetRegistry)
 	}
 
 	// Get the path strategy
-	strategy, err := strategy.GetStrategy(pathStrategy, registryMappings)
-	if err != nil {
-		return fmt.Errorf("error getting path strategy: %v", err)
+	strategyImpl, strategyErr := strategy.GetStrategy(pathStrategy, registryMappings)
+	if strategyErr != nil {
+		return wrapExitCodeError(ExitCodeInvalidStrategy, "error getting path strategy", strategyErr)
 	}
 
 	// First detect images to see what we find
@@ -232,88 +268,88 @@ func runDefault(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	overrides, err := chart.GenerateOverrides(chartData, targetRegistry, sourceRegistriesList, excludeRegistriesList, strategy, registryMappings, verbose)
-	if err != nil {
-		return fmt.Errorf("error generating overrides: %v", err)
+	// Create the generator
+	generator := chart.NewGenerator(
+		chartPath, // Use original path for generator context
+		targetRegistry,
+		sourceRegistriesList,
+		excludeRegistriesList,
+		strategyImpl,
+		registryMappings,
+		strictMode,
+		threshold,
+		loader, // Pass the loader we created earlier
+	)
+
+	// Generate the override file content
+	overrideFileResult, generateErr := generator.Generate()
+	if generateErr != nil {
+		// Check for specific error types from Generate if needed
+		if strictMode && strings.Contains(generateErr.Error(), "unsupported structures") {
+			return wrapExitCodeError(ExitUnsupportedStructError, "error generating overrides (unsupported structure)", generateErr)
+		}
+		return wrapExitCodeError(ExitImageProcessingError, "error generating overrides", generateErr)
 	}
 
-	debug.DumpValue("Generated Overrides", overrides)
+	debug.DumpValue("Generated Overrides Map", overrideFileResult.Overrides)
+	debug.DumpValue("Unsupported Structures Found", overrideFileResult.Unsupported)
 
-	// Convert overrides to YAML
-	yamlData, err := chart.OverridesToYAML(overrides)
-	if err != nil {
-		return fmt.Errorf("error converting overrides to YAML: %v", err)
+	// Convert the resulting overrides map to YAML
+	yamlData, yamlErr := chart.OverridesToYAML(overrideFileResult.Overrides)
+	if yamlErr != nil {
+		return wrapExitCodeError(ExitGeneralRuntimeError, "error converting overrides to YAML", yamlErr)
 	}
 
 	debug.DumpValue("YAML Output", string(yamlData))
 
 	// Validate the generated overrides by attempting a dry-run helm template
 	if !dryRun {
-		if err := validateHelmTemplate(chartPath, yamlData); err != nil {
-			return fmt.Errorf("error validating generated overrides: %v", err)
+		// Create the real command runner
+		cmdRunner := chart.NewOSCommandRunner() // Assuming constructor exists
+		if validationErr := chart.ValidateHelmTemplate(cmdRunner, chartPath, yamlData); validationErr != nil {
+			// Wrap error with specific exit code
+			return wrapExitCodeError(ExitHelmTemplateError, "Helm template validation failed", validationErr)
 		}
 	}
 
-	// Output the results
-	if outputFile == "" || dryRun {
-		fmt.Println(string(yamlData))
-	}
-
-	if outputFile != "" && !dryRun {
-		err = os.WriteFile(outputFile, yamlData, 0644)
-		if err != nil {
-			return fmt.Errorf("error writing output file: %v", err)
-		}
-		if verbose {
-			fmt.Printf("Wrote overrides to: %s\n", outputFile)
-		}
-		debug.Printf("Wrote overrides to: %s", outputFile)
-	}
-
-	// Exit successfully
-	return nil
-}
-
-// validateHelmTemplate validates the generated overrides by attempting a helm template.
-// @param chartPath: Path to the Helm chart
-// @param overrides: Generated YAML overrides
-// @returns: error if validation fails
-// @llm-helper This function ensures the overrides are valid
-// @llm-helper Uses helm template command for validation
-// @llm-helper Provides detailed error messages
-func validateHelmTemplate(chartPath string, overrides []byte) error {
-	// Create a temporary file for the overrides
-	tmpFile, err := os.CreateTemp("", "helm-override-*.yaml")
-	if err != nil {
-		return fmt.Errorf("failed to create temporary file: %v", err)
-	}
-	defer func() {
-		if err := os.Remove(tmpFile.Name()); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to remove temporary file %s: %v\n", tmpFile.Name(), err)
-		}
-	}()
-
-	// Write the overrides to the temporary file
-	if err := os.WriteFile(tmpFile.Name(), overrides, 0600); err != nil {
-		return fmt.Errorf("failed to write temporary file: %v", err)
-	}
-
-	// Run helm template with the overrides
-	cmd := exec.Command("helm", "template", "test", chartPath, "-f", tmpFile.Name())
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		// Parse the error output to provide more helpful messages
-		errorMsg := string(output)
-		if strings.Contains(errorMsg, "could not find template") {
-			return fmt.Errorf("helm template error: missing template file\nDetails: %s", errorMsg)
-		} else if strings.Contains(errorMsg, "error converting YAML to JSON") {
-			return fmt.Errorf("helm template error: invalid YAML syntax\nDetails: %s", errorMsg)
-		} else if strings.Contains(errorMsg, "error validating data") {
-			return fmt.Errorf("helm template error: validation failed\nDetails: %s", errorMsg)
+	// Write the YAML data to file or stdout
+	if !dryRun {
+		if outputFile != "" {
+			// Ensure the output directory exists
+			dir := filepath.Dir(outputFile)
+			if _, err := os.Stat(dir); os.IsNotExist(err) {
+				if mkDirErr := os.MkdirAll(dir, 0755); mkDirErr != nil {
+					return wrapExitCodeError(ExitInputConfigurationError, "failed to create output directory "+dir, mkDirErr)
+				}
+			}
+			// #nosec G306 // Allow configurable file permissions, default 0644 reasonable
+			if writeErr := os.WriteFile(outputFile, yamlData, 0644); writeErr != nil {
+				return wrapExitCodeError(ExitInputConfigurationError, "failed to write overrides file", writeErr)
+			}
+			if verbose {
+				fmt.Printf("Overrides successfully written to: %s\n", outputFile)
+			}
 		} else {
-			return fmt.Errorf("helm template error: %s", errorMsg)
+			fmt.Println(string(yamlData))
+		}
+	} else {
+		if verbose {
+			fmt.Println("Dry run enabled, printing overrides to stdout:")
+		}
+		fmt.Println(string(yamlData)) // Print YAML for dry run
+		if verbose {
+			fmt.Println("\nDry run complete. No files were written.")
 		}
 	}
 
-	return nil
+	// Report unsupported structures if any, but don't fail if not strict mode and threshold met
+	if len(overrideFileResult.Unsupported) > 0 {
+		fmt.Fprintln(os.Stderr, "\nWarning: Found unsupported image structures:")
+		for _, u := range overrideFileResult.Unsupported {
+			fmt.Fprintf(os.Stderr, "  - Path: %s, Type: %s\n", strings.Join(u.Path, "."), u.Type)
+		}
+	}
+
+	debug.Println("Execution successful")
+	return nil // ExitSuccess
 }

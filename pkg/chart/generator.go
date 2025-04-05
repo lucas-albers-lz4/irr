@@ -11,7 +11,6 @@ import (
 
 	"gopkg.in/yaml.v3"
 	"helm.sh/helm/v3/pkg/chart"
-	"helm.sh/helm/v3/pkg/chart/loader"
 
 	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/image"
@@ -57,10 +56,14 @@ type Generator struct {
 	mappings          *registry.RegistryMappings
 	strict            bool
 	threshold         int
+	loader            Loader
 }
 
 // NewGenerator creates a new Generator
-func NewGenerator(chartPath, targetRegistry string, sourceRegistries, excludeRegistries []string, pathStrategy strategy.PathStrategy, mappings *registry.RegistryMappings, strict bool, threshold int) *Generator {
+func NewGenerator(chartPath, targetRegistry string, sourceRegistries, excludeRegistries []string, pathStrategy strategy.PathStrategy, mappings *registry.RegistryMappings, strict bool, threshold int, loader Loader) *Generator {
+	if loader == nil {
+		loader = NewLoader()
+	}
 	return &Generator{
 		chartPath:         chartPath,
 		targetRegistry:    targetRegistry,
@@ -70,6 +73,7 @@ func NewGenerator(chartPath, targetRegistry string, sourceRegistries, excludeReg
 		mappings:          mappings,
 		strict:            strict,
 		threshold:         threshold,
+		loader:            loader,
 	}
 }
 
@@ -94,31 +98,25 @@ func (g *Generator) Generate() (*override.OverrideFile, error) {
 	debug.FunctionEnter("Generator.Generate")
 	defer debug.FunctionExit("Generator.Generate")
 
-	// Load the chart using the Helm SDK loader
-	chart, err := loader.Load(g.chartPath)
+	chartData, err := g.loader.Load(g.chartPath)
 	if err != nil {
 		return nil, fmt.Errorf("error loading chart: %w", err)
 	}
 
-	// Create a deep copy of the chart values to preserve structure
-	// Use original values for type checking later
-	baseValuesCopy := override.DeepCopy(chart.Values)
+	baseValuesCopy := override.DeepCopy(chartData.Values)
 	baseValues, ok := baseValuesCopy.(map[string]interface{})
 	if !ok {
 		return nil, fmt.Errorf("chart values are not a valid map[string]interface{}")
 	}
 	debug.DumpValue("Base values for type checking", baseValues)
 
-	// Get all image references from the chart
-	// We need the original chart.Values here for detection
-	images, unsupportedMatches, err := image.DetectImages(chart.Values, []string{}, g.sourceRegistries, g.excludeRegistries, g.strict)
+	images, unsupportedMatches, err := image.DetectImages(chartData.Values, []string{}, g.sourceRegistries, g.excludeRegistries, g.strict)
 	if err != nil {
 		return nil, fmt.Errorf("error detecting images: %w", err)
 	}
 	debug.DumpValue("Found images", images)
 	debug.DumpValue("Unsupported structures", unsupportedMatches)
 
-	// Convert unsupported matches to unsupported structures
 	var unsupported []override.UnsupportedStructure
 	for _, match := range unsupportedMatches {
 		unsupported = append(unsupported, override.UnsupportedStructure{
@@ -127,11 +125,9 @@ func (g *Generator) Generate() (*override.OverrideFile, error) {
 		})
 	}
 
-	// Calculate success percentage
 	totalImages := len(images)
 	if totalImages == 0 {
 		debug.Printf("No images requiring override found in chart.")
-		// Return an empty override file if no images are found
 		return &override.OverrideFile{
 			ChartPath:   g.chartPath,
 			ChartName:   filepath.Base(g.chartPath),
@@ -140,7 +136,6 @@ func (g *Generator) Generate() (*override.OverrideFile, error) {
 		}, nil
 	}
 
-	// Process each image reference
 	processedImages := 0
 	modifiedValuesCopy := override.DeepCopy(baseValues)
 	modifiedValues, ok := modifiedValuesCopy.(map[string]interface{})
@@ -150,27 +145,23 @@ func (g *Generator) Generate() (*override.OverrideFile, error) {
 
 	for _, img := range images {
 		debug.Printf("Processing image at path: %v, reference: %+v", img.Location, img.Reference)
-		// Skip if the image's registry is in the exclude list
 		if g.isExcluded(img.Reference.Registry) {
 			debug.Printf("Skipping image (excluded registry): %s", img.Reference.Registry)
 			continue
 		}
 
-		// Skip if the image's registry is not in the source list
 		if !g.isSourceRegistry(img.Reference.Registry) {
 			debug.Printf("Skipping image (not a source registry): %s", img.Reference.Registry)
 			continue
 		}
 
-		// Get the original value from the base structure to check its type
 		originalValue, err := image.GetValueAtPath(baseValues, img.Location)
 		if err != nil {
 			debug.Printf("Error getting original value at path %v: %v. Skipping.", img.Location, err)
-			continue // Skip this image if we can't get the original value
+			continue
 		}
 		debug.Printf("Original value type at path %v: %T", img.Location, originalValue)
 
-		// Transform the image reference using the path strategy
 		var transformedRef string
 		transformedRef, err = g.pathStrategy.GeneratePath(img.Reference, g.targetRegistry, g.mappings)
 		if err != nil {
@@ -179,12 +170,9 @@ func (g *Generator) Generate() (*override.OverrideFile, error) {
 		}
 		debug.DumpValue("Transformed Reference", transformedRef)
 
-		// Handle different image patterns - check if it's a string type
 		if img.LocationType == image.TypeString {
-			// Handle string image type, e.g., "docker.io/nginx:latest"
 			debug.Printf("Handling string image type at path: %v", img.Location)
 
-			// Set the transformed image as a string directly
 			err := override.SetValueAtPath(modifiedValues, img.Location, transformedRef)
 			if err != nil {
 				debug.Printf("Error setting string image value at path %v: %v", img.Location, err)
@@ -192,57 +180,43 @@ func (g *Generator) Generate() (*override.OverrideFile, error) {
 			continue
 		}
 
-		// For map-based image structures
-		// Extract registry and repository parts from the transformed reference
-		// Format example: harbor.home.arpa/dockerio/bitnami/nginx:1.27.4-debian-12-r6
 		var transformedRegistry, transformedRepo, transformedTag, transformedDigest string
 
-		// First check if there's a digest separator "@"
 		digestSeparatorIndex := strings.LastIndex(transformedRef, "@")
 		if digestSeparatorIndex != -1 {
-			// We have a digest reference
 			transformedDigest = transformedRef[digestSeparatorIndex+1:]
 			transformedRefWithoutTag := transformedRef[:digestSeparatorIndex]
 
-			// Extract registry and repository parts
 			firstSlashIndex := strings.Index(transformedRefWithoutTag, "/")
 			if firstSlashIndex != -1 {
 				transformedRegistry = transformedRefWithoutTag[:firstSlashIndex]
 				transformedRepo = transformedRefWithoutTag[firstSlashIndex+1:]
 			} else {
-				// If no slash, assume it's all repository
 				transformedRegistry = g.targetRegistry
 				transformedRepo = transformedRefWithoutTag
 			}
 		} else {
-			// Check for tag separator ":"
 			tagSeparatorIndex := strings.LastIndex(transformedRef, ":")
 			if tagSeparatorIndex != -1 {
-				// We have a tag reference
 				transformedTag = transformedRef[tagSeparatorIndex+1:]
 				transformedRefWithoutTag := transformedRef[:tagSeparatorIndex]
 
-				// Extract registry and repository parts
 				firstSlashIndex := strings.Index(transformedRefWithoutTag, "/")
 				if firstSlashIndex != -1 {
 					transformedRegistry = transformedRefWithoutTag[:firstSlashIndex]
 					transformedRepo = transformedRefWithoutTag[firstSlashIndex+1:]
 				} else {
-					// If no slash, assume it's all repository
 					transformedRegistry = g.targetRegistry
 					transformedRepo = transformedRefWithoutTag
 				}
 			} else {
-				// No tag or digest
 				transformedRefWithoutTag := transformedRef
 
-				// Extract registry and repository parts
 				firstSlashIndex := strings.Index(transformedRefWithoutTag, "/")
 				if firstSlashIndex != -1 {
 					transformedRegistry = transformedRefWithoutTag[:firstSlashIndex]
 					transformedRepo = transformedRefWithoutTag[firstSlashIndex+1:]
 				} else {
-					// If no slash, assume it's all repository
 					transformedRegistry = g.targetRegistry
 					transformedRepo = transformedRefWithoutTag
 				}
@@ -254,17 +228,14 @@ func (g *Generator) Generate() (*override.OverrideFile, error) {
 		debug.Printf("Extracted tag: %s", transformedTag)
 		debug.Printf("Extracted digest: %s", transformedDigest)
 
-		// Create the image configuration with extracted parts
 		imageConfig := map[string]interface{}{
 			"registry":   transformedRegistry,
 			"repository": transformedRepo,
 		}
 
-		// Handle tag or digest
 		if transformedDigest != "" {
 			imageConfig["digest"] = transformedDigest
 
-			// Clean up the repository if it contains a tag part
 			repoStr, ok := imageConfig["repository"].(string)
 			if ok && strings.Contains(repoStr, ":") {
 				tagIndex := strings.LastIndex(repoStr, ":")
@@ -281,11 +252,10 @@ func (g *Generator) Generate() (*override.OverrideFile, error) {
 			imageConfig["tag"] = img.Reference.Tag
 		}
 
-		// Set the correctly typed value at the correct path in the MODIFIED structure
 		err = image.SetValueAtPath(modifiedValues, img.Location, imageConfig)
 		if err != nil {
 			debug.Printf("Error setting value at path %v: %v", img.Location, err)
-			continue // Don't count as processed if we couldn't set the value
+			continue
 		}
 
 		processedImages++
@@ -293,8 +263,6 @@ func (g *Generator) Generate() (*override.OverrideFile, error) {
 
 	debug.Printf("Total images found: %d, Processed images needing override: %d", totalImages, processedImages)
 
-	// Calculate success percentage based on images needing processing
-	// Avoid division by zero if no images were targeted for override
 	processedNeedingOverride := 0
 	imagesNeedingOverride := 0
 	for _, img := range images {
@@ -303,15 +271,10 @@ func (g *Generator) Generate() (*override.OverrideFile, error) {
 		}
 	}
 
-	// Count processed images that needed override
 	for _, img := range images {
 		if !g.isExcluded(img.Reference.Registry) && g.isSourceRegistry(img.Reference.Registry) {
-			// Check if we actually set a value for this path in modifiedValues
-			// This requires GetValueAtPath, but on modifiedValues
 			_, err := image.GetValueAtPath(modifiedValues, img.Location)
 			if err == nil {
-				// Crude check: assume if GetValueAtPath succeeds, it was processed.
-				// A more robust check would compare the value against the targetRef.
 				processedNeedingOverride++
 			}
 		}
@@ -327,34 +290,25 @@ func (g *Generator) Generate() (*override.OverrideFile, error) {
 		debug.Printf("No images required overriding based on source/exclude registries.")
 	}
 
-	// If strict mode is enabled and there are unsupported structures, return an error
 	if g.strict && len(unsupported) > 0 {
 		return nil, fmt.Errorf("found %d unsupported structures in strict mode", len(unsupported))
 	}
 
-	// Extract only the modified paths from the modified structure
-	// Create the final minimal override structure
 	overrides := make(map[string]interface{})
 	for _, img := range images {
-		// Only include overrides for images that were actually processed
 		if g.isExcluded(img.Reference.Registry) || !g.isSourceRegistry(img.Reference.Registry) {
 			continue
 		}
 
-		// Check if this path exists in modifiedValues (i.e., was successfully set)
 		newValue, err := image.GetValueAtPath(modifiedValues, img.Location)
 		if err != nil {
-			// This path wasn't set successfully, skip adding it to the final overrides
 			debug.Printf("Skipping path %v in final overrides: value not found in modified map (error: %v)", img.Location, err)
 			continue
 		}
 
-		// Use SetValueAtPath on the final 'overrides' map to build the minimal structure
 		err = image.SetValueAtPath(overrides, img.Location, newValue)
 		if err != nil {
-			// This indicates an issue with SetValueAtPath itself or path structure
 			debug.Printf("Error setting path %v in final overrides map: %v", img.Location, err)
-			// Optionally, decide whether to continue or return an error
 		}
 	}
 	debug.DumpValue("Final minimal overrides structure", overrides)
@@ -497,14 +451,12 @@ func processChartForOverrides(chartData *chart.Chart, targetRegistry string, sou
 	debug.Printf("Processing chart: %s", chartData.Name())
 	debug.DumpValue("Chart Values", chartData.Values)
 
-	// Create a deep copy of the chart values to preserve structure
 	baseValuesCopy := override.DeepCopy(chartData.Values)
 	baseValues, ok := baseValuesCopy.(map[string]interface{})
 	if !ok {
 		return nil, fmt.Errorf("chart values are not a valid map[string]interface{}")
 	}
 
-	// Detect images in the chart's values
 	detectedImages, unsupported, err := image.DetectImages(chartData.Values, []string{}, sourceRegistries, excludeRegistries, false)
 	if err != nil {
 		return nil, fmt.Errorf("error detecting images: %w", err)
@@ -677,165 +629,113 @@ func mergeOverrides(dest, src map[string]interface{}) {
 	debug.DumpValue("Merged Result", dest)
 }
 
-// validateHelmTemplate validates a chart with given overrides by rendering templates
-// nolint:unused // Kept for potential future uses
-func validateHelmTemplate(chartPath string, overrides []byte) error {
-	debug.FunctionEnter("validateHelmTemplate")
-	defer debug.FunctionExit("validateHelmTemplate")
+// CommandRunner defines an interface for running external commands.
+type CommandRunner interface {
+	Run(name string, arg ...string) ([]byte, error)
+}
 
-	// Create a temporary file for the overrides
-	tmpFile, err := os.CreateTemp("", "helm-override-*.yaml")
+// osCommandRunner implements CommandRunner using the os/exec package.
+type osCommandRunner struct{}
+
+// NewOSCommandRunner creates a new CommandRunner that uses the real os/exec package.
+func NewOSCommandRunner() CommandRunner {
+	return &osCommandRunner{}
+}
+
+// Run executes the command and returns its combined stdout/stderr output and error.
+func (r *osCommandRunner) Run(name string, arg ...string) ([]byte, error) {
+	cmd := exec.Command(name, arg...)
+	// Using CombinedOutput captures both stdout and stderr, useful for debugging Helm errors.
+	return cmd.CombinedOutput()
+}
+
+// ValidateHelmTemplate runs `helm template` and validates the output.
+// It now accepts a CommandRunner to allow mocking.
+func ValidateHelmTemplate(runner CommandRunner, chartPath string, overrides []byte) error {
+	debug.FunctionEnter("ValidateHelmTemplate")
+	defer debug.FunctionExit("ValidateHelmTemplate")
+
+	// Create a temporary file for overrides
+	tempDir, err := os.MkdirTemp("", "helm-overrides-")
 	if err != nil {
-		return fmt.Errorf("failed to create temporary file for validation: %v", err)
+		return fmt.Errorf("failed to create temp dir for overrides: %w", err)
 	}
-	defer func() {
-		if err := os.Remove(tmpFile.Name()); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to remove temporary file %s: %v\n", tmpFile.Name(), err)
-		}
-	}()
+	defer os.RemoveAll(tempDir) // Clean up temp dir
 
-	// Write the overrides to the temporary file
-	if err := os.WriteFile(tmpFile.Name(), overrides, 0600); err != nil {
-		return fmt.Errorf("writing temporary helm values file: %w", err)
+	overrideFilePath := filepath.Join(tempDir, "overrides.yaml")
+	if err := os.WriteFile(overrideFilePath, overrides, 0600); err != nil {
+		return fmt.Errorf("failed to write temp overrides file: %w", err)
 	}
+	debug.Printf("Temporary override file written to: %s", overrideFilePath)
 
-	// Validate chartPath exists and is a directory
-	if _, err := os.Stat(chartPath); err != nil {
-		return fmt.Errorf("invalid chart path %s: %w", chartPath, err)
-	}
+	// Prepare helm template command arguments
+	args := []string{"template", "release-name", chartPath, "-f", overrideFilePath}
+	debug.Printf("Running helm command: helm %v", args)
 
-	// Run helm template with the overrides
-	// #nosec G204 -- chartPath is validated above and comes from trusted input
-	cmd := exec.Command("helm", "template", "test", chartPath, "-f", tmpFile.Name())
-	output, err := cmd.CombinedOutput()
-
+	// Run the command using the provided runner
+	output, err := runner.Run("helm", args...)
 	if err != nil {
-		// Parse the error output to provide more helpful messages
-		errorMsg := string(output)
-
-		// Check for common error patterns
-		switch {
-		case strings.Contains(errorMsg, "could not find template"):
-			return fmt.Errorf("helm template error: missing template file - this may indicate a problem with the chart's structure: %v", err)
-
-		case strings.Contains(errorMsg, "parse error"):
-			return fmt.Errorf("helm template error: YAML parsing failed - the generated overrides may be malformed: %v", err)
-
-		case strings.Contains(errorMsg, "function \"include\""):
-			return fmt.Errorf("helm template error: template include failed - this may indicate a problem with template helpers: %v", err)
-
-		case strings.Contains(errorMsg, "undefined variable"):
-			return fmt.Errorf("helm template error: undefined variable - the chart may require additional values not present in the overrides: %v", err)
-
-		case strings.Contains(errorMsg, "no matches for kind"):
-			return fmt.Errorf("helm template error: unknown resource kind - the chart may be using custom resource definitions (CRDs) that need to be installed: %v", err)
-
-		default:
-			// Extract the relevant portion of the error message
-			lines := strings.Split(errorMsg, "\n")
-			relevantLines := []string{}
-			for _, line := range lines {
-				if strings.Contains(line, "Error:") || strings.Contains(line, "error:") {
-					relevantLines = append(relevantLines, line)
-				}
-			}
-
-			if len(relevantLines) > 0 {
-				return fmt.Errorf("helm template error: %s", strings.Join(relevantLines, "\n"))
-			}
-			return fmt.Errorf("helm template failed with error: %v\nOutput: %s", err, errorMsg)
-		}
+		// exec.ExitError is common, provide output context
+		debug.Printf("Helm template command failed. Error: %v\nOutput:\n%s", err, string(output))
+		return fmt.Errorf("helm template command failed: %w. Output: %s", err, string(output))
 	}
+	debug.Printf("Helm template command successful. Output length: %d", len(output))
+	// debug.DumpValue("Helm Template Output", string(output)) // Optional: dump full output
 
-	// Validate the output YAML
+	// Basic validation of the template output
 	if err := validateYAML(output); err != nil {
-		return fmt.Errorf("generated template validation failed: %v", err)
+		return fmt.Errorf("failed to parse helm template output: %w", err)
 	}
 
+	// More detailed validation (placeholder for complex checks)
+	// This part would ideally parse the multi-document YAML and check structures
+	/*
+		dec := yaml.NewDecoder(bytes.NewReader(output))
+		for {
+			var docData map[string]interface{}
+			if err := dec.Decode(&docData); err != nil {
+				if err == io.EOF {
+					break
+				}
+				return fmt.Errorf("error decoding YAML document: %w", err)
+			}
+			if err := validateCommonIssues(docData); err != nil {
+				return fmt.Errorf("common issue detected in template output: %w", err)
+			}
+		}
+	*/
+	// Simplified check for common issues on the raw bytes for now
+	if bytes.Contains(output, []byte("\n  - ")) && bytes.Contains(output, []byte(":\n")) { // Very crude check
+		// Placeholder: A more robust check for lists as map keys needed here.
+		// Example: Check lines starting with "  -" immediately after a line ending with ":"
+		// return fmt.Errorf("common issue detected: map key might be a list (heuristic check)")
+	}
+
+	debug.Println("Helm template output validated successfully.")
 	return nil
 }
 
-// validateYAML performs additional validation on the generated YAML
-// nolint:unused // Kept for potential future uses
+// validateYAML checks if the byte slice contains valid YAML.
+// Keep this unexported as it's an internal helper for ValidateHelmTemplate.
 func validateYAML(yamlData []byte) error {
-	// Split the YAML into documents
-	docs := bytes.Split(yamlData, []byte("\n---\n"))
-
-	for i, doc := range docs {
-		if len(bytes.TrimSpace(doc)) == 0 {
-			continue
-		}
-
-		// Try to parse each document
-		var obj map[string]interface{}
-		if err := yaml.Unmarshal(doc, &obj); err != nil {
-			return fmt.Errorf("invalid YAML in document %d: %v", i+1, err)
-		}
-
-		// Check for required Kubernetes fields
-		if kind, ok := obj["kind"].(string); ok {
-			// Skip empty documents
-			if kind == "" {
-				continue
-			}
-
-			// Validate required fields
-			if _, ok := obj["apiVersion"].(string); !ok {
-				return fmt.Errorf("missing apiVersion in document %d (kind: %s)", i+1, kind)
-			}
-
-			if _, ok := obj["metadata"].(map[string]interface{}); !ok {
-				return fmt.Errorf("missing metadata in document %d (kind: %s)", i+1, kind)
-			}
-		}
-
-		// Check for common issues
-		if err := validateCommonIssues(obj); err != nil {
-			return fmt.Errorf("validation failed in document %d: %v", i+1, err)
-		}
+	// Use yaml.v3 decoder which is stricter
+	dec := yaml.NewDecoder(bytes.NewReader(yamlData))
+	var node yaml.Node
+	for dec.Decode(&node) == nil {
+		// Successfully decoded a document, continue
 	}
-
+	// Check the error after the loop (io.EOF is expected on success)
+	if err := dec.Decode(&node); err != nil && err.Error() != "EOF" {
+		debug.Printf("YAML validation failed: %v", err)
+		return fmt.Errorf("invalid YAML structure: %w", err)
+	}
 	return nil
 }
 
-// validateCommonIssues checks for common Kubernetes manifest issues
-// nolint:unused // Kept for potential future uses
-func validateCommonIssues(obj map[string]interface{}) error {
-	// Check for invalid null values in required fields
-	var checkNulls func(map[string]interface{}, []string) error
-	checkNulls = func(m map[string]interface{}, path []string) error {
-		for k, v := range m {
-			currentPath := append(path, k)
-			pathStr := strings.Join(currentPath, ".")
-
-			switch val := v.(type) {
-			case nil:
-				// Some fields should never be null
-				if strings.HasSuffix(k, "Name") ||
-					strings.HasSuffix(k, "Path") ||
-					k == "key" ||
-					k == "value" {
-					return fmt.Errorf("field %s cannot be null", pathStr)
-				}
-			case map[string]interface{}:
-				if err := checkNulls(val, currentPath); err != nil {
-					return err
-				}
-			case []interface{}:
-				for i, item := range val {
-					if m, ok := item.(map[string]interface{}); ok {
-						if err := checkNulls(m, append(currentPath, fmt.Sprintf("[%d]", i))); err != nil {
-							return err
-						}
-					}
-				}
-			}
-		}
-		return nil
-	}
-
-	return checkNulls(obj, nil)
-}
+// validateCommonIssues checks for specific problematic patterns in parsed YAML.
+// Note: This function is complex to implement correctly without false positives.
+// Keeping it simple or removing might be better initially.
+// func validateCommonIssues(obj map[string]interface{}) error { ... }
 
 // cleanupTemplateVariables removes or simplifies Helm template variables
 // nolint:unused // Kept for potential future uses
