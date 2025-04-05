@@ -36,8 +36,7 @@ func TestNewGenerator(t *testing.T) {
 	strict := false
 	threshold := 90
 	// Use a mock loader for NewGenerator test (can be nil to test default)
-	var mockLoader Loader // Use the interface type
-	mockLoader = nil      // Test default loader case first
+	mockLoader := Loader(nil) // Test default loader case first
 
 	generator := NewGenerator(
 		chartPath,
@@ -203,7 +202,9 @@ func TestGenerate(t *testing.T) {
 
 		if workerImage, ok := overrideFile.Overrides["workerImage"]; ok {
 			assert.IsType(t, "", workerImage, "Override value should be a string") // Expecting a string override
-			assert.Equal(t, expectedTransformedValue, workerImage.(string), "Transformed string value mismatch")
+			if !assert.Equal(t, expectedTransformedValue, workerImage.(string), "Transformed string value mismatch") {
+				t.Errorf("Expected transformed value %q but got %q", expectedTransformedValue, workerImage.(string))
+			}
 		} else {
 			t.Errorf("workerImage key not found in overrides")
 		}
@@ -244,7 +245,9 @@ func TestGenerate(t *testing.T) {
 		if publicImage, ok := overrideFile.Overrides["publicImage"]; ok {
 			assert.IsType(t, "", publicImage) // Expecting string type
 			expectedValue := targetRegistry + "/library/alpine:latest"
-			assert.Equal(t, expectedValue, publicImage.(string))
+			if !assert.Equal(t, expectedValue, publicImage.(string)) {
+				t.Errorf("Expected value %q but got %q", expectedValue, publicImage.(string))
+			}
 		} else {
 			t.Errorf("publicImage key not found in overrides")
 		}
@@ -284,7 +287,9 @@ func TestGenerate(t *testing.T) {
 		if dockerImage, ok := overrideFile.Overrides["dockerImage"]; ok {
 			assert.IsType(t, "", dockerImage) // Expecting string type
 			expectedValue := targetRegistry + "/library/redis:alpine"
-			assert.Equal(t, expectedValue, dockerImage.(string))
+			if !assert.Equal(t, expectedValue, dockerImage.(string)) {
+				t.Errorf("Expected value %q but got %q", expectedValue, dockerImage.(string))
+			}
 		} else {
 			t.Errorf("dockerImage key not found in overrides")
 		}

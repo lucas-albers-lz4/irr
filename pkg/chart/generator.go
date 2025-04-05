@@ -143,8 +143,16 @@ func (g *Generator) Generate() (*override.OverrideFile, error) {
 		return nil, fmt.Errorf("failed to create modified values map")
 	}
 
-	for _, img := range images {
-		debug.Printf("Processing image at path: %v, reference: %+v", img.Location, img.Reference)
+	for i, img := range images {
+		debug.Printf("Processing image %d/%d: Path: %v, Ref: %s (%s)", i+1, totalImages, img.Location, img.Reference.String(), locationTypeToString(img.LocationType))
+
+		var err error
+
+		if img.Reference == nil {
+			debug.Printf("Skipping image (nil reference) at path: %v", img.Location)
+			continue
+		}
+
 		if g.isExcluded(img.Reference.Registry) {
 			debug.Printf("Skipping image (excluded registry): %s", img.Reference.Registry)
 			continue
@@ -155,111 +163,104 @@ func (g *Generator) Generate() (*override.OverrideFile, error) {
 			continue
 		}
 
-		originalValue, err := image.GetValueAtPath(baseValues, img.Location)
-		if err != nil {
-			debug.Printf("Error getting original value at path %v: %v. Skipping.", img.Location, err)
+		originalValue, found := image.GetValueAtPath(baseValues, img.Location)
+		if !found {
+			debug.Printf("Original value not found at path %v. Skipping.", img.Location)
 			continue
 		}
 		debug.Printf("Original value type at path %v: %T", img.Location, originalValue)
 
-		var transformedRef string
-		transformedRef, err = g.pathStrategy.GeneratePath(img.Reference, g.targetRegistry, g.mappings)
+		// Always generate the transformed path first
+		transformedRef, err := g.pathStrategy.GeneratePath(img.Reference, g.targetRegistry, g.mappings)
 		if err != nil {
 			debug.Printf("Error transforming image reference: %v", err)
 			continue
 		}
-		debug.DumpValue("Transformed Reference", transformedRef)
+		debug.DumpValue("Transformed Reference String", transformedRef)
 
 		if img.LocationType == image.TypeString {
-			debug.Printf("Handling string image type at path: %v", img.Location)
-
-			err := override.SetValueAtPath(modifiedValues, img.Location, transformedRef)
+			// Handle simple string replacement
+			debug.Printf("Handling string image type at path: %v, setting to %s", img.Location, transformedRef)
+			err = override.SetValueAtPath(modifiedValues, img.Location, transformedRef)
 			if err != nil {
 				debug.Printf("Error setting string image value at path %v: %v", img.Location, err)
 			}
+			// Skip map processing for string types
+			processedImages++
 			continue
 		}
 
-		var transformedRegistry, transformedRepo, transformedTag, transformedDigest string
+		// Handle map-based image structure replacement
+		debug.Printf("Handling map image type at path: %v", img.Location)
 
-		digestSeparatorIndex := strings.LastIndex(transformedRef, "@")
-		if digestSeparatorIndex != -1 {
-			transformedDigest = transformedRef[digestSeparatorIndex+1:]
-			transformedRefWithoutTag := transformedRef[:digestSeparatorIndex]
+		// Parse the transformed reference string back into components
+		parsedTransformedRef, parseErr := image.ParseImageReference(transformedRef)
+		if parseErr != nil {
+			debug.Printf("Error parsing transformed reference '%s': %v. Skipping override for path %v.", transformedRef, parseErr, img.Location)
+			continue // Skip if the transformed ref itself is invalid
+		}
+		debug.DumpValue("Parsed Transformed Reference", parsedTransformedRef)
 
-			firstSlashIndex := strings.Index(transformedRefWithoutTag, "/")
-			if firstSlashIndex != -1 {
-				transformedRegistry = transformedRefWithoutTag[:firstSlashIndex]
-				transformedRepo = transformedRefWithoutTag[firstSlashIndex+1:]
-			} else {
-				transformedRegistry = g.targetRegistry
-				transformedRepo = transformedRefWithoutTag
+		// Update the fields within the existing map structure in modifiedValues
+		registryPath := append(img.Location, "registry")
+		repositoryPath := append(img.Location, "repository")
+
+		err = image.SetValueAtPath(modifiedValues, registryPath, parsedTransformedRef.Registry)
+		if err != nil {
+			// Log error but continue; maybe other fields can be set
+			debug.Printf("Error setting registry at path %v: %v", registryPath, err)
+		}
+
+		err = image.SetValueAtPath(modifiedValues, repositoryPath, parsedTransformedRef.Repository)
+		if err != nil {
+			debug.Printf("Error setting repository at path %v: %v", repositoryPath, err)
+		}
+
+		// Handle tag or digest, potentially removing the other if present
+		if parsedTransformedRef.Digest != "" {
+			digestPath := append(img.Location, "digest")
+			err = image.SetValueAtPath(modifiedValues, digestPath, parsedTransformedRef.Digest)
+			if err != nil {
+				debug.Printf("Error setting digest at path %v: %v", digestPath, err)
+			}
+			// Attempt to remove tag if digest is set (optional, depends on desired behavior)
+			tagPath := append(img.Location, "tag")
+			if _, found := image.GetValueAtPath(modifiedValues, tagPath); found {
+				// TODO: Implement RemoveValueAtPath or handle setting nil/empty string if needed
+				// For now, we might overwrite tag with empty string if digest exists?
+				// Or just leave it - SetValueAtPath might handle replacing tag value implicitly below if needed.
+				debug.Printf("Note: Digest is set, but removing existing tag is not yet implemented.")
+			}
+		} else if parsedTransformedRef.Tag != "" {
+			tagPath := append(img.Location, "tag")
+			err = image.SetValueAtPath(modifiedValues, tagPath, parsedTransformedRef.Tag)
+			if err != nil {
+				debug.Printf("Error setting tag at path %v: %v", tagPath, err)
+			}
+			// Attempt to remove digest if tag is set (optional)
+			digestPath := append(img.Location, "digest")
+			if _, found := image.GetValueAtPath(modifiedValues, digestPath); found {
+				debug.Printf("Note: Tag is set, but removing existing digest is not yet implemented.")
 			}
 		} else {
-			tagSeparatorIndex := strings.LastIndex(transformedRef, ":")
-			if tagSeparatorIndex != -1 {
-				transformedTag = transformedRef[tagSeparatorIndex+1:]
-				transformedRefWithoutTag := transformedRef[:tagSeparatorIndex]
-
-				firstSlashIndex := strings.Index(transformedRefWithoutTag, "/")
-				if firstSlashIndex != -1 {
-					transformedRegistry = transformedRefWithoutTag[:firstSlashIndex]
-					transformedRepo = transformedRefWithoutTag[firstSlashIndex+1:]
-				} else {
-					transformedRegistry = g.targetRegistry
-					transformedRepo = transformedRefWithoutTag
-				}
-			} else {
-				transformedRefWithoutTag := transformedRef
-
-				firstSlashIndex := strings.Index(transformedRefWithoutTag, "/")
-				if firstSlashIndex != -1 {
-					transformedRegistry = transformedRefWithoutTag[:firstSlashIndex]
-					transformedRepo = transformedRefWithoutTag[firstSlashIndex+1:]
-				} else {
-					transformedRegistry = g.targetRegistry
-					transformedRepo = transformedRefWithoutTag
-				}
-			}
+			// Parsed reference has neither tag nor digest
+			debug.Printf("Warning: Parsed transformed reference '%s' has neither tag nor digest. Corresponding fields might be missing or removed.", transformedRef)
+			// TODO: Optionally remove existing tag/digest keys if parsed ref has neither?
 		}
 
-		debug.Printf("Extracted registry: %s", transformedRegistry)
-		debug.Printf("Extracted repository: %s", transformedRepo)
-		debug.Printf("Extracted tag: %s", transformedTag)
-		debug.Printf("Extracted digest: %s", transformedDigest)
-
-		imageConfig := map[string]interface{}{
-			"registry":   transformedRegistry,
-			"repository": transformedRepo,
+		// DEBUG: Check the value immediately after setting fields
+		checkValue, checkFound := image.GetValueAtPath(modifiedValues, img.Location)
+		if checkFound {
+			debug.Printf("DEBUG: Value in modifiedValues immediately after SetValueAtPath for path %v:", img.Location)
+			debug.DumpValue("DEBUG Check", checkValue)
+		} else {
+			debug.Printf("DEBUG: Value NOT FOUND in modifiedValues immediately after SetValueAtPath for path %v", img.Location)
 		}
 
-		if transformedDigest != "" {
-			imageConfig["digest"] = transformedDigest
-
-			repoStr, ok := imageConfig["repository"].(string)
-			if ok && strings.Contains(repoStr, ":") {
-				tagIndex := strings.LastIndex(repoStr, ":")
-				if tagIndex != -1 {
-					imageConfig["repository"] = repoStr[:tagIndex]
-				}
-			}
-
-		} else if transformedTag != "" {
-			imageConfig["tag"] = transformedTag
-		} else if img.Reference.Digest != "" {
-			imageConfig["digest"] = img.Reference.Digest
-		} else if img.Reference.Tag != "" {
-			imageConfig["tag"] = img.Reference.Tag
-		}
-
-		err = image.SetValueAtPath(modifiedValues, img.Location, imageConfig)
-		if err != nil {
-			debug.Printf("Error setting value at path %v: %v", img.Location, err)
-			continue
-		}
+		// Setting individual fields is done, no need to set the whole imageConfig map again.
 
 		processedImages++
-	}
+	} // End of main image processing loop
 
 	debug.Printf("Total images found: %d, Processed images needing override: %d", totalImages, processedImages)
 
@@ -273,8 +274,8 @@ func (g *Generator) Generate() (*override.OverrideFile, error) {
 
 	for _, img := range images {
 		if !g.isExcluded(img.Reference.Registry) && g.isSourceRegistry(img.Reference.Registry) {
-			_, err := image.GetValueAtPath(modifiedValues, img.Location)
-			if err == nil {
+			_, found := image.GetValueAtPath(modifiedValues, img.Location)
+			if found {
 				processedNeedingOverride++
 			}
 		}
@@ -300,9 +301,9 @@ func (g *Generator) Generate() (*override.OverrideFile, error) {
 			continue
 		}
 
-		newValue, err := image.GetValueAtPath(modifiedValues, img.Location)
-		if err != nil {
-			debug.Printf("Skipping path %v in final overrides: value not found in modified map (error: %v)", img.Location, err)
+		newValue, found := image.GetValueAtPath(modifiedValues, img.Location)
+		if !found {
+			debug.Printf("Skipping path %v in final overrides: value not found in modified map", img.Location)
 			continue
 		}
 
@@ -660,7 +661,11 @@ func ValidateHelmTemplate(runner CommandRunner, chartPath string, overrides []by
 	if err != nil {
 		return fmt.Errorf("failed to create temp dir for overrides: %w", err)
 	}
-	defer os.RemoveAll(tempDir) // Clean up temp dir
+	defer func() {
+		if err := os.RemoveAll(tempDir); err != nil {
+			debug.Printf("Warning: failed to clean up temp dir %s: %v", tempDir, err)
+		}
+	}() // Clean up temp dir
 
 	overrideFilePath := filepath.Join(tempDir, "overrides.yaml")
 	if err := os.WriteFile(overrideFilePath, overrides, 0600); err != nil {
@@ -687,29 +692,17 @@ func ValidateHelmTemplate(runner CommandRunner, chartPath string, overrides []by
 		return fmt.Errorf("failed to parse helm template output: %w", err)
 	}
 
-	// More detailed validation (placeholder for complex checks)
-	// This part would ideally parse the multi-document YAML and check structures
+	// Simplified check for common issues on the raw bytes for now
+	// A more robust check for lists as map keys would be implemented here
+	// This placeholder code is intentionally not implementing the check yet
+	// and will be developed in a future PR when we have better detection criteria
 	/*
-		dec := yaml.NewDecoder(bytes.NewReader(output))
-		for {
-			var docData map[string]interface{}
-			if err := dec.Decode(&docData); err != nil {
-				if err == io.EOF {
-					break
-				}
-				return fmt.Errorf("error decoding YAML document: %w", err)
-			}
-			if err := validateCommonIssues(docData); err != nil {
-				return fmt.Errorf("common issue detected in template output: %w", err)
-			}
+		if bytes.Contains(output, []byte("\n  - ")) && bytes.Contains(output, []byte(":\n")) { // Very crude check
+			// Placeholder: A more robust check for lists as map keys needed here.
+			// Example: Check lines starting with "  -" immediately after a line ending with ":"
+			// return fmt.Errorf("common issue detected: map key might be a list (heuristic check)")
 		}
 	*/
-	// Simplified check for common issues on the raw bytes for now
-	if bytes.Contains(output, []byte("\n  - ")) && bytes.Contains(output, []byte(":\n")) { // Very crude check
-		// Placeholder: A more robust check for lists as map keys needed here.
-		// Example: Check lines starting with "  -" immediately after a line ending with ":"
-		// return fmt.Errorf("common issue detected: map key might be a list (heuristic check)")
-	}
 
 	debug.Println("Helm template output validated successfully.")
 	return nil
