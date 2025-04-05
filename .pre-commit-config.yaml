@@ -15,5 +15,6 @@ repos:
       rev: v1.56.2
       hooks:
         - id: golangci-lint
-          args: ["run","--default standard"]
+          args: ["run",]
+          args: ["--default standard"]
 # Optional: create a pyproject.toml for tool configuration
