@@ -1,6 +1,6 @@
 # .golangci.yml
-version: "2"
-
+version:
+   value : 2
 run:
   go: "1.24"
   timeout: 5m
