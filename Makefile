@@ -15,9 +15,9 @@ build:
 	@mkdir -p $(BUILD_DIR)
 	@go build -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/irr
 
-test:
+test: build
 	@echo "Running unit tests..."
-	@go test -v ./...
+	@IRR_TESTING=true go test -v ./...
 
 test-charts: build
 	@echo "Running chart tests..."
