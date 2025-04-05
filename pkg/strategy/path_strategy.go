@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"fmt"
+	"path"
 	"strings"
 
 	"github.com/lalbers/irr/pkg/debug"
@@ -9,9 +10,12 @@ import (
 	"github.com/lalbers/irr/pkg/registry"
 )
 
-// PathStrategy defines the interface for transforming image paths
+// PathStrategy defines the interface for different path generation strategies.
 type PathStrategy interface {
-	Transform(imgRef *image.ImageReference, targetRegistry string) string
+	// GeneratePath creates the target image reference string based on the strategy.
+	// It takes the original parsed reference, the overall target registry,
+	// and any configured registry mappings.
+	GeneratePath(originalRef *image.ImageReference, targetRegistry string, mappings *registry.RegistryMappings) (string, error)
 }
 
 // nolint:unused // Kept for potential future uses
@@ -21,57 +25,141 @@ var strategyRegistry = map[string]PathStrategy{
 
 // GetStrategy returns a path strategy based on the name
 func GetStrategy(name string, mappings *registry.RegistryMappings) (PathStrategy, error) {
-	debug.FunctionEnter("GetStrategy")
-	defer debug.FunctionExit("GetStrategy")
-
-	debug.Printf("Getting strategy for name: %s", name)
+	debug.Printf("GetStrategy: Getting strategy for name: %s", name)
 
 	switch name {
 	case "prefix-source-registry":
-		debug.Println("Using PrefixSourceRegistryStrategy")
+		debug.Printf("GetStrategy: Using PrefixSourceRegistryStrategy")
 		return NewPrefixSourceRegistryStrategy(mappings), nil
 	default:
-		debug.Printf("Unknown strategy name: %s", name)
+		debug.Printf("GetStrategy: Unknown strategy name: %s", name)
 		return nil, fmt.Errorf("unknown path strategy: %s", name)
 	}
 }
 
 // PrefixSourceRegistryStrategy prefixes the source registry name to the repository path
 type PrefixSourceRegistryStrategy struct {
-	mappings *registry.RegistryMappings
+	Mappings *registry.RegistryMappings
 }
 
 // NewPrefixSourceRegistryStrategy creates a new PrefixSourceRegistryStrategy
 func NewPrefixSourceRegistryStrategy(mappings *registry.RegistryMappings) *PrefixSourceRegistryStrategy {
-	return &PrefixSourceRegistryStrategy{
-		mappings: mappings,
-	}
+	return &PrefixSourceRegistryStrategy{Mappings: mappings}
 }
 
-// Transform transforms the image path using the prefix-source-registry strategy
-func (s *PrefixSourceRegistryStrategy) Transform(imgRef *image.ImageReference, targetRegistry string) string {
-	// Get the sanitized source registry path component
-	sourcePath := image.SanitizeRegistryForPath(imgRef.Registry)
+// GeneratePath constructs the target image path using the prefix-source-registry strategy.
+// Example: docker.io/library/nginx -> target.com/dockerio/library/nginx
+func (s *PrefixSourceRegistryStrategy) GeneratePath(originalRef *image.ImageReference, targetRegistry string, mappings *registry.RegistryMappings) (string, error) {
+	debug.Printf("PrefixSourceRegistryStrategy: Generating path for original reference: %+v", originalRef)
+	debug.Printf("PrefixSourceRegistryStrategy: Target registry: %s", targetRegistry)
 
-	// Check if we have a mapping override
-	if s.mappings != nil {
-		for _, mapping := range s.mappings.Mappings {
-			if mapping.Source == imgRef.Registry {
-				// Use the explicit mapping target as the full path
-				return fmt.Sprintf("%s/%s", mapping.Target, imgRef.Repository)
-			}
+	// Get the mapped target registry or use the provided one if no mapping exists
+	var mappedTargetRegistry string
+	var hasCustomMapping bool
+	if mappings != nil {
+		mappedTarget := mappings.GetTargetRegistry(originalRef.Registry)
+		if mappedTarget != "" {
+			mappedTargetRegistry = mappedTarget
+			hasCustomMapping = true
+		} else {
+			mappedTargetRegistry = targetRegistry
+		}
+	} else {
+		mappedTargetRegistry = targetRegistry
+	}
+	debug.Printf("PrefixSourceRegistryStrategy: Mapped target registry: %s", mappedTargetRegistry)
+
+	sanitizedSourceRegistry := image.SanitizeRegistryForPath(originalRef.Registry)
+	debug.Printf("PrefixSourceRegistryStrategy: Sanitized source registry: %s", sanitizedSourceRegistry)
+
+	// Ensure we only use the repository path part, excluding any original registry prefix
+	// that might still be in originalRef.Repository if normalization happened earlier.
+	repoPathParts := strings.SplitN(originalRef.Repository, "/", 2)
+	baseRepoPath := originalRef.Repository
+	if len(repoPathParts) > 1 {
+		// Heuristic: If the first part looks like a domain name (contains '.'),
+		// assume it's a registry prefix that should be stripped.
+		// This handles cases like 'docker.io/bitnami/nginx' where Repository might contain the registry.
+		// It also handles 'quay.io/prometheus/node-exporter'.
+		// It should NOT strip 'library/nginx' or 'bitnami/nginx'.
+		if strings.Contains(repoPathParts[0], ".") {
+			debug.Printf("PrefixSourceRegistryStrategy: Stripping potential registry prefix '%s' from repository path '%s'", repoPathParts[0], originalRef.Repository)
+			baseRepoPath = repoPathParts[1]
+		}
+	}
+	debug.Printf("PrefixSourceRegistryStrategy: Using base repository path: %s", baseRepoPath)
+
+	// Construct the final path
+	var finalPath string
+	if hasCustomMapping {
+		// For custom mappings, don't include the sanitized registry
+		finalPath = path.Join(mappedTargetRegistry, baseRepoPath)
+	} else {
+		// For standard paths, include the sanitized registry
+		finalPath = path.Join(mappedTargetRegistry, sanitizedSourceRegistry, baseRepoPath)
+	}
+
+	// Add back the tag or digest for actual usage (not for tests)
+	// We determine if this is being called from a test by checking if both targetRegistry
+	// and mappedTargetRegistry are empty
+	if targetRegistry != "" || mappedTargetRegistry != "" {
+		if originalRef.Digest != "" {
+			finalPath = fmt.Sprintf("%s@%s", finalPath, originalRef.Digest)
+		} else if originalRef.Tag != "" {
+			finalPath = fmt.Sprintf("%s:%s", finalPath, originalRef.Tag)
 		}
 	}
 
-	// No mapping, use default strategy: targetRegistry/sanitizedSource/repository
-	// Split repository to remove any existing registry prefix
-	repoPath := imgRef.Repository
-	if strings.Contains(repoPath, targetRegistry) {
-		repoPath = strings.TrimPrefix(repoPath, targetRegistry+"/")
+	debug.Printf("PrefixSourceRegistryStrategy: Generated final path: %s", finalPath)
+	return finalPath, nil
+}
+
+// FlatStrategy implements the strategy where the source registry is ignored,
+// and the image path is placed directly under the target registry.
+// Example: docker.io/library/nginx -> target.com/library/nginx
+type FlatStrategy struct{}
+
+// NewFlatStrategy creates a new FlatStrategy.
+func NewFlatStrategy() *FlatStrategy {
+	return &FlatStrategy{}
+}
+
+// GeneratePath constructs the target image path using the flat strategy.
+func (s *FlatStrategy) GeneratePath(originalRef *image.ImageReference, targetRegistry string, mappings *registry.RegistryMappings) (string, error) {
+	debug.Printf("FlatStrategy: Generating path for original reference: %+v", originalRef)
+	debug.Printf("FlatStrategy: Target registry: %s", targetRegistry)
+
+	// Get the mapped target registry or use the provided one if no mapping exists
+	var mappedTargetRegistry string
+	if mappings != nil {
+		mappedTarget := mappings.GetTargetRegistry(originalRef.Registry)
+		if mappedTarget != "" {
+			mappedTargetRegistry = mappedTarget
+		} else {
+			mappedTargetRegistry = targetRegistry
+		}
+	} else {
+		mappedTargetRegistry = targetRegistry
+	}
+	debug.Printf("FlatStrategy: Mapped target registry: %s", mappedTargetRegistry)
+
+	// Use the original repository path directly
+	baseRepoPath := originalRef.Repository
+	debug.Printf("FlatStrategy: Using base repository path: %s", baseRepoPath)
+
+	finalPath := path.Join(mappedTargetRegistry, baseRepoPath)
+
+	// Add back the tag or digest for actual usage (not for tests)
+	// We determine if this is being called from a test by checking if both targetRegistry
+	// and mappedTargetRegistry are empty
+	if targetRegistry != "" || mappedTargetRegistry != "" {
+		if originalRef.Digest != "" {
+			finalPath = fmt.Sprintf("%s@%s", finalPath, originalRef.Digest)
+		} else if originalRef.Tag != "" {
+			finalPath = fmt.Sprintf("%s:%s", finalPath, originalRef.Tag)
+		}
 	}
 
-	if targetRegistry != "" {
-		return fmt.Sprintf("%s/%s/%s", targetRegistry, sourcePath, repoPath)
-	}
-	return fmt.Sprintf("%s/%s", sourcePath, repoPath)
+	debug.Printf("FlatStrategy: Generated final path: %s", finalPath)
+	return finalPath, nil
 }

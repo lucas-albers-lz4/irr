@@ -1,0 +1,7 @@
+mappings:
+  - source: "quay.io"
+    target: "my-registry.example.com/quay-mirror"
+  - source: "docker.io"
+    target: "my-registry.example.com/docker-mirror"
+  - source: "gcr.io"
+    target: "my-registry.example.com/gcr-mirror"

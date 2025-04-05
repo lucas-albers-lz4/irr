@@ -68,7 +68,7 @@ func (h *TestHarness) GenerateOverrides() error {
 		"--verbose",
 	}
 
-	cmd := exec.Command("../../build/helm-image-override", args...)
+	cmd := exec.Command("../../bin/irr", args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to generate overrides: %v\nOutput: %s", err, output)

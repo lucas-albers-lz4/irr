@@ -1,0 +1,1 @@
+Error: failed to fetch https://giantswarm.github.io/giantswarm-catalog/default-apps-aws-0.1.1.tgz : 404 Not Found

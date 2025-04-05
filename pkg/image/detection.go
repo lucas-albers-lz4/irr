@@ -425,6 +425,9 @@ func (d *ImageDetector) tryExtractImageFromMap(m map[string]interface{}) (*Image
 	if hasTag {
 		if tagStr, ok := tag.(string); ok {
 			ref.Tag = tagStr
+		} else if tag == nil {
+			// Handle nil tag by setting empty string
+			ref.Tag = ""
 		} else {
 			return nil, "", fmt.Errorf("tag is not a string")
 		}

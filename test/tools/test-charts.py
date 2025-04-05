@@ -141,19 +141,11 @@ service:
         enabled: true
         port: 80
 
-# Assume image map exists, provide SemVer tag
+# Assume image map exists, provide SemVer tag BUT NOT REPOSITORY
 image:
-  repository: placeholderRepo # Will be overridden
+  # repository: placeholderRepo # REMOVED: Avoid forcing this key
   tag: "1.0.0" # Use valid SemVer default
   pullPolicy: IfNotPresent
-
-# Remove serviceAccount.create: true as it causes schema errors
-# serviceAccount:
-#  create: true # Often needed
-
-# Required by specific charts, avoid adding globally if possible
-# clusterName: "test-cluster"
-# azureTenantID: "dummy-tenant-id"
 """
 
 # VALUES_TEMPLATE_STANDARD_STRING: For charts using simple string image definitions
@@ -454,265 +446,396 @@ def save_classification_stats():
 
 
 async def test_chart_override(chart_info, target_registry, irr_binary, session):
+    """Test chart override generation and validation.
+
+    Args:
+        chart_info: Tuple of (chart_name, chart_path)
+        target_registry: Target registry URL
+        irr_binary: Path to irr binary
+        session: Unused session parameter (kept for compatibility)
+    """
     chart_name, chart_path = chart_info
     output_file = TEST_OUTPUT_DIR / f"{chart_name}-values.yaml"
+    debug_log_file = TEST_OUTPUT_DIR / f"{chart_name}-debug.log"
 
     # --- Initialize variables ---
     classification = "UNKNOWN"
     override_duration = 0
     validation_duration = 0
-    stdout, stderr = None, None  # For irr process
-    override_stdout_str, override_stderr_str = "", ""  # Decoded strings
-    template_stdout_str, template_stderr_str = "", ""  # For helm template process
-    result = None  # For override process result
-    template_process = None  # For template process result
+    stdout, stderr = None, None
+    override_stdout_str, override_stderr_str = "", ""
+    template_stdout_str, template_stderr_str = "", ""
+    result = None
+    template_process = None
+    temp_dir = None
 
-    # --- Initial Chart Path Validation ---
-    # This check needs to happen before the main try block
-    if not chart_path or not chart_path.is_dir():
-        error_msg = (
-            f"Extracted chart path is not a directory or is missing: {chart_path}"
-        )
-        print(f"Error testing {chart_name}: {error_msg}")
-        category = categorize_error(error_msg)  # Use standalone function
-        # Ensure durations are 0 for early setup errors
-        return TestResult(
-            chart_name,
-            chart_path,
-            classification,
-            "SETUP_ERROR",
-            category,
-            error_msg,
-            0,
-            0,
-        )
+    # Create debug log file
+    debug_log_file.parent.mkdir(parents=True, exist_ok=True)
+    debug_log = open(debug_log_file, "w")
 
-    print(f"\nTesting chart override: {chart_name} at {chart_path}")
+    def log_debug(msg):
+        """Helper to log debug messages to both console and file."""
+        print(f"  DEBUG: {msg}")
+        debug_log.write(f"{msg}\n")
+        debug_log.flush()
 
     try:
-        classification = get_chart_classification(
-            chart_path
-        )  # Get classification early
-        print(f"  Classification: {classification}")
+        log_debug(f"Processing chart {chart_name} from {chart_path}")
 
-        # --- Override Generation ---
-        print(f"  Generating overrides for {chart_name}...")
-        start_time = time.time()
-        override_cmd = [
-            str(irr_binary),
-            "override",
-            "--chart-path",
-            str(chart_path),
-            "--target-registry",
-            target_registry,
-            "--source-registries",
-            "docker.io,quay.io,gcr.io,ghcr.io,k8s.gcr.io,registry.k8s.io",
-            "--output-file",
-            str(output_file),
-            "--debug",  # Keep debug enabled
-        ]
+        # --- Extract Chart if Needed ---
+        if str(chart_path).endswith(".tgz"):
+            # Create temporary directory for extraction
+            temp_dir = Path(tempfile.mkdtemp(prefix=f"{chart_name}-extract-"))
+            log_debug(f"Extracting {chart_path} to {temp_dir}")
 
-        try:
-            result = await asyncio.create_subprocess_exec(
-                *override_cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await asyncio.wait_for(result.communicate(), timeout=120)
-            override_duration = time.time() - start_time
-            # Decode output here, after communicate potentially succeeded
-            override_stdout_str = stdout.decode().strip() if stdout else ""
-            override_stderr_str = stderr.decode().strip() if stderr else ""
-        except Exception as override_exec_err:
-            override_duration = time.time() - start_time  # Capture time until error
-            error_msg = (
-                f"Error during irr execution for {chart_name}: {override_exec_err}"
-            )
-            print(f"Error: {error_msg}")
-            category = categorize_error(str(override_exec_err))
-            # stdout/stderr might be None here, use already initialized empty strings
-            error_details = f"{error_msg}\nStderr: {override_stderr_str}\nStdout: {override_stdout_str}"
-            return TestResult(
-                chart_name,
-                chart_path,
-                classification,
-                "OVERRIDE_ERROR",
-                category,
-                error_details,
-                override_duration,
-                0,
-            )
-
-        # Check return code AFTER trying to communicate
-        if result is None or result.returncode != 0:
-            return_code = result.returncode if result is not None else "N/A"
-            error_msg = f"irr failed (code {return_code}):\nStderr: {override_stderr_str}\nStdout: {override_stdout_str}"
-            print(f"  Error generating overrides for {chart_name}.")
-            category = categorize_error(
-                override_stderr_str or override_stdout_str
-            )  # Prioritize stderr
-            return TestResult(
-                chart_name,
-                chart_path,
-                classification,
-                "OVERRIDE_ERROR",
-                category,
-                error_msg,
-                override_duration,
-                0,
-            )
-
-        # Check if output file exists (moved after return code check)
-        if not output_file.exists() or output_file.stat().st_size == 0:
-            error_msg = f"Override file not created or empty after successful run for {chart_name}.\nStderr: {override_stderr_str}\nStdout: {override_stdout_str}"
-            print(f"  Error: {error_msg}")
-            category = categorize_error(error_msg)
-            return TestResult(
-                chart_name,
-                chart_path,
-                classification,
-                "OVERRIDE_ERROR",
-                category,
-                error_msg,
-                override_duration,
-                0,
-            )
-        else:
-            print(
-                f"  Override generation successful ({override_duration:.2f}s). Output: {output_file}"
-            )
-
-        # --- Helm Template Validation ---
-        print(f"  Validating with helm template for {chart_name}...")
-        start_time = time.time()
-        temp_dir = None
-        template_stdout_str, template_stderr_str = "", ""  # Initialize for this block
-        try:
-            temp_dir = Path(tempfile.mkdtemp(prefix="helm-values-"))
-            temp_values_path = temp_dir / "temp_class_values.yaml"
-
-            values_content = get_values_content(classification, target_registry)
-            temp_values_path.write_text(values_content)
-
-            cmd = [
-                "helm",
-                "template",
-                chart_name,
-                str(chart_path),
-                "-f",
-                str(temp_values_path),
-                "-f",
-                str(output_file),
-            ]
-            template_process = await asyncio.create_subprocess_exec(
-                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-            )
-            stdout_tmpl, stderr_tmpl = await asyncio.wait_for(
-                template_process.communicate(), timeout=60
-            )
-            validation_duration = time.time() - start_time
-
-            template_stdout_str = stdout_tmpl.decode().strip() if stdout_tmpl else ""
-            template_stderr_str = stderr_tmpl.decode().strip() if stderr_tmpl else ""
-
-            if template_process.returncode != 0:
-                error_details = f"Helm template failed (code {template_process.returncode}):\nCommand: {' '.join(cmd)}\nStderr: {template_stderr_str}\nStdout: {template_stdout_str}"
-                print(f"  Helm template validation failed for {chart_name}.")
-                category = categorize_error(template_stderr_str or template_stdout_str)
+            try:
+                with tarfile.open(chart_path) as tar:
+                    tar.extractall(temp_dir)
+                # Find the extracted directory (usually the first directory)
+                extracted_dirs = [d for d in temp_dir.iterdir() if d.is_dir()]
+                if not extracted_dirs:
+                    error_msg = f"No directories found after extracting {chart_path}"
+                    log_debug(f"Error: {error_msg}")
+                    return TestResult(
+                        chart_name,
+                        chart_path,
+                        classification,
+                        "SETUP_ERROR",
+                        "SETUP_ERROR",
+                        error_msg,
+                        0,
+                        0,
+                    )
+                chart_path = extracted_dirs[0]  # Use the first directory found
+                log_debug(f"Extracted chart to {chart_path}")
+            except Exception as e:
+                error_msg = f"Error extracting chart {chart_path}: {e}"
+                log_debug(f"Error: {error_msg}")
                 return TestResult(
                     chart_name,
                     chart_path,
                     classification,
-                    "TEMPLATE_ERROR",
-                    category,
-                    error_details,
-                    override_duration,
-                    validation_duration,
-                )
-            else:
-                print(
-                    f"  Helm template validation successful ({validation_duration:.2f}s)."
+                    "SETUP_ERROR",
+                    "SETUP_ERROR",
+                    error_msg,
+                    0,
+                    0,
                 )
 
-        except (asyncio.TimeoutError, Exception) as template_exc:
-            validation_duration = (
-                time.time() - start_time
-            )  # Capture time until exception
-            # Use already decoded strings if available, otherwise the exception string
-            error_details = f"Error during helm template execution for {chart_name}: {template_exc}\nStderr: {template_stderr_str}\nStdout: {template_stdout_str}"
-            print(f"Error: {error_details}")
-            category = categorize_error(template_stderr_str or str(template_exc))
-            status = (
-                "TIMEOUT_ERROR"
-                if isinstance(template_exc, asyncio.TimeoutError)
-                else "TEMPLATE_ERROR"
-            )
+        # --- Find Chart Directory ---
+        extracted_chart_dir = None
+        try:
+            # First, check if Chart.yaml exists directly in the provided path
+            if (chart_path / "Chart.yaml").is_file():
+                extracted_chart_dir = chart_path
+                log_debug(f"Found Chart.yaml directly in {chart_path}")
+            else:
+                # Search for Chart.yaml in immediate subdirectories
+                for subdir in chart_path.iterdir():
+                    if subdir.is_dir() and (subdir / "Chart.yaml").is_file():
+                        extracted_chart_dir = subdir
+                        log_debug(f"Found Chart.yaml in subdirectory {subdir}")
+                        break
+
+            if not extracted_chart_dir:
+                error_msg = (
+                    f"Could not locate Chart.yaml in {chart_path} or its subdirectories"
+                )
+                log_debug(f"Error: {error_msg}")
+                return TestResult(
+                    chart_name,
+                    chart_path,
+                    classification,
+                    "SETUP_ERROR",
+                    "SETUP_ERROR",
+                    error_msg,
+                    0,
+                    0,
+                )
+
+            # Verify Chart.yaml content
+            chart_yaml_path = extracted_chart_dir / "Chart.yaml"
+            try:
+                with open(chart_yaml_path) as f:
+                    chart_yaml = yaml.safe_load(f)
+                log_debug(f"Chart.yaml content: {json.dumps(chart_yaml, indent=2)}")
+            except Exception as e:
+                log_debug(f"Warning: Could not read Chart.yaml content: {e}")
+
+        except Exception as e:
+            error_msg = f"Error while searching for Chart.yaml: {e}"
+            log_debug(f"Error: {error_msg}")
             return TestResult(
                 chart_name,
                 chart_path,
                 classification,
-                status,
-                category,
-                error_details,
+                "SETUP_ERROR",
+                "SETUP_ERROR",
+                error_msg,
+                0,
+                0,
+            )
+
+        log_debug(f"Testing chart override: {chart_name} at {extracted_chart_dir}")
+
+        try:
+            # Get chart classification early for template selection
+            classification = get_chart_classification(extracted_chart_dir)
+            log_debug(f"Classification: {classification}")
+
+            # --- Override Generation ---
+            log_debug(f"Generating overrides for {chart_name}...")
+            start_time = time.time()
+            override_cmd = [
+                str(irr_binary),
+                "override",
+                "--chart-path",
+                str(extracted_chart_dir),  # Use correctly identified chart directory
+                "--target-registry",
+                target_registry,
+                "--source-registries",
+                "docker.io,quay.io,gcr.io,ghcr.io,k8s.gcr.io,registry.k8s.io",
+                "--output-file",
+                str(output_file),
+                "--debug",
+            ]
+
+            log_debug(f"Running override command: {' '.join(override_cmd)}")
+
+            try:
+                result = await asyncio.create_subprocess_exec(
+                    *override_cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, stderr = await asyncio.wait_for(
+                    result.communicate(), timeout=120
+                )
+                override_duration = time.time() - start_time
+                override_stdout_str = stdout.decode().strip() if stdout else ""
+                override_stderr_str = stderr.decode().strip() if stderr else ""
+
+                log_debug("Override command output:")
+                log_debug(f"Exit code: {result.returncode}")
+                if override_stdout_str:
+                    log_debug(f"Stdout:\n{override_stdout_str}")
+                if override_stderr_str:
+                    log_debug(f"Stderr:\n{override_stderr_str}")
+
+                # Check return code immediately after communicate
+                if result.returncode != 0:
+                    error_msg = f"irr override failed (code {result.returncode}):\nCommand: {' '.join(override_cmd)}\nStderr: {override_stderr_str}\nStdout: {override_stdout_str}"
+                    log_debug(f"Error generating overrides for {chart_name}.")
+                    category = categorize_error(
+                        override_stderr_str or override_stdout_str
+                    )
+                    return TestResult(
+                        chart_name,
+                        extracted_chart_dir,
+                        classification,
+                        "OVERRIDE_ERROR",
+                        category,
+                        error_msg,
+                        override_duration,
+                        0,
+                    )
+
+                # Verify override file exists and is not empty
+                if not output_file.exists() or output_file.stat().st_size == 0:
+                    error_msg = f"Override file not created or empty after successful run.\nCommand: {' '.join(override_cmd)}\nStderr: {override_stderr_str}\nStdout: {override_stdout_str}"
+                    log_debug(f"Error: {error_msg}")
+                    return TestResult(
+                        chart_name,
+                        extracted_chart_dir,
+                        classification,
+                        "OVERRIDE_ERROR",
+                        "OVERRIDE_ERROR",
+                        error_msg,
+                        override_duration,
+                        0,
+                    )
+
+                # Log override file content for debugging
+                try:
+                    with open(output_file) as f:
+                        override_content = f.read()
+                    log_debug(f"Generated override file content:\n{override_content}")
+                except Exception as e:
+                    log_debug(f"Warning: Could not read override file: {e}")
+
+                log_debug(
+                    f"Override generation successful ({override_duration:.2f}s). Output: {output_file}"
+                )
+
+            except asyncio.TimeoutError as e:
+                error_msg = f"Timeout during override generation: {e}"
+                log_debug(f"Error: {error_msg}")
+                return TestResult(
+                    chart_name,
+                    extracted_chart_dir,
+                    classification,
+                    "TIMEOUT_ERROR",
+                    "TIMEOUT_ERROR",
+                    error_msg,
+                    time.time() - start_time,
+                    0,
+                )
+            except Exception as e:
+                error_msg = f"Error during override generation: {e}"
+                log_debug(f"Error: {error_msg}")
+                return TestResult(
+                    chart_name,
+                    extracted_chart_dir,
+                    classification,
+                    "OVERRIDE_ERROR",
+                    "OVERRIDE_ERROR",
+                    error_msg,
+                    time.time() - start_time,
+                    0,
+                )
+
+            # --- Helm Template Validation ---
+            log_debug(f"Validating with helm template for {chart_name}...")
+            start_time = time.time()
+            values_temp_dir = None
+            try:
+                # Create temporary directory for values file
+                values_temp_dir = Path(tempfile.mkdtemp(prefix="helm-values-"))
+                temp_values_path = values_temp_dir / "temp_class_values.yaml"
+
+                # Generate appropriate values based on classification
+                values_content = get_values_content(classification, target_registry)
+                temp_values_path.write_text(values_content)
+                log_debug(f"Generated values file content:\n{values_content}")
+
+                # Construct helm template command
+                template_cmd = [
+                    "helm",
+                    "template",
+                    chart_name,
+                    str(
+                        extracted_chart_dir
+                    ),  # Use correctly identified chart directory
+                    "-f",
+                    str(temp_values_path),  # Classification-based values first
+                    "-f",
+                    str(output_file),  # Override file last for precedence
+                ]
+
+                log_debug(f"Running template command: {' '.join(template_cmd)}")
+
+                # Execute helm template
+                template_process = await asyncio.create_subprocess_exec(
+                    *template_cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout_tmpl, stderr_tmpl = await asyncio.wait_for(
+                    template_process.communicate(), timeout=60
+                )
+                validation_duration = time.time() - start_time
+
+                template_stdout_str = (
+                    stdout_tmpl.decode().strip() if stdout_tmpl else ""
+                )
+                template_stderr_str = (
+                    stderr_tmpl.decode().strip() if stderr_tmpl else ""
+                )
+
+                log_debug("Template command output:")
+                log_debug(f"Exit code: {template_process.returncode}")
+                if template_stdout_str:
+                    log_debug(f"Stdout:\n{template_stdout_str}")
+                if template_stderr_str:
+                    log_debug(f"Stderr:\n{template_stderr_str}")
+
+                if template_process.returncode != 0:
+                    error_msg = f"Helm template failed (code {template_process.returncode}):\nCommand: {' '.join(template_cmd)}\nStderr: {template_stderr_str}\nStdout: {template_stdout_str}"
+                    log_debug(f"Helm template validation failed for {chart_name}.")
+                    category = categorize_error(
+                        template_stderr_str or template_stdout_str
+                    )
+                    return TestResult(
+                        chart_name,
+                        extracted_chart_dir,
+                        classification,
+                        "TEMPLATE_ERROR",
+                        category,
+                        error_msg,
+                        override_duration,
+                        validation_duration,
+                    )
+
+                log_debug(
+                    f"Helm template validation successful ({validation_duration:.2f}s)."
+                )
+
+            except asyncio.TimeoutError as e:
+                error_msg = f"Timeout during helm template validation: {e}"
+                log_debug(f"Error: {error_msg}")
+                return TestResult(
+                    chart_name,
+                    extracted_chart_dir,
+                    classification,
+                    "TIMEOUT_ERROR",
+                    "TIMEOUT_ERROR",
+                    error_msg,
+                    override_duration,
+                    time.time() - start_time,
+                )
+            except Exception as e:
+                error_msg = f"Error during helm template validation: {e}"
+                log_debug(f"Error: {error_msg}")
+                return TestResult(
+                    chart_name,
+                    extracted_chart_dir,
+                    classification,
+                    "TEMPLATE_ERROR",
+                    "TEMPLATE_ERROR",
+                    error_msg,
+                    override_duration,
+                    time.time() - start_time,
+                )
+            finally:
+                if values_temp_dir and values_temp_dir.exists():
+                    shutil.rmtree(values_temp_dir, ignore_errors=True)
+
+            # Success case
+            log_debug(f"Success: Chart {chart_name} processed successfully.")
+            return TestResult(
+                chart_name,
+                extracted_chart_dir,
+                classification,
+                "SUCCESS",
+                "",
+                "",
                 override_duration,
                 validation_duration,
             )
-        finally:
-            if temp_dir and temp_dir.exists():
-                shutil.rmtree(temp_dir, ignore_errors=True)
 
-        # If template validation passes
-        print(f"Success: Chart {chart_name} processed successfully.")
-        return TestResult(
-            chart_name,
-            chart_path,
-            classification,
-            "SUCCESS",
-            "",
-            "",
-            override_duration,
-            validation_duration,
-        )
+        except Exception as e:
+            error_msg = f"Unexpected error processing chart {chart_name}: {str(e)}"
+            log_debug(f"Error: {error_msg}")
+            import traceback
 
-    # --- Outer Exception Handling ---
-    # Catch broader exceptions (e.g., file system errors, unexpected issues)
-    except asyncio.TimeoutError as e:
-        # override_duration should already be set if timeout happened there
-        error_msg = f"Timeout expired processing chart {chart_name}: {e}"
-        print(f"Error: {error_msg}")
-        category = categorize_error(error_msg)
-        # Include override output if available
-        error_details = f"{error_msg}\nOverride Stderr: {override_stderr_str}\nOverride Stdout: {override_stdout_str}"
-        return TestResult(
-            chart_name,
-            chart_path,
-            classification,
-            "TIMEOUT_ERROR",
-            category,
-            error_details,
-            override_duration,
-            validation_duration,
-        )
-    except Exception as e:
-        # override_duration should already be set if error happened there
-        error_msg = f"Unexpected error processing chart {chart_name}: {str(e)}"
-        print(f"Error: {error_msg}")
-        import traceback
+            traceback.print_exc(file=debug_log)
+            return TestResult(
+                chart_name,
+                extracted_chart_dir,
+                classification,
+                "UNKNOWN_ERROR",
+                "UNKNOWN_ERROR",
+                error_msg,
+                override_duration,
+                validation_duration,
+            )
 
-        traceback.print_exc()  # Print full traceback for unexpected errors
-        category = categorize_error(str(e))
-        # Include override output if available
-        error_details = f"{error_msg}\nOverride Stderr: {override_stderr_str}\nOverride Stdout: {override_stdout_str}"
-        return TestResult(
-            chart_name,
-            chart_path,
-            classification,
-            "UNKNOWN_ERROR",
-            category,
-            error_details,
-            override_duration,
-            validation_duration,
-        )
+    finally:
+        # Clean up temporary directory if it was created
+        if temp_dir and temp_dir.exists():
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        # Close debug log file
+        debug_log.close()
 
 
 # Repository management functions
@@ -950,87 +1073,96 @@ def get_chart_classification(chart_path: Path) -> str:
     Returns one of: "BITNAMI", "STANDARD_MAP", "STANDARD_STRING", "DEFAULT"
     """
     try:
-        print(f"\nAnalyzing chart structure for: {chart_path}")
+        print(
+            f"Analyzing chart structure for: {chart_path.name}"
+        )  # More concise logging
 
-        # Check Chart.yaml for Bitnami dependency
         chart_yaml_path = chart_path / "Chart.yaml"
-        if chart_yaml_path.exists():
-            print("  Found Chart.yaml")
-            with open(chart_yaml_path) as f:
-                chart_data = yaml.safe_load(f)
-
-                # Check for Bitnami dependency
-                if "dependencies" in chart_data:
-                    print("  Checking dependencies...")
-                    for dep in chart_data["dependencies"]:
-                        if dep.get("name") == "common" and "bitnami" in dep.get(
-                            "repository", ""
-                        ):
-                            print("  → Detected Bitnami common library dependency")
-                            return "BITNAMI"
-
-                # Check chart name/description for scanner patterns
-                chart_name = chart_data.get("name", "").lower()
-                chart_desc = chart_data.get("description", "").lower()
-                if any(
-                    term in chart_name or term in chart_desc
-                    for term in ["scanner", "security", "aqua", "trivy"]
-                ):
-                    print("  → Detected scanner/security chart")
-                    return "STANDARD_MAP"
-
-                print("  No special dependencies or patterns found in Chart.yaml")
-
-        # Analyze values.yaml structure
         values_yaml_path = chart_path / "values.yaml"
+
+        # --- Check Chart.yaml ---
+        chart_data = {}
+        if chart_yaml_path.exists():
+            print(f"  Checking {chart_yaml_path.name}...")
+            with open(chart_yaml_path) as f:
+                chart_data = yaml.safe_load(f) or {}  # Ensure dict even if empty/null
+
+                # Check for Bitnami dependency (Strong indicator)
+                dependencies = chart_data.get("dependencies", [])
+                if isinstance(dependencies, list):
+                    for dep in dependencies:
+                        if (
+                            isinstance(dep, dict)
+                            and dep.get("name") == "common"
+                            and "bitnami" in dep.get("repository", "")
+                        ):
+                            print("  → Classified as BITNAMI (common dependency)")
+                            return "BITNAMI"
+            # Removed scanner check from Chart.yaml - less reliable
+
+        # --- Check values.yaml ---
+        values_data = {}
         if values_yaml_path.exists():
-            print("  Found values.yaml")
+            print(f"  Checking {values_yaml_path.name}...")
             with open(values_yaml_path) as f:
-                values_data = yaml.safe_load(f)
+                values_data = yaml.safe_load(f) or {}  # Ensure dict even if empty/null
 
                 if not isinstance(values_data, dict):
-                    print(f"  Values data type: {type(values_data)}")
-                    return "DEFAULT"
+                    print(
+                        f"  Values data is not a dictionary ({type(values_data)}), falling back."
+                    )
+                    # Fall through to DEFAULT
 
-                # Check for scanner-specific patterns
-                if any(
-                    key in values_data
-                    for key in ["scanner", "aqua", "trivy", "security"]
-                ):
-                    print("  → Detected scanner/security configuration")
-                    return "STANDARD_MAP"
-
-                # Check for global registry pattern
+                # Check for strong Bitnami patterns in values.yaml
                 global_data = values_data.get("global", {})
-                if isinstance(global_data, dict):
-                    if "imageRegistry" in global_data:
-                        print("  Found global.imageRegistry")
-                        if any(
-                            "bitnami" in str(v).lower() for v in global_data.values()
-                        ):
-                            print("  → Detected Bitnami global configuration")
+                if isinstance(global_data, dict) and "imageRegistry" in global_data:
+                    # Check if volumePermissions.image.repository pattern exists (strong bitnami indicator)
+                    volume_permissions = values_data.get("volumePermissions", {})
+                    if isinstance(volume_permissions, dict):
+                        vp_image = volume_permissions.get("image", {})
+                        if isinstance(vp_image, dict) and "repository" in vp_image:
+                            print(
+                                "  → Classified as BITNAMI (global.imageRegistry + volumePermissions.image.repository)"
+                            )
                             return "BITNAMI"
+                    # Less strong: global.imageRegistry exists, maybe Bitnami or generic global pattern
+                    # Consider adding a dedicated GLOBAL_REGISTRY classification here later if needed.
+                    # For now, let's assume it might be Bitnami if global.imageRegistry is present.
+                    print(
+                        "  → Classified as BITNAMI (heuristic: global.imageRegistry present)"
+                    )
+                    return "BITNAMI"  # Tentative Bitnami classification
 
-                # Check for standard map pattern
-                image_data = values_data.get("image", {})
+                # Check for explicit image map with repository (STANDARD_MAP)
+                image_data = values_data.get(
+                    "image", None
+                )  # Use None to distinguish missing key
                 if isinstance(image_data, dict):
-                    print("  Found image map structure")
-                    if "repository" in image_data:
-                        print("  → Detected standard map pattern with repository")
+                    if "repository" in image_data:  # Key MUST exist
+                        print(
+                            "  → Classified as STANDARD_MAP (image map with repository key)"
+                        )
                         return "STANDARD_MAP"
+                    else:
+                        # It's a map, but doesn't contain 'repository'. Could use defaults or globals.
+                        # Avoid classifying as STANDARD_MAP. Fall through.
+                        print("  Image map found, but 'repository' key is missing.")
+
+                # Check for image as string (STANDARD_STRING)
                 elif isinstance(image_data, str):
-                    print("  → Detected string-based image configuration")
+                    print("  → Classified as STANDARD_STRING (image is a string)")
                     return "STANDARD_STRING"
-                else:
-                    print(f"  Image data type: {type(image_data)}")
-        else:
-            print("  No values.yaml found")
+
+        # --- Fallback ---
+        print("  → Classified as DEFAULT (no specific pattern matched)")
+        return "DEFAULT"
 
     except Exception as e:
-        print(f"  Warning: Error during chart classification: {e}")
-
-    print("  → Using DEFAULT classification")
-    return "DEFAULT"
+        print(
+            f"  Warning: Error during chart classification for {chart_path.name}: {e}"
+        )
+        print("  → Classified as DEFAULT (due to error)")
+        return "DEFAULT"
 
 
 def get_values_content(classification: str, target_registry: str) -> str:

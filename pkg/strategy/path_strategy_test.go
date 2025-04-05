@@ -61,7 +61,8 @@ func TestPrefixSourceRegistryStrategy(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result := strategy.Transform(tc.input, tc.targetRegistry)
+			result, err := strategy.GeneratePath(tc.input, tc.targetRegistry, nil)
+			assert.NoError(t, err)
 			assert.Equal(t, tc.expected, result)
 		})
 	}
@@ -111,7 +112,7 @@ func TestGetStrategy(t *testing.T) {
 	}
 }
 
-func TestPrefixSourceRegistryStrategy_Transform(t *testing.T) {
+func TestPrefixSourceRegistryStrategy_GeneratePath(t *testing.T) {
 	mappings := &registry.RegistryMappings{
 		Mappings: []registry.RegistryMapping{
 			{
@@ -159,15 +160,16 @@ func TestPrefixSourceRegistryStrategy_Transform(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := &PrefixSourceRegistryStrategy{
-				mappings: mappings,
+				Mappings: mappings,
 			}
-			got := s.Transform(tt.imgRef, tt.targetRegistry)
+			got, err := s.GeneratePath(tt.imgRef, tt.targetRegistry, mappings)
+			assert.NoError(t, err)
 			assert.Equal(t, tt.want, got)
 		})
 	}
 }
 
-func TestPrefixSourceRegistryStrategy_Transform_WithMappings(t *testing.T) {
+func TestPrefixSourceRegistryStrategy_GeneratePath_WithMappings(t *testing.T) {
 	mappings := &registry.RegistryMappings{
 		Mappings: []registry.RegistryMapping{
 			{
@@ -216,9 +218,10 @@ func TestPrefixSourceRegistryStrategy_Transform_WithMappings(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := &PrefixSourceRegistryStrategy{
-				mappings: mappings,
+				Mappings: mappings,
 			}
-			got := s.Transform(tt.imgRef, tt.targetRegistry)
+			got, err := s.GeneratePath(tt.imgRef, tt.targetRegistry, mappings)
+			assert.NoError(t, err)
 			assert.Equal(t, tt.want, got)
 		})
 	}

@@ -16,6 +16,7 @@ import (
 	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/image"
 	"github.com/lalbers/irr/pkg/override"
+	"github.com/lalbers/irr/pkg/registry"
 	"github.com/lalbers/irr/pkg/strategy"
 )
 
@@ -53,18 +54,20 @@ type Generator struct {
 	sourceRegistries  []string
 	excludeRegistries []string
 	pathStrategy      strategy.PathStrategy
+	mappings          *registry.RegistryMappings
 	strict            bool
 	threshold         int
 }
 
 // NewGenerator creates a new Generator
-func NewGenerator(chartPath, targetRegistry string, sourceRegistries, excludeRegistries []string, pathStrategy strategy.PathStrategy, strict bool, threshold int) *Generator {
+func NewGenerator(chartPath, targetRegistry string, sourceRegistries, excludeRegistries []string, pathStrategy strategy.PathStrategy, mappings *registry.RegistryMappings, strict bool, threshold int) *Generator {
 	return &Generator{
 		chartPath:         chartPath,
 		targetRegistry:    targetRegistry,
 		sourceRegistries:  sourceRegistries,
 		excludeRegistries: excludeRegistries,
 		pathStrategy:      pathStrategy,
+		mappings:          mappings,
 		strict:            strict,
 		threshold:         threshold,
 	}
@@ -159,56 +162,119 @@ func (g *Generator) Generate() (*override.OverrideFile, error) {
 		}
 		debug.Printf("Original value type at path %v: %T", img.Location, originalValue)
 
-		// Transform the image reference's repository path using the path strategy
-		newRepoPath := g.pathStrategy.Transform(img.Reference, g.targetRegistry)
-		if newRepoPath == "" {
-			debug.Printf("Error transforming image reference repository path at %v. Skipping.", img.Location)
+		// Transform the image reference using the path strategy
+		var transformedRef string
+		transformedRef, err = g.pathStrategy.GeneratePath(img.Reference, g.targetRegistry, g.mappings)
+		if err != nil {
+			debug.Printf("Error transforming image reference: %v", err)
 			continue
 		}
-		debug.Printf("Transformed repository path: %s", newRepoPath)
+		debug.DumpValue("Transformed Reference", transformedRef)
 
-		// Create the new value based on the ORIGINAL value's type
-		var newValue interface{}
-		switch originalValue.(type) {
-		case string:
-			// Original was a string, create the new value as a string using the transformed repo path
-			if img.Reference.Digest != "" {
-				// Use target registry (implicitly included in newRepoPath by some strategies) + digest
-				newValue = fmt.Sprintf("%s@%s", newRepoPath, img.Reference.Digest)
-			} else if img.Reference.Tag != "" {
-				// Use target registry (implicitly included in newRepoPath) + tag
-				newValue = fmt.Sprintf("%s:%s", newRepoPath, img.Reference.Tag)
-			} else {
-				newValue = newRepoPath // Only repository path if no tag/digest
-				debug.Printf("Warning: Image reference at path %v has no tag or digest. Using repository only for string override.", img.Location)
+		// Handle different image patterns - check if it's a string type
+		if img.LocationType == image.TypeString {
+			// Handle string image type, e.g., "docker.io/nginx:latest"
+			debug.Printf("Handling string image type at path: %v", img.Location)
+
+			// Set the transformed image as a string directly
+			err := override.SetValueAtPath(modifiedValues, img.Location, transformedRef)
+			if err != nil {
+				debug.Printf("Error setting string image value at path %v: %v", img.Location, err)
 			}
-			debug.Printf("Generating string override: %s", newValue)
-		case map[string]interface{}:
-			// Original was a map, create the new value as a map using the transformed repo path
-			newMap := map[string]interface{}{
-				// Note: Path strategy now determines the registry/repo structure
-				// We might need to split newRepoPath if it contains the registry
-				// For prefix-source-registry, newRepoPath is target/source/repo
-				"registry":   g.targetRegistry,                                      // Keep targetRegistry explicit for map structure
-				"repository": strings.TrimPrefix(newRepoPath, g.targetRegistry+"/"), // Extract repo part
-			}
-			if img.Reference.Digest != "" {
-				newMap["digest"] = img.Reference.Digest
-			} else if img.Reference.Tag != "" {
-				newMap["tag"] = img.Reference.Tag
-			} else {
-				newMap["tag"] = "" // Keep tag field, even if empty
-				debug.Printf("Warning: Image reference at path %v has no tag or digest. Setting empty tag for map override.", img.Location)
-			}
-			newValue = newMap
-			debug.Printf("Generating map override: %+v", newValue)
-		default:
-			debug.Printf("Skipping image at path %v due to unexpected original value type: %T", img.Location, originalValue)
 			continue
+		}
+
+		// For map-based image structures
+		// Extract registry and repository parts from the transformed reference
+		// Format example: harbor.home.arpa/dockerio/bitnami/nginx:1.27.4-debian-12-r6
+		var transformedRegistry, transformedRepo, transformedTag, transformedDigest string
+
+		// First check if there's a digest separator "@"
+		digestSeparatorIndex := strings.LastIndex(transformedRef, "@")
+		if digestSeparatorIndex != -1 {
+			// We have a digest reference
+			transformedDigest = transformedRef[digestSeparatorIndex+1:]
+			transformedRefWithoutTag := transformedRef[:digestSeparatorIndex]
+
+			// Extract registry and repository parts
+			firstSlashIndex := strings.Index(transformedRefWithoutTag, "/")
+			if firstSlashIndex != -1 {
+				transformedRegistry = transformedRefWithoutTag[:firstSlashIndex]
+				transformedRepo = transformedRefWithoutTag[firstSlashIndex+1:]
+			} else {
+				// If no slash, assume it's all repository
+				transformedRegistry = g.targetRegistry
+				transformedRepo = transformedRefWithoutTag
+			}
+		} else {
+			// Check for tag separator ":"
+			tagSeparatorIndex := strings.LastIndex(transformedRef, ":")
+			if tagSeparatorIndex != -1 {
+				// We have a tag reference
+				transformedTag = transformedRef[tagSeparatorIndex+1:]
+				transformedRefWithoutTag := transformedRef[:tagSeparatorIndex]
+
+				// Extract registry and repository parts
+				firstSlashIndex := strings.Index(transformedRefWithoutTag, "/")
+				if firstSlashIndex != -1 {
+					transformedRegistry = transformedRefWithoutTag[:firstSlashIndex]
+					transformedRepo = transformedRefWithoutTag[firstSlashIndex+1:]
+				} else {
+					// If no slash, assume it's all repository
+					transformedRegistry = g.targetRegistry
+					transformedRepo = transformedRefWithoutTag
+				}
+			} else {
+				// No tag or digest
+				transformedRefWithoutTag := transformedRef
+
+				// Extract registry and repository parts
+				firstSlashIndex := strings.Index(transformedRefWithoutTag, "/")
+				if firstSlashIndex != -1 {
+					transformedRegistry = transformedRefWithoutTag[:firstSlashIndex]
+					transformedRepo = transformedRefWithoutTag[firstSlashIndex+1:]
+				} else {
+					// If no slash, assume it's all repository
+					transformedRegistry = g.targetRegistry
+					transformedRepo = transformedRefWithoutTag
+				}
+			}
+		}
+
+		debug.Printf("Extracted registry: %s", transformedRegistry)
+		debug.Printf("Extracted repository: %s", transformedRepo)
+		debug.Printf("Extracted tag: %s", transformedTag)
+		debug.Printf("Extracted digest: %s", transformedDigest)
+
+		// Create the image configuration with extracted parts
+		imageConfig := map[string]interface{}{
+			"registry":   transformedRegistry,
+			"repository": transformedRepo,
+		}
+
+		// Handle tag or digest
+		if transformedDigest != "" {
+			imageConfig["digest"] = transformedDigest
+
+			// Clean up the repository if it contains a tag part
+			repoStr, ok := imageConfig["repository"].(string)
+			if ok && strings.Contains(repoStr, ":") {
+				tagIndex := strings.LastIndex(repoStr, ":")
+				if tagIndex != -1 {
+					imageConfig["repository"] = repoStr[:tagIndex]
+				}
+			}
+
+		} else if transformedTag != "" {
+			imageConfig["tag"] = transformedTag
+		} else if img.Reference.Digest != "" {
+			imageConfig["digest"] = img.Reference.Digest
+		} else if img.Reference.Tag != "" {
+			imageConfig["tag"] = img.Reference.Tag
 		}
 
 		// Set the correctly typed value at the correct path in the MODIFIED structure
-		err = image.SetValueAtPath(modifiedValues, img.Location, newValue)
+		err = image.SetValueAtPath(modifiedValues, img.Location, imageConfig)
 		if err != nil {
 			debug.Printf("Error setting value at path %v: %v", img.Location, err)
 			continue // Don't count as processed if we couldn't set the value
@@ -381,7 +447,7 @@ func (g *Generator) isSourceRegistry(registry string) bool {
 // @returns: map[string]interface{} containing the override structure
 // @returns: error if processing fails
 // @llm-helper This is the main entry point for generating overrides
-func GenerateOverrides(chartData *chart.Chart, targetRegistry string, sourceRegistries []string, excludeRegistries []string, pathStrategy strategy.PathStrategy, verbose bool) (map[string]interface{}, error) {
+func GenerateOverrides(chartData *chart.Chart, targetRegistry string, sourceRegistries []string, excludeRegistries []string, pathStrategy strategy.PathStrategy, mappings *registry.RegistryMappings, verbose bool) (map[string]interface{}, error) {
 	debug.FunctionEnter("GenerateOverrides")
 	defer debug.FunctionExit("GenerateOverrides")
 
@@ -394,7 +460,7 @@ func GenerateOverrides(chartData *chart.Chart, targetRegistry string, sourceRegi
 
 	// Process the main chart
 	debug.Printf("Processing main chart: %s", chartData.Name())
-	overrides, err := processChartForOverrides(chartData, targetRegistry, sourceRegistries, excludeRegistries, pathStrategy, verbose)
+	overrides, err := processChartForOverrides(chartData, targetRegistry, sourceRegistries, excludeRegistries, pathStrategy, mappings, verbose)
 	if err != nil {
 		return nil, fmt.Errorf("error processing main chart: %v", err)
 	}
@@ -405,7 +471,7 @@ func GenerateOverrides(chartData *chart.Chart, targetRegistry string, sourceRegi
 	debug.Printf("Processing %d dependencies", len(chartData.Dependencies()))
 	for _, dep := range chartData.Dependencies() {
 		debug.Printf("Processing dependency: %s", dep.Name())
-		depOverrides, err := processChartForOverrides(dep, targetRegistry, sourceRegistries, excludeRegistries, pathStrategy, verbose)
+		depOverrides, err := processChartForOverrides(dep, targetRegistry, sourceRegistries, excludeRegistries, pathStrategy, mappings, verbose)
 		if err != nil {
 			return nil, fmt.Errorf("error processing dependency %s: %v", dep.Name(), err)
 		}
@@ -416,7 +482,7 @@ func GenerateOverrides(chartData *chart.Chart, targetRegistry string, sourceRegi
 }
 
 // processChartForOverrides processes a single chart and its values.
-func processChartForOverrides(chartData *chart.Chart, targetRegistry string, sourceRegistries []string, excludeRegistries []string, pathStrategy strategy.PathStrategy, verbose bool) (map[string]interface{}, error) {
+func processChartForOverrides(chartData *chart.Chart, targetRegistry string, sourceRegistries []string, excludeRegistries []string, pathStrategy strategy.PathStrategy, mappings *registry.RegistryMappings, verbose bool) (map[string]interface{}, error) {
 	debug.FunctionEnter("processChartForOverrides")
 	defer debug.FunctionExit("processChartForOverrides")
 
@@ -441,19 +507,114 @@ func processChartForOverrides(chartData *chart.Chart, targetRegistry string, sou
 		debug.DumpValue("Image Reference", img.Reference)
 
 		// Transform the image reference using the path strategy
-		transformedRef := pathStrategy.Transform(img.Reference, targetRegistry)
+		var transformedRef string
+		transformedRef, err = pathStrategy.GeneratePath(img.Reference, targetRegistry, mappings)
+		if err != nil {
+			debug.Printf("Error transforming image reference: %v", err)
+			continue
+		}
 		debug.DumpValue("Transformed Reference", transformedRef)
 
-		// Create the image configuration
+		// Handle different image patterns - check if it's a string type
+		if img.LocationType == image.TypeString {
+			// Handle string image type, e.g., "docker.io/nginx:latest"
+			debug.Printf("Handling string image type at path: %v", img.Location)
+
+			// Set the transformed image as a string directly
+			err := override.SetValueAtPath(baseValues, img.Location, transformedRef)
+			if err != nil {
+				debug.Printf("Error setting string image value at path %v: %v", img.Location, err)
+			}
+			continue
+		}
+
+		// For map-based image structures
+		// Extract registry and repository parts from the transformed reference
+		// Format example: harbor.home.arpa/dockerio/bitnami/nginx:1.27.4-debian-12-r6
+		var transformedRegistry, transformedRepo, transformedTag, transformedDigest string
+
+		// First check if there's a digest separator "@"
+		digestSeparatorIndex := strings.LastIndex(transformedRef, "@")
+		if digestSeparatorIndex != -1 {
+			// We have a digest reference
+			transformedDigest = transformedRef[digestSeparatorIndex+1:]
+			transformedRefWithoutTag := transformedRef[:digestSeparatorIndex]
+
+			// Extract registry and repository parts
+			firstSlashIndex := strings.Index(transformedRefWithoutTag, "/")
+			if firstSlashIndex != -1 {
+				transformedRegistry = transformedRefWithoutTag[:firstSlashIndex]
+				transformedRepo = transformedRefWithoutTag[firstSlashIndex+1:]
+			} else {
+				// If no slash, assume it's all repository
+				transformedRegistry = targetRegistry
+				transformedRepo = transformedRefWithoutTag
+			}
+		} else {
+			// Check for tag separator ":"
+			tagSeparatorIndex := strings.LastIndex(transformedRef, ":")
+			if tagSeparatorIndex != -1 {
+				// We have a tag reference
+				transformedTag = transformedRef[tagSeparatorIndex+1:]
+				transformedRefWithoutTag := transformedRef[:tagSeparatorIndex]
+
+				// Extract registry and repository parts
+				firstSlashIndex := strings.Index(transformedRefWithoutTag, "/")
+				if firstSlashIndex != -1 {
+					transformedRegistry = transformedRefWithoutTag[:firstSlashIndex]
+					transformedRepo = transformedRefWithoutTag[firstSlashIndex+1:]
+				} else {
+					// If no slash, assume it's all repository
+					transformedRegistry = targetRegistry
+					transformedRepo = transformedRefWithoutTag
+				}
+			} else {
+				// No tag or digest
+				transformedRefWithoutTag := transformedRef
+
+				// Extract registry and repository parts
+				firstSlashIndex := strings.Index(transformedRefWithoutTag, "/")
+				if firstSlashIndex != -1 {
+					transformedRegistry = transformedRefWithoutTag[:firstSlashIndex]
+					transformedRepo = transformedRefWithoutTag[firstSlashIndex+1:]
+				} else {
+					// If no slash, assume it's all repository
+					transformedRegistry = targetRegistry
+					transformedRepo = transformedRefWithoutTag
+				}
+			}
+		}
+
+		debug.Printf("Extracted registry: %s", transformedRegistry)
+		debug.Printf("Extracted repository: %s", transformedRepo)
+		debug.Printf("Extracted tag: %s", transformedTag)
+		debug.Printf("Extracted digest: %s", transformedDigest)
+
+		// Create the image configuration with extracted parts
 		imageConfig := map[string]interface{}{
-			"registry":   targetRegistry,
-			"repository": transformedRef,
+			"registry":   transformedRegistry,
+			"repository": transformedRepo,
 		}
-		if img.Reference.Tag != "" {
-			imageConfig["tag"] = img.Reference.Tag
-		}
-		if img.Reference.Digest != "" {
+
+		// Handle tag or digest
+		if transformedDigest != "" {
+			imageConfig["digest"] = transformedDigest
+
+			// Clean up the repository if it contains a tag part
+			repoStr, ok := imageConfig["repository"].(string)
+			if ok && strings.Contains(repoStr, ":") {
+				tagIndex := strings.LastIndex(repoStr, ":")
+				if tagIndex != -1 {
+					imageConfig["repository"] = repoStr[:tagIndex]
+				}
+			}
+
+		} else if transformedTag != "" {
+			imageConfig["tag"] = transformedTag
+		} else if img.Reference.Digest != "" {
 			imageConfig["digest"] = img.Reference.Digest
+		} else if img.Reference.Tag != "" {
+			imageConfig["tag"] = img.Reference.Tag
 		}
 
 		// Set the value at the correct path

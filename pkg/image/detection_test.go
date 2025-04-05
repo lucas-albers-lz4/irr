@@ -1266,6 +1266,21 @@ func TestTryExtractImageFromMap_PartialMaps(t *testing.T) {
 			expectedPattern: "map",
 			expectError:     false,
 		},
+		{
+			name: "map with nil tag",
+			imageMap: map[string]interface{}{
+				"repository": "nginx",
+				"tag":        nil,
+			},
+			context: nil,
+			expectedRef: &ImageReference{
+				Registry:   "docker.io",
+				Repository: "library/nginx",
+				Tag:        "",
+			},
+			expectedPattern: "map",
+			expectError:     false,
+		},
 	}
 
 	for _, tc := range tests {
