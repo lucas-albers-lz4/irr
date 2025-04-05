@@ -31,7 +31,9 @@ func TestChartOverrideStructures(t *testing.T) {
 				require.True(t, ok, "image key should be a map")
 
 				assert.Equal(t, "my-registry.example.com", image["registry"], "registry should be set correctly")
-				assert.Contains(t, image["repository"].(string), "dockerio/nginx", "repository should be transformed correctly")
+				repository, ok := image["repository"].(string)
+				require.True(t, ok, "repository should be a string")
+				assert.Contains(t, repository, "dockerio/nginx", "repository should be transformed correctly")
 				assert.NotEmpty(t, image["tag"], "tag should be present")
 			},
 			skip:       true,
@@ -48,7 +50,9 @@ func TestChartOverrideStructures(t *testing.T) {
 				require.True(t, ok, "image key should be a map")
 
 				assert.Equal(t, "my-registry.example.com", image["registry"], "registry should be set correctly")
-				assert.Contains(t, image["repository"].(string), "dockerio/wordpress", "repository should be transformed correctly")
+				repository, ok := image["repository"].(string)
+				require.True(t, ok, "repository should be a string")
+				assert.Contains(t, repository, "dockerio/wordpress", "repository should be transformed correctly")
 				assert.NotEmpty(t, image["tag"], "tag should be present")
 
 				// Validate MariaDB container override structure
@@ -59,7 +63,9 @@ func TestChartOverrideStructures(t *testing.T) {
 				require.True(t, ok, "mariadb.image key should be a map")
 
 				assert.Equal(t, "my-registry.example.com", mariaImage["registry"], "mariadb registry should be set correctly")
-				assert.Contains(t, mariaImage["repository"].(string), "dockerio/mariadb", "mariadb repository should be transformed correctly")
+				repository, ok = mariaImage["repository"].(string)
+				require.True(t, ok, "mariadb repository should be a string")
+				assert.Contains(t, repository, "dockerio/mariadb", "mariadb repository should be transformed correctly")
 				assert.NotEmpty(t, mariaImage["tag"], "mariadb tag should be present")
 			},
 			skip:       true,
@@ -76,7 +82,9 @@ func TestChartOverrideStructures(t *testing.T) {
 				require.True(t, ok, "image key should be a map")
 
 				assert.Equal(t, "my-registry.example.com", image["registry"], "registry should be set correctly")
-				assert.Contains(t, image["repository"].(string), "quayio/jetstack/cert-manager-controller", "repository should be transformed correctly")
+				repository, ok := image["repository"].(string)
+				require.True(t, ok, "repository should be a string")
+				assert.Contains(t, repository, "quayio/jetstack/cert-manager-controller", "repository should be transformed correctly")
 				assert.NotEmpty(t, image["tag"], "tag should be present")
 
 				// Validate webhook container override structure
@@ -87,7 +95,9 @@ func TestChartOverrideStructures(t *testing.T) {
 				require.True(t, ok, "webhook.image key should be a map")
 
 				assert.Equal(t, "my-registry.example.com", webhookImage["registry"], "webhook registry should be set correctly")
-				assert.Contains(t, webhookImage["repository"].(string), "quayio/jetstack/cert-manager-webhook", "webhook repository should be transformed correctly")
+				repository, ok = webhookImage["repository"].(string)
+				require.True(t, ok, "webhook repository should be a string")
+				assert.Contains(t, repository, "quayio/jetstack/cert-manager-webhook", "webhook repository should be transformed correctly")
 				assert.NotEmpty(t, webhookImage["tag"], "webhook tag should be present")
 			},
 			skip:       true,

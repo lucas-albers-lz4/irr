@@ -59,6 +59,15 @@ func (h *TestHarness) SetRegistries(target string, sources []string) {
 func (h *TestHarness) GenerateOverrides() error {
 	h.overridePath = filepath.Join(h.tempDir, "overrides.yaml")
 
+	// Get absolute path to the binary
+	wd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get working directory: %v", err)
+	}
+	// Go up two directories to get to the project root
+	projectRoot := filepath.Join(wd, "..", "..")
+	binaryPath := filepath.Join(projectRoot, "bin", "irr")
+
 	args := []string{
 		"override",
 		"--chart-path", h.chartPath,
@@ -68,7 +77,9 @@ func (h *TestHarness) GenerateOverrides() error {
 		"--verbose",
 	}
 
-	cmd := exec.Command("../../bin/irr", args...)
+	// #nosec G204 -- Test harness executes irr binary with test-controlled arguments
+	cmd := exec.Command(binaryPath, args...)
+	cmd.Dir = h.tempDir // Run in the temp directory context
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to generate overrides: %v\nOutput: %s", err, output)
@@ -112,7 +123,9 @@ func (h *TestHarness) helmTemplate(extraArgs []string) (string, error) {
 		args = append(args, extraArgs...)
 	}
 
+	// #nosec G204 -- Test harness executes helm with test-controlled arguments
 	cmd := exec.Command("helm", args...)
+	cmd.Dir = h.tempDir // Run in the temp directory context
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("helm template failed: %v\nOutput: %s", err, output)
@@ -237,8 +250,17 @@ func (h *TestHarness) WalkImageFields(data map[string]interface{}, callback func
 
 // ExecuteIRR runs the irr binary with the given arguments.
 func (h *TestHarness) ExecuteIRR(args ...string) (string, error) {
+	// Get absolute path to the binary
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("failed to get working directory: %v", err)
+	}
+	// Go up two directories to get to the project root
+	projectRoot := filepath.Join(wd, "..", "..")
+	binaryPath := filepath.Join(projectRoot, "bin", "irr")
+
 	// #nosec G204 // Test harness executes binary with test-controlled arguments
-	cmd := exec.Command("../../bin/irr", args...)
+	cmd := exec.Command(binaryPath, args...)
 	cmd.Dir = h.tempDir // Run in the temp directory context
 	output, err := cmd.CombinedOutput()
 	if err != nil {

@@ -30,14 +30,15 @@ This plan outlines the steps to address the findings from `golangci-lint run`. I
         *   `pkg/registrymapping/mappings.go:46`: `os.ReadFile(path)` - Already has comment? Verify `isSecurePath`.
 *   **Files Affected:** `cmd/irr/main.go`, `pkg/chart/generator.go`, `pkg/registry/mappings.go`, `pkg/registrymapping/mappings.go`, `test/integration/harness.go`, `test/integration/integration_test.go`, `pkg/registry/mappings_test.go`
 
-### Priority 2: Error Handling (err113, wrapcheck, nilnil)
+### Priority 2: Error Handling (err113, wrapcheck, nilnil, errcheck)
 *   **Goal:** Improve error handling consistency and robustness.
 *   **Tasks:**
     *   Define sentinel errors (e.g., `var ErrChartPathRequired = errors.New("--chart-path is required")`) for common error conditions currently using `fmt.Errorf` without wrapping (`err113`).
     *   Replace dynamic `fmt.Errorf` calls with sentinel errors where applicable.
     *   Use `fmt.Errorf("...: %w", err)` to wrap errors returned from other functions/packages (`err113`, `wrapcheck`).
+    *   Handle unchecked errors from type assertions (e.g., `value, ok := interface{}.(string)`). Ensure the `ok` variable is checked and appropriate error handling (or default logic) is implemented (`errcheck`).
     *   Review `nilnil` findings: Ensure functions don't return `nil, nil` unless it's a valid, documented state. Consider returning a specific sentinel error instead if the value is invalid when `err == nil`.
-*   **Files Affected:** `cmd/irr/main.go`, `pkg/image/detection.go`, `pkg/image/path_utils.go`, `pkg/registry/mappings.go`, `test/integration/harness.go`, `pkg/override/override.go`
+*   **Files Affected:** `cmd/irr/main.go`, `pkg/image/detection.go`, `pkg/image/path_utils.go`, `pkg/registry/mappings.go`, `test/integration/harness.go`, `pkg/override/override.go`, `pkg/analysis/analyzer.go`, `pkg/chart/generator.go`, `pkg/override/path_utils_test.go`, `test/integration/chart_override_test.go`
 
 ### Priority 3: Code Complexity (cyclop, gocognit, funlen, nestif)
 *   **Goal:** Reduce complexity of functions and nested blocks.

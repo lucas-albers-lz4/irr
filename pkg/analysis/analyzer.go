@@ -50,7 +50,10 @@ func (a *Analyzer) Analyze() (*ChartAnalysis, error) {
 func (a *Analyzer) normalizeImageValues(val map[string]interface{}) (string, string, string) {
 	// Extract values, handling potential nil cases
 	registry, hasRegistry := val["registry"].(string)
-	repository, _ := val["repository"].(string)
+	repository, hasRepository := val["repository"].(string)
+	if !hasRepository {
+		repository = ""
+	}
 
 	// Handle tag with type assertion and conversion
 	var tag string

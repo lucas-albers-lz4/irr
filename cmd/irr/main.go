@@ -294,7 +294,7 @@ func validateHelmTemplate(chartPath string, overrides []byte) error {
 	}()
 
 	// Write the overrides to the temporary file
-	if err := os.WriteFile(tmpFile.Name(), overrides, 0644); err != nil {
+	if err := os.WriteFile(tmpFile.Name(), overrides, 0600); err != nil {
 		return fmt.Errorf("failed to write temporary file: %v", err)
 	}
 

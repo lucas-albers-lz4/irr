@@ -102,7 +102,11 @@ func (g *Generator) Generate() (*override.OverrideFile, error) {
 
 	// Create a deep copy of the chart values to preserve structure
 	// Use original values for type checking later
-	baseValues := override.DeepCopy(chart.Values).(map[string]interface{})
+	baseValuesCopy := override.DeepCopy(chart.Values)
+	baseValues, ok := baseValuesCopy.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("chart values are not a valid map[string]interface{}")
+	}
 	debug.DumpValue("Base values for type checking", baseValues)
 
 	// Get all image references from the chart
@@ -138,7 +142,11 @@ func (g *Generator) Generate() (*override.OverrideFile, error) {
 
 	// Process each image reference
 	processedImages := 0
-	modifiedValues := override.DeepCopy(baseValues).(map[string]interface{}) // Deep copy for modification
+	modifiedValuesCopy := override.DeepCopy(baseValues)
+	modifiedValues, ok := modifiedValuesCopy.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("failed to create modified values map")
+	}
 
 	for _, img := range images {
 		debug.Printf("Processing image at path: %v, reference: %+v", img.Location, img.Reference)
@@ -490,7 +498,11 @@ func processChartForOverrides(chartData *chart.Chart, targetRegistry string, sou
 	debug.DumpValue("Chart Values", chartData.Values)
 
 	// Create a deep copy of the chart values to preserve structure
-	baseValues := override.DeepCopy(chartData.Values).(map[string]interface{})
+	baseValuesCopy := override.DeepCopy(chartData.Values)
+	baseValues, ok := baseValuesCopy.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("chart values are not a valid map[string]interface{}")
+	}
 
 	// Detect images in the chart's values
 	detectedImages, unsupported, err := image.DetectImages(chartData.Values, []string{}, sourceRegistries, excludeRegistries, false)
@@ -683,11 +695,17 @@ func validateHelmTemplate(chartPath string, overrides []byte) error {
 	}()
 
 	// Write the overrides to the temporary file
-	if err := os.WriteFile(tmpFile.Name(), overrides, 0644); err != nil {
-		return fmt.Errorf("failed to write overrides to temporary file: %v", err)
+	if err := os.WriteFile(tmpFile.Name(), overrides, 0600); err != nil {
+		return fmt.Errorf("writing temporary helm values file: %w", err)
+	}
+
+	// Validate chartPath exists and is a directory
+	if _, err := os.Stat(chartPath); err != nil {
+		return fmt.Errorf("invalid chart path %s: %w", chartPath, err)
 	}
 
 	// Run helm template with the overrides
+	// #nosec G204 -- chartPath is validated above and comes from trusted input
 	cmd := exec.Command("helm", "template", "test", chartPath, "-f", tmpFile.Name())
 	output, err := cmd.CombinedOutput()
 

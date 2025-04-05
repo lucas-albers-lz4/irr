@@ -109,8 +109,21 @@ func TestDeepCopy(t *testing.T) {
 			if m, ok := tt.src.(map[string]interface{}); ok {
 				for k, v := range m {
 					if arr, ok := v.([]interface{}); ok {
-						resultMap := result.(map[string]interface{})
-						resultArr := resultMap[k].([]interface{})
+						resultMap, ok := result.(map[string]interface{})
+						if !ok {
+							t.Error("DeepCopy() result is not a map[string]interface{}")
+							continue
+						}
+						resultVal, ok := resultMap[k]
+						if !ok {
+							t.Errorf("DeepCopy() result missing key %s", k)
+							continue
+						}
+						resultArr, ok := resultVal.([]interface{})
+						if !ok {
+							t.Errorf("DeepCopy() value at key %s is not []interface{}", k)
+							continue
+						}
 						if len(arr) > 0 && len(resultArr) > 0 {
 							if reflect.ValueOf(arr).Pointer() == reflect.ValueOf(resultArr).Pointer() {
 								t.Error("DeepCopy() returned same array instance")

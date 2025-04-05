@@ -263,6 +263,7 @@ func TestStrictMode(t *testing.T) {
 		"--strict",
 	}
 
+	// #nosec G204 -- Test command uses test-controlled arguments
 	cmd := exec.Command("../../bin/irr", args...)
 	_, err = cmd.CombinedOutput()
 	assert.Error(t, err, "Should fail in strict mode")

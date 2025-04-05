@@ -19,7 +19,7 @@ func TestLoadMappings(t *testing.T) {
 `
 	tmpDir := t.TempDir()
 	tmpFile := filepath.Join(tmpDir, "mappings.yaml")
-	err := os.WriteFile(tmpFile, []byte(content), 0644)
+	err := os.WriteFile(tmpFile, []byte(content), 0600)
 	require.NoError(t, err)
 
 	tests := []struct {
