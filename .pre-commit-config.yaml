@@ -15,5 +15,5 @@ repos:
       rev: v1.56.2
       hooks:
         - id: golangci-lint
-          args: ["--timeout=5m"]
+          args: ["--timeout=5m","--verbose"]
 # Optional: create a pyproject.toml for tool configuration
