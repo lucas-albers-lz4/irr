@@ -37,10 +37,8 @@ func (l *helmLoader) Load(chartPath string) (*chart.Chart, error) {
 	// Check if path exists using standard os.Stat
 	_, err := os.Stat(chartPath)
 	if err != nil {
-		// Don't log error here, loader.Load/LoadDir below will provide better context
-		// debug.Printf("Error accessing chart path: %v", err)
-		// Return error directly, Helm loader functions handle path errors.
-		// return nil, fmt.Errorf("error accessing chart path: %v", err)
+		debug.Printf("Error checking chart path: %v", err)
+		// Helm loader functions below will handle path errors with more context
 	}
 
 	// Load the chart using Helm's loader funcs

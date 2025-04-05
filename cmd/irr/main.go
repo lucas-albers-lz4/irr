@@ -147,12 +147,6 @@ func (e *ExitCodeError) Unwrap() error {
 	return e.Err
 }
 
-func newExitCodeError(code int, msg string) error {
-	// Create the base error message first using errors.New
-	baseErr := errors.New(msg)
-	return &ExitCodeError{Code: code, Err: baseErr}
-}
-
 // Helper function to wrap existing errors with an exit code
 func wrapExitCodeError(code int, baseMsg string, originalErr error) error {
 	// Format the combined message safely
