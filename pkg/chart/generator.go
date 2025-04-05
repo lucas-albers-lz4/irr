@@ -69,6 +69,22 @@ func NewGenerator(chartPath, targetRegistry string, sourceRegistries, excludeReg
 	}
 }
 
+// locationTypeToString converts a LocationType to its string representation
+func locationTypeToString(lt image.LocationType) string {
+	switch lt {
+	case image.TypeUnknown:
+		return "unknown"
+	case image.TypeMapRegistryRepositoryTag:
+		return "map-registry-repository-tag"
+	case image.TypeRepositoryTag:
+		return "repository-tag"
+	case image.TypeString:
+		return "string"
+	default:
+		return fmt.Sprintf("unknown-%d", lt)
+	}
+}
+
 // Generate generates image overrides for the chart
 func (g *Generator) Generate() (*override.OverrideFile, error) {
 	debug.FunctionEnter("Generator.Generate")
@@ -81,10 +97,12 @@ func (g *Generator) Generate() (*override.OverrideFile, error) {
 	}
 
 	// Create a deep copy of the chart values to preserve structure
+	// Use original values for type checking later
 	baseValues := override.DeepCopy(chart.Values).(map[string]interface{})
-	debug.DumpValue("Base values", baseValues)
+	debug.DumpValue("Base values for type checking", baseValues)
 
 	// Get all image references from the chart
+	// We need the original chart.Values here for detection
 	images, unsupportedMatches, err := image.DetectImages(chart.Values, []string{}, g.sourceRegistries, g.excludeRegistries, g.strict)
 	if err != nil {
 		return nil, fmt.Errorf("error detecting images: %w", err)
@@ -96,82 +114,142 @@ func (g *Generator) Generate() (*override.OverrideFile, error) {
 	var unsupported []override.UnsupportedStructure
 	for _, match := range unsupportedMatches {
 		unsupported = append(unsupported, override.UnsupportedStructure{
-			Path: match.Path,
-			Type: match.RefType,
+			Path: match.Location,
+			Type: locationTypeToString(match.LocationType),
 		})
 	}
 
 	// Calculate success percentage
 	totalImages := len(images)
 	if totalImages == 0 {
-		return nil, fmt.Errorf("no images found in chart")
+		debug.Printf("No images requiring override found in chart.")
+		// Return an empty override file if no images are found
+		return &override.OverrideFile{
+			ChartPath:   g.chartPath,
+			ChartName:   filepath.Base(g.chartPath),
+			Overrides:   make(map[string]interface{}),
+			Unsupported: unsupported,
+		}, nil
 	}
 
 	// Process each image reference
 	processedImages := 0
-	modifiedValues := override.DeepCopy(baseValues).(map[string]interface{})
+	modifiedValues := override.DeepCopy(baseValues).(map[string]interface{}) // Deep copy for modification
 
 	for _, img := range images {
+		debug.Printf("Processing image at path: %v, reference: %+v", img.Location, img.Reference)
 		// Skip if the image's registry is in the exclude list
-		if g.isExcluded(img.ImageRef.Registry) {
+		if g.isExcluded(img.Reference.Registry) {
+			debug.Printf("Skipping image (excluded registry): %s", img.Reference.Registry)
 			continue
 		}
 
 		// Skip if the image's registry is not in the source list
-		if !g.isSourceRegistry(img.ImageRef.Registry) {
+		if !g.isSourceRegistry(img.Reference.Registry) {
+			debug.Printf("Skipping image (not a source registry): %s", img.Reference.Registry)
 			continue
 		}
 
-		// Transform the image reference using the path strategy
-		transformedPath := g.pathStrategy.Transform(img.ImageRef, g.targetRegistry)
-
-		// Create the image configuration based on the original structure type
-		var newValue interface{}
-		switch img.RefType {
-		case image.PatternRegistryRepoTag:
-			newValue = map[string]interface{}{
-				"registry":   g.targetRegistry,
-				"repository": transformedPath,
-				"tag":        img.ImageRef.Tag,
-			}
-			if img.ImageRef.Digest != "" {
-				delete(newValue.(map[string]interface{}), "tag")
-				newValue.(map[string]interface{})["digest"] = img.ImageRef.Digest
-			}
-		case image.PatternRepositoryTag:
-			newValue = map[string]interface{}{
-				"repository": transformedPath,
-				"tag":        img.ImageRef.Tag,
-			}
-			if img.ImageRef.Digest != "" {
-				delete(newValue.(map[string]interface{}), "tag")
-				newValue.(map[string]interface{})["digest"] = img.ImageRef.Digest
-			}
-		case image.PatternImageString:
-			if img.ImageRef.Digest != "" {
-				newValue = fmt.Sprintf("%s/%s@%s", g.targetRegistry, transformedPath, img.ImageRef.Digest)
-			} else {
-				newValue = fmt.Sprintf("%s/%s:%s", g.targetRegistry, transformedPath, img.ImageRef.Tag)
-			}
-		default:
-			debug.Printf("Skipping unsupported image reference type at path %v: %s", img.Path, img.RefType)
-			continue
-		}
-
-		// Set the value at the correct path in the modified structure
-		err := image.SetValueAtPath(modifiedValues, img.Path, newValue)
+		// Get the original value from the base structure to check its type
+		originalValue, err := image.GetValueAtPath(baseValues, img.Location)
 		if err != nil {
-			debug.Printf("Error setting value at path %v: %v", img.Path, err)
+			debug.Printf("Error getting original value at path %v: %v. Skipping.", img.Location, err)
+			continue // Skip this image if we can't get the original value
+		}
+		debug.Printf("Original value type at path %v: %T", img.Location, originalValue)
+
+		// Transform the image reference's repository path using the path strategy
+		newRepoPath := g.pathStrategy.Transform(img.Reference, g.targetRegistry)
+		if newRepoPath == "" {
+			debug.Printf("Error transforming image reference repository path at %v. Skipping.", img.Location)
 			continue
+		}
+		debug.Printf("Transformed repository path: %s", newRepoPath)
+
+		// Create the new value based on the ORIGINAL value's type
+		var newValue interface{}
+		switch originalValue.(type) {
+		case string:
+			// Original was a string, create the new value as a string using the transformed repo path
+			if img.Reference.Digest != "" {
+				// Use target registry (implicitly included in newRepoPath by some strategies) + digest
+				newValue = fmt.Sprintf("%s@%s", newRepoPath, img.Reference.Digest)
+			} else if img.Reference.Tag != "" {
+				// Use target registry (implicitly included in newRepoPath) + tag
+				newValue = fmt.Sprintf("%s:%s", newRepoPath, img.Reference.Tag)
+			} else {
+				newValue = newRepoPath // Only repository path if no tag/digest
+				debug.Printf("Warning: Image reference at path %v has no tag or digest. Using repository only for string override.", img.Location)
+			}
+			debug.Printf("Generating string override: %s", newValue)
+		case map[string]interface{}:
+			// Original was a map, create the new value as a map using the transformed repo path
+			newMap := map[string]interface{}{
+				// Note: Path strategy now determines the registry/repo structure
+				// We might need to split newRepoPath if it contains the registry
+				// For prefix-source-registry, newRepoPath is target/source/repo
+				"registry":   g.targetRegistry,                                      // Keep targetRegistry explicit for map structure
+				"repository": strings.TrimPrefix(newRepoPath, g.targetRegistry+"/"), // Extract repo part
+			}
+			if img.Reference.Digest != "" {
+				newMap["digest"] = img.Reference.Digest
+			} else if img.Reference.Tag != "" {
+				newMap["tag"] = img.Reference.Tag
+			} else {
+				newMap["tag"] = "" // Keep tag field, even if empty
+				debug.Printf("Warning: Image reference at path %v has no tag or digest. Setting empty tag for map override.", img.Location)
+			}
+			newValue = newMap
+			debug.Printf("Generating map override: %+v", newValue)
+		default:
+			debug.Printf("Skipping image at path %v due to unexpected original value type: %T", img.Location, originalValue)
+			continue
+		}
+
+		// Set the correctly typed value at the correct path in the MODIFIED structure
+		err = image.SetValueAtPath(modifiedValues, img.Location, newValue)
+		if err != nil {
+			debug.Printf("Error setting value at path %v: %v", img.Location, err)
+			continue // Don't count as processed if we couldn't set the value
 		}
 
 		processedImages++
 	}
 
-	// Calculate success percentage
-	successPercentage := (processedImages * 100) / totalImages
-	if successPercentage < g.threshold {
-		return nil, fmt.Errorf("success percentage %d%% is below threshold %d%%", successPercentage, g.threshold)
+	debug.Printf("Total images found: %d, Processed images needing override: %d", totalImages, processedImages)
+
+	// Calculate success percentage based on images needing processing
+	// Avoid division by zero if no images were targeted for override
+	processedNeedingOverride := 0
+	imagesNeedingOverride := 0
+	for _, img := range images {
+		if !g.isExcluded(img.Reference.Registry) && g.isSourceRegistry(img.Reference.Registry) {
+			imagesNeedingOverride++
+		}
+	}
+
+	// Count processed images that needed override
+	for _, img := range images {
+		if !g.isExcluded(img.Reference.Registry) && g.isSourceRegistry(img.Reference.Registry) {
+			// Check if we actually set a value for this path in modifiedValues
+			// This requires GetValueAtPath, but on modifiedValues
+			_, err := image.GetValueAtPath(modifiedValues, img.Location)
+			if err == nil {
+				// Crude check: assume if GetValueAtPath succeeds, it was processed.
+				// A more robust check would compare the value against the targetRef.
+				processedNeedingOverride++
+			}
+		}
+	}
+
+	if imagesNeedingOverride > 0 {
+		successPercentage := (processedNeedingOverride * 100) / imagesNeedingOverride
+		debug.Printf("Success Percentage (based on %d images needing override): %d%%", imagesNeedingOverride, successPercentage)
+		if successPercentage < g.threshold {
+			return nil, fmt.Errorf("success percentage %d%% is below threshold %d%% (based on %d images needing override)", successPercentage, g.threshold, imagesNeedingOverride)
+		}
+	} else {
+		debug.Printf("No images required overriding based on source/exclude registries.")
 	}
 
 	// If strict mode is enabled and there are unsupported structures, return an error
@@ -180,15 +258,31 @@ func (g *Generator) Generate() (*override.OverrideFile, error) {
 	}
 
 	// Extract only the modified paths from the modified structure
+	// Create the final minimal override structure
 	overrides := make(map[string]interface{})
 	for _, img := range images {
-		if g.isExcluded(img.ImageRef.Registry) || !g.isSourceRegistry(img.ImageRef.Registry) {
+		// Only include overrides for images that were actually processed
+		if g.isExcluded(img.Reference.Registry) || !g.isSourceRegistry(img.Reference.Registry) {
 			continue
 		}
-		// Extract the modified subtree and merge it into the overrides
-		subtree := extractSubtree(modifiedValues, img.Path)
-		mergeOverrides(overrides, subtree)
+
+		// Check if this path exists in modifiedValues (i.e., was successfully set)
+		newValue, err := image.GetValueAtPath(modifiedValues, img.Location)
+		if err != nil {
+			// This path wasn't set successfully, skip adding it to the final overrides
+			debug.Printf("Skipping path %v in final overrides: value not found in modified map (error: %v)", img.Location, err)
+			continue
+		}
+
+		// Use SetValueAtPath on the final 'overrides' map to build the minimal structure
+		err = image.SetValueAtPath(overrides, img.Location, newValue)
+		if err != nil {
+			// This indicates an issue with SetValueAtPath itself or path structure
+			debug.Printf("Error setting path %v in final overrides map: %v", img.Location, err)
+			// Optionally, decide whether to continue or return an error
+		}
 	}
+	debug.DumpValue("Final minimal overrides structure", overrides)
 
 	return &override.OverrideFile{
 		ChartPath:   g.chartPath,
@@ -341,11 +435,11 @@ func processChartForOverrides(chartData *chart.Chart, targetRegistry string, sou
 
 	// Process each detected image
 	for _, img := range detectedImages {
-		debug.Printf("Processing image at path: %v", img.Path)
-		debug.DumpValue("Image Reference", img.ImageRef)
+		debug.Printf("Processing image at path: %v", img.Location)
+		debug.DumpValue("Image Reference", img.Reference)
 
 		// Transform the image reference using the path strategy
-		transformedRef := pathStrategy.Transform(img.ImageRef, targetRegistry)
+		transformedRef := pathStrategy.Transform(img.Reference, targetRegistry)
 		debug.DumpValue("Transformed Reference", transformedRef)
 
 		// Create the image configuration
@@ -353,17 +447,17 @@ func processChartForOverrides(chartData *chart.Chart, targetRegistry string, sou
 			"registry":   targetRegistry,
 			"repository": transformedRef,
 		}
-		if img.ImageRef.Tag != "" {
-			imageConfig["tag"] = img.ImageRef.Tag
+		if img.Reference.Tag != "" {
+			imageConfig["tag"] = img.Reference.Tag
 		}
-		if img.ImageRef.Digest != "" {
-			imageConfig["digest"] = img.ImageRef.Digest
+		if img.Reference.Digest != "" {
+			imageConfig["digest"] = img.Reference.Digest
 		}
 
 		// Set the value at the correct path
-		err := override.SetValueAtPath(baseValues, img.Path, imageConfig)
+		err := override.SetValueAtPath(baseValues, img.Location, imageConfig)
 		if err != nil {
-			debug.Printf("Error setting value at path %v: %v", img.Path, err)
+			debug.Printf("Error setting value at path %v: %v", img.Location, err)
 			continue
 		}
 	}

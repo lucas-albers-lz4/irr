@@ -1,0 +1,27 @@
+
+global:
+  imageRegistry: "harbor.home.arpa/docker"
+  imagePullSecrets: []
+  storageClass: ""
+  security:
+    allowInsecureImages: true  # Required for Bitnami charts
+
+# Common image settings
+image:
+  registry: "harbor.home.arpa/docker"
+  repository: ""  # Will be set by the chart
+  tag: ""  # Will be set by the chart
+  pullPolicy: IfNotPresent
+  security:
+    allowInsecureImages: true
+
+# Additional common settings
+commonAnnotations: {}
+commonLabels: {}
+
+# Bitnami specific configuration
+registry:
+  enabled: true
+  server: "harbor.home.arpa/docker"
+  security:
+    allowInsecureImages: true

@@ -549,3 +549,321 @@
    - Implement context-aware override generation (beyond globals/aliases)
    - Expand test suite significantly beyond core fixes
 
+## 15. Chart Testing Improvements
+
+*(Based on analysis of test run results from Python test script)*
+
+### 15.1 Command Syntax Correction (Highest Priority) ✓
+*Goal: Fix the 0% override success rate by correcting helm-image-override invocation.*
+
+- [x] **Update `test_chart_override` function in `test/tools/test-charts.py`:**
+  - [x] Replace current subprocess invocation with proper command syntax:
+    ```python
+    result = subprocess.run(
+        [
+            str(helm_override_binary),
+            "override",  # Add the required 'override' subcommand
+            "--chart-path", str(chart_path),  # Change from '--chart' to '--chart-path'
+            "--target-registry", target_registry,
+            "--source-registries", "docker.io,quay.io,gcr.io,ghcr.io,k8s.gcr.io,registry.k8s.io",  # Add comprehensive registry list
+            "--output-file", str(TEST_OUTPUT_DIR / f"{chart_name}-values.yaml")
+        ],
+        # ...existing code...
+    )
+    ```
+  - [x] Remove the `--values` flag from the command (not used by the `override` subcommand)
+  - [x] Add test validation to verify successful command execution
+
+### 15.2 Default Values Enhancement (High Priority) ✓
+*Goal: Fix the 63 Bitnami-specific errors by enabling non-standard image repositories.*
+
+- [x] **Update `DEFAULT_VALUES_CONTENT` in `test/tools/test-charts.py`:**
+  - [x] Add explicit security allowance for Bitnami charts:
+    ```yaml
+    global:
+      imageRegistry: harbor.home.arpa/docker
+      imagePullSecrets: []
+      storageClass: ""
+      security:
+        allowInsecureImages: true  # Required for Bitnami charts
+    ```
+
+### 15.3 Error Categorization Improvement (Medium Priority) ✓
+*Goal: Better identify and differentiate error types for more accurate statistics.*
+
+- [x] **Enhance `categorize_error` function in `test/tools/test-charts.py`:**
+  - [x] Add new error category for command syntax issues
+  - [x] Update categorization logic to detect command errors
+  - [x] Refine rate limit detection to catch all variants of rate limit errors
+  - [x] Add more specific checks for Bitnami chart errors
+
+### 15.4 Rate Limit and Performance Improvements (Medium Priority) ✓
+*Goal: Reduce rate limit errors through better caching and processing control.*
+
+- [x] **Implement Chart Caching System:**
+  - [x] Add `CHART_CACHE_DIR` for persistent storage of downloaded charts
+  - [x] Implement `get_cached_chart` function to check cache before downloading
+  - [x] Add `--no-cache` flag to optionally disable caching
+  - [x] Preserve downloaded charts between runs
+
+- [x] **Rate Limit Mitigation:**
+  - [x] Lower parallel processing limits to conservative values
+  - [x] Add QPS and burst limits to Helm commands
+  - [x] Implement incremental backoff for retries
+  - [x] Add delays between repository operations
+
+### 15.5 Targeted Testing (Low Priority) ✓
+*Goal: Allow focused testing of specific charts or subsets of charts for efficient debugging.*
+
+- [x] **Add filtering options to `test/tools/test-charts.py`:**
+  - [x] Implement `--chart-filter` for pattern matching
+  - [x] Add `--max-charts` for limiting test scope
+  - [x] Add `--skip-charts` for excluding specific charts
+  - [x] Update documentation with new options
+
+### 15.6 Results Analysis Enhancement (Low Priority)
+*Goal: Provide more detailed insights into test results for ongoing improvement.*
+
+- [ ] **Improve summary generation in `test/tools/test-charts.py`:**
+  - [ ] Add timing information (total and per-chart average)
+  - [ ] Generate a list of most common error patterns
+  - [ ] Create a simple chart category analysis (e.g., by repository, by error type)
+  - [ ] Save raw test data to JSON for external analysis
+  - [ ] Add a flag to generate an HTML report with visualizations
+
+### 15.7 New Improvements
+*Goal: Further enhance the testing process based on recent findings.*
+
+- [ ] **Repository-Specific Optimizations:**
+  - [ ] Add repository-specific rate limit configurations
+  - [ ] Implement smart retry logic based on repository response codes
+  - [ ] Add support for authenticated registry access
+
+- [ ] **Cache Management:**
+  - [ ] Add cache cleanup/maintenance functionality
+  - [ ] Implement cache versioning for chart updates
+  - [ ] Add cache statistics to summary report
+
+- [ ] **Documentation:**
+  - [ ] Create a dedicated document for the test script (`docs/chart_testing.md`)
+  - [ ] Add troubleshooting guide for common issues
+  - [ ] Document caching behavior and configuration
+
+### 15.8 Implementation Status
+1. **Completed:**
+   - Command syntax correction
+   - Default values enhancement
+   - Error categorization improvement
+   - Rate limit mitigation
+   - Chart caching system
+   - Targeted testing capabilities
+
+2. **In Progress:**
+   - Results analysis enhancement
+   - Repository-specific optimizations
+
+3. **Planned:**
+   - Cache management improvements
+   - Documentation updates
+
+## 16. Hybrid Chart Classification for Test Configuration (Python Script)
+
+**Goal:** Reduce template errors in `test/tools/test-charts.py` by applying tailored default `values.yaml` content based on chart characteristics, improving the override success rate.
+
+### 16.1 Strategy Overview
+Implement a tiered classification system within the Python test script (`test/tools/test-charts.py`) to select the most appropriate base configuration for the `helm template` validation step. The order of precedence prioritizes more specific indicators:
+
+1.  **Dependency Analysis:** Check `Chart.yaml` for dependencies on known common libraries (e.g., `bitnami/common`). Apply a template optimized for that ecosystem.
+2.  **`values.yaml` Structural Analysis:** If no common library is detected, analyze the chart's `values.yaml` for common image definition patterns (e.g., presence of `global.imageRegistry`, `image.repository` map, `image` as string). Select a corresponding standard template.
+3.  **Default Fallback:** If neither analysis yields a clear classification, use a general-purpose default template and log a warning.
+
+### 16.2 Implementation Steps (in `test/tools/test-charts.py`)
+
+- [ ] **Define Configuration Templates:**
+    - [ ] Create distinct string constants or load separate `.yaml` files representing different base configurations:
+        - `VALUES_TEMPLATE_BITNAMI`: Optimized for Bitnami charts (includes `global.imageRegistry`, `commonLabels`, `allowInsecureImages`).
+        - `VALUES_TEMPLATE_STANDARD_MAP`: Assumes `image.repository`, `image.tag` map structure.
+        - `VALUES_TEMPLATE_STANDARD_STRING`: Assumes `image: registry/repo:tag` string structure (might need less common).
+        - `VALUES_TEMPLATE_DEFAULT`: A general-purpose fallback (similar to the last improved version in Section 15).
+    - [ ] Ensure templates use consistent placeholder values (e.g., `TARGET_REGISTRY_PLACEHOLDER`) that can be replaced dynamically.
+
+- [ ] **Implement `get_chart_classification(chart_path: Path) -> str` function:**
+    - [ ] **Dependency Check:**
+        - [ ] Parse `Chart.yaml` located at `chart_path / "Chart.yaml"`.
+        - [ ] Check the `dependencies` list for entries with `name: common` and `repository` containing `bitnami`.
+        - [ ] If found, return `"BITNAMI"`.
+    - [ ] **`values.yaml` Analysis:**
+        - [ ] Parse `values.yaml` located at `chart_path / "values.yaml"`. Handle potential parsing errors gracefully.
+        - [ ] Check for `global.imageRegistry`: If present (and maybe a string), return `"GLOBAL_REGISTRY"`. (This might overlap with Bitnami, refine logic).
+        - [ ] Check for `image` key:
+            - If `image` is a map containing `repository` (and maybe `tag`), return `"STANDARD_MAP"`.
+            - If `image` is a string, return `"STANDARD_STRING"`.
+        - [ ] Add checks for other common patterns as identified through error analysis (e.g., presence of `commonLabels`, `commonAnnotations`).
+    - [ ] **Fallback:** If no classification is determined, return `"DEFAULT"`.
+
+- [ ] **Implement `get_values_content(classification: str, target_registry: str) -> str` function:**
+    - [ ] Takes the classification string and the target registry URL.
+    - [ ] Returns the appropriate template string (from step 1) with placeholders replaced.
+    - [ ] Example:
+      ```python
+      if classification == "BITNAMI":
+          template = VALUES_TEMPLATE_BITNAMI
+      elif classification == "STANDARD_MAP":
+          template = VALUES_TEMPLATE_STANDARD_MAP
+      # ... other classifications
+      else: # DEFAULT
+          template = VALUES_TEMPLATE_DEFAULT
+      # Replace placeholder - Ensure placeholder is unique and defined in templates
+      # return template.replace("TARGET_REGISTRY_PLACEHOLDER", target_registry)
+      # Consider using a more robust templating method if needed
+      return template # Placeholder replacement needs implementation
+      ```
+
+- [ ] **Modify `test_chart_override` function:**
+    - [ ] Before running `helm template` validation (inside the `try` block after generating the override):
+        - [ ] Call `classification = get_chart_classification(chart_path)`
+        - [ ] Call `values_content = get_values_content(classification, target_registry)`
+        - [ ] Create a temporary directory or use `tempfile` to write `values_content` to a temporary values file (e.g., `temp_class_values.yaml`). Ensure proper cleanup.
+        - [ ] Update the `helm template` command to use *both* the generated `override.yaml` (`-f output_file`) and the temporary classification-based values file (`-f temp_class_values.yaml`). Ensure the override file (`output_file`) comes *last* so its values take precedence for the actual image fields.
+          ```python
+          # Example helm template command update
+          temp_values_path = # path to temp_class_values.yaml
+          template_result = subprocess.run(
+              [
+                  "helm", "template", str(chart_path),
+                  "-f", str(temp_values_path), # Base values based on classification
+                  "-f", str(output_file)      # Our generated image overrides
+              ],
+              # ... rest of subprocess call ...
+          )
+          ```
+    - [ ] Add logging to indicate which classification was used for each chart (e.g., `print(f"Chart {chart}: Classified as {classification}, using corresponding template.")`).
+
+- [ ] **Refine Templates and Logic:**
+    - [ ] Analyze the remaining `TEMPLATE_ERROR` charts after initial implementation.
+    - [ ] Refine the classification logic (`get_chart_classification`) and the content of the `VALUES_TEMPLATE_*` constants based on error patterns.
+    - [ ] Consider adding more specific classifications or templates if needed (e.g., differentiate `STANDARD_MAP` based on whether `registry` key is present alongside `repository`).
+
+### 16.3 Testing and Validation
+- [ ] Run the updated `test-charts.py` script.
+- [ ] Monitor the `TEMPLATE_ERROR` count in the summary.
+
+## 17. Comprehensive Test Case Improvements
+
+**Goal:** Strengthen our testing coverage with focused unit tests targeting key functionality areas, edge cases, and potential vulnerabilities.
+
+### 17.1 Image Detection Test Expansion (`pkg/image/detection_test.go`)
+
+- [ ] **`TestDetectImages_ComplexStructures`:**
+  - [ ] Deep nested maps and arrays with images at various nesting levels
+  - [ ] Maps with keys resembling image parts (e.g., `config: { repository: "abc", tag: "v1" }`) but not actual images
+  - [ ] Lists containing mixed valid and invalid image references
+  - [ ] Expected: Only correct images identified with precise paths
+
+- [ ] **`TestDetectImages_ContextVariations`:**
+  - [ ] Run standard tests with `Strict: true` to catch ambiguous strings
+  - [ ] Test with `TemplateMode: false` to verify template variable handling behavior
+  - [ ] Test global registry precedence (global vs. map-specific vs. default `docker.io`)
+  - [ ] Expected: Context settings appropriately influence detection behavior
+
+- [ ] **`TestTryExtractImageFromString_EdgeCases`:**
+  - [ ] Invalid image formats (e.g., invalid tags, invalid digests, invalid characters)
+  - [ ] Various registry formats (with/without port, localhost, private domains)
+  - [ ] Docker Library image references (e.g., `nginx` without registry/repository)
+  - [ ] Expected: Correct parsing or appropriate nil/error responses
+
+- [ ] **`TestTryExtractImageFromMap_PartialMaps`:**
+  - [ ] Maps with missing `tag` field
+  - [ ] Maps with missing `registry` field (should use global or default)
+  - [ ] Maps with template variables in fields
+  - [ ] Expected: Proper handling with defaults applied correctly
+
+- [ ] **`TestIsImagePath_RegexAccuracy`:**
+  - [ ] Known image paths from real charts
+  - [ ] Known non-image paths
+  - [ ] Edge cases and ambiguous paths
+  - [ ] Expected: Correct classification of paths
+
+- [ ] **`TestNormalizeImageReference_DockerLibrary`:**
+  - [ ] Docker Library normalization for registry/repository
+  - [ ] Non-Docker registries (should remain unchanged)
+  - [ ] Multi-component repository paths
+  - [ ] Expected: Consistent normalization behavior
+
+### 17.2 Override Generation Test Enhancement (`pkg/override/override_test.go`)
+
+- [ ] **`TestSetValueAtPath_ComplexPaths`:**
+  - [ ] Nested map creation for non-existent paths
+  - [ ] Type conflict handling (e.g., trying to set map field on a string)
+  - [ ] Special characters in map keys
+  - [ ] Expected: Correct value setting or appropriate errors
+
+- [ ] **`TestCleanupMap_NestedStructures`:**
+  - [ ] Deep nested structures where only deeper values are needed
+  - [ ] Pruning of empty maps and arrays
+  - [ ] Handling of non-map values
+  - [ ] Expected: Minimal output structure with only necessary paths
+
+- [ ] **`TestGenerateOverrideStructure_Minimalism`:**
+  - [ ] Charts with only a subset of images requiring overrides
+  - [ ] Mix of map and string image specifications
+  - [ ] Complex nested structures
+  - [ ] Expected: Minimal override YAML containing only necessary structure
+
+- [ ] **`TestDeepCopy_Nested`:**
+  - [ ] Complex nested structure with maps, arrays, and primitive values
+  - [ ] Modification of copy should not affect original
+  - [ ] Expected: Identical copy that's safely modifiable
+
+### 17.3 Path Strategy Tests (`pkg/strategy/path_strategy_test.go`)
+
+- [ ] **`TestPrefixSourceRegistryStrategy_RegistryVariations`:**
+  - [ ] Various source registry formats
+  - [ ] Registry sanitization edge cases
+  - [ ] Docker Library handling
+  - [ ] Expected: Correctly formatted target paths following all rules
+
+- [ ] **`TestRegistryMappingIntegration`:**
+  - [ ] Mapping file with various registry mappings
+  - [ ] Source registries defined and undefined in mapping
+  - [ ] Expected: Correct application of mapping rules
+
+### 17.4 CLI and Integration Tests (`cmd/helm-image-override/main_test.go`)
+
+- [ ] **`TestCLI_FlagValidation`:**
+  - [ ] Missing required flags
+  - [ ] Invalid flag values
+  - [ ] Flag interactions and conflicts
+  - [ ] Expected: Appropriate error messages and exit codes
+
+- [ ] **`TestCLI_ExitCodes`:**
+  - [ ] Various error conditions triggering specific exit codes
+  - [ ] Charts with unsupported structures in strict mode
+  - [ ] Expected: Correct exit codes for different error conditions
+
+- [ ] **`TestCLI_OutputToFile`:**
+  - [ ] Redirect output to file
+  - [ ] Verify file contents
+  - [ ] Expected: Correct file creation and content
+
+### 17.5 Implementation Strategy
+
+1. Prioritize test cases that improve core functionality coverage first:
+   - Complex structure detection
+   - Partial map handling
+   - Path-based modification
+   - Template variable preservation
+
+2. Add regression tests for specific bugs fixed during development:
+   - Docker library normalization
+   - Registry sanitization
+   - Path generation for special cases
+
+3. Ensure edge cases and potential future issues are covered:
+   - Type conflicts in maps
+   - Invalid image references
+   - Complex nesting and array handling
+
+4. Target a minimum 80% test coverage for all core packages.
+
+   

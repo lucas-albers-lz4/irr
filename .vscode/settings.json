@@ -1,0 +1,5 @@
+   {
+       "yaml.schemas": {
+           "https://raw.githubusercontent.com/helm/helm/master/docs/chart_template_guide/templates.md": "test-data/charts/minimal-test/templates/*.yaml"
+       }
+   }

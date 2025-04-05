@@ -2,96 +2,83 @@ package image
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestParseImageReference(t *testing.T) {
 	tests := []struct {
-		name           string
-		imageRef       string
-		expectedResult *ImageReference
-		expectError    bool
+		name          string
+		input         interface{}
+		expectedRef   *ImageReference
+		expectedErr   bool
+		errorContains string
 	}{
 		{
-			name:     "standard image with registry",
-			imageRef: "docker.io/nginx:1.23",
-			expectedResult: &ImageReference{
-				Registry:   "docker.io",
-				Repository: "nginx",
-				Tag:        "1.23",
-			},
-			expectError: false,
-		},
-		{
-			name:     "image with nested path",
-			imageRef: "quay.io/prometheus/node-exporter:v1.3.1",
-			expectedResult: &ImageReference{
+			name:  "standard image with registry",
+			input: "quay.io/nginx:1.20.0",
+			expectedRef: &ImageReference{
 				Registry:   "quay.io",
-				Repository: "prometheus/node-exporter",
-				Tag:        "v1.3.1",
+				Repository: "nginx",
+				Tag:        "1.20.0",
 			},
-			expectError: false,
 		},
 		{
-			name:     "image with implicit docker.io registry",
-			imageRef: "nginx:latest",
-			expectedResult: &ImageReference{
+			name:  "image with nested path",
+			input: "docker.io/org/suborg/app:v1.2.3",
+			expectedRef: &ImageReference{
+				Registry:   "docker.io",
+				Repository: "org/suborg/app",
+				Tag:        "v1.2.3",
+			},
+		},
+		{
+			name:  "image with implicit docker.io registry",
+			input: "nginx:latest",
+			expectedRef: &ImageReference{
 				Registry:   "docker.io",
 				Repository: "library/nginx",
 				Tag:        "latest",
 			},
-			expectError: false,
 		},
 		{
-			name:     "image with digest",
-			imageRef: "docker.io/nginx@sha256:1234567890123456789012345678901234567890123456789012345678901234",
-			expectedResult: &ImageReference{
+			name:  "image with digest",
+			input: "alpine@sha256:1234567890123456789012345678901234567890123456789012345678901234",
+			expectedRef: &ImageReference{
 				Registry:   "docker.io",
-				Repository: "nginx",
+				Repository: "library/alpine",
 				Digest:     "sha256:1234567890123456789012345678901234567890123456789012345678901234",
 			},
-			expectError: false,
 		},
 		{
-			name:        "invalid image reference",
-			imageRef:    "invalid::image:format",
-			expectError: true,
+			name:          "invalid image reference",
+			input:         "not:a:valid:image",
+			expectedRef:   nil,
+			expectedErr:   true,
+			errorContains: "invalid image reference",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result, err := ParseImageReference(tc.imageRef)
+			ref, err := ParseImageReference(tc.input)
 
-			// Check for expected error
-			if tc.expectError && err == nil {
-				t.Errorf("Expected error, but got nil")
-				return
-			}
-			if !tc.expectError && err != nil {
-				t.Errorf("Expected no error, but got: %v", err)
-				return
-			}
-
-			// Skip further checks if we expected an error
-			if tc.expectError {
-				return
-			}
-
-			// Check reference fields
-			if result.Registry != tc.expectedResult.Registry {
-				t.Errorf("Registry mismatch: expected %s, got %s", tc.expectedResult.Registry, result.Registry)
-			}
-			if result.Repository != tc.expectedResult.Repository {
-				t.Errorf("Repository mismatch: expected %s, got %s", tc.expectedResult.Repository, result.Repository)
-			}
-			if tc.expectedResult.Digest != "" {
-				if result.Digest != tc.expectedResult.Digest {
-					t.Errorf("Digest mismatch: expected %s, got %s", tc.expectedResult.Digest, result.Digest)
+			if tc.expectedErr {
+				assert.Error(t, err)
+				if tc.errorContains != "" {
+					assert.Contains(t, err.Error(), tc.errorContains)
 				}
+				return
+			}
+
+			assert.NoError(t, err)
+			if tc.expectedRef != nil {
+				assert.Equal(t, tc.expectedRef.Registry, ref.Registry, "Registry mismatch")
+				assert.Equal(t, tc.expectedRef.Repository, ref.Repository, "Repository mismatch")
+				assert.Equal(t, tc.expectedRef.Tag, ref.Tag, "Tag mismatch")
+				assert.Equal(t, tc.expectedRef.Digest, ref.Digest, "Digest mismatch")
 			} else {
-				if result.Tag != tc.expectedResult.Tag {
-					t.Errorf("Tag mismatch: expected %s, got %s", tc.expectedResult.Tag, result.Tag)
-				}
+				assert.Nil(t, ref)
 			}
 		})
 	}

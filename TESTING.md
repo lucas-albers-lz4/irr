@@ -25,7 +25,27 @@ Validate that the `helm-image-override` tool successfully redirects container im
 
 ## Test Strategy
 
-### 1. Image Relocation Validation
+Our testing strategy combines focused unit tests for deterministic functions with broader, outcome-focused tests for the heuristic-based core detection logic, supplemented by comprehensive integration tests against real Helm charts.
+
+### 1. Unit and Focused Tests (Go Tests - `make test`)
+
+These tests verify specific functions and isolated logic components:
+
+*   **Strict Unit Tests:** Target deterministic functions with clear input/output relationships (e.g., `ParseImageReference`, `NormalizeRegistry`, `IsSourceRegistry`, `tryExtract...` functions). These tests precisely validate the expected output for given inputs.
+*   **Outcome-Focused Tests:** Target the core `DetectImages` function and its interactions with different contexts (e.g., `TestDetectImages_ContextVariations`, `TestImageDetector_ContainerArrays`). Due to the heuristic nature of `DetectImages` in finding images within arbitrary YAML structures, these tests prioritize validating the *presence* of expected final image references (repository, tag, digest) rather than asserting the exact internal detection path or pattern. This approach reduces test fragility when refactoring the complex detection logic while still ensuring the function achieves its main goal in various scenarios.
+
+### 2. Integration & Chart Validation Tests (`make test-charts`)
+
+These tests provide end-to-end validation using real Helm charts:
+
+*   Leverage the `test/tools/test-charts.sh` script.
+*   Process a corpus of real-world charts (Top 50 from Artifact Hub + complex examples).
+*   Validate the generated `override.yaml` by rendering Helm templates (`helm template ... -f override.yaml`).
+*   Compare rendered manifests to ensure correct image relocation, version preservation, and non-destructive changes.
+*   Verify behavior against different path strategies and registry filtering options.
+*   Crucial for catching regressions and validating the tool's effectiveness in practical use cases.
+
+### 3. Image Relocation Validation
 **Regex Pattern Focus**:
 ```regex
 # Tag-based
@@ -46,7 +66,7 @@ Validate that the `helm-image-override` tool successfully redirects container im
 | Digest | quay.io/prometheus/prometheus@sha256:abc... | myharbor.internal:5000/quayio/prometheus/prometheus@sha256:abc... |
 | Excluded Registry | internal.repo/app:v1 | internal.repo/app:v1 |
 
-### 2. Version Preservation Check
+### 4. Version Preservation Check
 
 #### Validation Commands:
 
@@ -63,7 +83,7 @@ diff <(yq eval '.appVersion' original/Chart.yaml) <(yq eval '.appVersion' migrat
 # yq eval '.. | select(has("repository")) | .tag' overrides.yaml # Check tags weren't added/removed inappropriately
 ```
 
-### 3. Non-Destructive Change Verification
+### 5. Non-Destructive Change Verification
 
 #### Checklist:
 - ☐ No values.yaml changes except specified image references
@@ -80,7 +100,7 @@ helm template ./chart -f overrides.yaml > migrated.yaml
 diff --ignore-matching-lines='image:' --ignore-matching-lines='repository:' --ignore-matching-lines='registry:' original.yaml migrated.yaml
 ```
 
-### 4. Path Strategy Testing
+### 6. Path Strategy Testing
 
 Test each supported path strategy (`prefix-source-registry`, potentially others) with various registry patterns and chart structures.
 
@@ -88,7 +108,7 @@ Test each supported path strategy (`prefix-source-registry`, potentially others)
 - Test `prefix-source-registry` with long original repo paths to check against potential target limits (e.g., Harbor project path depth).
 - Test image names that might conflict with target registry naming rules (e.g., if ECR were a target, test paths with potentially problematic characters for the `flat` strategy if implemented).
 
-### 5. Subchart and Complex Structure Testing
+### 7. Subchart and Complex Structure Testing
 - Verify correct override path generation using dependency aliases (e.g., `parentchart.alias.image.repository`).
 - Test charts with multiple levels of nesting (parent -> child -> grandchild).
 - Include test cases with complex value structures:
@@ -116,49 +136,7 @@ someApp:
       registry: docker.io # Explicit docker.io
 ```
 
-### 4.1 Unit Tests
-
-- [ ] Test value traversal logic.
-- [ ] Test image detection heuristics for all supported and unsupported patterns.
-- [ ] Test image string parsing regex and extraction logic.
-- [ ] Test Docker Library normalization function.
-- [ ] Test registry domain sanitization function.
-- [ ] Test `prefix-source-registry` path generation logic.
-- [ ] Test override structure generation for various inputs (ensure minimal output).
-- [ ] Test subchart alias path construction.
-- [ ] Test YAML generation output format.
-
-### 4.2 Integration Tests
-
-- [ ] **Core Use Case Test:**
-    - [ ] Add specific test using `kube-prometheus-stack` chart (or equivalent complex chart).
-    - [ ] Configure test to use `--source-registries docker.io,quay.io` and `--target-registry harbor.home.arpa`.
-    - [ ] **Validation:**
-        - [ ] Generate `override.yaml` using the tool.
-        - [ ] Run `helm template <chart> <original_values>` and capture image lines (e.g., `... | grep 'image:' > original_images.txt`).
-        - [ ] Run `helm template <chart> <original_values> -f override.yaml` and capture image lines (e.g., `... | grep 'image:' > overridden_images.txt`).
-        - [ ] Compare `original_images.txt` and `overridden_images.txt` to verify:
-            - Images from `docker.io`, `quay.io` are redirected to `harbor.home.arpa` using the correct path strategy (`harbor.home.arpa/dockerio/...`, `harbor.home.arpa/quayio/...`).
-            - Tags/digests remain identical.
-            - Images from other registries (e.g., `registry.k8s.io`) are unchanged.
-            - Images excluded via `--exclude-registries` are unchanged.
-        - [ ] Verify the `helm template ... -f override.yaml` command completes successfully.
-- [ ] Curate test chart corpus: Select top ~50 from Artifact Hub + specific complex examples (including the core use case chart).
-- [ ] Implement validation test harness/script automating the comparison steps above:
-  - [ ] **Image Relocation Validation:** Compare images in `helm template` output (original vs. overridden) using parsing/diffing. Verify target registry, path strategy application, tag/digest preservation.
-  - [ ] **Version Preservation Check:** Diff `Chart.yaml` `version` and `appVersion`.
-  - [ ] **Non-destructive Change Verification:** Diff `helm template` output ignoring expected image lines and ensuring no unrelated values are changed.
-  - [ ] **Path Strategy Testing:** Run tests for each implemented strategy.
-  - [ ] **Subchart Handling:** Use charts with multiple nesting levels and aliases. Verify correct override paths.
-  - [ ] **Complex Structures:** Test charts with images in lists, nested maps, etc.
-  - [ ] **CLI Options Testing:** Create test cases covering combinations of CLI flags.
-  - [ ] **Error Handling Validation:** Test scenarios triggering each defined exit code and verify error message structure.
-  - [ ] **Dry Run Test:** Verify no file output with `--dry-run`.
-  - [ ] **Strict Mode Test:** Verify failure vs. warning behavior with `--strict`.
-  - [ ] **Exclusion Test:** Verify `--exclude-registries` correctly skips processing images from the specified *source registries*. (e.g., `--exclude-registries docker.io` should not modify any `docker.io` images).
-  - [ ] **Threshold Test:** Verify behavior with different `--threshold` values.
-
-### 6. Command-Line Option Validation
+### 8. Command-Line Option Validation
 
 Test all CLI options individually and in combination:
 - `--chart-path` (directory and .tgz)
@@ -219,7 +197,7 @@ helm install --dry-run my-release original-chart/ -f overrides.yaml > /dev/null 
 - **Authentication**:
     - Tool assumes environment (Docker client, Kubeconfig) handles target registry authentication. Tool itself does not handle credentials. Testing confirms overrides work in an authenticated context.
 
-## 7. Error Handling and Exit Code Testing
+## 9. Error Handling and Exit Code Testing
 
 Verify correct exit codes and informative, structured error messages for various scenarios:
 
@@ -245,7 +223,7 @@ Error: <General error description>
 ```
 Test cases should validate that errors conform to this structure where applicable.
 
-## 8. Performance Benchmarking
+## 10. Performance Benchmarking
 
 Establish baseline performance metrics to understand resource requirements and scalability.
 
@@ -263,9 +241,9 @@ Establish baseline performance metrics to understand resource requirements and s
 | Complex (20+ Subcharts) | (Identify large charts) | ~10-30s                        | ~250-500MB              | `t3.large`    | Stress test, potential memory limits |
 | Large Values File       | (Chart w/ >5k lines YAML) | TBD                            | TBD                     | `t3.large`    | Test YAML parsing efficiency            |
 ```
-*Note: Actual charts, times, and memory usage to be filled in during testing.*
+*Note: The charts listed above are examples and may not match the actual charts available in `test-data/charts/`. Actual charts, times, and memory usage to be filled in during testing.*
 
-## 9. Debug Logging Testing
+## 11. Debug Logging Testing
 
 ### Debug Output Validation
 Test the debug logging functionality with the `--debug` flag:
@@ -380,7 +358,7 @@ Charts using:
 ### 4. Docker Library Image Handling
 *Covered in Relocation Validation test matrix.*
 
-## 5. Documentation
+## 12. Documentation
 
 - [ ] Create `README.md`: Overview, Installation, Quick Start, Basic Usage (including the core Prometheus->Harbor example).
 - [ ] Add detailed CLI Reference section (Flags and Arguments).
@@ -389,7 +367,7 @@ Charts using:
 - [ ] Create Troubleshooting / Error Codes guide.
 - [ ] Add Contributor Guide (basic setup, testing).
 
-## 6. Release Process
+## 13. Release Process
 
 - [ ] Set up Git tagging for versioning (e.g., SemVer).
 - [ ] Create release builds for target platforms (Linux AMD64, macOS AMD64/ARM64).
@@ -407,38 +385,60 @@ Charts using:
 
 ## Running Tests
 
-The project includes several types of tests that can be run using different make targets:
+## Test Suites
 
-### Unit Tests
-```bash
-make test
-```
-Runs the Go unit tests for all packages using `go test -v ./...`
+The project has two complementary test suites:
 
-### Chart Tests
-```bash
-make test-charts [TARGET_REGISTRY=your.registry.com]
-```
-Runs the chart testing script that validates the tool against a variety of Helm charts. This:
-- Builds the binary if needed
-- Creates required test directories (`test/results`, `test/overrides`)
-- Runs `test-charts.sh` with the specified registry (defaults to harbor.home.arpa)
-- Generates test results in `test/results/results.txt`
-- Creates override files in `test/overrides/`
+### 1. Unit and Integration Tests (`make test`)
+These tests run as part of the standard Go test suite and include:
+- Unit tests for individual packages
+- Integration tests using controlled test fixtures in `test-data/charts/`
+- Tests for specific functionality like:
+  - Basic chart processing
+  - Parent/child chart relationships
+  - Complex chart handling
+  - Dry-run functionality
+  - Strict mode behavior
+These tests are fast, deterministic, and suitable for CI/CD pipelines.
 
-### Directory Structure
-The testing framework uses several directories:
-- `test-data/charts/`: Contains test chart fixtures
-- `test/results/`: Contains test execution results
-- `test/overrides/`: Contains generated override files
+> **Note:** The integration tests will only test with charts available in the `test-data/charts/` directory. Tests for charts that aren't available (like `kube-prometheus-stack`, `ingress-nginx`, etc.) will be automatically skipped. The currently available test charts are:
+> - cert-manager
+> - cert-manager-v1.17.1.tgz
+> - cert-manager-values.yaml
+> - minimal-test
+> - parent-test
+
+### 2. Chart Validation Tests (`make test-charts`)
+These tests use the `test/tools/test-charts.sh` script to validate against real-world charts:
+- Tests against multiple chart types
+- Validates actual chart rendering
+- Tests with Harbor registry integration
+- Generates detailed test results
+These tests take longer to run and are better suited for validation testing.
+
+### Test Directory Structure
+- `test-data/charts/`: Contains test fixtures used by integration tests
+- `test/results/`: Contains results from chart validation tests
+- `test/overrides/`: Contains generated override files from tests
 - `test/tools/`: Contains testing scripts
+- `test/integration/`: Contains Go integration tests
 
-### Clean Up
+### Running Tests
 ```bash
+# Run unit and integration tests
+make test
+
+# Run chart validation tests (optionally specify target registry)
+make test-charts [TARGET_REGISTRY=your.registry.com]
+
+# Clean all test artifacts
 make clean
 ```
-Removes all generated test artifacts, including:
-- Build directory
-- Test charts directory
-- Test results
-- Generated overrides
+
+### Adding New Test Charts
+To add new charts for testing:
+1. Place the chart in the `test-data/charts/` directory
+2. Ensure the chart follows the expected structure
+3. If needed, update the integration tests in `test/integration/` to use the new chart
+
+When adding tests that use specific charts, always check if the chart exists and skip the test if it doesn't, to ensure the test suite can run successfully regardless of which charts are available.

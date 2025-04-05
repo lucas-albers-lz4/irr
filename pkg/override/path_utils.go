@@ -52,17 +52,21 @@ func SetValueAtPath(data map[string]interface{}, path []string, value interface{
 		isLast := i == len(path)-1
 
 		// Check if this path part contains an array index
-		key, index, hasIndex := parseArrayPath(part)
+		key, index, hasIndex, err := parseArrayPath(part)
+		if err != nil {
+			return fmt.Errorf("error parsing path part '%s': %w", part, err)
+		}
 
 		if hasIndex {
-			// Handle array indexing
+			// Validate index is valid
+			if index < 0 {
+				return fmt.Errorf("negative array index: %d", index)
+			}
+
+			// Check if key exists
 			if _, exists := current[key]; !exists {
-				// Create new array if it doesn't exist
+				// Create new array if it doesn't exist, initialize with nils
 				arr := make([]interface{}, index+1)
-				// Initialize all elements as empty maps
-				for j := range arr {
-					arr[j] = make(map[string]interface{})
-				}
 				current[key] = arr
 			}
 
@@ -71,24 +75,28 @@ func SetValueAtPath(data map[string]interface{}, path []string, value interface{
 				return fmt.Errorf("path element %s exists but is not an array", key)
 			}
 
-			// Expand array if needed, initializing new elements as empty maps
+			// Expand array if needed, padding with nil
 			for len(arr) <= index {
-				arr = append(arr, make(map[string]interface{}))
+				arr = append(arr, nil) // Pad with nil
 			}
-			current[key] = arr
+			current[key] = arr // Update the map with the potentially resized array
 
 			if isLast {
-				arr[index] = value
+				arr[index] = value // Set the final value
 			} else {
-				// Ensure we have a map at this index for further traversal
+				// If not the last element, we need to traverse into this index.
+				// Ensure the element at the current index is a map.
 				if arr[index] == nil {
+					// If it's nil (because it was just padded), initialize it as a map.
 					arr[index] = make(map[string]interface{})
 				}
+
 				nextMap, ok := arr[index].(map[string]interface{})
 				if !ok {
-					return fmt.Errorf("cannot traverse through non-map at index %d", index)
+					// If it exists but isn't a map, and we need to traverse, it's an error.
+					return fmt.Errorf("cannot traverse through non-map at index %d which holds value %T", index, arr[index])
 				}
-				current = nextMap
+				current = nextMap // Continue traversal into the map at the current index
 			}
 		} else {
 			// Handle regular map keys
@@ -117,18 +125,23 @@ func ParsePath(path string) []string {
 }
 
 // parseArrayPath extracts the key and index from a path segment that may contain an array index.
-// Returns the key, index, and whether an index was found.
-// Example: "containers[0]" -> "containers", 0, true
-func parseArrayPath(part string) (string, int, bool) {
+// Returns the key, index, whether an index was found, and an error if syntax is invalid.
+func parseArrayPath(part string) (string, int, bool, error) {
 	start := strings.Index(part, "[")
 	end := strings.Index(part, "]")
 
-	if start != -1 && end != -1 && start < end {
+	if start != -1 && end != -1 && start < end && end == len(part)-1 {
 		key := part[:start]
 		indexStr := part[start+1 : end]
-		if index, err := strconv.Atoi(indexStr); err == nil {
-			return key, index, true
+		index, err := strconv.Atoi(indexStr)
+		if err == nil {
+			return key, index, true, nil
+		} else {
+			return part, 0, false, fmt.Errorf("invalid non-integer array index '%s' in path part '%s'", indexStr, part)
 		}
+	} else if start != -1 || end != -1 {
+		return part, 0, false, fmt.Errorf("malformed array index syntax in path part '%s'", part)
 	}
-	return part, 0, false
+
+	return part, 0, false, nil
 }

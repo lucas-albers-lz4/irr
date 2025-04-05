@@ -187,6 +187,28 @@ The tool's sole output is the generated override file. It does *not* directly in
 * **Repeatability:** Consistent re-application of overrides.
 * **Verification:** Easy comparison via `helm template diff` or similar methods.
 
+### 6.3.1. Parallel Processing
+
+The chart testing process supports parallel execution to improve performance when processing large numbers of charts:
+
+* **Default Behavior:** Automatically uses parallel processing with GNU Parallel
+* **Scaling:** Automatically scales to system capabilities
+  * Uses half of available CPU cores
+  * Minimum of 4 parallel jobs
+  * Maximum of 16 parallel jobs
+* **Sequential Fallback:** Supports `--no-parallel` flag for sequential processing
+* **Requirements:** GNU Parallel must be installed for parallel execution
+* **Implementation:** Each chart is processed in isolation with its own temporary directory to prevent conflicts
+
+Example usage:
+```bash
+# Run with parallel processing (default)
+./test/tools/test-charts.sh harbor.home.arpa
+
+# Run sequentially
+./test/tools/test-charts.sh harbor.home.arpa --no-parallel
+```
+
 ### 6.4. CLI Interface (Proposed)
 
 ```bash

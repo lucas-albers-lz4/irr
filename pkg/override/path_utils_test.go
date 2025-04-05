@@ -183,12 +183,9 @@ func TestSetValueAtPath(t *testing.T) {
 			value: "nginx:latest",
 			wantData: map[string]interface{}{
 				"spec": map[string]interface{}{
-					"containers": []interface{}{
-						map[string]interface{}{},
-						map[string]interface{}{
-							"image": "nginx:latest",
-						},
-					},
+					"containers": []interface{}{nil, map[string]interface{}{
+						"image": "nginx:latest",
+					}},
 				},
 			},
 		},
@@ -379,7 +376,14 @@ func TestParseArrayPath(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			key, index, hasIndex := parseArrayPath(tt.part)
+			key, index, hasIndex, err := parseArrayPath(tt.part)
+
+			// Check for unexpected errors first
+			if tt.wantHasIndex && err != nil {
+				t.Errorf("parseArrayPath() returned unexpected error for valid input '%s': %v", tt.part, err)
+			}
+			// If we expect it *not* to be an index, errors might be expected (like malformed or non-integer)
+			// but we don't explicitly check for specific errors here, just the hasIndex result.
 
 			if key != tt.wantKey {
 				t.Errorf("parseArrayPath() key = %v, want %v", key, tt.wantKey)

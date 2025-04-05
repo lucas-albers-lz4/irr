@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/lalbers/helm-image-override/pkg/debug"
 	"github.com/lalbers/helm-image-override/pkg/image"
@@ -49,18 +50,28 @@ func NewPrefixSourceRegistryStrategy(mappings *registry.RegistryMappings) *Prefi
 
 // Transform transforms the image path using the prefix-source-registry strategy
 func (s *PrefixSourceRegistryStrategy) Transform(imgRef *image.ImageReference, targetRegistry string) string {
-	targetPath := image.SanitizeRegistryForPath(imgRef.Registry)
+	// Get the sanitized source registry path component
+	sourcePath := image.SanitizeRegistryForPath(imgRef.Registry)
+
+	// Check if we have a mapping override
 	if s.mappings != nil {
 		for _, mapping := range s.mappings.Mappings {
 			if mapping.Source == imgRef.Registry {
-				targetPath = mapping.Target
-				break
+				// Use the explicit mapping target as the full path
+				return fmt.Sprintf("%s/%s", mapping.Target, imgRef.Repository)
 			}
 		}
 	}
 
-	if targetRegistry != "" {
-		return fmt.Sprintf("%s/%s/%s", targetRegistry, targetPath, imgRef.Repository)
+	// No mapping, use default strategy: targetRegistry/sanitizedSource/repository
+	// Split repository to remove any existing registry prefix
+	repoPath := imgRef.Repository
+	if strings.Contains(repoPath, targetRegistry) {
+		repoPath = strings.TrimPrefix(repoPath, targetRegistry+"/")
 	}
-	return fmt.Sprintf("%s/%s", targetPath, imgRef.Repository)
+
+	if targetRegistry != "" {
+		return fmt.Sprintf("%s/%s/%s", targetRegistry, sourcePath, repoPath)
+	}
+	return fmt.Sprintf("%s/%s", sourcePath, repoPath)
 }

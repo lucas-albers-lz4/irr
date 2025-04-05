@@ -216,12 +216,12 @@ func runDefault(cmd *cobra.Command, args []string) error {
 			if verbose {
 				fmt.Printf("Detected %d images:\n", len(detectedImages))
 				for _, img := range detectedImages {
-					fmt.Printf("  Path: %v\n  Type: %s\n  Image: %+v\n", img.Path, img.RefType, img.ImageRef)
+					fmt.Printf("  Path: %v\n  Type: %v\n  Image: %+v\n", img.Location, img.LocationType, img.Reference)
 				}
 				if len(unsupported) > 0 {
 					fmt.Printf("Found %d unsupported structures:\n", len(unsupported))
 					for _, u := range unsupported {
-						fmt.Printf("  Path: %v\n  Type: %s\n", u.Path, u.RefType)
+						fmt.Printf("  Path: %v\n  Type: %v\n", u.Location, u.LocationType)
 					}
 				}
 			}

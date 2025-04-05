@@ -1,0 +1,120 @@
+# Test output and generated files
+test/output/
+test/output/**/*.txt
+test/output/**/*.log
+test/output/**/*.json
+test/output/**/*.yaml
+test/*.txt
+test/charts/
+test/test/
+test/results.txt
+test/analysis-results.txt
+test/override-results.txt
+
+# Go build artifacts
+bin/
+build/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go workspace files
+go.work
+
+# Python virtual environments
+.venv/
+venv/
+ENV/
+env/
+.env/
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# IDE settings
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.swp
+*.swo
+*~
+.vs/
+*.sublime-workspace
+*.sublime-project
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+*.log
+
+# Helm charts and packages
+*.tgz
+charts/*/charts/
+charts/*/requirements.lock
+charts/*/Chart.lock
+
+# Dependencies
+vendor/
+node_modules/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+*.env
+
+# Build output
+dist/
+_output/
+*.tar.gz
+*.zip
+
+# Debug files
+debug/
+debug.test
+*.debug
+*.pprof
+
+# Project specific
+test-data/
+test-chart/
+tools/bin/
+tools/build/
+tools/temp/
+
+# Registry mappings (if these should be user-specific)
+registry-mappings.yaml *.tgz
