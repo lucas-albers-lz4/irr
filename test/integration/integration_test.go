@@ -229,7 +229,7 @@ func TestDryRunFlag(t *testing.T) {
 		"--dry-run",
 	}
 
-	// Run the command
+	// #nosec G204 // Test command uses test-controlled arguments
 	cmd := exec.Command("../../bin/irr", args...)
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "Dry run should succeed")
@@ -272,7 +272,7 @@ func TestStrictMode(t *testing.T) {
 
 func setupMinimalTestChart(t *testing.T, h *TestHarness) {
 	chartDir := filepath.Join(h.tempDir, "minimal-chart")
-	require.NoError(t, os.MkdirAll(chartDir, 0755))
+	require.NoError(t, os.MkdirAll(chartDir, 0750))
 
 	// Create Chart.yaml
 	chartYaml := `apiVersion: v2
@@ -291,7 +291,7 @@ version: 0.1.0`
 
 func setupChartWithUnsupportedStructure(t *testing.T, h *TestHarness) {
 	chartDir := filepath.Join(h.tempDir, "unsupported-chart")
-	require.NoError(t, os.MkdirAll(chartDir, 0755))
+	require.NoError(t, os.MkdirAll(chartDir, 0750))
 
 	// Create Chart.yaml
 	chartYaml := `apiVersion: v2

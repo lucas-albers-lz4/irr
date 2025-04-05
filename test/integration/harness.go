@@ -234,3 +234,37 @@ func (h *TestHarness) WalkImageFields(data map[string]interface{}, callback func
 	}
 	walk(data, nil)
 }
+
+// ExecuteIRR runs the irr binary with the given arguments.
+func (h *TestHarness) ExecuteIRR(args ...string) (string, error) {
+	// #nosec G204 // Test harness executes binary with test-controlled arguments
+	cmd := exec.Command("../../bin/irr", args...)
+	cmd.Dir = h.tempDir // Run in the temp directory context
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		// Try to provide more context on error
+		exitErr, ok := err.(*exec.ExitError)
+		if ok {
+			return string(output), fmt.Errorf("command failed with exit code %d: %w\nStderr: %s", exitErr.ExitCode(), err, string(exitErr.Stderr))
+		}
+		return string(output), fmt.Errorf("failed to execute irr: %w", err)
+	}
+	return string(output), nil
+}
+
+// ExecuteHelm runs the helm binary with the given arguments.
+func (h *TestHarness) ExecuteHelm(args ...string) (string, error) {
+	// #nosec G204 // Test harness executes helm with test-controlled arguments
+	cmd := exec.Command("helm", args...)
+	cmd.Dir = h.tempDir // Run in the temp directory context
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		// Try to provide more context on error
+		exitErr, ok := err.(*exec.ExitError)
+		if ok {
+			return string(output), fmt.Errorf("helm command failed with exit code %d: %w\nStderr: %s", exitErr.ExitCode(), err, string(exitErr.Stderr))
+		}
+		return string(output), fmt.Errorf("helm template execution failed: %w", err)
+	}
+	return string(output), nil
+}
