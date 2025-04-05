@@ -43,7 +43,7 @@ func TestLoadMappings(t *testing.T) {
 			name:          "nonexistent file",
 			path:          "nonexistent.yaml",
 			wantErr:       true,
-			errorContains: "failed to read mappings file",
+			errorContains: "mappings file does not exist",
 		},
 		{
 			name: "empty path",
