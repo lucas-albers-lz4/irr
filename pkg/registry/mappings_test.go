@@ -53,6 +53,9 @@ func TestLoadMappings(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Set env variable to skip CWD check in LoadMappings during testing
+			t.Setenv("IRR_TESTING", "true")
+
 			got, err := LoadMappings(tt.path)
 			if tt.wantErr {
 				require.Error(t, err)
