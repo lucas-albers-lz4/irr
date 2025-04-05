@@ -15,4 +15,5 @@ repos:
       rev: v1.56.2
       hooks:
         - id: golangci-lint
+          args: [--version, --default standard]
 # Optional: create a pyproject.toml for tool configuration
