@@ -8,7 +8,6 @@ It does NOT pull charts from repositories.
 """
 
 import argparse
-import concurrent.futures
 import json
 import os
 import re
@@ -20,7 +19,7 @@ import tarfile
 import yaml
 import time
 from pathlib import Path
-from typing import Dict, List, Tuple, Any, Optional
+from typing import List, Tuple, Optional
 from collections import defaultdict
 import csv
 from datetime import datetime
@@ -129,8 +128,8 @@ volumePermissions:
 
 # VALUES_TEMPLATE_STANDARD_MAP: For charts generally using map-based image definitions
 # Keep VERY minimal, avoid adding keys not universally present in schemas.
-VALUES_TEMPLATE_STANDARD_MAP = f"""
-global: {{}} # Assume global might exist but add no specific keys
+VALUES_TEMPLATE_STANDARD_MAP = """
+global: {} # Assume global might exist but add no specific keys
 
 # Service structure required by many common libraries
 # Use nested map structure for ports
@@ -174,7 +173,7 @@ pullPolicy: IfNotPresent
 # VALUES_TEMPLATE_DEFAULT: Fallback - ABSOLUTELY MINIMAL.
 # Rely on chart defaults as much as possible.
 # Make this completely empty to avoid most schema errors.
-VALUES_TEMPLATE_DEFAULT = f"""{{}}"""
+VALUES_TEMPLATE_DEFAULT = """{}"""
 
 # Add to the top with other constants
 CLASSIFICATION_STATS_FILE = TEST_OUTPUT_DIR / "classification-stats.json"
@@ -400,182 +399,156 @@ def save_classification_stats():
     print("-" * 40)
 
 async def test_chart_override(chart_info, target_registry, helm_override_binary, session):
-    """
-    Tests override generation and helm template validation for a single chart.
-    Assumes the chart path points to an already downloaded/extracted chart directory.
-    """
     chart_name, chart_path = chart_info
-    stdout_file = TEST_OUTPUT_DIR / f"{chart_name}-override-stdout.txt"
-    stderr_file = TEST_OUTPUT_DIR / f"{chart_name}-override-stderr.txt"
     output_file = TEST_OUTPUT_DIR / f"{chart_name}-values.yaml"
-    
+
+    # --- Initialize variables --- 
+    classification = "UNKNOWN"
+    override_duration = 0
+    validation_duration = 0
+    stdout, stderr = None, None # For helm-image-override process
+    override_stdout_str, override_stderr_str = "", "" # Decoded strings
+    template_stdout_str, template_stderr_str = "", "" # For helm template process
+    result = None # For override process result
+    template_process = None # For template process result
+
+    # --- Initial Chart Path Validation --- 
+    # This check needs to happen before the main try block
+    if not chart_path or not chart_path.is_dir():
+         error_msg = f"Extracted chart path is not a directory or is missing: {chart_path}"
+         print(f"Error testing {chart_name}: {error_msg}")
+         category = categorize_error(error_msg) # Use standalone function
+         # Ensure durations are 0 for early setup errors
+         return TestResult(chart_name, chart_path, classification, "SETUP_ERROR", category, error_msg, 0, 0)
+
     print(f"\nTesting chart override: {chart_name} at {chart_path}")
     
     try:
-        # First check if helm-override-binary exists
-        if not helm_override_binary.exists():
-            error_msg = f"helm-image-override binary not found at {helm_override_binary}"
-            print(f"Error: {error_msg}")
-            return TestResult(chart_name, chart_path, "UNKNOWN", "UNKNOWN_ERROR", error_msg, "", 0, 0)
+        classification = get_chart_classification(chart_path) # Get classification early
+        print(f"  Classification: {classification}")
 
-        # Get cached chart
-        cached_chart = get_cached_chart(chart_name)
-        if not cached_chart:
-            error_msg = f"Chart {chart_name} not found in cache"
-            print(f"Error: {error_msg}")
-            return TestResult(chart_name, chart_path, "UNKNOWN", "UNKNOWN_ERROR", error_msg, "", 0, 0)
-
-        # Create temporary directory for chart extraction
-        temp_dir = Path(tempfile.mkdtemp())
-        chart_path = temp_dir / chart_name
+        # --- Override Generation ---
+        print(f"  Generating overrides for {chart_name}...")
+        start_time = time.time() 
+        override_cmd = [
+            str(helm_override_binary),
+            "override",
+            "--chart-path", str(chart_path),
+            "--target-registry", target_registry,
+            "--source-registries", "docker.io,quay.io,gcr.io,ghcr.io,k8s.gcr.io,registry.k8s.io", 
+            "--output-file", str(output_file),
+            "--debug" # Keep debug enabled
+        ]
         
         try:
-            # Extract the cached chart
-            print(f"Extracting cached chart: {cached_chart}")
-            with tarfile.open(cached_chart) as tar:
-                tar.extractall(temp_dir)
-                
-                # Find the extracted directory (usually there's only one)
-                extracted_items = list(temp_dir.iterdir())
-                if not extracted_items:
-                    raise Exception("No files found in extracted chart")
-                    
-                # The chart directory is usually the only directory in the extracted contents
-                chart_path = extracted_items[0]
-                if not chart_path.is_dir():
-                    raise Exception("Extracted chart path is not a directory")
-
-            # Get chart classification
-            classification = get_chart_classification(chart_path)
-            print(f"Using classification: {classification}")
-
-            # Build and print the override command
-            override_cmd = [
-                str(helm_override_binary),
-                "override",
-                "--chart-path", str(chart_path),
-                "--target-registry", target_registry,
-                "--source-registries", "docker.io,quay.io,gcr.io,ghcr.io,k8s.gcr.io,registry.k8s.io",
-                "--output-file", str(output_file)
-            ]
-            print("\nExecuting override command:")
-            print(" ".join(override_cmd))
-
-            # Run the override command
-            print("Generating overrides...")
-            start_time = time.time()
-            result = subprocess.run(
-                override_cmd,
-                stdout=open(stdout_file, "w"),
-                stderr=open(stderr_file, "w"),
-                check=True
+            result = await asyncio.create_subprocess_exec(
+                *override_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
             )
+            stdout, stderr = await asyncio.wait_for(result.communicate(), timeout=120)
             override_duration = time.time() - start_time
-            
-            # Capture override stdout/stderr for potential errors even on success code
+            # Decode output here, after communicate potentially succeeded
             override_stdout_str = stdout.decode().strip() if stdout else ""
             override_stderr_str = stderr.decode().strip() if stderr else ""
-
-            if result.returncode != 0:
-                error_msg = f"helm-image-override failed (code {result.returncode}):\nStderr: {override_stderr_str}\nStdout: {override_stdout_str}"
-                print(f"  Error generating overrides for {chart_name}.")
-                category = categorize_error(override_stderr_str or override_stdout_str) # Prioritize stderr
-                return TestResult(chart_name, chart_path, classification, "OVERRIDE_ERROR", category, error_msg, override_duration, 0)
-            elif not output_file.exists() or output_file.stat().st_size == 0:
-                # Include override tool's output in the error message
-                error_msg = f"Override file not created or empty after successful run for {chart_name}.\nStderr: {override_stderr_str}\nStdout: {override_stdout_str}"
-                print(f"  Error: {error_msg}")
-                category = categorize_error(error_msg)
-                return TestResult(chart_name, chart_path, classification, "OVERRIDE_ERROR", category, error_msg, override_duration, 0)
-            else:
-                print(f"  Override generation successful ({override_duration:.2f}s). Output: {output_file}")
-
-            # --- Helm Template Validation ---
-            print(f"  Validating with helm template for {chart_name}...")
-            start_time = time.time()
-            temp_dir = None
-            template_stdout_str = ""
-            template_stderr_str = ""
-            try:
-                temp_dir = Path(tempfile.mkdtemp(prefix="helm-values-"))
-                temp_values_path = temp_dir / "temp_class_values.yaml"
-
-                values_content = get_values_content(classification, target_registry)
-                temp_values_path.write_text(values_content)
-
-                cmd = [
-                    "helm", "template", chart_name, str(chart_path),
-                    "-f", str(temp_values_path),
-                    "-f", str(output_file)
-                ]
-                # Use asyncio.create_subprocess_exec for helm template as well
-                template_process = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE
-                )
-                # Ensure communication happens to capture output
-                stdout, stderr = await asyncio.wait_for(template_process.communicate(), timeout=60) 
-                validation_duration = time.time() - start_time
-                
-                template_stdout_str = stdout.decode().strip() if stdout else ""
-                template_stderr_str = stderr.decode().strip() if stderr else ""
-
-                if template_process.returncode != 0:
-                    # Combine command, stderr, and stdout for detailed error
-                    error_details = f"Helm template failed (code {template_process.returncode}):\nCommand: {' '.join(cmd)}\nStderr: {template_stderr_str}\nStdout: {template_stdout_str}" 
-                    print(f"  Helm template validation failed for {chart_name}.")
-                    # Categorize based on stderr primarily, fallback to stdout
-                    category = categorize_error(template_stderr_str or template_stdout_str) 
-                    return TestResult(chart_name, chart_path, classification, "TEMPLATE_ERROR", category, error_details, override_duration, validation_duration)
-                else:
-                     print(f"  Helm template validation successful ({validation_duration:.2f}s).")
-
-            # Catch exceptions specifically around the helm template subprocess call
-            except (asyncio.TimeoutError, Exception) as template_exc:
-                 validation_duration = time.time() - start_time # Capture time until exception
-                 # Attempt to include any captured output, even partial
-                 error_msg = f"Error during helm template execution for {chart_name}: {template_exc}\nStderr: {template_stderr_str}\nStdout: {template_stdout_str}"
-                 print(f"Error: {error_msg}")
-                 category = categorize_error(template_stderr_str or str(template_exc))
-                 status = "TIMEOUT_ERROR" if isinstance(template_exc, asyncio.TimeoutError) else "TEMPLATE_ERROR"
-                 return TestResult(chart_name, chart_path, classification, status, category, error_msg, override_duration, validation_duration)
-            finally:
-                if temp_dir and temp_dir.exists():
-                    shutil.rmtree(temp_dir, ignore_errors=True)
-
-            # If template validation passes
-            print(f"Success: Chart {chart_name} processed successfully.")
-            return TestResult(chart_name, chart_path, classification, "SUCCESS", "", "", override_duration, validation_duration)
-
-        except Exception as e:
-            error_msg = f"Unexpected error processing chart {chart_name}: {str(e)}"
+        except Exception as override_exec_err:
+            override_duration = time.time() - start_time # Capture time until error
+            error_msg = f"Error during helm-image-override execution for {chart_name}: {override_exec_err}"
             print(f"Error: {error_msg}")
-            import traceback
-            traceback.print_exc() # Print full traceback for unexpected errors
-            category = categorize_error(str(e)) # Categorize based on the exception string
-            return TestResult(chart_name, chart_path, classification, "UNKNOWN_ERROR", category, error_msg, 0, 0)
+            category = categorize_error(str(override_exec_err))
+            # stdout/stderr might be None here, use already initialized empty strings
+            error_details = f"{error_msg}\nStderr: {override_stderr_str}\nStdout: {override_stdout_str}"
+            return TestResult(chart_name, chart_path, classification, "OVERRIDE_ERROR", category, error_details, override_duration, 0)
 
+        # Check return code AFTER trying to communicate
+        if result is None or result.returncode != 0:
+            return_code = result.returncode if result is not None else "N/A"
+            error_msg = f"helm-image-override failed (code {return_code}):\nStderr: {override_stderr_str}\nStdout: {override_stdout_str}"
+            print(f"  Error generating overrides for {chart_name}.")
+            category = categorize_error(override_stderr_str or override_stdout_str) # Prioritize stderr
+            return TestResult(chart_name, chart_path, classification, "OVERRIDE_ERROR", category, error_msg, override_duration, 0)
+        
+        # Check if output file exists (moved after return code check)
+        if not output_file.exists() or output_file.stat().st_size == 0:
+            error_msg = f"Override file not created or empty after successful run for {chart_name}.\nStderr: {override_stderr_str}\nStdout: {override_stdout_str}"
+            print(f"  Error: {error_msg}")
+            category = categorize_error(error_msg)
+            return TestResult(chart_name, chart_path, classification, "OVERRIDE_ERROR", category, error_msg, override_duration, 0)
+        else:
+            print(f"  Override generation successful ({override_duration:.2f}s). Output: {output_file}")
+        
+        # --- Helm Template Validation ---
+        print(f"  Validating with helm template for {chart_name}...")
+        start_time = time.time() 
+        temp_dir = None
+        template_stdout_str, template_stderr_str = "", "" # Initialize for this block
+        try:
+            temp_dir = Path(tempfile.mkdtemp(prefix="helm-values-"))
+            temp_values_path = temp_dir / "temp_class_values.yaml"
+
+            values_content = get_values_content(classification, target_registry)
+            temp_values_path.write_text(values_content)
+
+            cmd = [
+                "helm", "template", chart_name, str(chart_path),
+                "-f", str(temp_values_path),
+                "-f", str(output_file)
+            ]
+            template_process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout_tmpl, stderr_tmpl = await asyncio.wait_for(template_process.communicate(), timeout=60) 
+            validation_duration = time.time() - start_time
+            
+            template_stdout_str = stdout_tmpl.decode().strip() if stdout_tmpl else ""
+            template_stderr_str = stderr_tmpl.decode().strip() if stderr_tmpl else ""
+
+            if template_process.returncode != 0:
+                error_details = f"Helm template failed (code {template_process.returncode}):\nCommand: {' '.join(cmd)}\nStderr: {template_stderr_str}\nStdout: {template_stdout_str}" 
+                print(f"  Helm template validation failed for {chart_name}.")
+                category = categorize_error(template_stderr_str or template_stdout_str) 
+                return TestResult(chart_name, chart_path, classification, "TEMPLATE_ERROR", category, error_details, override_duration, validation_duration)
+            else:
+                 print(f"  Helm template validation successful ({validation_duration:.2f}s).")
+
+        except (asyncio.TimeoutError, Exception) as template_exc:
+             validation_duration = time.time() - start_time # Capture time until exception
+             # Use already decoded strings if available, otherwise the exception string
+             error_details = f"Error during helm template execution for {chart_name}: {template_exc}\nStderr: {template_stderr_str}\nStdout: {template_stdout_str}"
+             print(f"Error: {error_details}")
+             category = categorize_error(template_stderr_str or str(template_exc))
+             status = "TIMEOUT_ERROR" if isinstance(template_exc, asyncio.TimeoutError) else "TEMPLATE_ERROR"
+             return TestResult(chart_name, chart_path, classification, status, category, error_details, override_duration, validation_duration)
+        finally:
+            if temp_dir and temp_dir.exists():
+                shutil.rmtree(temp_dir, ignore_errors=True)
+
+        # If template validation passes
+        print(f"Success: Chart {chart_name} processed successfully.")
+        return TestResult(chart_name, chart_path, classification, "SUCCESS", "", "", override_duration, validation_duration)
+
+    # --- Outer Exception Handling --- 
+    # Catch broader exceptions (e.g., file system errors, unexpected issues)
     except asyncio.TimeoutError as e:
-        # Ensure override duration is captured if timeout happened there
-        if override_duration == 0: override_duration = time.time() - start_time 
+        # override_duration should already be set if timeout happened there
         error_msg = f"Timeout expired processing chart {chart_name}: {e}"
         print(f"Error: {error_msg}")
         category = categorize_error(error_msg)
-        return TestResult(chart_name, chart_path, classification, "TIMEOUT_ERROR", category, error_msg, override_duration, 0)
+        # Include override output if available
+        error_details = f"{error_msg}\nOverride Stderr: {override_stderr_str}\nOverride Stdout: {override_stdout_str}"
+        return TestResult(chart_name, chart_path, classification, "TIMEOUT_ERROR", category, error_details, override_duration, validation_duration)
     except Exception as e:
-        # Ensure override duration is captured if error happened there
-        if override_duration == 0: override_duration = time.time() - start_time
-        # Attempt to get stderr/stdout if available from override context
-        error_details = f"Unexpected error processing chart {chart_name}: {str(e)}"
-        # Add override output if relevant context is available (variables might not exist here)
-        # error_details += f"\nOverride Stderr: {override_stderr_str if 'override_stderr_str' in locals() else 'N/A'}"
-        # error_details += f"\nOverride Stdout: {override_stdout_str if 'override_stdout_str' in locals() else 'N/A'}"
-        print(f"Error: {error_details}")
+        # override_duration should already be set if error happened there
+        error_msg = f"Unexpected error processing chart {chart_name}: {str(e)}"
+        print(f"Error: {error_msg}")
         import traceback
         traceback.print_exc() # Print full traceback for unexpected errors
-        category = categorize_error(str(e)) # Categorize based on the exception string
-        return TestResult(chart_name, chart_path, classification, "UNKNOWN_ERROR", category, error_details, override_duration, 0)
+        category = categorize_error(str(e)) 
+        # Include override output if available
+        error_details = f"{error_msg}\nOverride Stderr: {override_stderr_str}\nOverride Stdout: {override_stdout_str}"
+        return TestResult(chart_name, chart_path, classification, "UNKNOWN_ERROR", category, error_details, override_duration, validation_duration)
 
 # Repository management functions
 def add_helm_repositories():
