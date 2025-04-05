@@ -33,6 +33,10 @@ var (
 	ErrInvalidImageRefFormat   = errors.New("invalid image reference format")
 	ErrUnsupportedImageType    = errors.New("unsupported image reference type")
 	ErrRepoNotFound            = errors.New("repository not found or not a string")
+	ErrInvalidRegistryName     = errors.New("invalid registry name")
+
+	// Regex for basic validation (adjust as needed based on OCI spec)
+	digestCharsRegex = regexp.MustCompile(`^[a-fA-F0-9]+$`) // Added for digest hex char validation
 )
 
 // ImageReference represents a container image reference
@@ -467,29 +471,42 @@ func tryExtractImageFromString(s string) (*ImageReference, error) {
 	if len(parts) == 2 {
 		ref.Digest = parts[1]
 		// Validate digest format - allow any length for flexibility
-		if !strings.HasPrefix(ref.Digest, "sha256:") {
+		// Allow sha256: prefix or just the hex chars for compatibility
+		if !digestCharsRegex.MatchString(ref.Digest) && (!strings.HasPrefix(ref.Digest, "sha256:") || !digestCharsRegex.MatchString(strings.TrimPrefix(ref.Digest, "sha256:"))) {
 			return nil, ErrInvalidDigestFormat
 		}
-	}
-
-	// Split remaining part by : to handle tag and registry port
-	repoAndTag := parts[0]
-
-	// We need to handle :port in the registry domain, so split from the right
-	lastColonIdx := strings.LastIndex(repoAndTag, ":")
-	if lastColonIdx > 0 {
-		// Check if there's a slash after the last colon (indicates port is in registry)
-		if strings.LastIndex(repoAndTag, "/") < lastColonIdx {
-			ref.Tag = repoAndTag[lastColonIdx+1:]
-			repoAndTag = repoAndTag[:lastColonIdx]
-			// Validate tag format - more flexible validation
-			if !isValidTag(ref.Tag) {
-				return nil, ErrInvalidTagFormat
-			}
+		if !strings.HasPrefix(ref.Digest, "sha256:") {
+			// Normalize digest to include prefix if missing
+			ref.Digest = "sha256:" + ref.Digest
 		}
 	}
 
-	// Handle repository part
+	// Remaining part might contain registry, repository, and tag
+	repoAndTag := parts[0]
+
+	// Find the last colon to potentially separate the tag
+	lastColonIdx := strings.LastIndex(repoAndTag, ":")
+
+	// Check if the colon exists and is not the first character
+	if lastColonIdx > 0 {
+		potentialTag := repoAndTag[lastColonIdx+1:]
+		potentialRepoPart := repoAndTag[:lastColonIdx]
+
+		// Validate the potential tag *immediately*
+		if !isValidTag(potentialTag) {
+			return nil, ErrInvalidTagFormat // Return error if tag format is invalid
+		}
+
+		// If the tag is valid, assign it and update the remaining part
+		ref.Tag = potentialTag
+		repoAndTag = potentialRepoPart
+	} else if lastColonIdx == 0 {
+		// Colon at the beginning is invalid (e.g., ":tag")
+		return nil, ErrInvalidImageRefFormat
+	}
+	// If lastColonIdx == -1, there's no colon, so no tag to process here.
+
+	// Handle repository part from the remaining repoAndTag string
 	repoStr := repoAndTag
 	if strings.Contains(repoStr, "/") {
 		// Has registry or organization
@@ -497,6 +514,9 @@ func tryExtractImageFromString(s string) (*ImageReference, error) {
 		if strings.Contains(repoParts[0], ".") || strings.Contains(repoParts[0], ":") || repoParts[0] == "localhost" {
 			// First part contains . or : indicating it's a registry, or is localhost
 			ref.Registry = repoParts[0]
+			if !isValidRegistryName(ref.Registry) {
+				return nil, ErrInvalidRegistryName
+			}
 			ref.Repository = repoParts[1]
 		} else {
 			// First part is an organization
@@ -530,66 +550,58 @@ func tryExtractImageFromString(s string) (*ImageReference, error) {
 	return ref, nil
 }
 
-// ParseImageReference parses an image reference from either a string or a map
-func ParseImageReference(value interface{}) (*ImageReference, error) {
-	debug.FunctionEnter("ParseImageReference")
-	defer debug.FunctionExit("ParseImageReference")
-
-	switch v := value.(type) {
-	case string:
-		return parseImageString(v)
-	case map[string]interface{}:
-		return parseImageMap(v)
-	default:
-		return nil, fmt.Errorf("%w: %T", ErrUnsupportedImageType, value)
-	}
-}
-
-// parseImageString parses an image reference from a string
-func parseImageString(image string) (*ImageReference, error) {
-	debug.Printf("Parsing image string: %s", image)
-
-	// Try to match as a tag-based reference first
-	if matches := tagRegex.FindStringSubmatch(image); len(matches) > 0 {
-		ref := &ImageReference{}
-		for i, name := range tagRegex.SubexpNames() {
-			if i != 0 && name != "" && i < len(matches) {
-				switch name {
-				case "registry":
-					ref.Registry = matches[i]
-				case "repository":
-					ref.Repository = matches[i]
-				case "tag":
-					ref.Tag = matches[i]
-				}
-			}
-		}
-		return normalizeImageReference(ref), nil
+// ParseImageReference parses a string into an ImageReference
+func ParseImageReference(input interface{}) (*ImageReference, error) {
+	// Handle nil input
+	if input == nil {
+		return nil, fmt.Errorf("input must be a string")
 	}
 
-	// Try to match as a digest-based reference
-	if matches := digestRegex.FindStringSubmatch(image); len(matches) > 0 {
-		ref := &ImageReference{}
-		for i, name := range digestRegex.SubexpNames() {
-			if i != 0 && name != "" && i < len(matches) {
-				switch name {
-				case "registry":
-					ref.Registry = matches[i]
-				case "repository":
-					ref.Repository = matches[i]
-				case "digest":
-					ref.Digest = matches[i]
-				}
-			}
-		}
-		return normalizeImageReference(ref), nil
+	// Convert input to string
+	str, ok := input.(string)
+	if !ok {
+		return nil, fmt.Errorf("input must be a string")
 	}
 
-	// Try to extract using more flexible parsing
-	ref, err := tryExtractImageFromString(image)
+	// Handle empty string
+	if str == "" {
+		return nil, fmt.Errorf("empty image reference")
+	}
+
+	// Parse the string into an ImageReference using the core logic
+	ref, err := tryExtractImageFromString(str)
+
+	// Handle errors from parsing
 	if err != nil {
-		return nil, fmt.Errorf("invalid image reference: %v", err)
+		switch {
+		case errors.Is(err, ErrEmptyImageString):
+			return nil, fmt.Errorf("empty image reference")
+		case errors.Is(err, ErrInvalidTagFormat):
+			return nil, fmt.Errorf("invalid tag format")
+		case errors.Is(err, ErrInvalidDigestFormat):
+			return nil, fmt.Errorf("invalid digest format")
+		case errors.Is(err, ErrInvalidRegistryName):
+			// Use original string for context as ref might be partially populated or nil
+			return nil, fmt.Errorf("invalid registry name: %s", str)
+		case errors.Is(err, ErrInvalidRepoName):
+			// Error for invalid Docker Library names like "InvalidRepo"
+			return nil, fmt.Errorf("invalid image reference: %s", str)
+		case errors.Is(err, ErrInvalidImageRefFormat):
+			// Generic format error from tryExtractImageFromString's final check
+			return nil, fmt.Errorf("invalid image reference: %s", str)
+		default:
+			// Catch-all for unexpected errors, wrap original error
+			return nil, fmt.Errorf("invalid image reference: %s: %w", str, err)
+		}
 	}
+
+	// Defensive check in case tryExtractImageFromString returns nil, nil
+	if ref == nil {
+		return nil, fmt.Errorf("invalid image reference: %s", str)
+	}
+
+	// Trust tryExtractImageFromString for validation, final checks removed.
+
 	return ref, nil
 }
 
@@ -657,6 +669,17 @@ func isValidTag(tag string) bool {
 	if tag == "" {
 		return false
 	}
+
+	// Maximum length for a tag
+	if len(tag) > 128 {
+		return false
+	}
+
+	// Tag cannot contain slashes
+	if strings.Contains(tag, "/") {
+		return false
+	}
+
 	for _, c := range tag {
 		// nolint:staticcheck // Intentionally keeping complex boolean logic for readability
 		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.') {
@@ -672,28 +695,19 @@ func isValidImageReference(ref *ImageReference) bool {
 		return false
 	}
 
-	// Check registry
-	if ref.Registry != "" && !isValidRegistryName(ref.Registry) {
-		// Accommodate for special cases like localhost, ip addresses with ports
-		if !strings.HasPrefix(ref.Registry, "localhost") &&
-			!strings.Contains(ref.Registry, ":") {
-			return false
-		}
+	// Check registry name
+	if !isValidRegistryName(ref.Registry) {
+		return false
 	}
 
 	// Check repository
-	if ref.Repository == "" {
+	if !isValidRepositoryPart(ref.Repository) {
 		return false
 	}
-	for _, part := range strings.Split(ref.Repository, "/") {
-		if !isValidRepositoryPart(part) {
-			return false
-		}
-	}
 
-	// Check tag or digest - empty tag is valid for latest
+	// Check tag and digest
 	if ref.Tag != "" && ref.Digest != "" {
-		return false // Can't have both
+		return false
 	}
 	if ref.Tag != "" && !isValidTag(ref.Tag) {
 		return false
@@ -731,8 +745,12 @@ func isValidRegistryName(name string) bool {
 		return false
 	}
 
+	// Maximum of 3 parts in a domain name (e.g., registry.example.com)
+	if len(parts) > 3 {
+		return false
+	}
+
 	for _, part := range parts {
-		// nolint:staticcheck // Intentionally keeping complex boolean logic for readability
 		if !isValidDomainPart(part) {
 			return false
 		}
@@ -768,18 +786,61 @@ func isValidDockerLibraryName(name string) bool {
 	return true
 }
 
-// isValidRepositoryPart checks if a repository name part is valid
-func isValidRepositoryPart(part string) bool {
-	if part == "" {
+// isValidRepositoryPart checks if a repository name is valid
+func isValidRepositoryPart(repo string) bool {
+	if repo == "" {
 		return false
 	}
-	for _, c := range part {
-		// nolint:staticcheck // Intentionally keeping complex boolean logic for readability
-		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-') {
+
+	// Maximum length for a repository name
+	if len(repo) > 255 {
+		return false
+	}
+
+	// Maximum of 5 parts in a repository path (e.g., org/suborg/group/subgroup/app)
+	parts := strings.Split(repo, "/")
+	if len(parts) > 5 {
+		return false
+	}
+
+	// Repository must be lowercase and can contain alphanumeric characters, dots, dashes, and slashes
+	// Each part between slashes must be valid
+	for _, part := range parts {
+		if part == "" {
+			return false
+		}
+		if !isValidNamePart(part) {
 			return false
 		}
 	}
 	return true
+}
+
+// isValidNamePart checks if a single part of a name is valid
+func isValidNamePart(part string) bool {
+	if part == "" {
+		return false
+	}
+	// Must start and end with alphanumeric character
+	if !isAlphanumeric(rune(part[0])) || !isAlphanumeric(rune(part[len(part)-1])) {
+		return false
+	}
+	// Can contain lowercase alphanumeric characters, dots, and dashes
+	for _, r := range part {
+		if !isAlphanumeric(r) && r != '.' && r != '-' {
+			return false
+		}
+	}
+	// Check for consecutive dots or dashes
+	if strings.Contains(part, "..") || strings.Contains(part, "--") {
+		return false
+	}
+	return true
+}
+
+// isAlphanumeric checks if a rune is a lowercase letter or number
+func isAlphanumeric(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
 }
 
 // isImagePath checks if a path is likely to contain an image reference

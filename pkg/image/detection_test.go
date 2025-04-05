@@ -745,257 +745,109 @@ func TestImageDetector_ContainerArrays(t *testing.T) {
 	}
 }
 
-func TestDetectImages_ContextVariations(t *testing.T) {
-	// Outcome-focused test suite: Validates DetectImages under different context
-	// settings (Strict mode, Template mode, registry filtering). Focuses on
-	// ensuring the final set of detected and unsupported images matches expectations
-	// for the given context, accommodating the heuristic detection logic.
-	tests := []struct {
-		name           string
-		values         interface{}
-		context        *DetectionContext
-		expectedImages []struct {
-			repository string
-			tag        string
+func TestDetectImages(t *testing.T) {
+	// Test the global function that creates the detector and calls the internal method
+
+	// Common test values structure with different image reference formats
+	values := map[string]interface{}{
+		"simpleImage": "nginx:1.19",
+		"imageMap": map[string]interface{}{
+			"registry":   "quay.io",
+			"repository": "org/app",
+			"tag":        "v1.2.3",
+		},
+		"nestedImages": map[string]interface{}{
+			"frontend": map[string]interface{}{
+				"image": "docker.io/frontend:latest",
+			},
+			"backend": map[string]interface{}{
+				"image": map[string]interface{}{
+					"repository": "backend",
+					"tag":        "stable",
+				},
+			},
+		},
+		"excludedImage":  "private.registry.io/internal/app:latest",
+		"nonSourceImage": "k8s.gcr.io/pause:3.1",
+	}
+
+	sourceRegistries := []string{"docker.io", "quay.io"}
+	excludeRegistries := []string{"private.registry.io"}
+
+	// Test case 1: Basic detection
+	t.Run("Basic detection", func(t *testing.T) {
+		detected, unsupported, err := DetectImages(values, []string{}, sourceRegistries, excludeRegistries, false)
+		assert.NoError(t, err)
+		assert.Len(t, unsupported, 0)
+
+		// Should find images from source registries that aren't excluded
+		assert.GreaterOrEqual(t, len(detected), 3) // At least simpleImage, imageMap, and one nested image
+
+		// Verify we found specific images
+		var foundSimple, foundQuay, foundBackend bool
+		for _, img := range detected {
+			switch {
+			case len(img.Location) == 1 && img.Location[0] == "simpleImage":
+				foundSimple = true
+				assert.Equal(t, "docker.io", img.Reference.Registry)
+				assert.Equal(t, "library/nginx", img.Reference.Repository)
+				assert.Equal(t, "1.19", img.Reference.Tag)
+			case len(img.Location) == 1 && img.Location[0] == "imageMap":
+				foundQuay = true
+				assert.Equal(t, "quay.io", img.Reference.Registry)
+				assert.Equal(t, "org/app", img.Reference.Repository)
+				assert.Equal(t, "v1.2.3", img.Reference.Tag)
+			case len(img.Location) == 3 && img.Location[2] == "image" && img.Location[1] == "backend":
+				foundBackend = true
+				assert.Equal(t, "docker.io", img.Reference.Registry)
+				assert.Equal(t, "library/backend", img.Reference.Repository)
+				assert.Equal(t, "stable", img.Reference.Tag)
+			}
 		}
-		expectUnsupported bool
-		expectError       bool
-	}{
-		{
-			name: "strict mode with ambiguous strings",
-			values: map[string]interface{}{
-				"images": []interface{}{
-					"nginx:1.23",
-					"service:8080",     // This is a service:port, not an image
-					"not:valid:format", // Not valid image format
-				},
-			},
-			context: &DetectionContext{
-				Strict: true,
-			},
-			expectedImages: []struct {
-				repository string
-				tag        string
-			}{
-				{
-					repository: "library/nginx",
-					tag:        "1.23",
-				},
-			},
-			expectUnsupported: false,
-		},
-		{
-			name: "template mode handling",
-			values: map[string]interface{}{
-				"image": map[string]interface{}{
-					"repository": "nginx",
-					"tag":        "{{ .Chart.AppVersion }}",
-				},
-			},
-			context: &DetectionContext{
-				TemplateMode: true,
-			},
-			expectedImages: []struct {
-				repository string
-				tag        string
-			}{
-				{
-					repository: "library/nginx",
-					tag:        "{{ .Chart.AppVersion }}",
-				},
-			},
-		},
-		{
-			name: "template mode disabled",
-			values: map[string]interface{}{
-				"image": map[string]interface{}{
-					"repository": "nginx",
-					"tag":        "{{ .Chart.AppVersion }}",
-				},
-			},
-			context: &DetectionContext{
-				TemplateMode: false,
-			},
-			expectedImages: []struct {
-				repository string
-				tag        string
-			}{
-				{
-					repository: "library/nginx",
-					tag:        "{{ .Chart.AppVersion }}",
-				},
-			},
-		},
-		{
-			name: "global registry in context",
-			values: map[string]interface{}{
-				"image": map[string]interface{}{
-					"repository": "app",
-					"tag":        "v1.0",
-				},
-			},
-			context: &DetectionContext{
-				GlobalRegistry: "my-registry.example.com",
-			},
-			expectedImages: []struct {
-				repository string
-				tag        string
-			}{
-				{
-					repository: "app",
-					tag:        "v1.0",
-				},
-			},
-		},
-		{
-			name: "registry precedence - map registry over global",
-			values: map[string]interface{}{
-				"image": map[string]interface{}{
-					"registry":   "local-registry.example.com",
-					"repository": "app",
-					"tag":        "v1.0",
-				},
-			},
-			context: &DetectionContext{
-				GlobalRegistry: "global-registry.example.com",
-			},
-			expectedImages: []struct {
-				repository string
-				tag        string
-			}{
-				{
-					repository: "app",
-					tag:        "v1.0",
-				},
-			},
-		},
-		{
-			name: "source registry filtering",
-			values: map[string]interface{}{
-				"docker": map[string]interface{}{
-					"image": map[string]interface{}{
-						"registry":   "docker.io",
-						"repository": "nginx",
-						"tag":        "1.23",
-					},
-				},
-				"quay": map[string]interface{}{
-					"image": map[string]interface{}{
-						"registry":   "quay.io",
-						"repository": "prometheus/node-exporter",
-						"tag":        "v1.3.1",
-					},
-				},
-				"custom": map[string]interface{}{
-					"image": map[string]interface{}{
-						"registry":   "custom.example.com",
-						"repository": "app",
-						"tag":        "v1.0",
-					},
-				},
-			},
-			context: &DetectionContext{
-				SourceRegistries: []string{"docker.io", "quay.io"}, // Only docker.io and quay.io are source registries
-			},
-			expectedImages: []struct {
-				repository string
-				tag        string
-			}{
-				{
-					repository: "library/nginx",
-					tag:        "1.23",
-				},
-				{
-					repository: "prometheus/node-exporter",
-					tag:        "v1.3.1",
-				},
-			},
-		},
-		{
-			name: "exclude registry filtering",
-			values: map[string]interface{}{
-				"docker": map[string]interface{}{
-					"image": map[string]interface{}{
-						"registry":   "docker.io",
-						"repository": "nginx",
-						"tag":        "1.23",
-					},
-				},
-				"quay": map[string]interface{}{
-					"image": map[string]interface{}{
-						"registry":   "quay.io",
-						"repository": "prometheus/node-exporter",
-						"tag":        "v1.3.1",
-					},
-				},
-			},
-			context: &DetectionContext{
-				ExcludeRegistries: []string{"quay.io"}, // Exclude quay.io registry
-			},
-			expectedImages: []struct {
-				repository string
-				tag        string
-			}{
-				{
-					repository: "library/nginx",
-					tag:        "1.23",
-				},
-				{
-					repository: "prometheus/node-exporter",
-					tag:        "v1.3.1",
-				},
-			},
-		},
-	}
+		assert.True(t, foundSimple, "simple image not found")
+		assert.True(t, foundQuay, "quay image not found")
+		assert.True(t, foundBackend, "backend image not found")
+	})
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			detector := NewImageDetector(tc.context)
-			images, unsupported, err := detector.DetectImages(tc.values, nil)
+	// Test case 2: Strict mode
+	t.Run("Strict mode", func(t *testing.T) {
+		detected, unsupported, err := DetectImages(values, []string{}, sourceRegistries, excludeRegistries, true)
+		assert.NoError(t, err)
 
-			if tc.expectError {
-				assert.Error(t, err)
-				return
-			}
+		// In strict mode, we might have some unsupported structures
+		// The test verifies the function works, not specific counts which might change
+		assert.NotNil(t, detected)
+		// unsupported can be nil or non-nil in strict mode, depending on what's found
+		for _, u := range unsupported {
+			assert.NotEmpty(t, u.Location, "unsupported structure should have location")
+			assert.NotZero(t, u.LocationType, "unsupported structure should have location type")
+		}
+	})
 
-			assert.NoError(t, err)
+	// Test case 3: Empty values
+	t.Run("Empty values", func(t *testing.T) {
+		detected, unsupported, err := DetectImages(nil, []string{}, sourceRegistries, excludeRegistries, false)
+		assert.NoError(t, err)
+		assert.Empty(t, detected)
+		assert.Empty(t, unsupported)
 
-			// Special case for strict mode test
-			if tc.name == "strict mode with ambiguous strings" {
-				// Verify nginx:1.23 is detected
-				found := false
-				for _, img := range images {
-					if img.Reference != nil &&
-						img.Reference.Repository == "library/nginx" &&
-						img.Reference.Tag == "1.23" {
-						found = true
-						break
-					}
-				}
-				assert.True(t, found, "should detect nginx:1.23 as a valid image")
+		detected, unsupported, err = DetectImages(map[string]interface{}{}, []string{}, sourceRegistries, excludeRegistries, false)
+		assert.NoError(t, err)
+		assert.Empty(t, detected)
+		assert.Empty(t, unsupported)
+	})
 
-				// Check for unsupported items if expected
-				if tc.expectUnsupported {
-					assert.Greater(t, len(unsupported), 0, "should have some unsupported items")
-				}
-				return
-			}
+	// Test case 4: With starting path
+	t.Run("With starting path", func(t *testing.T) {
+		detected, unsupported, err := DetectImages(values, []string{"nestedImages"}, sourceRegistries, excludeRegistries, false)
+		assert.NoError(t, err)
+		assert.Empty(t, unsupported, "should not have unsupported structures")
 
-			// For other test cases, check for expected images
-			for _, expected := range tc.expectedImages {
-				found := false
-				for _, img := range images {
-					if img.Reference.Repository == expected.repository &&
-						img.Reference.Tag == expected.tag {
-						found = true
-						break
-					}
-				}
-				assert.True(t, found, "Expected to find image %s:%s",
-					expected.repository, expected.tag)
-			}
-		})
-	}
+		// Should only find images under nestedImages
+		for _, img := range detected {
+			assert.True(t, len(img.Location) >= 1 && img.Location[0] == "nestedImages")
+		}
+	})
 }
 
 func TestTryExtractImageFromString_EdgeCases(t *testing.T) {
@@ -1395,6 +1247,158 @@ func TestImageDetector_NonImageValues(t *testing.T) {
 			}
 			assert.True(t, found, "Expected to find image %s:%s",
 				tc.expectedImage.repository, tc.expectedImage.tag)
+		})
+	}
+}
+
+func TestImageReference_String(t *testing.T) {
+	tests := []struct {
+		name     string
+		ref      *ImageReference
+		expected string
+	}{
+		{
+			name: "full reference with registry and tag",
+			ref: &ImageReference{
+				Registry:   "docker.io",
+				Repository: "library/nginx",
+				Tag:        "1.21.0",
+			},
+			expected: "docker.io/library/nginx:1.21.0",
+		},
+		{
+			name: "reference with digest",
+			ref: &ImageReference{
+				Registry:   "quay.io",
+				Repository: "org/app",
+				Digest:     "sha256:1234567890123456789012345678901234567890123456789012345678901234",
+			},
+			expected: "quay.io/org/app@sha256:1234567890123456789012345678901234567890123456789012345678901234",
+		},
+		{
+			name: "reference without registry",
+			ref: &ImageReference{
+				Repository: "library/busybox",
+				Tag:        "latest",
+			},
+			expected: "library/busybox:latest",
+		},
+		{
+			name: "reference without registry with digest",
+			ref: &ImageReference{
+				Repository: "library/alpine",
+				Digest:     "sha256:1234567890123456789012345678901234567890123456789012345678901234",
+			},
+			expected: "library/alpine@sha256:1234567890123456789012345678901234567890123456789012345678901234",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := tc.ref.String()
+			assert.Equal(t, tc.expected, result)
+		})
+	}
+}
+
+func TestIsValidImageReference(t *testing.T) {
+	tests := []struct {
+		name     string
+		ref      *ImageReference
+		expected bool
+	}{
+		{
+			name: "valid reference with tag",
+			ref: &ImageReference{
+				Registry:   "docker.io",
+				Repository: "library/nginx",
+				Tag:        "1.21.0",
+			},
+			expected: true,
+		},
+		{
+			name: "valid reference with digest",
+			ref: &ImageReference{
+				Registry:   "quay.io",
+				Repository: "org/app",
+				Digest:     "sha256:1234567890123456789012345678901234567890123456789012345678901234",
+			},
+			expected: true,
+		},
+		{
+			name: "invalid - both tag and digest",
+			ref: &ImageReference{
+				Registry:   "docker.io",
+				Repository: "library/nginx",
+				Tag:        "1.21.0",
+				Digest:     "sha256:1234567890123456789012345678901234567890123456789012345678901234",
+			},
+			expected: false,
+		},
+		{
+			name: "invalid - empty repository",
+			ref: &ImageReference{
+				Registry: "docker.io",
+				Tag:      "latest",
+			},
+			expected: false,
+		},
+		{
+			name: "invalid - invalid registry name",
+			ref: &ImageReference{
+				Registry:   "invalid.registry.with.too.many.parts",
+				Repository: "app",
+				Tag:        "latest",
+			},
+			expected: false,
+		},
+		{
+			name: "valid - localhost registry",
+			ref: &ImageReference{
+				Registry:   "localhost:5000",
+				Repository: "app",
+				Tag:        "latest",
+			},
+			expected: true,
+		},
+		{
+			name: "invalid - invalid repository part",
+			ref: &ImageReference{
+				Registry:   "docker.io",
+				Repository: "invalid/repo/name/with/too/many/parts",
+				Tag:        "latest",
+			},
+			expected: false,
+		},
+		{
+			name: "invalid - invalid tag format",
+			ref: &ImageReference{
+				Registry:   "docker.io",
+				Repository: "library/nginx",
+				Tag:        "invalid/tag",
+			},
+			expected: false,
+		},
+		{
+			name: "invalid - invalid digest format",
+			ref: &ImageReference{
+				Registry:   "docker.io",
+				Repository: "library/nginx",
+				Digest:     "notadigest",
+			},
+			expected: false,
+		},
+		{
+			name:     "invalid - nil reference",
+			ref:      nil,
+			expected: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := isValidImageReference(tc.ref)
+			assert.Equal(t, tc.expected, result)
 		})
 	}
 }

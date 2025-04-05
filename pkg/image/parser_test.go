@@ -51,11 +51,72 @@ func TestParseImageReference(t *testing.T) {
 			},
 		},
 		{
+			name:  "image with port in registry",
+			input: "localhost:5000/app:latest",
+			expectedRef: &ImageReference{
+				Registry:   "localhost:5000",
+				Repository: "app",
+				Tag:        "latest",
+			},
+		},
+		{
+			name:  "image with both tag and digest",
+			input: "docker.io/library/nginx:1.21.0@sha256:1234567890123456789012345678901234567890123456789012345678901234",
+			expectedRef: &ImageReference{
+				Registry:   "docker.io",
+				Repository: "library/nginx",
+				Tag:        "1.21.0",
+				Digest:     "sha256:1234567890123456789012345678901234567890123456789012345678901234",
+			},
+		},
+		{
 			name:          "invalid image reference",
 			input:         "not:a:valid:image",
 			expectedRef:   nil,
 			expectedErr:   true,
 			errorContains: "invalid image reference",
+		},
+		{
+			name:          "empty string",
+			input:         "",
+			expectedRef:   nil,
+			expectedErr:   true,
+			errorContains: "empty image reference",
+		},
+		{
+			name:          "invalid digest format",
+			input:         "docker.io/library/nginx@notadigest",
+			expectedRef:   nil,
+			expectedErr:   true,
+			errorContains: "invalid digest format",
+		},
+		{
+			name:          "invalid tag format",
+			input:         "docker.io/library/nginx:invalid/tag",
+			expectedRef:   nil,
+			expectedErr:   true,
+			errorContains: "invalid tag format",
+		},
+		{
+			name:          "invalid registry name",
+			input:         "invalid.registry.with.too.many.parts/app:latest",
+			expectedRef:   nil,
+			expectedErr:   true,
+			errorContains: "invalid registry name",
+		},
+		{
+			name:          "non-string input",
+			input:         123,
+			expectedRef:   nil,
+			expectedErr:   true,
+			errorContains: "input must be a string",
+		},
+		{
+			name:          "nil input",
+			input:         nil,
+			expectedRef:   nil,
+			expectedErr:   true,
+			errorContains: "input must be a string",
 		},
 	}
 
@@ -153,5 +214,110 @@ func TestSanitizeRegistryForPath(t *testing.T) {
 		if result != tc.expected {
 			t.Errorf("SanitizeRegistryForPath(%s): expected %s, got %s", tc.registry, tc.expected, result)
 		}
+	}
+}
+
+func TestParseImageMap(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       map[string]interface{}
+		expected    *ImageReference
+		expectedErr bool
+	}{
+		{
+			name: "repository with tag",
+			input: map[string]interface{}{
+				"repository": "nginx",
+				"tag":        "1.21.0",
+			},
+			expected: &ImageReference{
+				Registry:   "docker.io",
+				Repository: "library/nginx",
+				Tag:        "1.21.0",
+			},
+		},
+		{
+			name: "repository with registry and tag",
+			input: map[string]interface{}{
+				"repository": "quay.io/company/app",
+				"tag":        "v2.3.4",
+			},
+			expected: &ImageReference{
+				Registry:   "quay.io",
+				Repository: "company/app",
+				Tag:        "v2.3.4",
+			},
+		},
+		{
+			name: "repository with digest",
+			input: map[string]interface{}{
+				"repository": "nginx",
+				"digest":     "sha256:1234567890123456789012345678901234567890123456789012345678901234",
+			},
+			expected: &ImageReference{
+				Registry:   "docker.io",
+				Repository: "library/nginx",
+				Digest:     "sha256:1234567890123456789012345678901234567890123456789012345678901234",
+			},
+		},
+		{
+			name: "repository without tag or digest",
+			input: map[string]interface{}{
+				"repository": "busybox",
+			},
+			expected: &ImageReference{
+				Registry:   "docker.io",
+				Repository: "library/busybox",
+			},
+		},
+		{
+			name: "repository with non-string tag",
+			input: map[string]interface{}{
+				"repository": "app",
+				"tag":        123, // Non-string tag
+			},
+			expected: &ImageReference{
+				Registry:   "docker.io",
+				Repository: "library/app",
+				// Tag should not be set since it's not a string
+			},
+		},
+		{
+			name: "missing repository",
+			input: map[string]interface{}{
+				"tag": "latest",
+			},
+			expected: nil, // Should return nil when repository is missing
+		},
+		{
+			name: "non-string repository",
+			input: map[string]interface{}{
+				"repository": 123, // Non-string repository
+				"tag":        "latest",
+			},
+			expected: nil, // Should return nil for non-string repository
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ref, err := parseImageMap(tc.input)
+
+			if tc.expectedErr {
+				assert.Error(t, err)
+				return
+			}
+
+			if tc.expected == nil {
+				assert.Nil(t, ref)
+				return
+			}
+
+			assert.NoError(t, err)
+			assert.Equal(t, tc.expected.Registry, ref.Registry, "Registry mismatch")
+			assert.Equal(t, tc.expected.Repository, ref.Repository, "Repository mismatch")
+			assert.Equal(t, tc.expected.Tag, ref.Tag, "Tag mismatch")
+			assert.Equal(t, tc.expected.Digest, ref.Digest, "Digest mismatch")
+		})
 	}
 }

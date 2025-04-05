@@ -54,10 +54,15 @@ func SetValueAtPath(data map[string]interface{}, path []string, value interface{
 			// Current key leads to an array
 			var arr []interface{}
 			if existing, ok := current[key]; ok {
-				if arr, ok = existing.([]interface{}); !ok {
+				// Check if the existing value is a slice
+				_, isSlice := existing.([]interface{})
+				if !isSlice {
+					// If it exists but is not a slice, it's an error
 					return fmt.Errorf("path element '%s' is not a slice", key)
 				}
+				// If it exists and is a slice, we don't need to modify 'arr' or 'current[key]', just continue.
 			} else {
+				// If the key doesn't exist, create a new empty slice
 				arr = make([]interface{}, 0)
 				current[key] = arr
 			}
@@ -91,7 +96,9 @@ func SetValueAtPath(data map[string]interface{}, path []string, value interface{
 		// Get the array from the current map
 		var arr []interface{}
 		if existing, ok := current[parentKey]; ok {
-			if arr, ok = existing.([]interface{}); !ok {
+			var isSlice bool
+			arr, isSlice = existing.([]interface{})
+			if !isSlice {
 				return fmt.Errorf("path element '%s' is not a slice", parentKey)
 			}
 		} else {
