@@ -165,25 +165,22 @@ func (o *Override) MergeInto(target map[string]interface{}) map[string]interface
 	return target
 }
 
-// ToYAML converts the override file to YAML format
+// ToYAML serializes the override structure to YAML.
 func (o *OverrideFile) ToYAML() ([]byte, error) {
-	// Convert directly to YAML
 	yamlData, err := yaml.Marshal(o.Overrides)
 	if err != nil {
-		return nil, fmt.Errorf("error converting to YAML: %w", err)
+		return nil, fmt.Errorf("failed to marshal overrides to YAML: %w", err)
 	}
-
 	return yamlData, nil
 }
 
 // JSONToYAML converts JSON data to YAML format
 func JSONToYAML(jsonData []byte) ([]byte, error) {
-	var yamlData []byte
-	var err error
-
-	if yamlData, err = yaml.JSONToYAML(jsonData); err != nil {
-		return nil, err
+	// Attempt to convert JSON bytes (potentially from Helm output) to YAML
+	yamlBytes, err := yaml.JSONToYAML(jsonData)
+	if err != nil {
+		// Wrap the error from JSONToYAML
+		return nil, fmt.Errorf("failed to convert JSON to YAML: %w", err)
 	}
-
-	return yamlData, nil
+	return yamlBytes, nil
 }

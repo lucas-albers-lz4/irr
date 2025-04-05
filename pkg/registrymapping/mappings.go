@@ -3,6 +3,8 @@ package registry
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"sigs.k8s.io/yaml"
 )
@@ -24,8 +26,28 @@ func LoadMappings(path string) (*RegistryMappings, error) {
 		return nil, nil
 	}
 
-	data, err := os.ReadFile(path)
+	// Basic validation to prevent path traversal
+	absPath, err := filepath.Abs(path)
 	if err != nil {
+		return nil, fmt.Errorf("failed to get absolute path for mappings file: %w", err)
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get working directory: %w", err)
+	}
+	if !strings.HasPrefix(absPath, wd) {
+		return nil, fmt.Errorf("invalid mappings file path: must be within the current working directory tree")
+	}
+	if !strings.HasSuffix(absPath, ".yaml") && !strings.HasSuffix(absPath, ".yml") {
+		return nil, fmt.Errorf("invalid mappings file path: must end with .yaml or .yml")
+	}
+
+	// Read the file content
+	data, err := os.ReadFile(path) // G304 mitigation: path validated above
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("mappings file does not exist: %v", err)
+		}
 		return nil, fmt.Errorf("failed to read mappings file: %v", err)
 	}
 
