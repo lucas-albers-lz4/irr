@@ -49,8 +49,9 @@ func newAnalyzeCmd() *cobra.Command {
 
 			// Write output
 			if outputFile != "" {
+				// #nosec G306 // Allow 0644 for potentially shared analysis output
 				if err := os.WriteFile(outputFile, []byte(output), 0644); err != nil {
-					return fmt.Errorf("failed to write output file: %w", err)
+					return fmt.Errorf("failed to write analysis output: %w", err)
 				}
 			} else {
 				fmt.Println(output)
