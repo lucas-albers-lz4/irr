@@ -11,9 +11,9 @@ repos:
       hooks:
           - id: isort
             args: [--profile=black, --filter-files]
-#    - repo: https://github.com/golangci/golangci-lint
-#      rev: v1.56.2
-#      hooks:
-#        - id: golangci-lint
-#          args: ["--timeout=5m"]
+    - repo: https://github.com/golangci/golangci-lint
+      rev: v1.56.2
+      hooks:
+        - id: golangci-lint
+          args: ["--timeout=5m"]
 # Optional: create a pyproject.toml for tool configuration
