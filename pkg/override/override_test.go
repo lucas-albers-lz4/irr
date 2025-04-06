@@ -10,7 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func TestGenerateOverrideStructure(t *testing.T) {
+func TestGenerateOverrides(t *testing.T) {
 	tests := []struct {
 		name     string
 		ref      *image.ImageReference
@@ -86,21 +86,21 @@ func TestGenerateOverrideStructure(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := GenerateOverrideStructure(tt.ref, tt.path)
+			result, err := GenerateOverrides(tt.ref, tt.path)
 			if tt.wantErr {
 				if err == nil {
-					t.Error("GenerateOverrideStructure() expected error, got nil")
+					t.Error("GenerateOverrides() expected error, got nil")
 				}
 				return
 			}
 
 			if err != nil {
-				t.Errorf("GenerateOverrideStructure() unexpected error: %v", err)
+				t.Errorf("GenerateOverrides() unexpected error: %v", err)
 				return
 			}
 
 			if !reflect.DeepEqual(result, tt.expected) {
-				t.Errorf("GenerateOverrideStructure() = %v, want %v", result, tt.expected)
+				t.Errorf("GenerateOverrides() = %v, want %v", result, tt.expected)
 			}
 		})
 	}
