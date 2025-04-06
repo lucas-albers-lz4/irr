@@ -20,6 +20,7 @@ type TestHarness struct {
 	targetReg    string
 	sourceRegs   []string
 	overridePath string
+	mappingsPath string
 }
 
 // NewTestHarness creates a new test harness
@@ -53,6 +54,36 @@ func (h *TestHarness) SetupChart(chartPath string) {
 func (h *TestHarness) SetRegistries(target string, sources []string) {
 	h.targetReg = target
 	h.sourceRegs = sources
+
+	// Create registry mappings file
+	mappings := struct {
+		Mappings []struct {
+			Source string `yaml:"source"`
+			Target string `yaml:"target"`
+		} `yaml:"mappings"`
+	}{}
+
+	for _, source := range sources {
+		mappings.Mappings = append(mappings.Mappings, struct {
+			Source string `yaml:"source"`
+			Target string `yaml:"target"`
+		}{
+			Source: source,
+			Target: target,
+		})
+	}
+
+	mappingsPath := filepath.Join(h.tempDir, "registry-mappings.yaml")
+	mappingsData, err := yaml.Marshal(mappings)
+	if err != nil {
+		h.t.Fatalf("Failed to marshal registry mappings: %v", err)
+	}
+
+	if err := os.WriteFile(mappingsPath, mappingsData, 0644); err != nil {
+		h.t.Fatalf("Failed to write registry mappings: %v", err)
+	}
+
+	h.mappingsPath = mappingsPath
 }
 
 // GenerateOverrides runs the helm-image-override tool
@@ -74,8 +105,13 @@ func (h *TestHarness) GenerateOverrides() error {
 		"--target-registry", h.targetReg,
 		"--source-registries", strings.Join(h.sourceRegs, ","),
 		"--output-file", h.overridePath,
+		"--registry-mappings", h.mappingsPath,
 		"--verbose",
 	}
+
+	// Set IRR_TESTING environment variable
+	os.Setenv("IRR_TESTING", "true")
+	defer os.Unsetenv("IRR_TESTING")
 
 	// #nosec G204 -- Test harness executes irr binary with test-controlled arguments
 	cmd := exec.Command(binaryPath, args...)

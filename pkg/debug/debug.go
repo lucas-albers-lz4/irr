@@ -106,3 +106,5 @@ func SetPrefix(prefix string) {
 	}
 	debugPrefix = prefix
 }
+
+// DumpYAML was removed
