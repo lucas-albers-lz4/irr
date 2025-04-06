@@ -386,8 +386,6 @@ func GenerateOverrides(chartData *chart.Chart, targetRegistry string, sourceRegi
 	debug.DumpValue("Exclude Registries", excludeRegistries)
 	debug.DumpValue("Path Strategy", pathStrategy)
 
-	result := make(map[string]interface{})
-
 	// Create a new image detector with context
 	detector := image.NewImageDetector(&image.DetectionContext{
 		GlobalRegistry: targetRegistry,
@@ -403,10 +401,7 @@ func GenerateOverrides(chartData *chart.Chart, targetRegistry string, sourceRegi
 		return nil, fmt.Errorf("error processing chart values: %w", err)
 	}
 	// The result is directly the overrides map generated
-	result = overrides
-
-	debug.DumpValue("Final Combined Overrides", result)
-	return result, nil
+	return overrides, nil
 }
 
 // ImageDetector defines the interface for detecting images in chart values
