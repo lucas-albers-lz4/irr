@@ -98,14 +98,17 @@ func (s *PrefixSourceRegistryStrategy) GeneratePath(originalRef *image.ImageRefe
 	// Construct the final repository path part
 	var finalRepoPathPart string
 	if hasCustomMapping {
-		// For custom mappings, the target registry acts as the new root,
-		// so the repo path is just the base path.
-		// We should NOT include the mappedTargetRegistry here.
-		finalRepoPathPart = baseRepoPath
+		// If a custom mapping exists, use the mapped TARGET prefix
+		mappedPrefix := mappings.GetTargetRegistry(originalRef.Registry) // Re-get the target prefix
+		if mappedPrefix == "" {                                          // Should not happen if hasCustomMapping is true, but defensive check
+			return "", fmt.Errorf("internal error: custom mapping existed but target prefix was empty for registry %s", originalRef.Registry)
+		}
+		finalRepoPathPart = path.Join(mappedPrefix, baseRepoPath)
+		debug.Printf("PrefixSourceRegistryStrategy: Using custom mapping prefix '%s'", mappedPrefix)
 	} else {
-		// For standard paths, prefix the sanitized source registry.
-		// We should NOT include the global targetRegistry here.
+		// For standard paths, prefix the SANITIZED source registry name.
 		finalRepoPathPart = path.Join(sanitizedSourceRegistry, baseRepoPath)
+		debug.Printf("PrefixSourceRegistryStrategy: Using default sanitized prefix '%s'", sanitizedSourceRegistry)
 	}
 
 	// NOTE: This function now ONLY returns the repository part (e.g., "dockerio/library/nginx")
