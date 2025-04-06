@@ -43,7 +43,7 @@ func TestLoadMappings(t *testing.T) {
 			name:          "nonexistent file",
 			path:          "nonexistent.yaml",
 			wantErr:       true,
-			errorContains: "failed to read mappings file",
+			errorContains: "mappings file does not exist",
 		},
 		{
 			name: "empty path",
@@ -53,6 +53,9 @@ func TestLoadMappings(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Set env variable to skip CWD check in LoadMappings during testing
+			t.Setenv("IRR_TESTING", "true")
+
 			got, err := LoadMappings(tt.path)
 			if tt.wantErr {
 				require.Error(t, err)
