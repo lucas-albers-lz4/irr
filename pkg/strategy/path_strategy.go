@@ -89,6 +89,12 @@ func (s *PrefixSourceRegistryStrategy) GeneratePath(originalRef *image.ImageRefe
 	}
 	debug.Printf("PrefixSourceRegistryStrategy: Using base repository path: %s", baseRepoPath)
 
+	// Handle Docker Hub official images (add library/ prefix if needed)
+	if (originalRef.Registry == "docker.io" || originalRef.Registry == "") && !strings.Contains(baseRepoPath, "/") {
+		debug.Printf("PrefixSourceRegistryStrategy: Prepending 'library/' to Docker Hub image path: %s", baseRepoPath)
+		baseRepoPath = path.Join("library", baseRepoPath)
+	}
+
 	// Construct the final repository path part
 	var finalRepoPath string
 	if hasCustomMapping {

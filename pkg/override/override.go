@@ -3,10 +3,8 @@ package override
 import (
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"strings"
 
-	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/image"
 	"sigs.k8s.io/yaml"
 )
@@ -317,48 +315,38 @@ func flattenValue(prefix string, value interface{}, sets *[]string) error {
 	return nil
 }
 
-// SetValueAtPath sets a value in a nested map structure based on a path slice.
-// It creates intermediate maps if they don't exist.
+// SetValueAtPath is defined in path_utils.go
+/*
 func SetValueAtPath(data map[string]interface{}, path []string, value interface{}) error {
-	debug.FunctionEnterf("SetValueAtPath(path=%v)", path)
+	debug.FunctionEnterf("SetValueAtPath - Path: %v", path)
 	defer debug.FunctionExit("SetValueAtPath")
+
+	if len(path) == 0 {
+		return ErrEmptyPath
+	}
 
 	current := data
 	for i, key := range path {
-		debug.Printf("Processing path segment: key='%s', index=%d, total_segments=%d", key, i, len(path))
-
 		if i == len(path)-1 {
-			// Last element: set the value
-			debug.Printf("Setting final value at key '%s'", key)
-			debug.DumpValue("Value to set", value)
 			current[key] = value
-			debug.DumpValue("Map after setting final value", current)
 			return nil
 		}
 
-		// Intermediate element: ensure map exists and move deeper
 		next, exists := current[key]
 		if !exists {
-			debug.Printf("Key '%s' does not exist, creating new map.", key)
-			newMap := make(map[string]interface{})
-			current[key] = newMap
-			current = newMap
-			debug.DumpValue(fmt.Sprintf("Current map state after creating intermediate map for key '%s'", key), current)
-		} else {
-			// Key exists, check if it's a map
-			if nextMap, ok := next.(map[string]interface{}); ok {
-				debug.Printf("Key '%s' exists and is a map, descending.", key)
-				current = nextMap
-			} else {
-				// Key exists but is not a map, this is an error condition
-				errDetail := fmt.Sprintf("cannot create nested structure: key '%s' at path '%s' is not a map (found type %T), trying to set path %v", key, strings.Join(path[:i+1], "."), reflect.TypeOf(next), path)
-				debug.Printf("Error: %s", errDetail)
-				return fmt.Errorf(errDetail)
-			}
+			next = make(map[string]interface{})
+			current[key] = next
 		}
+
+		nextMap, ok := next.(map[string]interface{})
+		if !ok {
+			// Attempt to convert if it's a map[string]string or similar simple types?
+			// For now, assume structure error if not map[string]interface{}
+			return fmt.Errorf("non-map value encountered at path segment '%s'", key)
+		}
+		current = nextMap
 	}
-	// This part should technically not be reached if path has elements
-	errDetail := fmt.Sprintf("unexpected state: finished path traversal without setting value for path %v", path)
-	debug.Printf("Error: %s", errDetail)
-	return fmt.Errorf(errDetail)
+	// Should not be reached due to early return in loop
+	return fmt.Errorf("internal error: loop did not terminate correctly")
 }
+*/
