@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"text/tabwriter"
 
@@ -110,6 +111,10 @@ var currentGeneratorFactory = defaultGeneratorFactory
 
 // --- End Generator Factory ---
 
+// Regex for basic registry validation (hostname/IP + optional port)
+// Allows letters, numbers, hyphens, dots in hostname part.
+var registryRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9](:[0-9]+)?$`)
+
 // newRootCmd creates the base command when called without any subcommands
 func newRootCmd() *cobra.Command {
 	rootCmd := &cobra.Command{
@@ -205,9 +210,35 @@ func runDefault(cmd *cobra.Command, args []string) error {
 	debug.FunctionEnter("runDefault (overrideCmd)")
 	defer debug.FunctionExit("runDefault (overrideCmd)")
 
-	// Parse flags, load mappings, get strategy...
-	// ... (parsing logic remains the same) ...
+	// --- START: Input Validation ---
+	debug.Printf("Validating inputs...")
+	debug.DumpValue("Target Registry Input", targetRegistry)
+	if !registryRegex.MatchString(targetRegistry) {
+		err := fmt.Errorf("invalid target registry format: '%s'. Must be a valid hostname or IP, optionally followed by a port number (e.g., my.registry.com:5000)", targetRegistry)
+		debug.Printf("Target registry validation failed: %v", err)
+		return wrapExitCodeError(ExitInputConfigurationError, "input validation failed", err)
+	}
+	// Allow empty source list if flag was provided but empty, but not if empty within a list
 	sourceRegistriesList := strings.Split(sourceRegistries, ",")
+	if len(sourceRegistriesList) == 1 && strings.TrimSpace(sourceRegistriesList[0]) == "" {
+		// Treat single empty string as explicitly requesting no sources
+		sourceRegistriesList = []string{} // Set to empty slice
+		debug.Printf("Empty --source-registries provided, processing no specific sources.")
+	} else {
+		// Validate non-empty entries if list is not just a single empty string
+		for _, sr := range sourceRegistriesList {
+			if strings.TrimSpace(sr) == "" {
+				err := errors.New("source-registries flag contains empty value within the list")
+				debug.Printf("Source registry validation failed: %v", err)
+				return wrapExitCodeError(ExitInputConfigurationError, "input validation failed", err)
+			}
+		}
+	}
+	debug.Printf("Input validation passed.")
+	// --- END: Input Validation ---
+
+	// Parse flags, load mappings, get strategy...
+	// sourceRegistriesList is now correctly populated or empty
 	var excludeRegistriesList []string
 	if excludeRegistries != "" {
 		excludeRegistriesList = strings.Split(excludeRegistries, ",")
@@ -258,7 +289,30 @@ func runDefault(cmd *cobra.Command, args []string) error {
 	// Generate overrides using the interface
 	overrideFile, err := generator.Generate()
 	if err != nil {
-		exitCode := ExitImageProcessingError
+		// Check for specific error types to determine exit code
+		var thresholdErr *chart.ThresholdNotMetError
+		var imageProcErr *chart.ImageProcessingError
+		var chartParseErr *chart.ChartParsingError
+		var unsupportedStructErr *chart.UnsupportedStructureError
+
+		exitCode := ExitGeneralRuntimeError // Default to 1 for unexpected errors
+
+		if errors.As(err, &thresholdErr) {
+			exitCode = ExitThresholdNotMetError // Code 6
+		} else if errors.As(err, &unsupportedStructErr) {
+			// This specific error type requires the --strict flag to be set,
+			// but we assign the code regardless. The generator decides whether to error.
+			exitCode = ExitUnsupportedStructError // Code 5
+		} else if errors.As(err, &imageProcErr) {
+			exitCode = ExitImageProcessingError // Code 4
+		} else if errors.As(err, &chartParseErr) {
+			exitCode = ExitChartParsingError // Code 3
+		} else if strings.Contains(err.Error(), "threshold failed") {
+			// Catch the generic error case where threshold failed + processing errors occurred
+			exitCode = ExitThresholdNotMetError // Code 6
+		}
+		// For other errors, it defaults to ExitGeneralRuntimeError (1)
+
 		return wrapExitCodeError(exitCode, "error generating overrides", err)
 	}
 
