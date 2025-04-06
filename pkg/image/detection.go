@@ -382,80 +382,6 @@ func (d *ImageDetector) DetectImages(values interface{}, path []string) ([]Detec
 	return detected, unsupported, nil
 }
 
-// tryExtractImageFromMap attempts to extract an image reference from a map
-func (d *ImageDetector) tryExtractImageFromMap(m map[string]interface{}) (*ImageReference, string, error) {
-	// Get repository - required for an image map
-	repoVal, repoExists := m["repository"]
-	if !repoExists {
-		debug.Printf("Map missing 'repository', cannot parse as image map.")
-		return nil, "", ErrInvalidImageMapRepo // Return error if repository is missing
-	}
-	repoStr, repoIsString := repoVal.(string)
-	if !repoIsString {
-		debug.Printf("Map 'repository' exists but is not a string (type: %T).", repoVal)
-		return nil, "", ErrInvalidImageMapRepo // Also return error if repo is wrong type
-	}
-
-	// Skip "repository" keys that don't look like image repositories
-	// For example, Git repositories or other URLs that aren't container images
-	if strings.HasPrefix(repoStr, "http") || strings.HasPrefix(repoStr, "git@") ||
-		strings.HasSuffix(repoStr, ".git") || strings.Contains(repoStr, "github.com") {
-		return nil, "", nil
-	}
-
-	// Proceed with creating the reference
-	ref := &ImageReference{Repository: repoStr}
-
-	// First check for explicit registry in the map
-	if registryVal, exists := m["registry"]; exists {
-		if registry, ok := registryVal.(string); ok {
-			ref.Registry = registry
-			ref.Repository = repoStr
-		} else if registryVal != nil { // Check type only if the value is not nil
-			return nil, "", ErrInvalidImageMapRegistryType
-		}
-		// If registry exists but is nil, it will be handled later (defaulted)
-	}
-
-	// If no explicit *valid* registry was found above, derive or use global/default
-	if ref.Registry == "" {
-		parts := strings.SplitN(repoStr, "/", 2)
-		// Check if first part looks like a registry (contains dots) and is not a template variable
-		if len(parts) == 2 && strings.Contains(parts[0], ".") && !strings.Contains(parts[0], "{{") {
-			ref.Registry = parts[0]
-			ref.Repository = parts[1]
-		} else {
-			// No registry found in repository string, use global or default
-			if d.context.GlobalRegistry != "" {
-				ref.Registry = d.context.GlobalRegistry
-			} else {
-				ref.Registry = defaultRegistry
-			}
-			ref.Repository = repoStr
-		}
-	}
-
-	// Get tag
-	if tagVal, exists := m["tag"]; exists {
-		if tag, ok := tagVal.(string); ok {
-			ref.Tag = tag
-		} else if tagVal != nil { // Check type only if the value is not nil
-			return nil, "", ErrInvalidImageMapTagType
-		}
-		// If tag exists but is nil, ref.Tag remains empty string, which is handled
-	}
-
-	// Get digest
-	if digest, ok := m["digest"].(string); ok {
-		ref.Digest = digest
-	}
-
-	// Normalize registry
-	ref.Registry = NormalizeRegistry(ref.Registry)
-
-	return normalizeImageReference(ref), "map", nil
-}
-
 // tryExtractImageFromString tries to extract an image reference from a string.
 func tryExtractImageFromString(s string) (*ImageReference, error) {
 	if s == "" {
@@ -674,26 +600,6 @@ func parseImageMap(m map[string]interface{}, globalRegistry string) (*ImageRefer
 
 	debug.Printf("Parsed image map result: %+v", ref)
 	return ref, nil
-}
-
-// normalizeImageReference ensures the reference has valid values
-// DEPRECATED: Logic moved into parseImageMap and tryExtractImageFromString
-func normalizeImageReference(ref *ImageReference) *ImageReference {
-	// This function is largely redundant now as normalization happens within the parsing functions.
-	// Keeping it for potential future use or complex normalization steps, but it's currently simple.
-	if ref == nil {
-		return nil
-	}
-
-	// Basic normalization: Ensure default registry if empty
-	if ref.Registry == "" {
-		ref.Registry = defaultRegistry
-	}
-
-	// The library namespace logic is now handled in parseImageMap and tryExtractImageFromString
-	// where context (like the original map/string and global registry) is available.
-
-	return ref
 }
 
 // isValidTag checks if a tag string is valid
