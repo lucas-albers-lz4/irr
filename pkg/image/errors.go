@@ -8,6 +8,7 @@ var (
 	ErrInvalidImageMapRepo         = errors.New("invalid image map: repository is not a string")
 	ErrInvalidImageMapRegistryType = errors.New("invalid image map: registry is not a string")
 	ErrInvalidImageMapTagType      = errors.New("invalid image map: tag is not a string")
+	ErrInvalidImageMapDigestType   = errors.New("invalid image map: digest is not a string")
 	ErrRepoNotFound                = errors.New("repository not found or not a string")
 
 	// Errors related to string parsing
