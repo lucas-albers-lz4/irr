@@ -282,48 +282,42 @@ func (d *ImageDetector) DetectImages(values interface{}, path []string) ([]Detec
 	switch v := values.(type) {
 	case map[string]interface{}:
 		debug.Printf("Processing map at path: %v", path)
-		debug.DumpValue("Map contents", v)
+		// 1. Check if the map itself is an image structure
+		mapAsImageDetected, mapAsImageUnsupported, err := d.detectImageValue(v, path)
+		if err != nil {
+			debug.Printf("Error checking if map itself is an image at path %v: %v", path, err)
+			// Logged the error, continue processing keys
+		}
+		detected = append(detected, mapAsImageDetected...)
+		unsupported = append(unsupported, mapAsImageUnsupported...)
 
-		// Iterate through ALL keys in the map
-		for k, val := range v {
-			newPath := append(path, k)
-			debug.Printf("Processing key: %s (Path: %v)", k, newPath)
+		// 2. Determine if we should recurse into children
+		skipRecursion := len(mapAsImageDetected) > 0
+		if skipRecursion {
+			debug.Printf("Map at path %v is an image structure, skipping recursion into its keys.", path)
+		}
 
-			// Skip global section at root
-			if len(path) == 0 && k == "global" {
-				debug.Printf("Skipping global key at root")
+		// 3. Iterate through all keys
+		for key, value := range v {
+			if skipRecursion {
+				continue // Don't process children like repository, tag if map itself was image
+			}
+
+			// Prepare path for recursion
+			currentPath := append([]string{}, path...)
+			currentPath = append(currentPath, key)
+
+			// 4. ALWAYS recurse using DetectImages (No special 'image' key handling)
+			debug.Printf("Recursively calling DetectImages for key '%s' at path %v", key, path)
+			subDetected, subUnsupported, err := d.DetectImages(value, currentPath)
+			if err != nil {
+				// Log error for this specific key/value pair, but continue processing siblings
+				debug.Printf("Error processing value for key '%s' at path %v: %v. Skipping this key.", key, path, err)
 				continue
 			}
-
-			// Special handling if the key is "image"
-			if k == "image" {
-				debug.Printf("Found 'image' key at path %v, processing its value specifically", newPath)
-				// Process the value directly using detectImageValue
-				subDetected, subUnsupported, err := d.detectImageValue(val, newPath) // Use newPath
-				if err != nil {
-					// Propagate errors from parsing the value under the 'image' key
-					return nil, nil, fmt.Errorf("error processing value under 'image' key at %v: %w", newPath, err)
-				}
-				detected = append(detected, subDetected...)
-				unsupported = append(unsupported, subUnsupported...)
-				// After handling the 'image' key's value, continue to the next key in the loop.
-			} else {
-				// For all OTHER keys, recurse using DetectImages.
-				// This will handle nested maps, slices, and strings appropriately.
-				// If 'val' happens to be a map representing an image (e.g., {repository:..., tag:...}),
-				// the recursive call to DetectImages will handle it in the next level down.
-				subDetected, subUnsupported, err := d.DetectImages(val, newPath)
-				if err != nil {
-					// Propagate errors from recursive calls
-					return nil, nil, fmt.Errorf("error processing key '%s' at path %v: %w", k, newPath, err)
-				}
-				detected = append(detected, subDetected...)
-				unsupported = append(unsupported, subUnsupported...)
-			}
+			detected = append(detected, subDetected...)
+			unsupported = append(unsupported, subUnsupported...)
 		}
-		// Note: The previous logic block that tried `parseImageMap(v, ...)` on the map itself
-		// has been removed. The standard recursion handles cases where a map representing an image
-		// is nested under a key *other* than "image".
 
 	case []interface{}:
 		for i, val := range v {
@@ -408,6 +402,16 @@ func (d *ImageDetector) detectImageValue(imageVal interface{}, path []string) ([
 		} else if err != nil {
 			// Propagate parsing errors (like invalid types within the map)
 			return nil, nil, fmt.Errorf("error parsing map under image key at %v: %w", path, err)
+		} else if ref == nil && d.context.Strict {
+			// If parsing didn't error but didn't yield a valid image reference,
+			// and we are in strict mode, consider it unsupported.
+			debug.Printf("Map at path %v did not parse as a valid image structure in strict mode.", path)
+			unsupported = append(unsupported, DetectedImage{
+				Location:     path,
+				LocationType: TypeUnknown, // Or maybe TypeMapRegistryRepositoryTag if repo was present but tag/reg missing?
+				Pattern:      "unsupported-map-structure",
+				Original:     img,
+			})
 		}
 	default:
 		// Value under 'image' key is neither string nor map - unsupported?
@@ -915,3 +919,54 @@ func DetectImages(values interface{}, path []string, sourceRegistries []string, 
 
 // Package image provides functionality for detecting and manipulating container image references.
 // ... existing code ...
+
+// processMap handles detection within a map.
+func (d *ImageDetector) processMap(m map[string]interface{}, path []string) ([]DetectedImage, []DetectedImage, error) {
+	debug.FunctionEnter(fmt.Sprintf("processMap Path: %v", path))
+	defer debug.FunctionExit(fmt.Sprintf("processMap Path: %v", path))
+
+	var allDetected, allUnsupported []DetectedImage
+
+	// 1. Try to detect if the map *itself* represents an image
+	mapAsImageDetected, mapAsImageUnsupported, err := d.detectImageValue(m, path)
+	if err != nil {
+		// Log the error but don't stop processing sibling keys
+		debug.Printf("Error attempting to detect map as image at path %v: %v", path, err)
+		// Consider adding to allUnsupported here if desired
+	} else {
+		allDetected = append(allDetected, mapAsImageDetected...)
+		allUnsupported = append(allUnsupported, mapAsImageUnsupported...)
+	}
+
+	// 2. Determine if we should skip recursing into this map's children
+	skipRecursionIntoChildren := len(mapAsImageDetected) > 0
+	if skipRecursionIntoChildren {
+		debug.Printf("Map at path %v was detected as an image structure. Skipping recursion into its keys (e.g., repository, tag).", path)
+	}
+
+	// 3. Iterate through ALL keys in the map
+	for key, value := range m {
+		// 4. Skip processing children if the map itself was an image structure
+		if skipRecursionIntoChildren {
+			continue
+		}
+
+		// 5. Prepare path for potential recursion
+		currentPath := append([]string{}, path...) // Create a copy for this iteration
+		currentPath = append(currentPath, key)
+
+		// 6. Recurse for the current key/value
+		debug.Printf("Recursively calling DetectImages for key '%s' at path %v", key, path)
+		detected, unsupported, err := d.DetectImages(value, currentPath)
+		if err != nil {
+			// Log error for this specific key/value pair, but continue processing siblings
+			debug.Printf("Error processing value for key '%s' at path %v: %v. Skipping this key.", key, path, err)
+			// Optionally add a generic unsupported entry for this path/key
+			continue
+		}
+		allDetected = append(allDetected, detected...)
+		allUnsupported = append(allUnsupported, unsupported...)
+	}
+
+	return allDetected, allUnsupported, nil
+}
