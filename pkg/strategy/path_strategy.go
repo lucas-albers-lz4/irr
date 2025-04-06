@@ -96,21 +96,23 @@ func (s *PrefixSourceRegistryStrategy) GeneratePath(originalRef *image.ImageRefe
 	}
 
 	// Construct the final repository path part
-	var finalRepoPath string
+	var finalRepoPathPart string
 	if hasCustomMapping {
 		// For custom mappings, the target registry acts as the new root,
 		// so the repo path is just the base path.
-		finalRepoPath = baseRepoPath
+		// We should NOT include the mappedTargetRegistry here.
+		finalRepoPathPart = baseRepoPath
 	} else {
 		// For standard paths, prefix the sanitized source registry.
-		finalRepoPath = path.Join(sanitizedSourceRegistry, baseRepoPath)
+		// We should NOT include the global targetRegistry here.
+		finalRepoPathPart = path.Join(sanitizedSourceRegistry, baseRepoPath)
 	}
 
-	// NOTE: We no longer add the target registry prefix here.
-	// We also no longer add tag or digest here. Generate() will handle that.
+	// NOTE: This function now ONLY returns the repository part (e.g., "dockerio/library/nginx")
+	// The caller (generator) is responsible for prepending the actual target registry.
 
-	debug.Printf("PrefixSourceRegistryStrategy: Generated final repo path part: %s", finalRepoPath)
-	return finalRepoPath, nil
+	debug.Printf("PrefixSourceRegistryStrategy: Generated final repo path part: %s", finalRepoPathPart)
+	return finalRepoPathPart, nil
 }
 
 // FlatStrategy implements the strategy where the source registry is ignored,
@@ -128,37 +130,24 @@ func (s *FlatStrategy) GeneratePath(originalRef *image.ImageReference, targetReg
 	debug.Printf("FlatStrategy: Generating path for original reference: %+v", originalRef)
 	debug.Printf("FlatStrategy: Target registry: %s", targetRegistry)
 
-	// Get the mapped target registry or use the provided one if no mapping exists
-	var mappedTargetRegistry string
-	if mappings != nil {
-		mappedTarget := mappings.GetTargetRegistry(originalRef.Registry)
-		if mappedTarget != "" {
-			mappedTargetRegistry = mappedTarget
-		} else {
-			mappedTargetRegistry = targetRegistry
-		}
-	} else {
-		mappedTargetRegistry = targetRegistry
-	}
-	debug.Printf("FlatStrategy: Mapped target registry: %s", mappedTargetRegistry)
+	// Get the mapped target registry (only needed if we construct full path here)
+	// For Flat strategy, we just need the base repository path.
+	// var mappedTargetRegistry string // No longer needed here
+	// ... mapping logic removed ...
 
 	// Use the original repository path directly
 	baseRepoPath := originalRef.Repository
 	debug.Printf("FlatStrategy: Using base repository path: %s", baseRepoPath)
 
-	finalPath := path.Join(mappedTargetRegistry, baseRepoPath)
+	// NOTE: This function now ONLY returns the repository part (e.g., "library/nginx")
+	// The caller (generator) is responsible for prepending the actual target registry.
 
-	// Add back the tag or digest for actual usage (not for tests)
-	// We determine if this is being called from a test by checking if both targetRegistry
-	// and mappedTargetRegistry are empty
-	if targetRegistry != "" || mappedTargetRegistry != "" {
-		if originalRef.Digest != "" {
-			finalPath = fmt.Sprintf("%s@%s", finalPath, originalRef.Digest)
-		} else if originalRef.Tag != "" {
-			finalPath = fmt.Sprintf("%s:%s", finalPath, originalRef.Tag)
-		}
-	}
+	// finalPath := path.Join(mappedTargetRegistry, baseRepoPath) // Remove this
+	finalRepoPathPart := baseRepoPath // Return only the repo part
 
-	debug.Printf("FlatStrategy: Generated final path: %s", finalPath)
-	return finalPath, nil
+	// Remove logic that adds tag/digest here, caller handles it.
+	// ... tag/digest logic removed ...
+
+	debug.Printf("FlatStrategy: Generated final repo path part: %s", finalRepoPathPart)
+	return finalRepoPathPart, nil
 }
