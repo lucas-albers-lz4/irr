@@ -47,6 +47,8 @@ func SetValueAtPath(data map[string]interface{}, path []string, value interface{
 	}
 
 	current := data
+
+	// Navigate through the path, creating maps as needed
 	for i, key := range path[:len(path)-1] {
 		// Check if next key is a number (array index)
 		nextKey := path[i+1]
@@ -108,11 +110,7 @@ func SetValueAtPath(data map[string]interface{}, path []string, value interface{
 		if index < 0 {
 			return fmt.Errorf("negative %w: %d", ErrInvalidArrayIndex, index)
 		} else if index >= len(arr) {
-			// Extend the slice with nil values if needed
-			newArr := make([]interface{}, index+1)
-			copy(newArr, arr)
-			arr = newArr
-			current[parentKey] = arr // Update the map with the extended slice
+			return fmt.Errorf("out of bounds %w: %d (array length: %d)", ErrInvalidArrayIndex, index, len(arr))
 		}
 
 		// Set the value
