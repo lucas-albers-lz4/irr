@@ -1,7 +1,6 @@
 package image
 
 import (
-	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -22,18 +21,6 @@ var (
 	// Precompiled regular expressions for image references
 	tagRegex    = regexp.MustCompile(tagPattern)
 	digestRegex = regexp.MustCompile(digestPattern)
-
-	ErrInvalidImageMapRepo     = errors.New("repository is not a string")
-	ErrInvalidImageMapRegistry = errors.New("registry is not a string")
-	ErrInvalidImageMapTag      = errors.New("tag is not a string")
-	ErrEmptyImageString        = errors.New("empty string")
-	ErrInvalidDigestFormat     = errors.New("invalid digest format")
-	ErrInvalidTagFormat        = errors.New("invalid tag format")
-	ErrInvalidRepoName         = errors.New("invalid repository name")
-	ErrInvalidImageRefFormat   = errors.New("invalid image reference format")
-	ErrUnsupportedImageType    = errors.New("unsupported image reference type")
-	ErrRepoNotFound            = errors.New("repository not found or not a string")
-	ErrInvalidRegistryName     = errors.New("invalid registry name")
 
 	// Regex for basic validation (adjust as needed based on OCI spec)
 	digestCharsRegex = regexp.MustCompile(`^[a-fA-F0-9]+$`) // Added for digest hex char validation
@@ -312,14 +299,14 @@ func (d *ImageDetector) DetectImages(values interface{}, path []string) ([]Detec
 		// If we didn't find an image via the simple "image" key,
 		// try detecting the map structure itself (e.g., {repository: ..., tag: ...})
 		if !foundImageInMapStructure {
-			if ref, pattern, err := d.tryExtractImageFromMap(v); err != nil {
+			if ref, err := parseImageMap(v, d.context.GlobalRegistry); err != nil {
 				return nil, nil, err // Propagate type errors
 			} else if ref != nil {
 				detected = append(detected, DetectedImage{
 					Location:     path,
 					LocationType: TypeMapRegistryRepositoryTag,
 					Reference:    ref,
-					Pattern:      pattern,
+					Pattern:      "map",
 					Original:     v,
 				})
 				// If detected as a map structure, don't recurse further into its keys
@@ -397,16 +384,16 @@ func (d *ImageDetector) DetectImages(values interface{}, path []string) ([]Detec
 
 // tryExtractImageFromMap attempts to extract an image reference from a map
 func (d *ImageDetector) tryExtractImageFromMap(m map[string]interface{}) (*ImageReference, string, error) {
-	// Check for required repository field
-	repository, hasRepository := m["repository"]
-	if !hasRepository {
-		return nil, "", nil
+	// Get repository - required for an image map
+	repoVal, repoExists := m["repository"]
+	if !repoExists {
+		debug.Printf("Map missing 'repository', cannot parse as image map.")
+		return nil, "", ErrInvalidImageMapRepo // Return error if repository is missing
 	}
-
-	// Validate repository is a string
-	repoStr, ok := repository.(string)
-	if !ok {
-		return nil, "", ErrInvalidImageMapRepo
+	repoStr, repoIsString := repoVal.(string)
+	if !repoIsString {
+		debug.Printf("Map 'repository' exists but is not a string (type: %T).", repoVal)
+		return nil, "", ErrInvalidImageMapRepo // Also return error if repo is wrong type
 	}
 
 	// Skip "repository" keys that don't look like image repositories
@@ -419,42 +406,54 @@ func (d *ImageDetector) tryExtractImageFromMap(m map[string]interface{}) (*Image
 	// Proceed with creating the reference
 	ref := &ImageReference{Repository: repoStr}
 
-	// Handle registry with precedence:
-	// 1. Map-specific registry
-	// 2. Global registry from context
-	// 3. Default registry (docker.io)
-	registry, hasRegistry := m["registry"]
-	if hasRegistry {
-		if regStr, ok := registry.(string); ok {
-			ref.Registry = regStr
-		} else {
-			return nil, "", ErrInvalidImageMapRegistry
+	// First check for explicit registry in the map
+	if registryVal, exists := m["registry"]; exists {
+		if registry, ok := registryVal.(string); ok {
+			ref.Registry = registry
+			ref.Repository = repoStr
+		} else if registryVal != nil { // Check type only if the value is not nil
+			return nil, "", ErrInvalidImageMapRegistryType
 		}
-	} else if d.context.GlobalRegistry != "" {
-		ref.Registry = d.context.GlobalRegistry
-	} else {
-		ref.Registry = defaultRegistry
+		// If registry exists but is nil, it will be handled later (defaulted)
 	}
 
-	// Handle tag
-	tag, hasTag := m["tag"]
-	if hasTag {
-		if tagStr, ok := tag.(string); ok {
-			ref.Tag = tagStr
-		} else if tag == nil {
-			// Handle nil tag by setting empty string
-			ref.Tag = ""
+	// If no explicit *valid* registry was found above, derive or use global/default
+	if ref.Registry == "" {
+		parts := strings.SplitN(repoStr, "/", 2)
+		// Check if first part looks like a registry (contains dots) and is not a template variable
+		if len(parts) == 2 && strings.Contains(parts[0], ".") && !strings.Contains(parts[0], "{{") {
+			ref.Registry = parts[0]
+			ref.Repository = parts[1]
 		} else {
-			return nil, "", ErrInvalidImageMapTag
+			// No registry found in repository string, use global or default
+			if d.context.GlobalRegistry != "" {
+				ref.Registry = d.context.GlobalRegistry
+			} else {
+				ref.Registry = defaultRegistry
+			}
+			ref.Repository = repoStr
 		}
 	}
 
-	// Only add library prefix for docker.io registry and single-component repository names
-	if ref.Registry == defaultRegistry && !strings.Contains(ref.Repository, "/") {
-		ref.Repository = fmt.Sprintf("%s/%s", libraryNamespace, ref.Repository)
+	// Get tag
+	if tagVal, exists := m["tag"]; exists {
+		if tag, ok := tagVal.(string); ok {
+			ref.Tag = tag
+		} else if tagVal != nil { // Check type only if the value is not nil
+			return nil, "", ErrInvalidImageMapTagType
+		}
+		// If tag exists but is nil, ref.Tag remains empty string, which is handled
 	}
 
-	return ref, "map", nil
+	// Get digest
+	if digest, ok := m["digest"].(string); ok {
+		ref.Digest = digest
+	}
+
+	// Normalize registry
+	ref.Registry = NormalizeRegistry(ref.Registry)
+
+	return normalizeImageReference(ref), "map", nil
 }
 
 // tryExtractImageFromString tries to extract an image reference from a string.
@@ -494,7 +493,7 @@ func tryExtractImageFromString(s string) (*ImageReference, error) {
 
 		// Validate the potential tag *immediately*
 		if !isValidTag(potentialTag) {
-			return nil, ErrInvalidTagFormat // Return error if tag format is invalid
+			return nil, ErrInvalidTagFormat
 		}
 
 		// If the tag is valid, assign it and update the remaining part
@@ -504,7 +503,6 @@ func tryExtractImageFromString(s string) (*ImageReference, error) {
 		// Colon at the beginning is invalid (e.g., ":tag")
 		return nil, ErrInvalidImageRefFormat
 	}
-	// If lastColonIdx == -1, there's no colon, so no tag to process here.
 
 	// Handle repository part from the remaining repoAndTag string
 	repoStr := repoAndTag
@@ -554,18 +552,18 @@ func tryExtractImageFromString(s string) (*ImageReference, error) {
 func ParseImageReference(input interface{}) (*ImageReference, error) {
 	// Handle nil input
 	if input == nil {
-		return nil, fmt.Errorf("input must be a string")
+		return nil, nil
 	}
 
 	// Convert input to string
 	str, ok := input.(string)
 	if !ok {
-		return nil, fmt.Errorf("input must be a string")
+		return nil, nil
 	}
 
 	// Handle empty string
 	if str == "" {
-		return nil, fmt.Errorf("empty image reference")
+		return nil, nil
 	}
 
 	// Parse the string into an ImageReference using the core logic
@@ -573,31 +571,12 @@ func ParseImageReference(input interface{}) (*ImageReference, error) {
 
 	// Handle errors from parsing
 	if err != nil {
-		switch {
-		case errors.Is(err, ErrEmptyImageString):
-			return nil, fmt.Errorf("empty image reference")
-		case errors.Is(err, ErrInvalidTagFormat):
-			return nil, fmt.Errorf("invalid tag format")
-		case errors.Is(err, ErrInvalidDigestFormat):
-			return nil, fmt.Errorf("invalid digest format")
-		case errors.Is(err, ErrInvalidRegistryName):
-			// Use original string for context as ref might be partially populated or nil
-			return nil, fmt.Errorf("invalid registry name: %s", str)
-		case errors.Is(err, ErrInvalidRepoName):
-			// Error for invalid Docker Library names like "InvalidRepo"
-			return nil, fmt.Errorf("invalid image reference: %s", str)
-		case errors.Is(err, ErrInvalidImageRefFormat):
-			// Generic format error from tryExtractImageFromString's final check
-			return nil, fmt.Errorf("invalid image reference: %s", str)
-		default:
-			// Catch-all for unexpected errors, wrap original error
-			return nil, fmt.Errorf("invalid image reference: %s: %w", str, err)
-		}
+		return nil, err
 	}
 
 	// Defensive check in case tryExtractImageFromString returns nil, nil
 	if ref == nil {
-		return nil, fmt.Errorf("invalid image reference: %s", str)
+		return nil, nil
 	}
 
 	// Trust tryExtractImageFromString for validation, final checks removed.
@@ -605,61 +584,115 @@ func ParseImageReference(input interface{}) (*ImageReference, error) {
 	return ref, nil
 }
 
-// parseImageMap parses an image reference from a map
-func parseImageMap(m map[string]interface{}) (*ImageReference, error) {
-	debug.Printf("Parsing image map: %v", m)
+// parseImageMap attempts to extract an ImageReference from a map[string]interface{}.
+// It handles different patterns like {registry: ..., repository: ..., tag: ...}
+// or {repository: ..., tag: ...} and applies global registry context if needed.
+// It returns the ImageReference or nil if the map doesn't represent an image.
+// It returns an error only if the map seems intended to be an image map but has invalid types.
+func parseImageMap(m map[string]interface{}, globalRegistry string) (*ImageReference, error) {
+	debug.Printf("Parsing image map: %v with global registry: %s", m, globalRegistry)
 
-	var ref ImageReference
+	ref := &ImageReference{}
 
-	// Get repository
-	if repo, ok := m["repository"].(string); ok {
-		// Split registry and repository
-		parts := strings.SplitN(repo, "/", 2)
-		if len(parts) == 2 && strings.Contains(parts[0], ".") {
+	// Get repository - required for an image map
+	repoVal, repoExists := m["repository"]
+	if !repoExists {
+		debug.Printf("Map missing 'repository', cannot parse as image map.")
+		return nil, ErrInvalidImageMapRepo // Return error if repository is missing
+	}
+	repoStr, repoIsString := repoVal.(string)
+	if !repoIsString {
+		debug.Printf("Map 'repository' exists but is not a string (type: %T).", repoVal)
+		return nil, ErrInvalidImageMapRepo // Also return error if repo is wrong type
+	}
+
+	// Check for explicit registry
+	if registryVal, exists := m["registry"]; exists {
+		if registryStr, ok := registryVal.(string); ok {
+			debug.Printf("Found explicit registry in map: %s", registryStr)
+			ref.Registry = registryStr
+		} else if registryVal != nil { // Non-string, non-nil registry is an error
+			debug.Printf("Map 'registry' exists but is not a string (type: %T).", registryVal)
+			return nil, ErrInvalidImageMapRegistryType
+		}
+		// If registry exists but is nil, we treat it as missing and use default/global later
+	}
+
+	// If no explicit registry was set above, derive or use global/default
+	if ref.Registry == "" {
+		parts := strings.SplitN(repoStr, "/", 2)
+		// Check if first part looks like a registry (contains dots/colon) and is not a template var
+		if len(parts) == 2 && (strings.Contains(parts[0], ".") || strings.Contains(parts[0], ":")) && !strings.Contains(parts[0], "{{") {
+			debug.Printf("Derived registry '%s' from repository '%s'", parts[0], repoStr)
 			ref.Registry = parts[0]
 			ref.Repository = parts[1]
 		} else {
-			ref.Registry = defaultRegistry
-			ref.Repository = repo
+			// No registry derived from repository string, use global or default
+			if globalRegistry != "" {
+				debug.Printf("Using global registry: %s", globalRegistry)
+				ref.Registry = globalRegistry
+			} else {
+				debug.Printf("Using default registry: %s", defaultRegistry)
+				ref.Registry = defaultRegistry
+			}
+			ref.Repository = repoStr // Repository is the original string
 		}
 	} else {
-		return nil, nil
+		// We had an explicit registry from the map, so the repository is just the repoStr
+		ref.Repository = repoStr
 	}
 
 	// Get tag
-	if tag, ok := m["tag"].(string); ok {
-		ref.Tag = tag
+	if tagVal, exists := m["tag"]; exists {
+		if tagStr, ok := tagVal.(string); ok {
+			ref.Tag = tagStr
+		} else if tagVal != nil { // Non-string, non-nil tag is an error
+			debug.Printf("Map 'tag' exists but is not a string (type: %T).", tagVal)
+			return nil, ErrInvalidImageMapTagType
+		}
+		// If tag exists but is nil, ref.Tag remains empty string, which is valid
 	}
 
 	// Get digest
-	if digest, ok := m["digest"].(string); ok {
-		ref.Digest = digest
+	if digestVal, exists := m["digest"]; exists {
+		if digestStr, ok := digestVal.(string); ok {
+			ref.Digest = digestStr
+		} else if digestVal != nil {
+			// Currently, we don't have a specific error for invalid digest type, maybe add later?
+			debug.Printf("Map 'digest' exists but is not a string (type: %T), ignoring.", digestVal)
+		}
 	}
 
-	return normalizeImageReference(&ref), nil
+	// Normalize the potentially complex registry string before further processing
+	ref.Registry = NormalizeRegistry(ref.Registry)
+	debug.Printf("Normalized registry: %s", ref.Registry)
+
+	// Apply library namespace logic AFTER registry normalization
+	if ref.Registry == defaultRegistry && !strings.Contains(ref.Repository, "/") {
+		debug.Printf("Prepending 'library/' to repository '%s' for default registry", ref.Repository)
+		ref.Repository = libraryNamespace + "/" + ref.Repository
+	}
+
+	debug.Printf("Parsed image map result: %+v", ref)
+	return ref, nil
 }
 
 // normalizeImageReference ensures the reference has valid values
+// DEPRECATED: Logic moved into parseImageMap and tryExtractImageFromString
 func normalizeImageReference(ref *ImageReference) *ImageReference {
+	// This function is largely redundant now as normalization happens within the parsing functions.
+	// Keeping it for potential future use or complex normalization steps, but it's currently simple.
 	if ref == nil {
 		return nil
 	}
 
-	// Normalize registry
+	// Basic normalization: Ensure default registry if empty
 	if ref.Registry == "" {
 		ref.Registry = defaultRegistry
-	} else {
-		// Handle docker.io special cases
-		if ref.Registry == "docker.io" || ref.Registry == "index.docker.io" {
-			ref.Registry = defaultRegistry
-		}
 	}
 
-	// Handle Docker library images: Add prefix only if registry is docker.io
-	// and the repository doesn't already contain a slash
-	if ref.Registry == defaultRegistry && !strings.Contains(ref.Repository, "/") {
-		ref.Repository = libraryNamespace + "/" + ref.Repository
-	}
+	// The library namespace logic is now handled in parseImageMap and tryExtractImageFromString
+	// where context (like the original map/string and global registry) is available.
 
 	return ref
 }

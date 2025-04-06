@@ -266,10 +266,10 @@ func TestImageDetector(t *testing.T) {
 
 			for i, expected := range tc.expectedImages {
 				if i >= len(images) {
-					break
+					assert.Fail(t, "Mismatch in number of detected images", "Expected %d, got %d", len(tc.expectedImages), len(images))
+					break // Avoid panic if lengths mismatch
 				}
-				actual := images[i]
-
+				actual := images[i] // Access only if index is valid
 				assert.Equal(t, expected.Location, actual.Location, "path mismatch")
 				assert.Equal(t, expected.Pattern, actual.Pattern, "pattern mismatch")
 				assert.Equal(t, expected.LocationType, actual.LocationType, "location type mismatch")
@@ -403,7 +403,11 @@ func TestImageDetector_DetectImages_EdgeCases(t *testing.T) {
 
 			assert.Equal(t, len(tc.expectedImages), len(images))
 			for i, expected := range tc.expectedImages {
-				actual := images[i]
+				if i >= len(images) {
+					assert.Fail(t, "Mismatch in number of detected images", "Expected %d, got %d", len(tc.expectedImages), len(images))
+					break // Avoid panic if lengths mismatch
+				}
+				actual := images[i] // Access only if index is valid
 				assert.Equal(t, expected.Location, actual.Location)
 				assert.Equal(t, expected.Pattern, actual.Pattern)
 				assert.Equal(t, expected.LocationType, actual.LocationType)
@@ -630,7 +634,11 @@ func TestImageDetector_TemplateVariables(t *testing.T) {
 			sortDetectedImages(images)
 
 			for i, expected := range tc.expectedImages {
-				actual := images[i]
+				if i >= len(images) {
+					assert.Fail(t, "Mismatch in number of detected images", "Expected %d, got %d", len(tc.expectedImages), len(images))
+					break // Avoid panic if lengths mismatch
+				}
+				actual := images[i] // Access only if index is valid
 				assert.Equal(t, expected.Location, actual.Location)
 				assert.Equal(t, expected.Pattern, actual.Pattern)
 				assert.Equal(t, expected.LocationType, actual.LocationType)
@@ -862,13 +870,12 @@ func TestTryExtractImageFromString_EdgeCases(t *testing.T) {
 		{
 			name:          "empty string",
 			input:         "",
-			expected:      nil,
 			expectError:   true,
-			errorContains: "empty string",
+			errorContains: "cannot parse empty image string",
 		},
 		{
 			name:        "simple docker library image",
-			input:       "nginx:latest", // Add tag for better compatibility
+			input:       "nginx:latest",
 			expectError: false,
 			expected: &ImageReference{
 				Registry:   "docker.io",
@@ -949,218 +956,191 @@ func TestTryExtractImageFromString_EdgeCases(t *testing.T) {
 	}
 }
 
-func TestTryExtractImageFromMap_PartialMaps(t *testing.T) {
-	// Strict unit test: Validates the deterministic tryExtractImageFromMap function.
+func TestParseImageMap_PartialMaps(t *testing.T) {
 	tests := []struct {
-		name            string
-		imageMap        map[string]interface{}
-		context         *DetectionContext
-		expectedRef     *ImageReference
-		expectedPattern string
-		expectError     bool
-		errorContains   string
+		name           string
+		input          map[string]interface{}
+		expectedRef    *ImageReference
+		expectError    bool
+		errorContains  string
+		globalRegistry string
 	}{
 		{
 			name: "complete map with all fields",
-			imageMap: map[string]interface{}{
+			input: map[string]interface{}{
 				"registry":   "docker.io",
 				"repository": "nginx",
 				"tag":        "1.23",
 			},
-			context: nil,
 			expectedRef: &ImageReference{
 				Registry:   "docker.io",
 				Repository: "library/nginx",
 				Tag:        "1.23",
 			},
-			expectedPattern: "map",
-			expectError:     false,
+			expectError:   false,
+			errorContains: "",
 		},
 		{
 			name: "partial map - missing tag",
-			imageMap: map[string]interface{}{
+			input: map[string]interface{}{
 				"registry":   "docker.io",
 				"repository": "nginx",
 			},
-			context: nil,
 			expectedRef: &ImageReference{
 				Registry:   "docker.io",
 				Repository: "library/nginx",
 				Tag:        "",
 			},
-			expectedPattern: "map",
-			expectError:     false,
+			expectError:   false,
+			errorContains: "",
 		},
 		{
 			name: "partial map - missing registry",
-			imageMap: map[string]interface{}{
+			input: map[string]interface{}{
 				"repository": "nginx",
 				"tag":        "1.23",
 			},
-			context: nil,
 			expectedRef: &ImageReference{
 				Registry:   "docker.io", // Default
 				Repository: "library/nginx",
 				Tag:        "1.23",
 			},
-			expectedPattern: "map",
-			expectError:     false,
+			expectError:   false,
+			errorContains: "",
 		},
 		{
 			name: "partial map - missing registry with global context",
-			imageMap: map[string]interface{}{
+			input: map[string]interface{}{
 				"repository": "app",
 				"tag":        "v1.0",
-			},
-			context: &DetectionContext{
-				GlobalRegistry: "my-registry.example.com",
 			},
 			expectedRef: &ImageReference{
 				Registry:   "my-registry.example.com", // From global context
 				Repository: "app",
 				Tag:        "v1.0",
 			},
-			expectedPattern: "map",
-			expectError:     false,
+			expectError:    false,
+			errorContains:  "",
+			globalRegistry: "my-registry.example.com",
 		},
 		{
 			name: "minimal map - only repository",
-			imageMap: map[string]interface{}{
+			input: map[string]interface{}{
 				"repository": "nginx",
 			},
-			context: nil,
 			expectedRef: &ImageReference{
 				Registry:   "docker.io", // Default
 				Repository: "library/nginx",
 				Tag:        "",
 			},
-			expectedPattern: "map",
-			expectError:     false,
+			expectError:   false,
+			errorContains: "",
 		},
 		{
 			name: "non-image map - missing repository",
-			imageMap: map[string]interface{}{
+			input: map[string]interface{}{
 				"registry": "docker.io",
 				"tag":      "latest",
 			},
-			context:         nil,
-			expectedRef:     nil,
-			expectedPattern: "",
-			expectError:     false, // Not an error, just returns nil
+			expectedRef:   nil,
+			expectError:   false, // Not an error, just returns nil
+			errorContains: "",
 		},
 		{
 			name: "invalid map - repository not a string",
-			imageMap: map[string]interface{}{
+			input: map[string]interface{}{
 				"repository": 123, // Invalid type
 				"tag":        "1.23",
 			},
-			context:         nil,
-			expectedRef:     nil,
-			expectedPattern: "",
-			expectError:     true,
-			errorContains:   "repository is not a string",
+			expectedRef:   nil,
+			expectError:   true,
+			errorContains: ErrInvalidImageMapRepo.Error(),
 		},
 		{
 			name: "invalid map - registry not a string",
-			imageMap: map[string]interface{}{
+			input: map[string]interface{}{
 				"registry":   true, // Invalid type
 				"repository": "nginx",
 				"tag":        "1.23",
 			},
-			context:         nil,
-			expectedRef:     nil,
-			expectedPattern: "",
-			expectError:     true,
-			errorContains:   "registry is not a string",
+			expectedRef:   nil,
+			expectError:   true,
+			errorContains: ErrInvalidImageMapRegistryType.Error(),
 		},
 		{
 			name: "invalid map - tag not a string",
-			imageMap: map[string]interface{}{
+			input: map[string]interface{}{
 				"registry":   "docker.io",
 				"repository": "nginx",
 				"tag":        123, // Invalid type
 			},
-			context:         nil,
-			expectedRef:     nil,
-			expectedPattern: "",
-			expectError:     true,
-			errorContains:   "tag is not a string",
+			expectedRef:   nil,
+			expectError:   true,
+			errorContains: ErrInvalidImageMapTagType.Error(),
 		},
 		{
 			name: "map with template variable in tag",
-			imageMap: map[string]interface{}{
+			input: map[string]interface{}{
 				"repository": "nginx",
 				"tag":        "{{ .Chart.AppVersion }}",
-			},
-			context: &DetectionContext{
-				TemplateMode: true,
 			},
 			expectedRef: &ImageReference{
 				Registry:   "docker.io",
 				Repository: "library/nginx",
 				Tag:        "{{ .Chart.AppVersion }}",
 			},
-			expectedPattern: "map",
-			expectError:     false,
+			expectError:   false,
+			errorContains: "",
 		},
 		{
 			name: "map with organization in repository",
-			imageMap: map[string]interface{}{
+			input: map[string]interface{}{
 				"repository": "myorg/myapp",
 				"tag":        "v1.0",
 			},
-			context: nil,
 			expectedRef: &ImageReference{
 				Registry:   "docker.io",   // Default
 				Repository: "myorg/myapp", // Already has organization, should not prepend library/
 				Tag:        "v1.0",
 			},
-			expectedPattern: "map",
-			expectError:     false,
+			expectError:   false,
+			errorContains: "",
 		},
 		{
 			name: "map with nil tag",
-			imageMap: map[string]interface{}{
+			input: map[string]interface{}{
 				"repository": "nginx",
 				"tag":        nil,
 			},
-			context: nil,
 			expectedRef: &ImageReference{
 				Registry:   "docker.io",
 				Repository: "library/nginx",
 				Tag:        "",
 			},
-			expectedPattern: "map",
-			expectError:     false,
+			expectError:   false,
+			errorContains: "",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			detector := NewImageDetector(tc.context)
-			ref, pattern, err := detector.tryExtractImageFromMap(tc.imageMap)
+			globalReg := tc.globalRegistry
+			if globalReg == "" {
+				// Simulate the default behavior when no global registry is set
+			}
+			ref, err := parseImageMap(tc.input, globalReg)
 
 			if tc.expectError {
-				assert.Error(t, err, "expected an error")
+				assert.Error(t, err)
 				if tc.errorContains != "" {
-					assert.Contains(t, err.Error(), tc.errorContains, "error message did not contain expected text")
+					assert.Contains(t, err.Error(), tc.errorContains)
 				}
-				assert.Nil(t, ref, "expected nil reference for error case")
-				assert.Empty(t, pattern, "expected empty pattern for error case")
-			} else {
-				assert.NoError(t, err, "unexpected error: %v", err)
-
-				if tc.expectedRef == nil {
-					assert.Nil(t, ref, "expected nil reference")
-				} else {
-					assert.NotNil(t, ref, "expected non-nil reference")
-					assert.Equal(t, tc.expectedRef.Registry, ref.Registry, "registry mismatch")
-					assert.Equal(t, tc.expectedRef.Repository, ref.Repository, "repository mismatch")
-					assert.Equal(t, tc.expectedRef.Tag, ref.Tag, "tag mismatch")
-				}
-
-				assert.Equal(t, tc.expectedPattern, pattern, "pattern mismatch")
+				assert.Nil(t, ref)
+				return
 			}
+
+			assert.NoError(t, err)
+			assert.Equal(t, tc.expectedRef, ref)
 		})
 	}
 }
