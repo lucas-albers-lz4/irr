@@ -13,6 +13,7 @@ import (
 )
 
 func TestMinimalChart(t *testing.T) {
+	// t.Skip("Temporarily disabled")
 	harness := NewTestHarness(t)
 	defer harness.Cleanup()
 
@@ -29,6 +30,7 @@ func TestMinimalChart(t *testing.T) {
 }
 
 func TestParentChart(t *testing.T) {
+	// t.Skip("Temporarily disabled")
 	harness := NewTestHarness(t)
 	defer harness.Cleanup()
 
@@ -45,7 +47,8 @@ func TestParentChart(t *testing.T) {
 }
 
 func TestKubePrometheusStack(t *testing.T) {
-	t.Skip("Skipping test: kube-prometheus-stack chart not available in test-data/charts")
+	// t.Skip("Temporarily disabled")
+	// t.Skip("Skipping test: kube-prometheus-stack chart not available in test-data/charts")
 	harness := NewTestHarness(t)
 	defer harness.Cleanup()
 
@@ -62,6 +65,7 @@ func TestKubePrometheusStack(t *testing.T) {
 }
 
 func TestCertManagerIntegration(t *testing.T) {
+	// t.Skip("Temporarily disabled")
 	// Certificate manager is available as cert-manager in test-data/charts
 	harness := NewTestHarness(t)
 	defer harness.Cleanup()
@@ -79,7 +83,8 @@ func TestCertManagerIntegration(t *testing.T) {
 }
 
 func TestKubePrometheusStackIntegration(t *testing.T) {
-	t.Skip("Skipping test: kube-prometheus-stack chart not available in test-data/charts")
+	// t.Skip("Temporarily disabled")
+	// t.Skip("Skipping test: kube-prometheus-stack chart not available in test-data/charts")
 	harness := NewTestHarness(t)
 	defer harness.Cleanup()
 
@@ -96,7 +101,8 @@ func TestKubePrometheusStackIntegration(t *testing.T) {
 }
 
 func TestIngressNginxIntegration(t *testing.T) {
-	t.Skip("Skipping test: ingress-nginx chart not available in test-data/charts")
+	// t.Skip("Temporarily disabled")
+	// t.Skip("Skipping test: ingress-nginx chart not available in test-data/charts")
 	harness := NewTestHarness(t)
 	defer harness.Cleanup()
 
@@ -113,6 +119,7 @@ func TestIngressNginxIntegration(t *testing.T) {
 }
 
 func TestComplexChartFeatures(t *testing.T) {
+	// t.Skip("Temporarily disabled")
 	tests := []struct {
 		name           string
 		chartName      string
@@ -152,8 +159,8 @@ func TestComplexChartFeatures(t *testing.T) {
 				"registry.k8s.io/kube-state-metrics/kube-state-metrics",
 				"docker.io/grafana/grafana",
 			},
-			skip:       true,
-			skipReason: "kube-prometheus-stack chart not available in test-data/charts",
+			skip: false,
+			// skipReason: "kube-prometheus-stack chart not available in test-data/charts",
 		},
 		{
 			name:      "ingress-nginx with admission webhook",
@@ -166,8 +173,8 @@ func TestComplexChartFeatures(t *testing.T) {
 				"registry.k8s.io/ingress-nginx/controller",
 				"registry.k8s.io/ingress-nginx/kube-webhook-certgen",
 			},
-			skip:       true,
-			skipReason: "ingress-nginx chart not available in test-data/charts",
+			skip: false,
+			// skipReason: "ingress-nginx chart not available in test-data/charts",
 		},
 	}
 
@@ -213,7 +220,9 @@ func TestComplexChartFeatures(t *testing.T) {
 }
 
 func TestDryRunFlag(t *testing.T) {
-	t.Skip("Skipping test: Requires binary to be built with 'make build' first")
+	// t.Skip("Temporarily disabled")
+	// t.Skip("Skipping test: Requires binary to be built with \'make build\' first")
+	// return
 	harness := NewTestHarness(t)
 	defer harness.Cleanup()
 
@@ -243,7 +252,9 @@ func TestDryRunFlag(t *testing.T) {
 }
 
 func TestStrictMode(t *testing.T) {
-	t.Skip("Skipping test: Requires binary to be built with 'make build' first")
+	// t.Skip("Temporarily disabled")
+	// t.Skip("Skipping test: Requires binary to be built with \'make build\' first")
+	// return
 	harness := NewTestHarness(t)
 	defer harness.Cleanup()
 
@@ -291,22 +302,25 @@ version: 0.1.0`
 }
 
 func setupChartWithUnsupportedStructure(t *testing.T, h *TestHarness) {
-	chartDir := filepath.Join(h.tempDir, "unsupported-chart")
-	require.NoError(t, os.MkdirAll(chartDir, 0750))
+	t.Helper()
+	// t.Skip("Temporarily disabled - Need to create unsupported-test chart")
+	chartPath := testutil.GetChartPath("unsupported-test")
+	err := os.MkdirAll(filepath.Join(h.tempDir, chartPath), 0755)
+	require.NoError(t, err, "Failed to create unsupported-test chart directory")
 
 	// Create Chart.yaml
 	chartYaml := `apiVersion: v2
-name: unsupported-chart
+name: unsupported-test
 version: 0.1.0`
-	require.NoError(t, os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), []byte(chartYaml), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(h.tempDir, chartPath, "Chart.yaml"), []byte(chartYaml), 0644))
 
 	// Create values.yaml with unsupported structure
 	valuesYaml := `image:
   name: nginx
   version: 1.23  # Using 'version' instead of 'tag'`
-	require.NoError(t, os.WriteFile(filepath.Join(chartDir, "values.yaml"), []byte(valuesYaml), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(h.tempDir, chartPath, "values.yaml"), []byte(valuesYaml), 0644))
 
-	h.chartPath = chartDir
+	h.chartPath = filepath.Join(h.tempDir, chartPath)
 }
 
 // nolint:unused // Kept for potential future uses
