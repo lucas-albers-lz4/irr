@@ -23,16 +23,16 @@ func GetValueAtPath(data map[string]interface{}, path []string) (interface{}, bo
 			// Handle slice/array index
 			index, err := strconv.Atoi(key)
 			if err != nil {
-				return nil, false
+				return nil, false // Invalid index format, path doesn't match
 			}
 
 			if index < 0 || index >= len(currentSlice) {
-				return nil, false
+				return nil, false // Index out of bounds
 			}
 			current = currentSlice[index]
 		} else {
 			// Current level is not a map or slice, but path continues
-			return nil, false
+			return nil, false // Path mismatch
 		}
 	}
 
@@ -43,7 +43,7 @@ func GetValueAtPath(data map[string]interface{}, path []string) (interface{}, bo
 // It creates maps and handles slices/arrays as needed.
 func SetValueAtPath(data map[string]interface{}, path []string, value interface{}) error {
 	if len(path) == 0 {
-		return fmt.Errorf("empty path")
+		return ErrEmptyPath
 	}
 
 	current := data
@@ -57,8 +57,7 @@ func SetValueAtPath(data map[string]interface{}, path []string, value interface{
 				// Check if the existing value is a slice
 				_, isSlice := existing.([]interface{})
 				if !isSlice {
-					// If it exists but is not a slice, it's an error
-					return fmt.Errorf("path element '%s' is not a slice", key)
+					return fmt.Errorf("%w: %s", ErrPathElementNotSlice, key)
 				}
 				// If it exists and is a slice, we don't need to modify 'arr' or 'current[key]', just continue.
 			} else {
@@ -74,7 +73,7 @@ func SetValueAtPath(data map[string]interface{}, path []string, value interface{
 			current = next
 		} else if existing, ok := current[key]; ok {
 			// Key exists but is not a map
-			return fmt.Errorf("path element '%s' exists but is not a map (%T)", key, existing)
+			return fmt.Errorf("%w: %s (found type %T)", ErrPathElementNotMap, key, existing)
 		} else {
 			// Create map if missing
 			newMap := make(map[string]interface{})
@@ -89,7 +88,7 @@ func SetValueAtPath(data map[string]interface{}, path []string, value interface{
 	// Handle final array index assignment
 	if index, err := strconv.Atoi(lastKey); err == nil {
 		if len(path) < 2 {
-			return fmt.Errorf("cannot have array index as only path element")
+			return ErrArrayIndexAsOnlyElement
 		}
 		parentKey := path[len(path)-2]
 
@@ -99,15 +98,21 @@ func SetValueAtPath(data map[string]interface{}, path []string, value interface{
 			var isSlice bool
 			arr, isSlice = existing.([]interface{})
 			if !isSlice {
-				return fmt.Errorf("path element '%s' is not a slice", parentKey)
+				return fmt.Errorf("%w: %s", ErrPathElementNotSlice, parentKey)
 			}
 		} else {
-			return fmt.Errorf("array not found at path element '%s'", parentKey)
+			return fmt.Errorf("array %w at path element '%s'", ErrPathNotFound, parentKey)
 		}
 
 		// Check array bounds
-		if index < 0 || index >= len(arr) {
-			return fmt.Errorf("array index %d out of bounds (len %d)", index, len(arr))
+		if index < 0 {
+			return fmt.Errorf("negative %w: %d", ErrInvalidArrayIndex, index)
+		} else if index >= len(arr) {
+			// Extend the slice with nil values if needed
+			newArr := make([]interface{}, index+1)
+			copy(newArr, arr)
+			arr = newArr
+			current[parentKey] = arr // Update the map with the extended slice
 		}
 
 		// Set the value
@@ -116,10 +121,10 @@ func SetValueAtPath(data map[string]interface{}, path []string, value interface{
 	} else { // Handle final map key assignment
 		if existing, ok := current[lastKey]; ok {
 			if _, ok := existing.(map[string]interface{}); ok {
-				return fmt.Errorf("cannot overwrite map at path element '%s'", lastKey)
+				return fmt.Errorf("%w at path element '%s'", ErrCannotOverwriteStructure, lastKey)
 			}
 			if _, ok := existing.([]interface{}); ok {
-				return fmt.Errorf("cannot overwrite array at path element '%s'", lastKey)
+				return fmt.Errorf("%w at path element '%s'", ErrCannotOverwriteStructure, lastKey)
 			}
 		}
 		current[lastKey] = value
