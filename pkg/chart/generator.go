@@ -143,6 +143,22 @@ func (g *Generator) Generate() (*override.OverrideFile, error) {
 	debug.DumpValue("Found images", images)
 	debug.DumpValue("Unsupported structures", unsupportedMatches)
 
+	// --- START: Strict Mode Check ---
+	if g.strict && len(unsupportedMatches) > 0 {
+		// Combine details of unsupported structures into the error message
+		var details []string
+		for _, match := range unsupportedMatches {
+			details = append(details, fmt.Sprintf("path=%v type=%s pattern=%s", match.Location, locationTypeToString(match.LocationType), match.Pattern))
+		}
+		errMsg := fmt.Sprintf("strict mode enabled: unsupported structures found (%d): [%s]",
+			len(unsupportedMatches), strings.Join(details, "; "))
+		debug.Println(errMsg)
+		// Return a generic error indicating the failure due to strict mode.
+		// The command layer will interpret this and set the correct exit code (5).
+		return nil, errors.New(errMsg)
+	}
+	// --- END: Strict Mode Check ---
+
 	// Determine eligible images *before* processing
 	eligibleImages := []image.DetectedImage{}
 	for _, img := range images {
@@ -154,11 +170,18 @@ func (g *Generator) Generate() (*override.OverrideFile, error) {
 			debug.Printf("Skipping image from excluded registry: %s", img.Reference.String())
 			continue
 		}
-		// Skip non-source registries (unless source list is empty)
-		if len(g.sourceRegistries) > 0 && !g.isSourceRegistry(img.Reference.Registry) {
+		// --- MODIFIED ELIGIBILITY CHECK ---
+		// If sourceRegistries list is empty, NO images are eligible.
+		if len(g.sourceRegistries) == 0 {
+			debug.Printf("Skipping image because source registry list is empty: %s", img.Reference.String())
+			continue
+		}
+		// If sourceRegistries is NOT empty, skip if image registry is not in the list.
+		if !g.isSourceRegistry(img.Reference.Registry) {
 			debug.Printf("Skipping image from non-source registry: %s", img.Reference.String())
 			continue
 		}
+		// If not excluded and (list is not empty AND registry is in the list)
 		eligibleImages = append(eligibleImages, img)
 	}
 	eligibleImagesCount := len(eligibleImages)
@@ -286,32 +309,36 @@ func (g *Generator) Generate() (*override.OverrideFile, error) {
 			// Error was already logged if SetValueAtPath failed
 			fmt.Printf("[DEBUG irr GEN] Processing failed for path: %v (error logged above if applicable)\n", img.Location)
 		}
-
-		// Check processing threshold AFTER attempting to process the image
-		if eligibleImagesCount > 0 {
-			successPercentage := (imagesSuccessfullyProcessed * 100) / eligibleImagesCount
-			debug.Printf("Success rate: %d%% (%d/%d)", successPercentage, imagesSuccessfullyProcessed, eligibleImagesCount)
-			if successPercentage < g.threshold {
-				debug.Printf("Threshold check failed: %d%% < %d%%", successPercentage, g.threshold)
-				// Aggregate errors
-				finalErr := &ThresholdNotMetError{Actual: successPercentage, Required: g.threshold}
-				if len(processingErrors) > 0 {
-					// Combine errors into a single message
-					var errorStrings []string
-					for _, procErr := range processingErrors {
-						errorStrings = append(errorStrings, procErr.Error())
-					}
-					combinedErrorMsg := fmt.Sprintf("threshold failed (%d%% < %d%%). Processing errors: [%s]",
-						successPercentage, g.threshold, strings.Join(errorStrings, "; "))
-					// Return a generic error with the combined message
-					return nil, errors.New(combinedErrorMsg)
-				}
-				return nil, finalErr // Return threshold error if no specific processing errors
-			}
-		} else {
-			debug.Printf("No eligible images were processed, threshold check skipped.")
-		}
 	} // End loop over images
+
+	// --- START: Threshold Check After Loop ---
+	if eligibleImagesCount > 0 {
+		successPercentage := 0
+		if eligibleImagesCount > 0 { // Avoid division by zero
+			successPercentage = (imagesSuccessfullyProcessed * 100) / eligibleImagesCount
+		}
+		debug.Printf("Final success rate: %d%% (%d/%d)", successPercentage, imagesSuccessfullyProcessed, eligibleImagesCount)
+		if successPercentage < g.threshold {
+			debug.Printf("Threshold check failed: %d%% < %d%%", successPercentage, g.threshold)
+
+			if len(processingErrors) > 0 {
+				// Combine specific processing errors into a single error message
+				var errorStrings []string
+				for _, procErr := range processingErrors {
+					errorStrings = append(errorStrings, procErr.Error())
+				}
+				combinedErrorMsg := fmt.Sprintf("processing threshold not met (%d%% < %d%%) and processing errors occurred: [%s]",
+					successPercentage, g.threshold, strings.Join(errorStrings, "; "))
+				// Return a standard error containing the combined message
+				return nil, errors.New(combinedErrorMsg)
+			}
+			// If no specific processing errors, return the specific threshold error type
+			return nil, &ThresholdNotMetError{Actual: successPercentage, Required: g.threshold}
+		}
+	} else {
+		debug.Printf("No eligible images were processed, threshold check skipped.")
+	}
+	// --- END: Threshold Check After Loop ---
 
 	// COMMENTED OUT: Second loop that incorrectly rebuilt the override structure.
 	// The 'modifiedValues' map already contains the correct, fully populated overrides.
