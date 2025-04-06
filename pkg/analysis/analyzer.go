@@ -130,50 +130,9 @@ func (a *Analyzer) analyzeValues(values map[string]interface{}, prefix string, a
 			path = prefix + "." + k
 		}
 
-		switch val := v.(type) {
-		case map[string]interface{}:
-			// Check if this is an image map pattern
-			if a.isImageMap(val) {
-				registry, repository, tag := a.normalizeImageValues(val)
-
-				if repository != "" { // Only repository is required
-					pattern := ImagePattern{
-						Path: path,
-						Type: PatternTypeMap,
-						Structure: map[string]interface{}{
-							"registry":   registry,
-							"repository": repository,
-							"tag":        tag,
-						},
-						Value: fmt.Sprintf("%s/%s:%s", registry, repository, tag),
-						Count: 1,
-					}
-					analysis.ImagePatterns = append(analysis.ImagePatterns, pattern)
-				}
-			} else {
-				// Recurse into the map
-				if err := a.analyzeValues(val, path, analysis); err != nil {
-					return err
-				}
-			}
-
-		case string:
-			// Check if this is an image string pattern
-			if a.isImageString(k, val) {
-				pattern := ImagePattern{
-					Path:  path,
-					Type:  PatternTypeString,
-					Value: val,
-					Count: 1,
-				}
-				analysis.ImagePatterns = append(analysis.ImagePatterns, pattern)
-			}
-
-		case []interface{}:
-			// Handle array values (could contain image maps or strings)
-			if err := a.analyzeArray(val, path, analysis); err != nil {
-				return err
-			}
+		if err := a.analyzeSingleValue(k, v, path, analysis); err != nil {
+			// If analyzing a single value fails, wrap the error with context
+			return fmt.Errorf("error analyzing path '%s': %w", path, err)
 		}
 
 		// Check for global patterns (registry configurations)
@@ -189,6 +148,62 @@ func (a *Analyzer) analyzeValues(values map[string]interface{}, prefix string, a
 	return nil
 }
 
+// analyzeSingleValue analyzes a single key-value pair based on the value type.
+func (a *Analyzer) analyzeSingleValue(key string, value interface{}, path string, analysis *ChartAnalysis) error {
+	switch val := value.(type) {
+	case map[string]interface{}:
+		return a.analyzeMapValue(val, path, analysis)
+	case string:
+		return a.analyzeStringValue(key, val, path, analysis)
+	case []interface{}:
+		return a.analyzeArray(val, path, analysis) // Keep calling analyzeArray for slices
+	default:
+		// Ignore other types (bool, int, float, nil, etc.)
+		return nil
+	}
+}
+
+// analyzeMapValue handles analysis when the value is a map.
+func (a *Analyzer) analyzeMapValue(val map[string]interface{}, path string, analysis *ChartAnalysis) error {
+	// Check if this is an image map pattern
+	if a.isImageMap(val) {
+		registry, repository, tag := a.normalizeImageValues(val)
+		if repository != "" { // Only repository is required for a valid image pattern
+			pattern := ImagePattern{
+				Path: path,
+				Type: PatternTypeMap,
+				Structure: map[string]interface{}{
+					"registry":   registry,
+					"repository": repository,
+					"tag":        tag,
+				},
+				Value: fmt.Sprintf("%s/%s:%s", registry, repository, tag),
+				Count: 1,
+			}
+			analysis.ImagePatterns = append(analysis.ImagePatterns, pattern)
+		}
+		// Important: If it IS an image map, we *don't* recurse further into it.
+	} else {
+		// If it's not an image map itself, recurse into its keys/values.
+		return a.analyzeValues(val, path, analysis)
+	}
+	return nil
+}
+
+// analyzeStringValue handles analysis when the value is a string.
+func (a *Analyzer) analyzeStringValue(key string, val string, path string, analysis *ChartAnalysis) error {
+	if a.isImageString(key, val) {
+		pattern := ImagePattern{
+			Path:  path,
+			Type:  PatternTypeString,
+			Value: val,
+			Count: 1,
+		}
+		analysis.ImagePatterns = append(analysis.ImagePatterns, pattern)
+	}
+	return nil
+}
+
 // analyzeArray handles array values that might contain image references
 func (a *Analyzer) analyzeArray(val []interface{}, path string, analysis *ChartAnalysis) error {
 	for i, item := range val {
@@ -196,37 +211,9 @@ func (a *Analyzer) analyzeArray(val []interface{}, path string, analysis *ChartA
 
 		switch v := item.(type) {
 		case map[string]interface{}:
-			foundPatternInMapItem := false // Flag to prevent duplicate processing
-			// Check if this map entry IS an image map
-			if a.isImageMap(v) {
-				registry, repository, tag := a.normalizeImageValues(v)
-				if repository != "" {
-					pattern := ImagePattern{
-						Path: itemPath, Type: PatternTypeMap,
-						Structure: map[string]interface{}{"registry": registry, "repository": repository, "tag": tag},
-						Value:     fmt.Sprintf("%s/%s:%s", registry, repository, tag), Count: 1,
-					}
-					analysis.ImagePatterns = append(analysis.ImagePatterns, pattern)
-					foundPatternInMapItem = true
-				}
-			} else {
-				// Check if it CONTAINS an image field (but isn't an image map itself)
-				if img, ok := v["image"].(string); ok && a.isImageString("image", img) {
-					pattern := ImagePattern{
-						Path: itemPath + ".image", Type: PatternTypeString, Value: img, Count: 1,
-					}
-					analysis.ImagePatterns = append(analysis.ImagePatterns, pattern)
-					foundPatternInMapItem = true // Count this as found to avoid full recursion duplication
-				}
+			if err := a.analyzeMapItemInArray(v, itemPath, analysis); err != nil {
+				return fmt.Errorf("error analyzing map item in array at path '%s': %w", itemPath, err)
 			}
-
-			// Recurse into the map ONLY IF we didn't find a primary pattern within it already.
-			// This prevents adding duplicates when a map contains `image:` but also nested images.
-			if !foundPatternInMapItem {
-				if err := a.analyzeValues(v, itemPath, analysis); err != nil {
-					return err
-				}
-			} // <<< Logic Change: Only recurse if no direct pattern found
 
 		case string:
 			// Check if the string itself is an image reference
@@ -239,6 +226,50 @@ func (a *Analyzer) analyzeArray(val []interface{}, path string, analysis *ChartA
 			}
 		}
 	}
+	return nil
+}
+
+// analyzeMapItemInArray handles the logic for processing a map found inside an array element.
+func (a *Analyzer) analyzeMapItemInArray(v map[string]interface{}, itemPath string, analysis *ChartAnalysis) error {
+	foundPatternInMapItem := false // Flag to prevent duplicate processing
+
+	// 1. Check if this map IS an image map itself
+	if a.isImageMap(v) {
+		registry, repository, tag := a.normalizeImageValues(v)
+		if repository != "" { // Check if it's a valid image map structure
+			pattern := ImagePattern{
+				Path:      itemPath, // Path is the array index
+				Type:      PatternTypeMap,
+				Structure: map[string]interface{}{"registry": registry, "repository": repository, "tag": tag},
+				Value:     fmt.Sprintf("%s/%s:%s", registry, repository, tag),
+				Count:     1,
+			}
+			analysis.ImagePatterns = append(analysis.ImagePatterns, pattern)
+			foundPatternInMapItem = true
+		}
+	}
+
+	// 2. If it's NOT an image map itself, check if it CONTAINS an 'image:' string key
+	if !foundPatternInMapItem {
+		if img, ok := v["image"].(string); ok && a.isImageString("image", img) {
+			pattern := ImagePattern{
+				Path:  itemPath + ".image", // Path includes the field within the array element
+				Type:  PatternTypeString,
+				Value: img,
+				Count: 1,
+			}
+			analysis.ImagePatterns = append(analysis.ImagePatterns, pattern)
+			foundPatternInMapItem = true // Mark as found to avoid redundant recursion
+		}
+	}
+
+	// 3. Recurse into the map ONLY IF we didn't find a primary pattern above.
+	// This prevents adding duplicates when a map IS an image map OR contains \`image:\`
+	// but might also contain other nested images deeper within.
+	if !foundPatternInMapItem {
+		return a.analyzeValues(v, itemPath, analysis)
+	}
+
 	return nil
 }
 
