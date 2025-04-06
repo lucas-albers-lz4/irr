@@ -359,53 +359,71 @@ func TestParseArrayPath(t *testing.T) {
 		wantKey      string
 		wantIndex    int
 		wantHasIndex bool
+		wantErr      bool
 	}{
 		{
 			name:         "simple key",
-			part:         "key",
-			wantKey:      "key",
+			part:         "image",
+			wantKey:      "image",
+			wantIndex:    0,
 			wantHasIndex: false,
+			wantErr:      false,
 		},
 		{
 			name:         "array index",
-			part:         "items[0]",
-			wantKey:      "items",
+			part:         "containers[0]",
+			wantKey:      "containers",
 			wantIndex:    0,
 			wantHasIndex: true,
+			wantErr:      false,
 		},
 		{
-			name:         "invalid array syntax",
-			part:         "items[a]",
-			wantKey:      "items[a]",
+			name:         "malformed array index - no closing bracket",
+			part:         "containers[0",
+			wantKey:      "",
+			wantIndex:    0,
 			wantHasIndex: false,
+			wantErr:      true,
 		},
 		{
-			name:         "missing close bracket",
-			part:         "items[0",
-			wantKey:      "items[0",
+			name:         "malformed array index - no opening bracket",
+			part:         "containers0]",
+			wantKey:      "containers0]",
+			wantIndex:    0,
 			wantHasIndex: false,
+			wantErr:      false,
+		},
+		{
+			name:         "non-integer array index",
+			part:         "containers[abc]",
+			wantKey:      "",
+			wantIndex:    0,
+			wantHasIndex: false,
+			wantErr:      true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			key, index, hasIndex, err := parseArrayPath(tt.part)
-
-			// Check for unexpected errors first
-			if tt.wantHasIndex && err != nil {
-				t.Errorf("parseArrayPath() returned unexpected error for valid input '%s': %v", tt.part, err)
+			key, index, hasIndex, err := parsePathPart(tt.part)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("parsePathPart() expected error for invalid input '%s'", tt.part)
+				}
+				return
 			}
-			// If we expect it *not* to be an index, errors might be expected (like malformed or non-integer)
-			// but we don't explicitly check for specific errors here, just the hasIndex result.
-
+			if err != nil {
+				t.Errorf("parsePathPart() returned unexpected error for valid input '%s': %v", tt.part, err)
+				return
+			}
 			if key != tt.wantKey {
-				t.Errorf("parseArrayPath() key = %v, want %v", key, tt.wantKey)
+				t.Errorf("parsePathPart() key = %v, want %v", key, tt.wantKey)
 			}
 			if hasIndex != tt.wantHasIndex {
-				t.Errorf("parseArrayPath() hasIndex = %v, want %v", hasIndex, tt.wantHasIndex)
+				t.Errorf("parsePathPart() hasIndex = %v, want %v", hasIndex, tt.wantHasIndex)
 			}
-			if hasIndex && index != tt.wantIndex {
-				t.Errorf("parseArrayPath() index = %v, want %v", index, tt.wantIndex)
+			if index != tt.wantIndex {
+				t.Errorf("parsePathPart() index = %v, want %v", index, tt.wantIndex)
 			}
 		})
 	}
