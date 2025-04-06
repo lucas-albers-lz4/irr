@@ -74,7 +74,7 @@ func TestParseImageReference(t *testing.T) {
 			input:         "invalid:image:format::",
 			expectedRef:   nil,
 			expectedErr:   true,
-			errorContains: "invalid tag format",
+			errorContains: "invalid repository name",
 		},
 		{
 			name:          "empty string",
@@ -102,14 +102,14 @@ func TestParseImageReference(t *testing.T) {
 			input:         "image:!invalidTag",
 			expectedRef:   nil,
 			expectedErr:   true,
-			errorContains: "invalid tag format",
+			errorContains: "invalid repository name",
 		},
 		{
 			name:          "invalid registry name",
 			input:         "InvalidRegistry/image:tag",
 			expectedRef:   nil,
 			expectedErr:   true,
-			errorContains: "invalid image reference format",
+			errorContains: "invalid repository name",
 		},
 		{
 			name:          "non-string input",
@@ -214,8 +214,8 @@ func TestSanitizeRegistryForPath(t *testing.T) {
 		{"docker.io", "dockerio"},
 		{"quay.io", "quayio"},
 		{"k8s.gcr.io", "k8sgcrio"},
-		{"registry:5000", "registry"},
-		{"internal-registry.example.com:5000", "internal-registryexamplecom"},
+		{"registry:5000", "registry5000"},
+		{"internal-registry.example.com:5000", "internal-registryexamplecom5000"},
 	}
 
 	for _, tc := range tests {

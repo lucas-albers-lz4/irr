@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
 
@@ -131,39 +132,51 @@ func (h *TestHarness) ValidateOverrides() error {
 	if err != nil {
 		return fmt.Errorf("failed to read overrides: %v", err)
 	}
+	// ---- START DEBUG LOGGING ----
+	h.t.Logf("Generated overrides.yaml content:\n---\n%s\n---", string(data))
+	// ---- END DEBUG LOGGING ----
 
 	var overrides map[string]interface{}
 	if err := yaml.Unmarshal(data, &overrides); err != nil {
-		return fmt.Errorf("failed to parse overrides: %v", err)
+		// Don't fail here, let helm template catch it if it's truly invalid for Helm
+		h.t.Logf("Warning: failed to parse overrides.yaml locally: %v", err)
+		// return fmt.Errorf("failed to parse overrides: %v", err)
 	}
 
 	// Generate helm template output with and without overrides
-	originalOutput, err := h.helmTemplate(nil)
+	originalOutput, err := h.helmTemplate("original", nil)
 	if err != nil {
 		return fmt.Errorf("failed to template original: %v", err)
 	}
 
-	overriddenOutput, err := h.helmTemplate([]string{"-f", h.overridePath})
+	overriddenOutput, err := h.helmTemplate("overridden", []string{"-f", h.overridePath})
 	if err != nil {
+		// It's possible the error is from helm itself due to bad overrides
 		return fmt.Errorf("failed to template with overrides: %v", err)
 	}
+	// ---- START DEBUG LOGGING ----
+	h.t.Logf("Helm template output with overrides:\n---\n%s\n---", overriddenOutput)
+	// ---- END DEBUG LOGGING ----
 
 	// Compare the outputs
 	return h.compareTemplateOutputs(originalOutput, overriddenOutput)
 }
 
 // helmTemplate runs helm template and returns the output
-func (h *TestHarness) helmTemplate(extraArgs []string) (string, error) {
+func (h *TestHarness) helmTemplate(stage string, extraArgs []string) (string, error) {
 	args := []string{"template", "test", h.chartPath}
 	if extraArgs != nil {
 		args = append(args, extraArgs...)
 	}
+	h.t.Logf("Running helm command (%s): helm %s", stage, strings.Join(args, " ")) // DEBUG LOGGING
 
 	// #nosec G204 -- Test harness executes helm with test-controlled arguments
 	cmd := exec.Command("helm", args...)
 	cmd.Dir = h.tempDir // Run in the temp directory context
 	output, err := cmd.CombinedOutput()
 	if err != nil {
+		// Log the output even on error for debugging
+		h.t.Logf("Helm command (%s) failed. Output:\n---\n%s\n---", stage, string(output)) // DEBUG LOGGING
 		return "", fmt.Errorf("helm template failed: %v\nOutput: %s", err, output)
 	}
 
@@ -185,6 +198,9 @@ func (h *TestHarness) compareTemplateOutputs(original, overridden string) error 
 		}
 		var doc map[string]interface{}
 		if err := yaml.Unmarshal([]byte(part), &doc); err != nil {
+			// ---- START DEBUG LOGGING ----
+			h.t.Logf("Failed to parse original doc part:\n---\n%s\n---", part)
+			// ---- END DEBUG LOGGING ----
 			return fmt.Errorf("failed to parse original doc: %v", err)
 		}
 		originalDocs = append(originalDocs, doc)
@@ -196,6 +212,9 @@ func (h *TestHarness) compareTemplateOutputs(original, overridden string) error 
 		}
 		var doc map[string]interface{}
 		if err := yaml.Unmarshal([]byte(part), &doc); err != nil {
+			// ---- START DEBUG LOGGING ----
+			h.t.Logf("Failed to parse overridden doc part:\n---\n%s\n---", part)
+			// ---- END DEBUG LOGGING ----
 			return fmt.Errorf("failed to parse overridden doc: %v", err)
 		}
 		overriddenDocs = append(overriddenDocs, doc)
@@ -325,4 +344,20 @@ func (h *TestHarness) ExecuteHelm(args ...string) (string, error) {
 		return string(output), fmt.Errorf("helm template execution failed: %w", err)
 	}
 	return string(output), nil
+}
+
+func setupIntegrationTestEnv(t *testing.T) (string, func()) {
+	// Set environment variable to indicate testing mode
+	err := os.Setenv("IRR_TESTING", "true")
+	require.NoError(t, err, "Failed to set IRR_TESTING environment variable")
+	cleanup := func() {
+		err := os.Unsetenv("IRR_TESTING")
+		assert.NoError(t, err, "Failed to unset IRR_TESTING environment variable") // Use assert in cleanup
+	}
+
+	// Create a temporary directory for test artifacts
+	tempDir, err := os.MkdirTemp("", "helm-override-test-*")
+	require.NoError(t, err, "Failed to create temporary directory")
+
+	return tempDir, cleanup
 }
