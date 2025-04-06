@@ -9,6 +9,15 @@ import (
 	"github.com/lalbers/irr/pkg/debug"
 )
 
+// Helper function to get map keys for logging
+func getMapKeys(m map[string]interface{}) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
 // Constants for image detection
 const (
 	// Patterns for detecting image references
@@ -252,16 +261,25 @@ func NewImageDetector(ctx *DetectionContext) *ImageDetector {
 
 // DetectImages finds all image references in a values structure
 func (d *ImageDetector) DetectImages(values interface{}, path []string) ([]DetectedImage, []DetectedImage, error) {
-	debug.FunctionEnter("DetectImages")
-	defer debug.FunctionExit("DetectImages")
+	// --- START DetectImages DEBUG ---
+	fmt.Printf("[DEBUG irr DETECT] >> Entering DetectImages. Path: %v\n", path)
+	fmt.Printf("[DEBUG irr DETECT]    Values type: %T\n", values)
+	if m, ok := values.(map[string]interface{}); ok {
+		fmt.Printf("[DEBUG irr DETECT]    Values (map): %d keys\n", len(m))
+		// Optionally print keys or a limited dump for maps
+		// debug.DumpValue("Map Values", m)
+	} else if s, ok := values.([]interface{}); ok {
+		fmt.Printf("[DEBUG irr DETECT]    Values (slice): %d items\n", len(s))
+	} else {
+		fmt.Printf("[DEBUG irr DETECT]    Values (other): %v\n", values)
+	}
+	// --- END DetectImages DEBUG ---
 
-	// Initialize slices for results at THIS level
-	var detected []DetectedImage
-	var unsupported []DetectedImage
+	var allDetected, allUnsupported []DetectedImage
 
 	// Handle nil values
 	if values == nil {
-		return detected, unsupported, nil
+		return allDetected, allUnsupported, nil
 	}
 
 	// Process global registry first if at root level
@@ -288,8 +306,8 @@ func (d *ImageDetector) DetectImages(values interface{}, path []string) ([]Detec
 			debug.Printf("Error checking if map itself is an image at path %v: %v", path, err)
 			// Logged the error, continue processing keys
 		}
-		detected = append(detected, mapAsImageDetected...)
-		unsupported = append(unsupported, mapAsImageUnsupported...)
+		allDetected = append(allDetected, mapAsImageDetected...)
+		allUnsupported = append(allUnsupported, mapAsImageUnsupported...)
 
 		// 2. Determine if we should recurse into children
 		skipRecursion := len(mapAsImageDetected) > 0
@@ -315,8 +333,8 @@ func (d *ImageDetector) DetectImages(values interface{}, path []string) ([]Detec
 				debug.Printf("Error processing value for key '%s' at path %v: %v. Skipping this key.", key, path, err)
 				continue
 			}
-			detected = append(detected, subDetected...)
-			unsupported = append(unsupported, subUnsupported...)
+			allDetected = append(allDetected, subDetected...)
+			allUnsupported = append(allUnsupported, subUnsupported...)
 		}
 
 	case []interface{}:
@@ -326,8 +344,8 @@ func (d *ImageDetector) DetectImages(values interface{}, path []string) ([]Detec
 			if err != nil {
 				return nil, nil, fmt.Errorf("error processing array index %d: %w", i, err)
 			}
-			detected = append(detected, subDetected...)
-			unsupported = append(unsupported, subUnsupported...)
+			allDetected = append(allDetected, subDetected...)
+			allUnsupported = append(allUnsupported, subUnsupported...)
 		}
 
 	case string:
@@ -337,7 +355,7 @@ func (d *ImageDetector) DetectImages(values interface{}, path []string) ([]Detec
 				if ref.Registry == "" && d.context.GlobalRegistry != "" {
 					ref.Registry = d.context.GlobalRegistry
 				}
-				detected = append(detected, DetectedImage{
+				allDetected = append(allDetected, DetectedImage{
 					Location:     path,
 					LocationType: TypeString,
 					Reference:    ref,
@@ -346,7 +364,7 @@ func (d *ImageDetector) DetectImages(values interface{}, path []string) ([]Detec
 				})
 				debug.Printf("DETECTED (string): Path=%v, Ref=%+v", path, ref)
 			} else if d.context.Strict && strings.Contains(v, ":") && !strings.Contains(v, "//") {
-				unsupported = append(unsupported, DetectedImage{
+				allUnsupported = append(allUnsupported, DetectedImage{
 					Location:     path,
 					LocationType: TypeUnknown,
 					Pattern:      "unsupported",
@@ -356,13 +374,16 @@ func (d *ImageDetector) DetectImages(values interface{}, path []string) ([]Detec
 		}
 	}
 
-	return detected, unsupported, nil
+	return allDetected, allUnsupported, nil
 }
 
 // detectImageValue is a helper to process the value found under an 'image' key.
 func (d *ImageDetector) detectImageValue(imageVal interface{}, path []string) ([]DetectedImage, []DetectedImage, error) {
-	var detected []DetectedImage
-	var unsupported []DetectedImage
+	// --- START detectImageValue DEBUG ---
+	fmt.Printf("[DEBUG irr DETECT VAL] >> Entering detectImageValue. Path: %v, ValueType: %T\n", path, imageVal)
+	// --- END detectImageValue DEBUG ---
+
+	var detected, unsupported []DetectedImage
 
 	switch img := imageVal.(type) {
 	case string:
@@ -388,30 +409,44 @@ func (d *ImageDetector) detectImageValue(imageVal interface{}, path []string) ([
 			})
 		}
 	case map[string]interface{}:
-		if ref, err := parseImageMap(img, d.context.GlobalRegistry); err == nil && ref != nil {
-			detected = append(detected, DetectedImage{
-				Location:     path,                         // Path already includes "image"
-				LocationType: TypeMapRegistryRepositoryTag, // Assuming full map structure under image key
-				Reference:    ref,
-				Pattern:      "map",
-				Original:     img,
-			})
-			debug.Printf("DETECTED (image:map): Path=%v, Ref=%+v", path, ref)
-			// Note: We intentionally DO NOT recurse further into this map
-			// as it was already identified as the image definition.
-		} else if err != nil {
-			// Propagate parsing errors (like invalid types within the map)
-			return nil, nil, fmt.Errorf("error parsing map under image key at %v: %w", path, err)
-		} else if ref == nil && d.context.Strict {
-			// If parsing didn't error but didn't yield a valid image reference,
-			// and we are in strict mode, consider it unsupported.
-			debug.Printf("Map at path %v did not parse as a valid image structure in strict mode.", path)
+		// Attempt to parse the map as a standard image structure
+		debug.Printf("Value is map. Calling parseImageMap. Path: %v", path)
+		// Call as method, handle 3 return values
+		ref, locType, err := d.parseImageMap(img, path)
+		if err != nil {
+			// Map looked like image structure but failed parsing (e.g., invalid type for tag)
+			debug.Printf("DETECT FAILED (map parse error): Path=%v, Error=%v", path, err)
+			// Always add parsing errors to unsupported regardless of strict mode
+			// The generator layer will check strict mode later.
 			unsupported = append(unsupported, DetectedImage{
 				Location:     path,
-				LocationType: TypeUnknown, // Or maybe TypeMapRegistryRepositoryTag if repo was present but tag/reg missing?
-				Pattern:      "unsupported-map-structure",
-				Original:     img,
+				LocationType: TypeUnknown, // Indicate parsing failure
+				Pattern:      PatternUnsupported,
+				Original:     imageVal,
 			})
+		} else if ref != nil {
+			// Successfully parsed as an image map
+			debug.Printf("DETECTED (map): Path=%v, Ref=%+v, Type=%d", path, ref, locType)
+			detected = append(detected, DetectedImage{
+				Location:     path,
+				LocationType: locType,                // Use type returned by parseImageMap
+				Pattern:      PatternRegistryRepoTag, // Adjust if needed based on locType
+				Reference:    ref,
+				Original:     imageVal,
+			})
+		} else { // ref is nil, err is nil
+			// Map didn't parse as standard image map (e.g., missing repository or using name/version)
+			debug.Printf("Map at path %v did not parse as image map (likely not an image structure)", path)
+			// If strict mode is enabled in the context, add this non-standard map to unsupported.
+			if d.context.Strict {
+				debug.Printf("Adding map at path %v to unsupported list due to strict mode.", path)
+				unsupported = append(unsupported, DetectedImage{
+					Location:     path,
+					LocationType: TypeUnknown, // It's an unknown/unsupported map structure
+					Pattern:      PatternUnsupported,
+					Original:     imageVal,
+				})
+			}
 		}
 	default:
 		// Value under 'image' key is neither string nor map - unsupported?
@@ -557,127 +592,148 @@ func ParseImageReference(input interface{}) (*ImageReference, error) {
 	return ref, nil
 }
 
-// parseImageMap attempts to extract an ImageReference from a map[string]interface{}.
-// It handles different patterns like {registry: ..., repository: ..., tag: ...}
-// or {repository: ..., tag: ...} and applies global registry context if needed.
+// parseImageMap attempts to parse a map[string]interface{} into an ImageReference.
 // It returns the ImageReference or nil if the map doesn't represent an image.
 // It returns an error only if the map seems intended to be an image map but has invalid types.
-func parseImageMap(m map[string]interface{}, globalRegistry string) (*ImageReference, error) {
-	debug.Printf("Attempting to parse image map: %+v", m)
-	ref := &ImageReference{}
+// NOTE: This is now a method of ImageDetector to access context.GlobalRegistry
+func (d *ImageDetector) parseImageMap(m map[string]interface{}, path []string) (*ImageReference, LocationType, error) {
+	// --- START parseImageMap DEBUG ---
+	fmt.Printf("[DEBUG irr PARSE MAP] >> Attempting to parse map at path: %v\n", path)
+	fmt.Printf("[DEBUG irr PARSE MAP]    Map Keys: %v\n", getMapKeys(m))
+	// --- END parseImageMap DEBUG ---
 
-	// Get repository - required for an image map
-	repoVal, repoExists := m["repository"]
+	ref := &ImageReference{}
+	var repoVal interface{}
+	var repoExists bool
+
+	// Check for required 'repository' key
+	repoVal, repoExists = m["repository"]
 	if !repoExists {
 		debug.Printf("Map missing 'repository', not an image map")
-		return nil, nil // Return nil without error for maps without repository
+		return nil, TypeUnknown, nil // Return nil, Unknown type, nil error
 	}
+
+	// Also require 'tag' key for Type 2 maps
+	tagVal, tagExists := m["tag"]
+	if !tagExists {
+		debug.Printf("Map has 'repository' but missing 'tag', not a valid image map")
+		return nil, TypeUnknown, nil // Not a complete image map
+	}
+
 	repoStr, repoIsString := repoVal.(string)
 	if !repoIsString {
 		debug.Printf("Map 'repository' exists but is not a string (type: %T).", repoVal)
-		return nil, ErrInvalidImageMapRepo // Return error if repo is wrong type
+		return nil, TypeUnknown, ErrInvalidImageMapRepo // Return nil, Unknown type, error
 	}
 
-	// Check for explicit registry
-	if registryVal, exists := m["registry"]; exists {
-		if registryStr, ok := registryVal.(string); ok {
-			debug.Printf("Found explicit registry in map: %s", registryStr)
-			ref.Registry = registryStr
+	// Also validate tag is a string
+	tagStr, tagIsString := tagVal.(string)
+	if !tagIsString {
+		debug.Printf("Map 'tag' exists but is not a string (type: %T).", tagVal)
+		return nil, TypeUnknown, ErrInvalidImageMapTagType
+	}
+
+	// Now we have both repository and tag as strings, we can continue
+
+	// Attempt to parse registry from the repository string itself (e.g., docker.io/library/nginx)
+	if strings.Contains(repoStr, "/") {
+		parts := strings.SplitN(repoStr, "/", 2)
+		// Basic check if the first part looks like a domain name (contains '.')
+		if strings.Contains(parts[0], ".") {
+			ref.Registry = parts[0]
+			ref.Repository = parts[1]
+			debug.Printf("Registry derived from repository string: %s", ref.Registry)
+		} else {
+			// Does not look like registry/repo format, assume full string is repo
+			ref.Repository = repoStr
+		}
+	} else {
+		// No slash, assume it's just the repository name (needs registry lookup)
+		ref.Repository = repoStr
+	}
+
+	// Handle explicit 'registry' key, potentially overriding derived one or global/default
+	registryVal, registryExists := m["registry"]
+	if registryExists {
+		if regStr, regIsString := registryVal.(string); regIsString {
+			ref.Registry = regStr // Explicit registry overrides derived/default
+			debug.Printf("Using explicit registry key: %s", ref.Registry)
 		} else if registryVal != nil { // Non-string, non-nil registry is an error
 			debug.Printf("Map 'registry' exists but is not a string (type: %T).", registryVal)
-			return nil, ErrInvalidImageMapRegistryType
+			return nil, TypeUnknown, ErrInvalidImageMapRegistryType // Return nil, Unknown type, error
 		}
 		// If registry exists but is nil, we treat it as missing and use default/global later
 	}
 
-	// If no explicit registry was set above, derive or use global/default
+	// If registry is still empty after checking explicit key and deriving from repo,
+	// use global registry or default to docker.io
 	if ref.Registry == "" {
-		parts := strings.SplitN(repoStr, "/", 2)
-		// Check if first part looks like a registry (contains dots/colon) and is not a template var
-		if len(parts) == 2 && (strings.Contains(parts[0], ".") || strings.Contains(parts[0], ":")) && !strings.Contains(parts[0], "{{") {
-			debug.Printf("Derived registry '%s' from repository '%s'", parts[0], repoStr)
-			ref.Registry = parts[0]
-			ref.Repository = parts[1]
+		if d.context.GlobalRegistry != "" { // Use receiver context
+			debug.Printf("Using global registry: %s", d.context.GlobalRegistry)
+			ref.Registry = d.context.GlobalRegistry
 		} else {
-			// No registry derived from repository string, use global or default
-			if globalRegistry != "" {
-				debug.Printf("Using global registry: %s", globalRegistry)
-				ref.Registry = globalRegistry
-			} else {
-				debug.Printf("Using default registry: %s", defaultRegistry)
-				ref.Registry = defaultRegistry
+			debug.Printf("Using default registry: %s", defaultRegistry)
+			ref.Registry = defaultRegistry
+			// If repo didn't contain a slash, prepend library/
+			if !strings.Contains(ref.Repository, "/") {
+				ref.Repository = libraryNamespace + "/" + ref.Repository
+				debug.Printf("Prepended '%s/' to repository: %s", libraryNamespace, ref.Repository)
 			}
-			ref.Repository = repoStr // Repository is the original string
 		}
-	} else {
-		// We had an explicit registry from the map, so the repository is just the repoStr
-		ref.Repository = repoStr
 	}
 
-	// Get tag and check for embedded digest
-	if tagVal, exists := m["tag"]; exists {
-		if tagStr, ok := tagVal.(string); ok {
-			// Check if tag contains a digest
-			tagParts := strings.SplitN(tagStr, "@", 2)
-			if len(tagParts) == 2 {
-				ref.Tag = tagParts[0]
-				ref.Digest = tagParts[1]
-				// Normalize digest
-				if !strings.HasPrefix(ref.Digest, "sha256:") {
-					ref.Digest = "sha256:" + ref.Digest
+	// Set the tag from our validated tag string
+	ref.Tag = tagStr
+
+	// Handle 'digest' key (takes precedence over tag if valid)
+	digestVal, digestExists := m["digest"]
+	if digestExists {
+		if digestStr, digestIsString := digestVal.(string); digestIsString {
+			if digestStr != "" {
+				// Basic validation: check for sha256: prefix and hex characters
+				if strings.HasPrefix(digestStr, "sha256:") {
+					digestHex := strings.TrimPrefix(digestStr, "sha256:")
+					if len(digestHex) == 64 && digestCharsRegex.MatchString(digestHex) {
+						ref.Digest = digestStr
+						ref.Tag = "" // Clear tag if valid digest is found
+					} else {
+						debug.Printf("Map 'digest' has invalid sha256 format: %s", digestStr)
+						// Don't error, just ignore the invalid digest
+					}
+				} else {
+					debug.Printf("Map 'digest' is missing sha256: prefix: %s", digestStr)
+					// Don't error, just ignore the invalid digest
 				}
-				// Add validation for digest format
-				if !isValidDigestFormat(ref.Digest) {
-					debug.Printf("WARN: Invalid digest format found in tag: '%s'. Clearing digest.", tagStr)
-					ref.Digest = "" // Clear invalid digest
-				}
-			} else {
-				ref.Tag = tagStr
 			}
-		} else if tagVal != nil { // Non-string, non-nil tag is an error
-			debug.Printf("Map 'tag' exists but is not a string (type: %T).", tagVal)
-			return nil, ErrInvalidImageMapTagType
+		} else if digestVal != nil { // Non-string, non-nil digest is an error
+			debug.Printf("Map 'digest' exists but is not a string (type: %T).", digestVal)
+			return nil, TypeUnknown, ErrInvalidImageMapDigestType // Invalid type is an error
 		}
-		// If tag exists but is nil, ref.Tag remains empty string, which is valid
+		// If digest exists but is nil or empty string, it's ignored
 	}
 
-	// Get explicit digest (overrides any digest found in tag)
-	if digestVal, exists := m["digest"]; exists {
-		if digestStr, ok := digestVal.(string); ok {
-			ref.Digest = digestStr
-			// Normalize digest
-			if !strings.HasPrefix(ref.Digest, "sha256:") {
-				ref.Digest = "sha256:" + ref.Digest
-			}
-			// Add validation for digest format
-			if !isValidDigestFormat(ref.Digest) {
-				debug.Printf("WARN: Invalid digest format found in digest field: '%s'. Clearing digest.", digestStr)
-				ref.Digest = "" // Clear invalid digest
-			}
-		} else if digestVal != nil {
-			debug.Printf("Map 'digest' exists but is not a string (type: %T), ignoring.", digestVal)
-		}
-	}
-
-	// Normalize the potentially complex registry string before further processing
-	ref.Registry = NormalizeRegistry(ref.Registry)
-	debug.Printf("Normalized registry: %s", ref.Registry)
-
-	// Apply library namespace logic AFTER registry normalization
-	// Check the ORIGINAL repository string (repoStr) for slashes
-	if ref.Registry == defaultRegistry && !strings.Contains(repoStr, "/") {
-		debug.Printf("Prepending '%s/' to repository '%s' for default registry", libraryNamespace, ref.Repository)
-		ref.Repository = libraryNamespace + "/" + ref.Repository
+	// Determine LocationType based on keys present (simplified example)
+	locType := TypeRepositoryTag              // Default if only repo/tag/digest
+	if registryExists && ref.Registry != "" { // Check if explicit registry was successfully parsed
+		locType = TypeMapRegistryRepositoryTag
 	}
 
 	debug.Printf("Parsed image map result: %+v", ref)
-	return ref, nil
+	// Ensure the parsed reference is actually valid before returning TypeRepositoryTag
+	if !isValidImageReference(ref) {
+		debug.Printf("Map at path %v looked like TypeRepositoryTag but parsed ref is invalid. Ref: %+v", path, ref)
+		return nil, TypeUnknown, fmt.Errorf("parsed image reference from map is invalid: %+v", ref)
+	}
+	return ref, locType, nil // Return reference, determined type, nil error
 }
 
 // isValidDigestFormat checks if a string matches the expected sha256 digest format.
 func isValidDigestFormat(digest string) bool {
-	return digestRegex.MatchString("ignored/repository@" + digest)
-	// We prepend a dummy repo because the regex expects the full pattern.
+	if !strings.HasPrefix(digest, "sha256:") {
+		return false
+	}
+	digestHex := strings.TrimPrefix(digest, "sha256:")
+	return len(digestHex) == 64 && digestCharsRegex.MatchString(digestHex)
 }
 
 // isValidTag checks if a string is a valid Docker tag.
@@ -922,48 +978,43 @@ func DetectImages(values interface{}, path []string, sourceRegistries []string, 
 
 // processMap handles detection within a map.
 func (d *ImageDetector) processMap(m map[string]interface{}, path []string) ([]DetectedImage, []DetectedImage, error) {
-	debug.FunctionEnter(fmt.Sprintf("processMap Path: %v", path))
-	defer debug.FunctionExit(fmt.Sprintf("processMap Path: %v", path))
-
 	var allDetected, allUnsupported []DetectedImage
+	debug.Printf("[PROCESS MAP] Processing map at path: %v", path)
 
-	// 1. Try to detect if the map *itself* represents an image
-	mapAsImageDetected, mapAsImageUnsupported, err := d.detectImageValue(m, path)
+	// First, try to detect if the map ITSELF is an image structure
+	mapDetected, mapUnsupported, err := d.detectImageValue(m, path)
 	if err != nil {
 		// Log the error but don't stop processing sibling keys
 		debug.Printf("Error attempting to detect map as image at path %v: %v", path, err)
 		// Consider adding to allUnsupported here if desired
 	} else {
-		allDetected = append(allDetected, mapAsImageDetected...)
-		allUnsupported = append(allUnsupported, mapAsImageUnsupported...)
+		allDetected = append(allDetected, mapDetected...)
+		allUnsupported = append(allUnsupported, mapUnsupported...)
 	}
 
-	// 2. Determine if we should skip recursing into this map's children
-	skipRecursionIntoChildren := len(mapAsImageDetected) > 0
-	if skipRecursionIntoChildren {
-		debug.Printf("Map at path %v was detected as an image structure. Skipping recursion into its keys (e.g., repository, tag).", path)
+	// If the map itself was identified as an image, DON'T recurse into its keys
+	if len(mapDetected) > 0 {
+		debug.Printf("[PROCESS MAP] Map at path %v IS an image structure, skipping recursion into its keys.", path)
+		return allDetected, allUnsupported, nil
 	}
 
-	// 3. Iterate through ALL keys in the map
-	for key, value := range m {
-		// 4. Skip processing children if the map itself was an image structure
-		if skipRecursionIntoChildren {
-			continue
-		}
+	// If the map itself is NOT an image, recurse into its key-value pairs
+	debug.Printf("[PROCESS MAP] Map at path %v is NOT an image structure itself, recursing into keys...", path)
+	for k, v := range m {
+		currentPath := append([]string{}, path...) // Create a copy
+		currentPath = append(currentPath, k)
 
-		// 5. Prepare path for potential recursion
-		currentPath := append([]string{}, path...) // Create a copy for this iteration
-		currentPath = append(currentPath, key)
-
-		// 6. Recurse for the current key/value
-		debug.Printf("Recursively calling DetectImages for key '%s' at path %v", key, path)
-		detected, unsupported, err := d.DetectImages(value, currentPath)
+		debug.Printf("[PROCESS MAP] Recursing for key '%s' at path %v...", k, path)
+		// Recursively call DetectImages for the value
+		detected, unsupported, err := d.DetectImages(v, currentPath)
 		if err != nil {
-			// Log error for this specific key/value pair, but continue processing siblings
-			debug.Printf("Error processing value for key '%s' at path %v: %v. Skipping this key.", key, path, err)
-			// Optionally add a generic unsupported entry for this path/key
-			continue
+			debug.Printf("[PROCESS MAP] ERROR during recursion for key '%s' at path %v: %v", k, path, err)
+			// Decide how to handle errors - skip key, return error, etc.
+			// For now, let's log and continue to process other keys
+			debug.Printf("Error detecting images for key '%s' at path %v: %v. Skipping this key.", k, path, err)
+			continue // Or return nil, nil, err
 		}
+		debug.Printf("[PROCESS MAP] Finished recursion for key '%s' at path %v. Found %d detected, %d unsupported.", k, path, len(detected), len(unsupported))
 		allDetected = append(allDetected, detected...)
 		allUnsupported = append(allUnsupported, unsupported...)
 	}
