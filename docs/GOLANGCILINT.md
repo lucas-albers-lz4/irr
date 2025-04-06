@@ -24,6 +24,25 @@
    * Clear separation of concerns between packages
    * Consistent error handling patterns within packages
 
+### Current Issues (As of Latest Scan)
+
+1. **Error Checking (errcheck)**
+   * Unchecked `os.Setenv/Unsetenv` in test files
+   * Unchecked type assertions in override package
+   * **Files:** `cmd/irr/override_test.go`, `pkg/override/override.go`
+
+2. **Code Efficiency (ineffassign, staticcheck)**
+   * Ineffectual assignments to `newPrefix` in override package
+   * Empty if branch in detection tests
+   * Unnecessary separate variable declaration
+   * **Files:** `pkg/override/override.go`, `pkg/image/detection_test.go`
+
+3. **Dead Code (unused)**
+   * Unused functions in image detection package:
+     * `tryExtractImageFromMap`
+     * `normalizeImageReference`
+   * **Files:** `pkg/image/detection.go`
+
 ### Challenges & Lessons
 1. **Complex Function Refactoring**
    * Large functions (like `parseImageMap`) require careful, incremental changes
@@ -41,17 +60,23 @@
    * Maintaining backward compatibility during error refactoring
 
 ### Next Steps & Recommendations
-1. **Error Handling Strategy**
+1. **Immediate Actions**
+   * Add error checking for environment variable operations in tests
+   * Fix ineffectual assignments in override package
+   * Remove or utilize unused functions in image detection
+   * Clean up empty branches and merge variable declarations
+
+2. **Error Handling Strategy**
    * Continue package-by-package error centralization
    * Focus on high-impact functions first
    * Document error handling patterns for consistency
 
-2. **Test Improvements**
+3. **Test Improvements**
    * Add edge case tests for error conditions
    * Improve test helper functions
    * Consider property-based testing for complex functions
 
-3. **Code Organization**
+4. **Code Organization**
    * Review package boundaries
    * Consider further modularization
    * Document package-level design decisions
