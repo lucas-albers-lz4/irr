@@ -104,8 +104,6 @@ _output/
 *.zip
 
 # Debug files
-debug/
-debug.test
 *.debug
 *.pprof
 
