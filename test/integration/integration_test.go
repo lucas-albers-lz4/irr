@@ -265,6 +265,9 @@ func TestStrictMode(t *testing.T) {
 	// Setup chart with unsupported structure
 	setupChartWithUnsupportedStructure(t, harness)
 
+	// <<< ADDED: Set registries for the harness call >>>
+	harness.SetRegistries("harbor.dummy.com", []string{"docker.io"}) // Values don't really matter for this test
+
 	// Test without --strict
 	err := harness.GenerateOverrides()
 	assert.NoError(t, err, "Should succeed with warning without --strict")
@@ -283,6 +286,58 @@ func TestStrictMode(t *testing.T) {
 	_, err = cmd.CombinedOutput()
 	assert.Error(t, err, "Should fail in strict mode")
 }
+
+// --- ADDING NEW TEST ---
+func TestRegistryMappingFile(t *testing.T) {
+	harness := NewTestHarness(t)
+	defer harness.Cleanup()
+
+	// 1. Create a temporary mapping file
+	mappingContent := `
+mappings:
+  - source: docker.io
+    target: dckr  # Custom mapping prefix
+  - source: quay.io
+    target: quaycustom
+`
+	mappingFilePath := filepath.Join(harness.tempDir, "custom-mappings.yaml")
+	err := os.WriteFile(mappingFilePath, []byte(mappingContent), 0644)
+	require.NoError(t, err, "Failed to write temporary mapping file")
+
+	// 2. Setup chart (using minimal-test which has docker.io and quay.io images)
+	harness.SetupChart(testutil.GetChartPath("minimal-test"))
+	// Target registry doesn't matter much here, focus is on the prefix mapping
+	harness.SetRegistries("target.registry.com", []string{"docker.io", "quay.io"})
+
+	// 3. Execute override command with the mapping file flag
+	args := []string{
+		"override",
+		"--chart-path", harness.chartPath,
+		"--target-registry", harness.targetReg, // Use harness target registry
+		"--source-registries", strings.Join(harness.sourceRegs, ","),
+		"--registry-mappings", mappingFilePath, // Point to our custom file
+		"--output-file", harness.overridePath, // Use harness output path
+	}
+
+	output, err := harness.ExecuteIRR(args...)
+	require.NoError(t, err, "irr command with mapping file failed. Output: %s", output)
+
+	// 4. Validate the generated overrides
+	overrides, err := harness.GetOverrides()
+	require.NoError(t, err, "Failed to read/parse generated overrides file")
+
+	// Check docker.io image (should use 'dckr' prefix)
+	dockerImageValue, ok := overrides["image"].(map[string]interface{})["repository"].(string)
+	assert.True(t, ok, "Failed to find repository for image [image]")
+	assert.Equal(t, "dckr/library/nginx", dockerImageValue, "docker.io image should use 'dckr' prefix from mapping file")
+
+	// Check quay.io image (should use 'quaycustom' prefix)
+	quayImageValue, ok := overrides["quayImage"].(map[string]interface{})["image"].(map[string]interface{})["repository"].(string)
+	assert.True(t, ok, "Failed to find repository for image [quayImage][image]")
+	assert.Equal(t, "quaycustom/prometheus/node-exporter", quayImageValue, "quay.io image should use 'quaycustom' prefix from mapping file")
+}
+
+// --- END NEW TEST ---
 
 // Helper functions
 
