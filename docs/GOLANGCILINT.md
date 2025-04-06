@@ -113,22 +113,20 @@ Current blocking issues in integration tests:
 
 ### Current Issues (As of Latest Scan)
 
-1. **Error Checking (errcheck)**
-   * Unchecked `os.Setenv/Unsetenv` in test files
-   * Unchecked type assertions in override package
-   * **Files:** `cmd/irr/override_test.go`, `pkg/override/override.go`
+1. **Error Checking (errcheck)** - RESOLVED (v0.x.y)
+   * ~~Unchecked `os.Setenv/Unsetenv` in test files~~ (`test/integration/harness.go`)
+   * ~~Unchecked type assertions~~ in `pkg/chart/generator_test.go`
+   * ~~Unchecked `image.ParseImageReference`~~ in `pkg/chart/generator_test.go`
 
-2. **Code Efficiency (ineffassign, staticcheck)**
-   * Ineffectual assignments to `newPrefix` in override package
-   * Empty if branch in detection tests
-   * Unnecessary separate variable declaration
-   * **Files:** `pkg/override/override.go`, `pkg/image/detection_test.go`
+2. **Code Efficiency (ineffassign, staticcheck)** - PARTIALLY RESOLVED (v0.x.y)
+   * ~~Ineffectual assignments to `result`~~ in `pkg/chart/generator.go`
+   * Empty if branch in detection tests (`pkg/image/detection_test.go`) - REMAINS
+   * Unnecessary separate variable declaration - REMAINS (Needs specific location)
 
-3. **Dead Code (unused)**
-   * Unused functions in image detection package:
+3. **Dead Code (unused)** - REMAINS
+   * Unused functions in image detection package (`pkg/image/detection.go`):
      * `tryExtractImageFromMap`
      * `normalizeImageReference`
-   * **Files:** `pkg/image/detection.go`
 
 ### Challenges & Lessons
 1. **Complex Function Refactoring**
