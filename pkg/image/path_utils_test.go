@@ -134,7 +134,8 @@ func TestSetValueAtPath(t *testing.T) {
 			path:          []string{"key", "10"},
 			value:         "ignored",
 			expected:      map[string]interface{}{"key": []interface{}{0}},
-			expectedError: false,
+			expectedError: true,
+			errorContains: "out of bounds invalid array index: 10 (array length: 1)",
 		},
 		{
 			name:          "invalid_path_type",
