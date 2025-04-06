@@ -276,8 +276,9 @@ func (d *ImageDetector) DetectImages(values interface{}, path []string) ([]Detec
 		foundImageInMapStructure := false
 		// Check for a simple "image: <string>" pattern first
 		if imageVal, ok := v["image"]; ok {
-			if imageStr, isString := imageVal.(string); isString {
-				if ref, err := tryExtractImageFromString(imageStr); err == nil && ref != nil {
+			switch img := imageVal.(type) {
+			case string:
+				if ref, err := tryExtractImageFromString(img); err == nil && ref != nil {
 					// Found a valid image string under the "image" key
 					if ref.Registry == "" && d.context.GlobalRegistry != "" {
 						ref.Registry = d.context.GlobalRegistry
@@ -287,16 +288,38 @@ func (d *ImageDetector) DetectImages(values interface{}, path []string) ([]Detec
 						LocationType: TypeString,
 						Reference:    ref,
 						Pattern:      "string",
-						Original:     imageStr,
+						Original:     img,
 					})
-					// Note: We don't return early here anymore.
-					// Mark that we found an image this way to avoid map structure detection later.
 					foundImageInMapStructure = true
 				}
+			case map[string]interface{}:
+				// Try to parse the map itself as an image reference first
+				if ref, err := parseImageMap(img, d.context.GlobalRegistry); err == nil && ref != nil {
+					detected = append(detected, DetectedImage{
+						Location:     append(path, "image"),
+						LocationType: TypeMapRegistryRepositoryTag,
+						Reference:    ref,
+						Pattern:      "map",
+						Original:     img,
+					})
+					foundImageInMapStructure = true
+				} else if err != nil {
+					// Propagate parsing errors (like invalid types)
+					return nil, nil, fmt.Errorf("error parsing image map: %w", err)
+				}
+				// ALWAYS recurse into the map found under the 'image' key, even if parseImageMap failed.
+				// This handles cases like { image: { repository: "foo" } } where tag/digest are missing.
+				subPath := append(path, "image")
+				subDetected, subUnsupported, err := d.DetectImages(img, subPath)
+				if err != nil {
+					return nil, nil, fmt.Errorf("error recursing into image map: %w", err)
+				}
+				detected = append(detected, subDetected...)
+				unsupported = append(unsupported, subUnsupported...)
 			}
 		}
 
-		// If we didn't find an image via the simple "image" key,
+		// If we didn't find an image via the "image" key,
 		// try detecting the map structure itself (e.g., {repository: ..., tag: ...})
 		if !foundImageInMapStructure {
 			if ref, err := parseImageMap(v, d.context.GlobalRegistry); err != nil {
@@ -528,6 +551,8 @@ func parseImageMap(m map[string]interface{}, globalRegistry string) (*ImageRefer
 	repoStr, repoIsString := repoVal.(string)
 	if !repoIsString {
 		debug.Printf("Map 'repository' exists but is not a string (type: %T).", repoVal)
+		// Remove detailed YAML dump on error
+		// debug.DumpYAML("Error: Invalid Image Map Structure", m)
 		return nil, ErrInvalidImageMapRepo // Return error if repo is wrong type
 	}
 

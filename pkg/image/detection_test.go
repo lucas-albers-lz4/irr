@@ -1125,9 +1125,6 @@ func TestParseImageMap_PartialMaps(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			globalReg := tc.globalRegistry
-			if globalReg == "" {
-				// Simulate the default behavior when no global registry is set
-			}
 			ref, err := parseImageMap(tc.input, globalReg)
 
 			if tc.expectError {

@@ -443,7 +443,13 @@ func processChartForOverrides(chartData *chart.Chart, targetRegistry string, sou
 		return nil, fmt.Errorf("chart values are not a valid map[string]interface{}")
 	}
 
-	detectedImages, unsupported, err := image.DetectImages(chartData.Values, []string{}, sourceRegistries, excludeRegistries, false)
+	// Create a new image detector with context
+	detector := image.NewImageDetector(&image.DetectionContext{
+		GlobalRegistry: targetRegistry,
+		Strict:         false,
+	})
+
+	detectedImages, unsupported, err := detector.DetectImages(chartData.Values, []string{})
 	if err != nil {
 		return nil, fmt.Errorf("error detecting images: %w", err)
 	}
@@ -455,6 +461,19 @@ func processChartForOverrides(chartData *chart.Chart, targetRegistry string, sou
 	for _, img := range detectedImages {
 		debug.Printf("Processing image at path: %v", img.Location)
 		debug.DumpValue("Image Reference", img.Reference)
+
+		// Skip if the image is from an excluded registry
+		if img.Reference != nil && img.Reference.Registry != "" {
+			if isRegistryExcluded(img.Reference.Registry, excludeRegistries) {
+				debug.Printf("Skipping excluded registry: %s", img.Reference.Registry)
+				continue
+			}
+			// Skip if not from a source registry
+			if !isRegistryInList(img.Reference.Registry, sourceRegistries) {
+				debug.Printf("Skipping non-source registry: %s", img.Reference.Registry)
+				continue
+			}
+		}
 
 		// Transform the image reference using the path strategy
 		var transformedRef string
@@ -802,4 +821,19 @@ func cleanupTemplateVariables(value interface{}) interface{} {
 // OverridesToYAML converts a map of overrides to YAML format
 func OverridesToYAML(overrides map[string]interface{}) ([]byte, error) {
 	return yaml.Marshal(overrides)
+}
+
+// Helper function to check if a registry is in a list
+func isRegistryInList(registry string, list []string) bool {
+	for _, r := range list {
+		if r == registry {
+			return true
+		}
+	}
+	return false
+}
+
+// Helper function to check if a registry is excluded
+func isRegistryExcluded(registry string, excludeList []string) bool {
+	return isRegistryInList(registry, excludeList)
 }

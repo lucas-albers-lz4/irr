@@ -95,21 +95,17 @@ func GenerateOverrides(ref *image.ImageReference, path []string) (map[string]int
 	// Create a representation that matches the intended format
 	// This will be stored at the location specified by 'path'
 	ref = normalizeRegistry(ref)
-	var valueToSet interface{}
-
-	// TypeMapRegistryTag is most common, but also support TypeMapRegistry and TypeMapTag
-	// These type constants are defined in the image package
-	valueToSet = map[string]interface{}{
+	valueToSet := map[string]interface{}{
 		"registry":   ref.Registry,
 		"repository": ref.Repository,
 	}
 
 	if ref.Tag != "" {
-		valueToSet.(map[string]interface{})["tag"] = ref.Tag
+		valueToSet["tag"] = ref.Tag
 	}
 
 	if ref.Digest != "" {
-		valueToSet.(map[string]interface{})["digest"] = ref.Digest
+		valueToSet["digest"] = ref.Digest
 	}
 
 	// Set the value at the specified path in the overrides map
