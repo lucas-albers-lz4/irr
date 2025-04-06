@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lalbers/irr/pkg/image"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
@@ -56,7 +57,13 @@ func (h *TestHarness) SetRegistries(target string, sources []string) {
 	h.targetReg = target
 	h.sourceRegs = sources
 
-	// Create registry mappings file
+	// Ensure the test overrides directory exists
+	testOverridesDir := filepath.Join("..", "..", "test", "overrides") // Relative path to project root
+	if err := os.MkdirAll(testOverridesDir, 0755); err != nil {
+		h.t.Fatalf("Failed to create test overrides directory %s: %v", testOverridesDir, err)
+	}
+
+	// Create registry mappings file within the project's test overrides directory
 	mappings := struct {
 		Mappings []struct {
 			Source string `yaml:"source"`
@@ -70,27 +77,129 @@ func (h *TestHarness) SetRegistries(target string, sources []string) {
 			Target string `yaml:"target"`
 		}{
 			Source: source,
-			Target: target,
+			Target: image.SanitizeRegistryForPath(source),
 		})
 	}
 
-	mappingsPath := filepath.Join(h.tempDir, "registry-mappings.yaml")
+	// Use a unique name to avoid conflicts if tests run concurrently or are retried
+	mappingsFilename := fmt.Sprintf("registry-mappings-%s.yaml", filepath.Base(h.tempDir))
+	mappingsPath := filepath.Join(testOverridesDir, mappingsFilename)
+
 	mappingsData, err := yaml.Marshal(mappings)
 	if err != nil {
 		h.t.Fatalf("Failed to marshal registry mappings: %v", err)
 	}
 
 	if err := os.WriteFile(mappingsPath, mappingsData, 0644); err != nil {
-		h.t.Fatalf("Failed to write registry mappings: %v", err)
+		h.t.Fatalf("Failed to write registry mappings to %s: %v", mappingsPath, err)
 	}
 
-	h.mappingsPath = mappingsPath
+	h.mappingsPath = mappingsPath                                   // Store the path to the file within the project
+	h.t.Logf("Registry mappings file created at: %s", mappingsPath) // Log the path
+
+	// Also ensure the main override file path uses the OS temp dir
+	h.overridePath = filepath.Join(h.tempDir, "overrides.yaml")
 }
 
-// GenerateOverrides runs the helm-image-override tool
+// GenerateOverrides runs the helm-image-override tool (or calls the Go package directly)
 func (h *TestHarness) GenerateOverrides() error {
-	h.overridePath = filepath.Join(h.tempDir, "overrides.yaml")
+	// Ensure overridePath is set (might be redundant if SetRegistries sets it, but safe)
+	if h.overridePath == "" {
+		h.overridePath = filepath.Join(h.tempDir, "overrides.yaml")
+	}
 
+	// Set the testing environment variable for LoadMappings check
+	origEnv := os.Getenv("IRR_TESTING")
+	os.Setenv("IRR_TESTING", "true")
+	defer os.Setenv("IRR_TESTING", origEnv) // Restore original value
+
+	// --- START: Direct Go Package Call ---
+	/*
+		// 1. Load Registry Mappings (if specified)
+		// Mappings are loaded first as they might influence strategy selection/behavior
+		var mappings *registry.RegistryMappings
+		var err error
+		if h.mappingsPath != "" {
+			// Since mappingsPath is now relative to project root, LoadMappings should work
+			absMappingsPath, absErr := filepath.Abs(h.mappingsPath)
+			if absErr != nil {
+				return fmt.Errorf("failed to get absolute path for mappings file %s: %w", h.mappingsPath, absErr)
+			}
+			h.t.Logf("Attempting to load mappings from absolute path: %s", absMappingsPath)
+			mappings, err = registry.LoadMappings(h.mappingsPath) // Use the relative path stored
+			if err != nil {
+				return fmt.Errorf("failed to load registry mappings from %s: %w", h.mappingsPath, err)
+			}
+			h.t.Logf("Successfully loaded mappings from %s", h.mappingsPath)
+		} else {
+			h.t.Logf("No mappings path specified, proceeding without registry mappings.")
+		}
+
+		// 2. Determine Path Strategy (Assuming default for now)
+		// TODO: Make strategy configurable in harness if needed for other tests
+		pathStrat, err := strategy.GetStrategy("prefix-source-registry", mappings) // Pass potentially loaded mappings
+		if err != nil {
+			return fmt.Errorf("failed to get path strategy: %w", err)
+		}
+
+		// 3. Create Generator
+		// Set strict/template modes as needed for testing (defaulting to false)
+		strictMode := false
+		templateMode := false
+		var excludeRegistries []string // Define exclude list (empty for now)
+
+		// Call the correct generator constructor
+		generator := generator.NewGenerator(mappings, pathStrat, h.sourceRegs, excludeRegistries, strictMode, templateMode)
+
+		// 4. Load initial values.yaml
+		valuesFilePath := filepath.Join(h.chartPath, "values.yaml")
+		valuesBytes, err := os.ReadFile(valuesFilePath)
+		if err != nil && !os.IsNotExist(err) { // Allow values.yaml to be optional
+			return fmt.Errorf("failed to read values file %s: %w", valuesFilePath, err)
+		}
+		initialValues := make(map[string]interface{})
+		if len(valuesBytes) > 0 {
+			if err := yaml.Unmarshal(valuesBytes, &initialValues); err != nil {
+				return fmt.Errorf("failed to parse values file %s: %w", valuesFilePath, err)
+			}
+		}
+
+		// --- Add Debug Logging before Generate ---
+		h.t.Logf("[HARNESS PRE-GEN] ChartPath: %s", h.chartPath)
+		h.t.Logf("[HARNESS PRE-GEN] TargetRegistry: %s", h.targetReg) // Note: targetReg isn't passed to NewGenerator, should it be?
+		h.t.Logf("[HARNESS PRE-GEN] SourceRegistries: %v", h.sourceRegs)
+		h.t.Logf("[HARNESS PRE-GEN] ExcludeRegistries: %v", excludeRegistries)
+		h.t.Logf("[HARNESS PRE-GEN] PathStrategy: %T", pathStrat)
+		if mappings != nil {
+			h.t.Logf("[HARNESS PRE-GEN] Mappings Loaded: true (from %s)", h.mappingsPath)
+		} else {
+			h.t.Logf("[HARNESS PRE-GEN] Mappings Loaded: false")
+		}
+		h.t.Logf("[HARNESS PRE-GEN] StrictMode: %t", strictMode)
+		h.t.Logf("[HARNESS PRE-GEN] TemplateMode: %t", templateMode)
+		// --- End Debug Logging ---
+
+		// 5. Generate Overrides (calling the correct method with args)
+		overridesMap, err := generator.Generate(h.chartPath, initialValues)
+		if err != nil {
+			// Log any generator errors
+			return fmt.Errorf("generator.Generate() failed: %w", err)
+		}
+
+		// 6. Marshal the overrides to YAML
+		overrideBytes, err := yaml.Marshal(overridesMap)
+		if err != nil {
+			return fmt.Errorf("failed to marshal generated overrides to YAML: %w", err)
+		}
+
+		// 7. Write to override file
+		if err := os.WriteFile(h.overridePath, overrideBytes, 0644); err != nil {
+			return fmt.Errorf("failed to write overrides file %s: %w", h.overridePath, err)
+		}
+	*/
+	// --- END: Direct Go Package Call ---
+
+	// --- START: Original Binary Execution Code (Commented Out) ---
 	// Get absolute path to the binary
 	wd, err := os.Getwd()
 	if err != nil {
@@ -100,19 +209,49 @@ func (h *TestHarness) GenerateOverrides() error {
 	projectRoot := filepath.Join(wd, "..", "..")
 	binaryPath := filepath.Join(projectRoot, "bin", "irr")
 
+	// --- START HARNESS DEBUG LOG ---
+	fileInfo, statErr := os.Stat(binaryPath)
+	if statErr != nil {
+		h.t.Logf("[HARNESS DEBUG] Error stating binary path '%s': %v", binaryPath, statErr)
+	} else {
+		h.t.Logf("[HARNESS DEBUG] Using binary path: %s (ModTime: %s)", binaryPath, fileInfo.ModTime())
+	}
+	// --- END HARNESS DEBUG LOG ---
+
 	args := []string{
 		"override",
 		"--chart-path", h.chartPath,
 		"--target-registry", h.targetReg,
 		"--source-registries", strings.Join(h.sourceRegs, ","),
 		"--output-file", h.overridePath,
-		"--registry-mappings", h.mappingsPath,
-		"--verbose",
+		// Pass mappings path if it exists
 	}
+	if h.mappingsPath != "" {
+		args = append(args, "--registry-mappings", h.mappingsPath)
+	}
+	// Enable debug logging via flag
+	args = append(args, "--debug")
 
-	// Set IRR_TESTING environment variable
+	// Set IRR_TESTING environment variable for LoadMappings check within the binary
 	os.Setenv("IRR_TESTING", "true")
 	defer os.Unsetenv("IRR_TESTING")
+
+	// Get absolute path for mappings file
+	var absMappingsPath string
+	if h.mappingsPath != "" {
+		var absErr error
+		absMappingsPath, absErr = filepath.Abs(h.mappingsPath)
+		if absErr != nil {
+			return fmt.Errorf("failed to get absolute path for mappings file %s: %w", h.mappingsPath, absErr)
+		}
+		// Replace relative path with absolute path in args
+		for i, arg := range args {
+			if arg == "--registry-mappings" && i+1 < len(args) {
+				args[i+1] = absMappingsPath
+				break
+			}
+		}
+	}
 
 	// #nosec G204 -- Test harness executes irr binary with test-controlled arguments
 	cmd := exec.Command(binaryPath, args...)
@@ -137,6 +276,7 @@ func (h *TestHarness) GenerateOverrides() error {
 		h.t.Logf("Generated overrides.yaml content (success):\n---\n%s\n---", string(overrideData))
 	}
 	// ---- END DEBUG LOGGING ----
+	// --- END: Original Binary Execution Code ---
 
 	return nil
 }
@@ -158,6 +298,19 @@ func (h *TestHarness) ValidateOverrides() error {
 		h.t.Logf("Warning: failed to parse overrides.yaml locally: %v", err)
 		// return fmt.Errorf("failed to parse overrides: %v", err)
 	}
+
+	// ---- START DETAILED OVERRIDE LOGGING ----
+	if overrides != nil {
+		if cloneGit, ok := overrides["cloneStaticSiteFromGit"].(map[string]interface{}); ok {
+			cloneGitYAML, _ := yaml.Marshal(cloneGit)
+			h.t.Logf("HARNESS LOG: Parsed 'cloneStaticSiteFromGit' section from overrides:\n---\n%s\n---", string(cloneGitYAML))
+		} else {
+			h.t.Logf("HARNESS LOG: 'cloneStaticSiteFromGit' section not found or not a map in overrides.")
+		}
+	} else {
+		h.t.Logf("HARNESS LOG: Overrides map is nil after parsing attempt.")
+	}
+	// ---- END DETAILED OVERRIDE LOGGING ----
 
 	// Generate helm template output with and without overrides
 	originalOutput, err := h.helmTemplate("original", nil)
@@ -184,6 +337,13 @@ func (h *TestHarness) helmTemplate(stage string, extraArgs []string) (string, er
 	if extraArgs != nil {
 		args = append(args, extraArgs...)
 	}
+
+	// If validating the overridden chart, add the flag needed by some charts (e.g., Bitnami)
+	// to allow templating even when images have been changed.
+	if stage == "overridden" {
+		args = append(args, "--set", "global.security.allowInsecureImages=true")
+	}
+
 	h.t.Logf("Running helm command (%s): helm %s", stage, strings.Join(args, " ")) // DEBUG LOGGING
 
 	// #nosec G204 -- Test harness executes helm with test-controlled arguments
