@@ -283,63 +283,47 @@ func (d *ImageDetector) DetectImages(values interface{}, path []string) ([]Detec
 	case map[string]interface{}:
 		debug.Printf("Processing map at path: %v", path)
 		debug.DumpValue("Map contents", v)
-		foundImageDirectly := false // Flag to prevent redundant recursion
 
-		// 1. Check for direct image structure (e.g., {repository: ..., tag: ...})
-		if ref, err := parseImageMap(v, d.context.GlobalRegistry); err != nil {
-			debug.Printf("Error parsing map as image at path %v: %v", path, err)
-			// If parsing fails due to type error, consider it unsupported?
-			// For now, propagate the error.
-			return nil, nil, fmt.Errorf("error parsing map structure at %v: %w", path, err)
-		} else if ref != nil {
-			debug.Printf("DETECTED (map structure): Path=%v, Ref=%+v", path, ref)
-			detected = append(detected, DetectedImage{
-				Location:     path,
-				LocationType: TypeMapRegistryRepositoryTag, // Or TypeRepositoryTag?
-				Reference:    ref,
-				Pattern:      "map",
-				Original:     v,
-			})
-			foundImageDirectly = true // Mark this map as processed
-		}
+		// Iterate through ALL keys in the map
+		for k, val := range v {
+			newPath := append(path, k)
+			debug.Printf("Processing key: %s (Path: %v)", k, newPath)
 
-		// 2. If not detected as a direct structure, iterate through keys
-		if !foundImageDirectly {
-			debug.Printf("Map not a direct image structure, recursing into keys at path %v", path)
-			for k, val := range v {
-				newPath := append(path, k)
-				debug.Printf("Recursing into key: %s (Path: %v)", k, newPath)
+			// Skip global section at root
+			if len(path) == 0 && k == "global" {
+				debug.Printf("Skipping global key at root")
+				continue
+			}
 
-				// Skip global section at root
-				if len(path) == 0 && k == "global" {
-					debug.Printf("Skipping global key at root")
-					continue
+			// Special handling if the key is "image"
+			if k == "image" {
+				debug.Printf("Found 'image' key at path %v, processing its value specifically", newPath)
+				// Process the value directly using detectImageValue
+				subDetected, subUnsupported, err := d.detectImageValue(val, newPath) // Use newPath
+				if err != nil {
+					// Propagate errors from parsing the value under the 'image' key
+					return nil, nil, fmt.Errorf("error processing value under 'image' key at %v: %w", newPath, err)
 				}
-
-				// Special handling for "image" key
-				if k == "image" {
-					debug.Printf("Found 'image' key at path %v", newPath)
-					subDetected, subUnsupported, err := d.detectImageValue(val, newPath)
-					if err != nil {
-						return nil, nil, fmt.Errorf("error processing image key %s: %w", k, err)
-					}
-					detected = append(detected, subDetected...)
-					unsupported = append(unsupported, subUnsupported...)
-					// Do NOT recurse further down this specific 'image' branch
-					continue
-				}
-
-				// Default recursion for other keys
+				detected = append(detected, subDetected...)
+				unsupported = append(unsupported, subUnsupported...)
+				// After handling the 'image' key's value, continue to the next key in the loop.
+			} else {
+				// For all OTHER keys, recurse using DetectImages.
+				// This will handle nested maps, slices, and strings appropriately.
+				// If 'val' happens to be a map representing an image (e.g., {repository:..., tag:...}),
+				// the recursive call to DetectImages will handle it in the next level down.
 				subDetected, subUnsupported, err := d.DetectImages(val, newPath)
 				if err != nil {
-					return nil, nil, fmt.Errorf("error processing key %s: %w", k, err)
+					// Propagate errors from recursive calls
+					return nil, nil, fmt.Errorf("error processing key '%s' at path %v: %w", k, newPath, err)
 				}
 				detected = append(detected, subDetected...)
 				unsupported = append(unsupported, subUnsupported...)
 			}
-		} else {
-			debug.Printf("Skipping key recursion for path %v as map was detected as direct image structure", path)
 		}
+		// Note: The previous logic block that tried `parseImageMap(v, ...)` on the map itself
+		// has been removed. The standard recursion handles cases where a map representing an image
+		// is nested under a key *other* than "image".
 
 	case []interface{}:
 		for i, val := range v {
@@ -638,6 +622,11 @@ func parseImageMap(m map[string]interface{}, globalRegistry string) (*ImageRefer
 				if !strings.HasPrefix(ref.Digest, "sha256:") {
 					ref.Digest = "sha256:" + ref.Digest
 				}
+				// Add validation for digest format
+				if !isValidDigestFormat(ref.Digest) {
+					debug.Printf("WARN: Invalid digest format found in tag: '%s'. Clearing digest.", tagStr)
+					ref.Digest = "" // Clear invalid digest
+				}
 			} else {
 				ref.Tag = tagStr
 			}
@@ -655,6 +644,11 @@ func parseImageMap(m map[string]interface{}, globalRegistry string) (*ImageRefer
 			// Normalize digest
 			if !strings.HasPrefix(ref.Digest, "sha256:") {
 				ref.Digest = "sha256:" + ref.Digest
+			}
+			// Add validation for digest format
+			if !isValidDigestFormat(ref.Digest) {
+				debug.Printf("WARN: Invalid digest format found in digest field: '%s'. Clearing digest.", digestStr)
+				ref.Digest = "" // Clear invalid digest
 			}
 		} else if digestVal != nil {
 			debug.Printf("Map 'digest' exists but is not a string (type: %T), ignoring.", digestVal)
@@ -676,7 +670,13 @@ func parseImageMap(m map[string]interface{}, globalRegistry string) (*ImageRefer
 	return ref, nil
 }
 
-// isValidTag checks if a tag string is valid
+// isValidDigestFormat checks if a string matches the expected sha256 digest format.
+func isValidDigestFormat(digest string) bool {
+	return digestRegex.MatchString("ignored/repository@" + digest)
+	// We prepend a dummy repo because the regex expects the full pattern.
+}
+
+// isValidTag checks if a string is a valid Docker tag.
 func isValidTag(tag string) bool {
 	if tag == "" {
 		return false
