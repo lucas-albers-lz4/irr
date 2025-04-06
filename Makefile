@@ -20,7 +20,6 @@ test: build
 	@IRR_TESTING=true go test ./... -v 
 
 test-json: build
-	@echo "Running unit tests , only showing failures, with json output"
     @IRR_TESTING=true go test ./... -json | jq -r 'select((.Action == "fail") and .Test)'
 
 test-packages: build

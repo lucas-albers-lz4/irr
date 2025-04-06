@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// Package debug provides debugging utilities for the helm-image-override tool.
+// Package debug provides simple debug logging capabilities.
 // This package implements a simple but effective debugging system that can be
 // enabled at runtime to help diagnose issues and track program flow.
 

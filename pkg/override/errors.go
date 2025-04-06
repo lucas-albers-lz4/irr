@@ -1,3 +1,4 @@
+// Package override provides functionality for generating Helm override files based on detected images.
 package override
 
 import (

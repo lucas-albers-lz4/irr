@@ -1,3 +1,4 @@
+// Package integration contains integration tests for the helm-image-override tool.
 package integration
 
 import (

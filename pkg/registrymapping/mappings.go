@@ -1,4 +1,5 @@
-package registry
+// Package registrymapping provides functionality for mapping container registry names.
+package registrymapping
 
 import (
 	"fmt"

@@ -1,3 +1,4 @@
+// Package image provides functionality for detecting, parsing, and manipulating container image references within Helm values.
 package image
 
 import (
@@ -306,12 +307,7 @@ func (d *ImageDetector) DetectImages(values interface{}, path []string) ([]Detec
 
 	case []interface{}:
 		debug.Println("Processing slice/array")
-		// Only process arrays if the path suggests it might contain images
-		// (e.g., spec.template.spec.containers)
-		if d.context.Strict && !isImagePath(path) {
-			debug.Printf("Skipping array processing at non-image path in strict mode: %v", path)
-			return allDetected, allUnsupported, nil
-		}
+		// Always process arrays, path check should happen for items within if needed
 		for i, item := range v {
 			indexPath := fmt.Sprintf("%s[%d]", strings.Join(path, "."), i)
 			newPath := append(append([]string{}, path...), fmt.Sprintf("[%d]", i)) // Representation for path tracking
@@ -326,42 +322,36 @@ func (d *ImageDetector) DetectImages(values interface{}, path []string) ([]Detec
 
 	case string:
 		debug.Println("Processing string")
-		// Check if path indicates this string *should* be an image
-		if isImagePath(path) {
+		// Heuristic: Check if string looks potentially like an image OR if path is known image path
+		looksLikeImage := strings.Contains(v, ":") || strings.Contains(v, "@")
+		shouldProcess := isImagePath(path) || looksLikeImage
+
+		if shouldProcess {
 			detectedImage, err := d.tryExtractImageFromString(v, path)
-			if err != nil {
-				// Use errors.Is for checking sentinel errors
-				isSpecificError := errors.Is(err, ErrInvalidImageString) || errors.Is(err, ErrEmptyImageReference) || errors.Is(err, ErrTemplateVariableInRepo)
-				if !isSpecificError {
-					// Report unexpected errors
-					debug.Printf("Unexpected error parsing string image at path %v: %v", path, err)
-					allUnsupported = append(allUnsupported, UnsupportedImage{
-						Location: path,
-						Type:     UnsupportedTypeString,
-						Error:    err,
-					})
-				} else {
-					// Log expected non-image string cases at debug level
-					debug.Printf("String at image path %v is not a valid image reference (or is template): %s. Error: %v", path, v, err)
-					if d.context.Strict && errors.Is(err, ErrInvalidImageString) {
-						// In strict mode, invalid strings at image paths are unsupported
-						allUnsupported = append(allUnsupported, UnsupportedImage{Location: path, Type: UnsupportedTypeString, Error: err})
-					}
-				}
-			} else if detectedImage != nil && IsValidImageReference(detectedImage.Reference) {
+
+			// Check if parsing was successful and the reference is valid
+			if err == nil && detectedImage != nil && IsValidImageReference(detectedImage.Reference) {
+				// Parsed successfully and looks valid, now check if it's a source registry
 				if IsSourceRegistry(detectedImage.Reference, d.context.SourceRegistries, d.context.ExcludeRegistries) {
-					debug.Printf("Detected string-based image at path %v: %v", path, detectedImage.Reference)
+					debug.Printf("Detected valid string-based image at path %v: %v", path, detectedImage.Reference)
 					allDetected = append(allDetected, *detectedImage)
 				} else {
-					debug.Printf("Skipping string-based image (not a source registry) at path %v: %v", path, detectedImage.Reference)
+					debug.Printf("Skipping valid string-based image (not a source registry) at path %v: %v", path, detectedImage.Reference)
 				}
-			} else if detectedImage == nil {
-				// String wasn't an image format (and no error returned from tryExtract)
-				debug.Printf("String at path %v does not match image format (but no error returned): %s", path, v)
+			} else if err != nil {
+				// Parsing failed, log it and decide if it's unsupported based on strictness and path
+				debug.Printf("String parsing failed at path %v for value '%s': %v", path, v, err)
+				// Only add to unsupported in strict mode IF it's NOT known to be a non-image path
+				if d.context.Strict && !isNonImagePath(path) && errors.Is(err, ErrInvalidImageString) {
+					allUnsupported = append(allUnsupported, UnsupportedImage{Location: path, Type: UnsupportedTypeString, Error: err})
+				}
+				// Ignore other errors (like empty string, templates handled in tryExtract) unless debugging
 			}
+			// If err == nil but detectedImage == nil or !IsValidImageReference (shouldn't happen often now)
+			// or if parsing succeeded but it wasn't a source registry, we just ignore it.
 		} else {
-			debug.Printf("Skipping string at non-image path: %v", path)
-			// Optionally, in very strict mode, try parsing anyway and warn/error if it LOOKS like an image?
+			// String didn't look like an image and wasn't at a known image path
+			debug.Printf("Skipping string at path %v as it doesn't look like an image: %s", path, v)
 		}
 
 	case bool, float64, int, nil:
@@ -411,25 +401,39 @@ func (d *ImageDetector) tryExtractImageFromMap(m map[string]interface{}, path []
 	ref.Repository = repoStr
 
 	// --- Extract Registry (Optional, check global context) ---
+	registrySource := "none"
 	if hasRegistry {
-		regVal, _ := m["registry"]
-		regStr, ok := regVal.(string)
-		if !ok {
-			return nil, true, fmt.Errorf("%w: found type %T", ErrInvalidImageMapRegistryType, regVal) // Use canonical error
+		regVal := m["registry"]
+		if registryExists := (regVal != nil); registryExists {
+			if regStr, regIsString := regVal.(string); regIsString {
+				ref.Registry = regStr
+				registrySource = "map"
+			} else {
+				return nil, true, fmt.Errorf("%w: found type %T", ErrInvalidImageMapRegistryType, regVal)
+			}
 		}
-		ref.Registry = regStr
-	} else if d.context.GlobalRegistry != "" {
-		debug.Printf("Using global registry '%s' for path %v", d.context.GlobalRegistry, path)
-		ref.Registry = d.context.GlobalRegistry
-	} else {
-		ref.Registry = "" // Will be normalized later
+		// If regVal was nil, fall through to check global context
 	}
+
+	// If registry wasn't set from the map, check global context
+	if registrySource == "none" {
+		if d.context.GlobalRegistry != "" {
+			ref.Registry = d.context.GlobalRegistry
+			registrySource = "global"
+			debug.Printf("Using global registry '%s' for path %v", ref.Registry, path)
+		} else {
+			ref.Registry = "" // Explicitly empty, normalization will handle default
+			registrySource = "default (pending normalization)"
+		}
+	}
+	debug.Printf("Registry source for path %v: %s (Value: '%s')", path, registrySource, ref.Registry)
 
 	// --- Extract Tag (Optional) ---
 	if hasTag {
-		tagVal, _ := m["tag"]
-		tagStr, ok := tagVal.(string)
-		if !ok {
+		tagVal := m["tag"]
+		if tagIsString, ok := tagVal.(string); ok {
+			ref.Tag = tagIsString
+		} else {
 			// Handle non-string tags gracefully if not strict template mode
 			if d.context.TemplateMode {
 				// Preserve non-string tags if they might be templates
@@ -438,19 +442,17 @@ func (d *ImageDetector) tryExtractImageFromMap(m map[string]interface{}, path []
 			} else {
 				return nil, true, fmt.Errorf("%w: found type %T", ErrInvalidImageMapTagType, tagVal) // Use canonical error
 			}
-		} else {
-			ref.Tag = tagStr
 		}
 	}
 
 	// --- Extract Digest (Optional) ---
 	if hasDigest {
-		digestVal, _ := m["digest"]
-		digestStr, ok := digestVal.(string)
-		if !ok {
+		digestVal := m["digest"]
+		if digestIsString, ok := digestVal.(string); ok {
+			ref.Digest = digestIsString
+		} else {
 			return nil, true, fmt.Errorf("%w: found type %T", ErrInvalidImageMapDigestType, digestVal) // Use canonical error
 		}
-		ref.Digest = digestStr
 	}
 
 	// --- Validation ---
@@ -695,6 +697,11 @@ func ParseImageReference(imgStr string) (*ImageReference, error) {
 			debug.Println("Error: Missing repository in tag reference.")
 			return nil, ErrInvalidRepoName // Return nil ref on error
 		}
+		// Check repository name validity *after* regex match but *before* normalization
+		if !isValidRepositoryName(ref.Repository) {
+			debug.Printf("Error: Invalid repository name format parsed: '%s'", ref.Repository)
+			return nil, ErrInvalidRepoName
+		}
 		// Check tag validity *before* normalization
 		if !isValidTag(ref.Tag) {
 			debug.Println("Error: Invalid tag format.")
@@ -756,25 +763,55 @@ func isValidRepositoryName(repo string) bool {
 	if repo == "" {
 		return false
 	}
-	// Check for invalid consecutive slashes or colons
-	if strings.Contains(repo, "//") || strings.Contains(repo, "::") || strings.Contains(repo, ":/") || strings.Contains(repo, "/:") {
-		debug.Printf("Repository name '%s' contains invalid consecutive separators or colons.", repo)
-		return false
-	}
-	// Check for invalid characters (allow lowercase alphanumeric, ., _, -, /)
-	// A simple check: disallow anything NOT in that set, except we already checked for : and space
-	// More precise regex might be needed for full compliance, but let's add a basic check for colons specifically.
-	if strings.Contains(repo, ":") {
-		debug.Printf("Repository name '%s' contains invalid character ':'.", repo)
+
+	// Regex for allowed characters in repository components
+	// (lowercase alphanumeric + separators ., _, -)
+	allowedChars := `^[a-z0-9]+(?:[._-][a-z0-9]+)*$`
+	allowedCharsRegex := regexp.MustCompile(allowedChars)
+
+	// Check overall length
+	if len(repo) == 0 || len(repo) > 255 {
+		debug.Printf("[DEBUG isValidRepositoryName] Repository name '%s' has invalid length %d.", repo, len(repo))
 		return false
 	}
 
-	// Original simplified check: not empty, doesn't start/end with /, doesn't contain space
-	isValid := repo != "" && !strings.HasPrefix(repo, "/") && !strings.HasSuffix(repo, "/") && !strings.Contains(repo, " ")
-	if !isValid {
-		debug.Printf("Repository name '%s' failed basic checks (empty, starts/ends with /, contains space).", repo)
+	// Split into components and validate each one
+	components := strings.Split(repo, "/")
+	for _, component := range components {
+		if !allowedCharsRegex.MatchString(component) {
+			debug.Printf("[DEBUG isValidRepositoryName] Repository component '%s' in '%s' contains invalid characters.", component, repo)
+			return false
+		}
 	}
-	return isValid
+
+	// Check for invalid consecutive slashes or colons (already done above, keep for safety)
+	if strings.Contains(repo, "//") || strings.Contains(repo, "::") || strings.Contains(repo, ":/") || strings.Contains(repo, "/:") {
+		debug.Printf("[DEBUG isValidRepositoryName] Repository name '%s' contains invalid consecutive separators.", repo)
+		return false
+	}
+
+	// Ensure it doesn't contain colons (tags/digests handled separately)
+	if strings.Contains(repo, ":") {
+		debug.Printf("[DEBUG isValidRepositoryName] Repository name '%s' contains invalid character ':'.", repo)
+		return false
+	}
+
+	// Check for uppercase letters (redundant with regex, but keep for clarity for now)
+	if repo != strings.ToLower(repo) {
+		debug.Printf("[DEBUG isValidRepositoryName] Repository '%s' contains uppercase letters. Returning false.", repo)
+		return false
+	}
+
+	// Simplified basic checks (redundant with regex, but keep for safety)
+	isValid := !strings.HasPrefix(repo, "/") && !strings.HasSuffix(repo, "/") && !strings.Contains(repo, " ")
+	if !isValid {
+		debug.Printf("[DEBUG isValidRepositoryName] Repository '%s' failed basic checks (starts/ends with /, contains space). Returning false.", repo)
+		return false // Return false if basic checks fail
+	}
+
+	// If all checks pass
+	debug.Printf("[DEBUG isValidRepositoryName] Repository '%s' passed all checks. Returning true.", repo)
+	return true // Return true only if all checks pass
 }
 
 // NormalizeImageReference ensures registry and potentially repository are set correctly,
@@ -790,15 +827,22 @@ func NormalizeImageReference(ref *ImageReference) {
 		// Handle Docker Library images (prepend "library/") only when using the default registry
 		if !strings.Contains(ref.Repository, "/") && !strings.HasPrefix(ref.Repository, libraryNamespace+"/") {
 			ref.Repository = libraryNamespace + "/" + ref.Repository
-			debug.Printf("Normalized Docker Library image: %s -> %s", ref.Repository, libraryNamespace+"/"+ref.Repository)
+			debug.Printf("Normalized Docker Library image (default registry): %s -> %s", ref.Repository, libraryNamespace+"/"+ref.Repository)
 		}
 	} else {
-		// If registry was parsed, check if it normalizes to docker.io anyway (e.g., index.docker.io)
-		// We don't want to overwrite an explicit registry like gcr.io with docker.io here.
-		if NormalizeRegistry(ref.Registry) == defaultRegistry {
-			ref.Registry = defaultRegistry // Ensure canonical docker.io if it is docker.io
+		// If registry was explicitly provided (either from map or global context)
+		normalizedReg := NormalizeRegistry(ref.Registry)
+		if normalizedReg == defaultRegistry {
+			ref.Registry = defaultRegistry // Ensure canonical docker.io
+			// Handle library/ prefix ONLY if the original registry was effectively docker.io
+			if !strings.Contains(ref.Repository, "/") && !strings.HasPrefix(ref.Repository, libraryNamespace+"/") {
+				ref.Repository = libraryNamespace + "/" + ref.Repository
+				debug.Printf("Normalized Docker Library image (explicit docker registry): %s -> %s", ref.Repository, libraryNamespace+"/"+ref.Repository)
+			}
+		} else {
+			// Explicit registry is NOT docker.io, DO NOT prepend library/
+			debug.Printf("Explicit non-docker registry '%s', not prepending library/ to '%s'", ref.Registry, ref.Repository)
 		}
-		// No need to prepend "library/" if an explicit registry was provided.
 	}
 
 	// Ensure tag is set ONLY if BOTH tag and digest are empty
@@ -832,10 +876,20 @@ func isImagePath(path []string) bool {
 	return false // Default to false if no specific image pattern matches
 }
 
+// isNonImagePath checks if the given path matches any known non-image patterns.
+func isNonImagePath(path []string) bool {
+	pathStr := strings.Join(path, ".")
+	for _, r := range nonImagePathRegexps {
+		if r.MatchString(pathStr) {
+			return true
+		}
+	}
+	return false
+}
+
 // Regex compilation moved here to avoid init cycles if defined globally with errors
 var (
-	digestRegexCompiled = regexp.MustCompile(digestPattern)
-	tagRegexCompiled    = regexp.MustCompile(tagPattern)
+	tagRegexCompiled = regexp.MustCompile(tagPattern)
 )
 
 // Helper function for backwards compatibility or simpler calls

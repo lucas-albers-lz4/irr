@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -692,8 +693,9 @@ func validateYAML(yamlData []byte) error {
 	for dec.Decode(&node) == nil {
 		// Successfully decoded a document, continue
 	}
-	// Check the error after the loop (io.EOF is expected on success)
-	if err := dec.Decode(&node); err != nil && err.Error() != "EOF" {
+
+	// After the loop, check for decoding errors
+	if err := dec.Decode(&node); err != nil && !errors.Is(err, io.EOF) {
 		debug.Printf("YAML validation failed: %v", err)
 		return fmt.Errorf("invalid YAML structure: %w", err)
 	}

@@ -1,3 +1,4 @@
+// Package analysis provides functionality to analyze Helm charts for image references.
 package analysis
 
 import (

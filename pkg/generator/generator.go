@@ -1,3 +1,4 @@
+// Package generator provides functionality for generating Helm override files.
 package generator
 
 import (

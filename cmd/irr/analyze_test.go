@@ -146,7 +146,7 @@ func TestAnalyzeCmd(t *testing.T) {
 				}
 			} else {
 				// Ensure tests not needing mock use the default (or a non-panicking stub)
-				currentAnalyzerFactory = func(chartPath string) AnalyzerInterface {
+				currentAnalyzerFactory = func(_ string) AnalyzerInterface {
 					// Return a mock that produces an expected error for non-mocked execution tests
 					return &mockAnalyzer{
 						AnalyzeFunc: func() (*analysis.ChartAnalysis, error) {

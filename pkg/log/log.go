@@ -1,3 +1,4 @@
+// Package log provides simple logging capabilities.
 package log
 
 import (
