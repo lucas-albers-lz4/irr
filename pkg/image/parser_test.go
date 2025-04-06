@@ -1,6 +1,7 @@
 package image
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -9,128 +10,94 @@ import (
 func TestParseImageReference(t *testing.T) {
 	tests := []struct {
 		name          string
-		input         interface{}
-		expectedRef   *ImageReference
-		expectedErr   bool
+		input         string
+		expected      *ImageReference
+		wantErr       bool
 		errorContains string
 	}{
 		{
 			name:  "standard image with registry",
-			input: "quay.io/nginx:1.20.0",
-			expectedRef: &ImageReference{
-				Registry:   "quay.io",
-				Repository: "nginx",
-				Tag:        "1.20.0",
+			input: "docker.io/library/nginx:1.21.0",
+			expected: &ImageReference{
+				Registry:   "docker.io",
+				Repository: "library/nginx",
+				Tag:        "1.21.0",
 			},
 		},
 		{
 			name:  "image with nested path",
-			input: "docker.io/org/suborg/app:v1.2.3",
-			expectedRef: &ImageReference{
-				Registry:   "docker.io",
-				Repository: "org/suborg/app",
-				Tag:        "v1.2.3",
+			input: "quay.io/org/app/component:v1",
+			expected: &ImageReference{
+				Registry:   "quay.io",
+				Repository: "org/app/component",
+				Tag:        "v1",
 			},
 		},
 		{
 			name:  "image with implicit docker.io registry",
-			input: "nginx:latest",
-			expectedRef: &ImageReference{
+			input: "nginx:1.21.0",
+			expected: &ImageReference{
 				Registry:   "docker.io",
 				Repository: "library/nginx",
-				Tag:        "latest",
+				Tag:        "1.21.0",
 			},
 		},
 		{
 			name:  "image with digest",
-			input: "alpine@sha256:1234567890123456789012345678901234567890123456789012345678901234",
-			expectedRef: &ImageReference{
-				Registry:   "docker.io",
-				Repository: "library/alpine",
-				Digest:     "sha256:1234567890123456789012345678901234567890123456789012345678901234",
+			input: "gcr.io/project/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			expected: &ImageReference{
+				Registry:   "gcr.io",
+				Repository: "project/image",
+				Digest:     "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			},
 		},
 		{
 			name:  "image with port in registry",
-			input: "localhost:5000/app:latest",
-			expectedRef: &ImageReference{
+			input: "localhost:5000/myimage:latest",
+			expected: &ImageReference{
 				Registry:   "localhost:5000",
-				Repository: "app",
+				Repository: "myimage",
 				Tag:        "latest",
 			},
 		},
 		{
-			name:  "image with both tag and digest",
-			input: "docker.io/library/nginx:1.21.0@sha256:1234567890123456789012345678901234567890123456789012345678901234",
-			expectedRef: &ImageReference{
-				Registry:   "docker.io",
-				Repository: "library/nginx",
-				Tag:        "1.21.0",
-				Digest:     "sha256:1234567890123456789012345678901234567890123456789012345678901234",
-			},
+			name:          "image with both tag and digest",
+			input:         "myimage:tag@sha256:abcdef123",
+			wantErr:       true,
+			errorContains: "both tag and digest present",
 		},
 		{
 			name:          "invalid image reference",
-			input:         "invalid:image:format::",
-			expectedRef:   nil,
-			expectedErr:   true,
-			errorContains: "invalid repository name",
+			input:         "invalid///image::ref",
+			wantErr:       true,
+			errorContains: "invalid image reference format",
 		},
 		{
 			name:          "empty string",
 			input:         "",
-			expectedRef:   nil,
-			expectedErr:   false,
-			errorContains: "",
+			wantErr:       true,
+			errorContains: "image reference string cannot be empty",
 		},
 		{
-			name:          "standard image with registry, tag, and nested path",
-			input:         "my-registry.com:5000/org/nested/path/image:v1.2.3",
-			expectedRef:   &ImageReference{Registry: "my-registry.com:5000", Repository: "org/nested/path/image", Tag: "v1.2.3"},
-			expectedErr:   false,
-			errorContains: "",
+			name:  "standard image with registry, tag, and nested path",
+			input: "docker.io/library/nested/nginx:1.21.0",
+			expected: &ImageReference{
+				Registry:   "docker.io",
+				Repository: "library/nested/nginx",
+				Tag:        "1.21.0",
+			},
 		},
 		{
 			name:          "invalid digest format",
-			input:         "image@sha256:invalid",
-			expectedRef:   nil,
-			expectedErr:   true,
+			input:         "gcr.io/project/image@invalid-digest",
+			wantErr:       true,
 			errorContains: "invalid digest format",
 		},
 		{
 			name:          "invalid tag format",
-			input:         "image:!invalidTag",
-			expectedRef:   nil,
-			expectedErr:   true,
-			errorContains: "invalid repository name",
-		},
-		{
-			name:          "invalid registry name",
-			input:         "InvalidRegistry/image:tag",
-			expectedRef:   nil,
-			expectedErr:   true,
-			errorContains: "invalid repository name",
-		},
-		{
-			name:          "non-string input",
-			input:         123,
-			expectedRef:   nil,
-			expectedErr:   false,
-			errorContains: "",
-		},
-		{
-			name:          "nil input",
-			input:         nil,
-			expectedRef:   nil,
-			expectedErr:   false,
-			errorContains: "",
-		},
-		{
-			name:          "missing_repository",
-			input:         map[string]interface{}{"tag": "latest"},
-			expectedRef:   nil,
-			expectedErr:   false,
-			errorContains: "",
+			input:         "gcr.io/project/image:invalid/tag",
+			wantErr:       true,
+			errorContains: "invalid image reference format",
 		},
 	}
 
@@ -138,17 +105,21 @@ func TestParseImageReference(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ref, err := ParseImageReference(tt.input)
 
-			if tt.expectedErr {
+			if tt.wantErr {
 				assert.Error(t, err)
 				if tt.errorContains != "" {
-					assert.Contains(t, err.Error(), tt.errorContains)
+					assert.Contains(t, err.Error(), tt.errorContains, "error message should contain expected text")
 				}
+				assert.Nil(t, ref, "Reference should be nil on error")
 			} else {
 				assert.NoError(t, err)
-			}
-
-			if !tt.expectedErr {
-				assert.Equal(t, tt.expectedRef, ref)
+				assert.NotNil(t, ref, "Reference should not be nil on success")
+				if tt.expected != nil {
+					if ref != nil {
+						ref.Path = nil
+					}
+					assert.True(t, reflect.DeepEqual(tt.expected, ref), "Mismatch between expected and actual ImageReference.\nExpected: %+v\nActual:   %+v", tt.expected, ref)
+				}
 			}
 		})
 	}
