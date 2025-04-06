@@ -89,29 +89,22 @@ func (s *PrefixSourceRegistryStrategy) GeneratePath(originalRef *image.ImageRefe
 	}
 	debug.Printf("PrefixSourceRegistryStrategy: Using base repository path: %s", baseRepoPath)
 
-	// Construct the final path
-	var finalPath string
+	// Construct the final repository path part
+	var finalRepoPath string
 	if hasCustomMapping {
-		// For custom mappings, don't include the sanitized registry
-		finalPath = path.Join(mappedTargetRegistry, baseRepoPath)
+		// For custom mappings, the target registry acts as the new root,
+		// so the repo path is just the base path.
+		finalRepoPath = baseRepoPath
 	} else {
-		// For standard paths, include the sanitized registry
-		finalPath = path.Join(mappedTargetRegistry, sanitizedSourceRegistry, baseRepoPath)
+		// For standard paths, prefix the sanitized source registry.
+		finalRepoPath = path.Join(sanitizedSourceRegistry, baseRepoPath)
 	}
 
-	// Add back the tag or digest for actual usage (not for tests)
-	// We determine if this is being called from a test by checking if both targetRegistry
-	// and mappedTargetRegistry are empty
-	if targetRegistry != "" || mappedTargetRegistry != "" {
-		if originalRef.Digest != "" {
-			finalPath = fmt.Sprintf("%s@%s", finalPath, originalRef.Digest)
-		} else if originalRef.Tag != "" {
-			finalPath = fmt.Sprintf("%s:%s", finalPath, originalRef.Tag)
-		}
-	}
+	// NOTE: We no longer add the target registry prefix here.
+	// We also no longer add tag or digest here. Generate() will handle that.
 
-	debug.Printf("PrefixSourceRegistryStrategy: Generated final path: %s", finalPath)
-	return finalPath, nil
+	debug.Printf("PrefixSourceRegistryStrategy: Generated final repo path part: %s", finalRepoPath)
+	return finalRepoPath, nil
 }
 
 // FlatStrategy implements the strategy where the source registry is ignored,
