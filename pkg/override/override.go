@@ -280,26 +280,30 @@ func flattenValue(prefix string, value interface{}, sets *[]string) error {
 	case map[interface{}]interface{}:
 		for k, val := range v {
 			key := fmt.Sprintf("%v", k)
-			newPrefix := prefix
-			if prefix != "" {
-				newPrefix = prefix + "." + key
-			} else {
-				newPrefix = key
-			}
-			if err := flattenValue(newPrefix, val, sets); err != nil {
-				return err
+			if strings.HasPrefix(key, prefix) {
+				// Use prefix directly or construct new one if needed
+				newPrefix := prefix
+				if len(key) > len(prefix) {
+					newPrefix = key[:strings.LastIndex(key, ".")]
+				}
+				// Use newPrefix in subsequent operations
+				if err := flattenValue(newPrefix, val, sets); err != nil {
+					return err
+				}
 			}
 		}
 	case map[string]interface{}:
 		for k, val := range v {
-			newPrefix := prefix
-			if prefix != "" {
-				newPrefix = prefix + "." + k
-			} else {
-				newPrefix = k
-			}
-			if err := flattenValue(newPrefix, val, sets); err != nil {
-				return err
+			if strings.HasPrefix(k, prefix) {
+				// Use prefix directly or construct new one if needed
+				newPrefix := prefix
+				if len(k) > len(prefix) {
+					newPrefix = k[:strings.LastIndex(k, ".")]
+				}
+				// Use newPrefix in subsequent operations
+				if err := flattenValue(newPrefix, val, sets); err != nil {
+					return err
+				}
 			}
 		}
 	case []interface{}:
