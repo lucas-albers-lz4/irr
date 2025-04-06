@@ -3,6 +3,7 @@ package override
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // Override package errors.
@@ -39,6 +40,14 @@ var (
 
 	// ErrJSONToYAML is returned when JSON cannot be converted to YAML.
 	ErrJSONToYAML = errors.New("failed to convert JSON to YAML")
+
+	// --- Errors for GetValueAtPath ---
+	// ErrPathNotFound is returned when a key in the path does not exist.
+	ErrPathNotFound = errors.New("path not found")
+	// ErrArrayIndexOutOfBounds is returned when an array index is out of bounds.
+	ErrArrayIndexOutOfBounds = errors.New("array index out of bounds")
+	// ErrNonMapOrArrayTraversal is returned when trying to traverse through a non-map/non-array value.
+	ErrNonMapOrArrayTraversal = errors.New("cannot traverse through non-map or non-array")
 )
 
 // WrapPathParsing wraps ErrPathParsing with the given path part and error for context.
@@ -84,4 +93,21 @@ func WrapMarshalOverrides(err error) error {
 // WrapJSONToYAML wraps ErrJSONToYAML with the original error for context.
 func WrapJSONToYAML(err error) error {
 	return fmt.Errorf("%w: %w", ErrJSONToYAML, err)
+}
+
+// --- Wrappers for GetValueAtPath ---
+
+// WrapPathNotFound wraps ErrPathNotFound with the specific path segment that was not found.
+func WrapPathNotFound(path []string) error {
+	return fmt.Errorf("%w: segment '%s' not found", ErrPathNotFound, strings.Join(path, "."))
+}
+
+// WrapArrayIndexOutOfBounds wraps ErrArrayIndexOutOfBounds with the index and array length.
+func WrapArrayIndexOutOfBounds(index, length int) error {
+	return fmt.Errorf("%w: index %d requested, length is %d", ErrArrayIndexOutOfBounds, index, length)
+}
+
+// WrapNonMapOrArrayTraversal wraps ErrNonMapOrArrayTraversal with the path segment where traversal failed.
+func WrapNonMapOrArrayTraversal(path []string) error {
+	return fmt.Errorf("%w: attempted to traverse non-map/non-array at path '%s'", ErrNonMapOrArrayTraversal, strings.Join(path, "."))
 }
