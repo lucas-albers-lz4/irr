@@ -478,7 +478,7 @@ func tryExtractImageFromString(s string) (*ImageReference, error) {
 		// Validate the potential tag *immediately*
 		if !isValidTag(potentialTag) {
 			// If the tag is invalid, treat the whole string as the repository
-			repoAndTag = repoAndTag
+
 		} else {
 			// If the tag is valid, assign it and update the remaining part
 			ref.Tag = potentialTag

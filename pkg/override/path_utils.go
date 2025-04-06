@@ -146,11 +146,54 @@ func SetValueAtPath(data map[string]interface{}, path []string, value interface{
 		arr[arrayIndex] = value
 		m[key] = arr
 	} else {
-		// Set the value directly in the map
-		m[key] = value
+		// Set the value in the map, merging if both old and new are maps
+		existingVal, exists := m[key]
+		if exists {
+			existingMap, existingIsMap := existingVal.(map[string]interface{})
+			newMap, newIsMap := value.(map[string]interface{})
+
+			if existingIsMap && newIsMap {
+				// Both are maps, merge the new one into the existing one
+				m[key] = mergeMaps(existingMap, newMap)
+			} else if existingIsMap && !newIsMap {
+				// Conflict: Existing is map, new is not. Keep existing map.
+				// Log this potential conflict? For now, prioritize valid structure.
+				// Do nothing, m[key] already holds the map.
+			} else {
+				// Existing is not a map, or new is a map replacing non-map.
+				// Overwrite the existing value.
+				m[key] = value
+			}
+		} else {
+			// Key doesn't exist, set the value directly
+			m[key] = value
+		}
 	}
 
 	return nil
+}
+
+// mergeMaps recursively merges src map into dst map.
+// It overwrites primitive values in dst with values from src.
+// Nested maps are merged recursively.
+func mergeMaps(dst, src map[string]interface{}) map[string]interface{} {
+	for key, srcVal := range src {
+		if dstVal, exists := dst[key]; exists {
+			srcMap, srcIsMap := srcVal.(map[string]interface{})
+			dstMap, dstIsMap := dstVal.(map[string]interface{})
+			if srcIsMap && dstIsMap {
+				// Both are maps, recurse
+				dst[key] = mergeMaps(dstMap, srcMap)
+			} else {
+				// Overwrite dst with src value (including overwriting map with primitive or vice versa)
+				dst[key] = srcVal
+			}
+		} else {
+			// Key doesn't exist in dst, add it
+			dst[key] = srcVal
+		}
+	}
+	return dst
 }
 
 // parsePathPart parses a path part which may include array access.
