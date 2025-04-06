@@ -162,12 +162,8 @@ func SetValueAtPath(data map[string]interface{}, path []string, value interface{
 			if existingIsMap && newIsMap {
 				// Both are maps, merge the new one into the existing one
 				m[key] = mergeMaps(existingMap, newMap)
-			} else if existingIsMap && !newIsMap {
-				// Conflict: Existing is map, new is not. Keep existing map.
-				// Log this potential conflict? For now, prioritize valid structure.
-				// Do nothing, m[key] already holds the map.
 			} else {
-				// Existing is not a map, or new is a map replacing non-map.
+				// Existing is not a map, OR new value is not a map.
 				// Overwrite the existing value.
 				m[key] = value
 			}
@@ -237,6 +233,59 @@ func parsePathPart(part string) (string, int, bool, error) {
 
 	// No opening bracket, treat as regular key
 	return part, 0, false, nil
+}
+
+// GetValueAtPath retrieves a value from a nested map structure at a given path.
+func GetValueAtPath(data map[string]interface{}, path []string) (interface{}, error) {
+	if data == nil {
+		return nil, ErrNilDataMap
+	}
+	if len(path) == 0 {
+		return data, nil // Return the whole map if path is empty
+	}
+
+	current := interface{}(data)
+
+	for i, part := range path {
+		key, arrayIndex, isArrayAccess, err := parsePathPart(part)
+		if err != nil {
+			return nil, WrapPathParsing(part, err)
+		}
+
+		if currentMap, ok := current.(map[string]interface{}); ok {
+			nextVal, exists := currentMap[key]
+			if !exists {
+				return nil, WrapPathNotFound(path[:i+1])
+			}
+
+			if isArrayAccess {
+				if arrayVal, ok := nextVal.([]interface{}); ok {
+					if arrayIndex < 0 || arrayIndex >= len(arrayVal) {
+						return nil, WrapArrayIndexOutOfBounds(arrayIndex, len(arrayVal))
+					}
+					current = arrayVal[arrayIndex]
+				} else {
+					return nil, WrapNotAnArray(key)
+				}
+			} else {
+				current = nextVal
+			}
+		} else if currentArray, ok := current.([]interface{}); ok {
+			// This case handles accessing elements within an array directly (e.g., path = ["[0]", "key"])
+			// Note: The current implementation of parsePathPart might not produce paths like this,
+			// but including for robustness / future path formats.
+			index, convErr := strconv.Atoi(key) // Assuming key is the index string here
+			if convErr != nil || index < 0 || index >= len(currentArray) {
+				return nil, WrapArrayIndexOutOfBounds(index, len(currentArray))
+			}
+			current = currentArray[index]
+		} else {
+			// Cannot traverse further if not a map or array
+			return nil, WrapNonMapOrArrayTraversal(path[:i])
+		}
+	}
+
+	return current, nil
 }
 
 // ParsePath splits a dot-notation path into segments.
