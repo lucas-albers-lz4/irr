@@ -414,54 +414,83 @@ func (h *TestHarness) GetOverrides() (map[string]interface{}, error) {
 }
 
 // WalkImageFields recursively walks through a map and calls the callback for each image field
-func (h *TestHarness) WalkImageFields(data map[string]interface{}, callback func(path []string, value string)) {
+// The callback receives the path and the value (which could be a string or map)
+func (h *TestHarness) WalkImageFields(data map[string]interface{}, callback func(path []string, value interface{})) {
 	var walk func(map[string]interface{}, []string)
 	walk = func(m map[string]interface{}, path []string) {
 		for key, value := range m {
 			currentPath := append(path, key)
 			switch v := value.(type) {
 			case map[string]interface{}:
-				walk(v, currentPath)
+				// Check if this map itself is likely an image structure
+				if _, repoOk := v["repository"]; repoOk {
+					// If it has a repository key, treat the whole map as the value
+					callback(currentPath, v)
+				} else {
+					// Otherwise, recurse into the map
+					walk(v, currentPath)
+				}
 			case []interface{}:
 				for i, item := range v {
 					if itemMap, ok := item.(map[string]interface{}); ok {
+						// Pass index as part of the path
 						walk(itemMap, append(currentPath, fmt.Sprintf("[%d]", i)))
-					}
+					} // Ignore non-map items in slices for this walk
 				}
 			case string:
+				// Heuristic: if the key contains 'image' or 'repository', pass the string value
 				if strings.Contains(key, "image") || strings.Contains(key, "repository") {
 					callback(currentPath, v)
 				}
+				// Could add more heuristics here if needed
 			}
 		}
 	}
 	walk(data, nil)
 }
 
-// ExecuteIRR runs the irr binary with the given arguments.
+// ExecuteIRR runs the irr binary with the given arguments and returns the combined output.
 func (h *TestHarness) ExecuteIRR(args ...string) (string, error) {
-	// Get absolute path to the binary
 	wd, err := os.Getwd()
 	if err != nil {
-		return "", fmt.Errorf("failed to get working directory: %v", err)
+		return "", fmt.Errorf("failed to get working directory: %w", err)
 	}
-	// Go up two directories to get to the project root
+	// Revert to original project root calculation
 	projectRoot := filepath.Join(wd, "..", "..")
 	binaryPath := filepath.Join(projectRoot, "bin", "irr")
 
-	// #nosec G204 // Test harness executes binary with test-controlled arguments
+	// Ensure the command includes the debug flag if not already present
+	debugFlagFound := false
+	for _, arg := range args {
+		if arg == "--debug" {
+			debugFlagFound = true
+			break
+		}
+	}
+	if !debugFlagFound {
+		args = append(args, "--debug")
+	}
+
+	// Set IRR_TESTING environment variable
+	os.Setenv("IRR_TESTING", "true")
+	defer os.Unsetenv("IRR_TESTING")
+
+	// #nosec G204 -- Test harness executes irr binary with test-controlled arguments
 	cmd := exec.Command(binaryPath, args...)
 	cmd.Dir = h.tempDir // Run in the temp directory context
-	output, err := cmd.CombinedOutput()
+	outputBytes, err := cmd.CombinedOutput()
+	outputStr := string(outputBytes)
+
+	// ALWAYS log the full output for debugging purposes
+	h.t.Logf("[HARNESS EXECUTE_IRR] Command: %s %s", binaryPath, strings.Join(args, " "))
+	h.t.Logf("[HARNESS EXECUTE_IRR] Full Output:\n%s", outputStr)
+
 	if err != nil {
-		// Try to provide more context on error
-		exitErr, ok := err.(*exec.ExitError)
-		if ok {
-			return string(output), fmt.Errorf("command failed with exit code %d: %w\nStderr: %s", exitErr.ExitCode(), err, string(exitErr.Stderr))
-		}
-		return string(output), fmt.Errorf("failed to execute irr: %w", err)
+		// Return error along with the output for context
+		return outputStr, fmt.Errorf("irr command execution failed: %w", err)
 	}
-	return string(output), nil
+
+	return outputStr, nil
 }
 
 // ExecuteHelm runs the helm binary with the given arguments.
