@@ -43,6 +43,7 @@ func LoadMappings(path string) (*RegistryMappings, error) {
 	}
 
 	// Read the file content
+	// #nosec G304 -- Path is validated above and provided by user input.
 	data, err := os.ReadFile(path) // G304 mitigation: path validated above
 	if err != nil {
 		if os.IsNotExist(err) {

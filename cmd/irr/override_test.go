@@ -181,7 +181,9 @@ func TestOverrideCmdExecution(t *testing.T) {
 			stdErrContains: "",
 			setupEnv:       map[string]string{"IRR_SKIP_HELM_VALIDATION": "true"},
 			postCheck: func(t *testing.T, testDir string) {
+				// Add the #nosec comment right before the os.ReadFile call inside the postCheck
 				outputPath := filepath.Join(testDir, "output.yaml")
+				// #nosec G304 -- Path is constructed within the test using TempDir
 				content, err := os.ReadFile(outputPath)
 				require.NoError(t, err, "Should be able to read output file")
 				assert.Contains(t, string(content), "repository: mock-target.com/dockerio/nginx")
@@ -222,8 +224,9 @@ func TestOverrideCmdExecution(t *testing.T) {
 
 			// Prepare args with output file if needed
 			args := tt.args
+			outputPath := ""
 			if tt.name == "success with output file (flow check)" {
-				outputPath := filepath.Join(testDir, "output.yaml")
+				outputPath = filepath.Join(testDir, "output.yaml")
 				args = append(args, "--output-file", outputPath, "--verbose")
 			}
 

@@ -67,7 +67,7 @@ func (g *Generator) Generate(chartPath string, values map[string]interface{}) (m
 
 		// Check if the image needs rewriting based on source/exclude registries
 		if image.IsSourceRegistry(ref, g.sourceRegistries, g.excludeRegistries) {
-			debug.Printf("[DEBUG irr GEN] Processing Eligible Image: Path=%v, OriginalRef=%s, Type=%d", detected.Location, ref.String(), detected.LocationType)
+			debug.Printf("[DEBUG irr GEN] Processing Eligible Image: Path=%v, OriginalRef=%s, Type=%s", detected.Path, ref.String(), detected.Pattern)
 
 			// Determine the target registry using mappings
 			targetRegistry := g.registryMappings.GetTargetRegistry(ref.Registry)
@@ -79,14 +79,14 @@ func (g *Generator) Generate(chartPath string, values map[string]interface{}) (m
 			// Generate the *repository path part* using the strategy
 			newRepoPath, err := g.pathStrategy.GeneratePath(ref, targetRegistry, g.registryMappings)
 			if err != nil {
-				debug.Printf("[ERROR irr GEN] Error generating repo path for %v: %v. Skipping.", detected.Location, err)
+				debug.Printf("[ERROR irr GEN] Error generating repo path for %v: %v. Skipping.", detected.Path, err)
 				continue // Skip on error generating path
 			}
 
 			// --- Construct the final newValue (map or string) ---
 			var newValue interface{}
-			switch detected.LocationType {
-			case image.TypeMapRegistryRepositoryTag, image.TypeRepositoryTag, image.TypeUnknown: // Treat Unknown like a map for now
+			switch detected.Pattern {
+			case image.PatternMap:
 				// Original was likely map{...}
 				// Recreate a map structure, conditionally adding digest or tag.
 				newMap := map[string]interface{}{
@@ -103,7 +103,7 @@ func (g *Generator) Generate(chartPath string, values map[string]interface{}) (m
 				newValue = newMap
 				debug.Printf("Original was Map/Unknown. Setting value as map: %v", newMap)
 
-			case image.TypeString:
+			case image.PatternString:
 				// Original was a string "registry/repo:tag" or "repo@digest"
 				// Output the combined string reference, conditionally using digest or tag.
 				newValueStr := path.Join(targetRegistry, newRepoPath) // Use path.Join for OS-agnostic paths
@@ -118,7 +118,7 @@ func (g *Generator) Generate(chartPath string, values map[string]interface{}) (m
 				debug.Printf("Original was String. Setting value as string: %s", newValueStr)
 
 			default:
-				debug.Printf("[ERROR irr GEN] Unsupported LocationType %d for path %v. Skipping.", detected.LocationType, detected.Location)
+				debug.Printf("[ERROR irr GEN] Unsupported Pattern %s for path %v. Skipping.", detected.Pattern, detected.Path)
 				processedCount-- // Decrement since we are skipping
 				continue         // Skip to the next image
 			}
@@ -126,16 +126,16 @@ func (g *Generator) Generate(chartPath string, values map[string]interface{}) (m
 
 			// Use the helper to set the value at the detected path
 			debug.Printf("[DEBUG irr GEN] Value to set: %v", newValue) // Changed from DumpValue
-			debug.Printf("[DEBUG irr GEN] Calling SetValueAtPath with Path: %v", detected.Location)
-			if err := override.SetValueAtPath(overrides, detected.Location, newValue); err != nil {
-				debug.Printf("[ERROR irr GEN] Failed to set value at path %v: %v", detected.Location, err)
+			debug.Printf("[DEBUG irr GEN] Calling SetValueAtPath with Path: %v", detected.Path)
+			if err := override.SetValueAtPath(overrides, detected.Path, newValue); err != nil {
+				debug.Printf("[ERROR irr GEN] Failed to set value at path %v: %v", detected.Path, err)
 				// Let strict mode check catch this failure
 				continue
 			}
-			debug.Printf("[DEBUG irr GEN] SetValueAtPath successful for path: %v", detected.Location)
+			debug.Printf("[DEBUG irr GEN] SetValueAtPath successful for path: %v", detected.Path)
 			processedCount++
 		} else {
-			debug.Printf("[DEBUG irr GEN] Skipping image (not in source registries or excluded): Path=%v, Ref=%s", detected.Location, ref.String())
+			debug.Printf("[DEBUG irr GEN] Skipping image (not in source registries or excluded): Path=%v, Ref=%s", detected.Path, ref.String())
 		}
 	}
 
@@ -161,7 +161,7 @@ func (g *Generator) Generate(chartPath string, values map[string]interface{}) (m
 		if len(unsupportedImages) > 0 {
 			debug.Printf("[WARN irr GEN] Strict mode enabled and unsupported image structures found:")
 			for _, unsup := range unsupportedImages {
-				debug.Printf("  - Path: %v, Original: %v", unsup.Location, unsup.Original)
+				debug.Printf("  - Path: %v, Type: %d, Error: %v", unsup.Location, unsup.Type, unsup.Error)
 			}
 			return nil, fmt.Errorf("%d unsupported image structures found in strict mode", len(unsupportedImages))
 		}

@@ -219,33 +219,22 @@ func TestComplexChartFeatures(t *testing.T) {
 			}
 			args = append(args, "--debug") // Ensure debug is enabled
 
-			// Special handling for ingress-nginx to capture specific debug logs
-			if tt.name == "ingress-nginx with admission webhook" {
-				// Use a unique output file path for this specific execution
-				explicitOutputFile := filepath.Join(harness.tempDir, "ingress-nginx-specific-overrides.yaml")
-				explicitArgs := append([]string{}, args...) // Create a copy
-				// Replace the default output file arg with the specific one
-				foundOutputArg := false
-				for i, arg := range explicitArgs {
-					if arg == "--output-file" && i+1 < len(explicitArgs) {
-						explicitArgs[i+1] = explicitOutputFile
-						foundOutputArg = true
-						break
-					}
-				}
-				if !foundOutputArg {
-					// Should not happen if args are built correctly, but handle defensively
-					explicitArgs = append(explicitArgs, "--output-file", explicitOutputFile)
-				}
+			if tt.chartName == "ingress-nginx" {
+				// Special handling for ingress-nginx with explicit output file
+				explicitOutputFile := filepath.Join(harness.tempDir, "explicit-ingress-nginx-overrides.yaml")
+				explicitArgs := append(args, "--output-file", explicitOutputFile)
 
 				// Execute IRR specifically for ingress-nginx
 				explicitOutput, err := harness.ExecuteIRR(explicitArgs...)
 				require.NoError(t, err, "Explicit ExecuteIRR failed for ingress-nginx. Output:\n%s", explicitOutput)
 
 				// Load the overrides generated specifically for this subtest
-				explicitOverrides := make(map[string]interface{})
+				// #nosec G304 -- Test reads file path constructed from test data
 				overridesBytes, err := os.ReadFile(explicitOutputFile)
-				require.NoError(t, err, "Failed to read explicit overrides file for ingress-nginx")
+				require.NoError(t, err, "Failed to read explicit output file: %s", explicitOutputFile)
+				require.NotEmpty(t, overridesBytes, "Explicit output file should not be empty")
+
+				explicitOverrides := make(map[string]interface{})
 				err = yaml.Unmarshal(overridesBytes, &explicitOverrides)
 				require.NoError(t, err, "Failed to unmarshal explicit overrides YAML for ingress-nginx")
 
@@ -297,7 +286,8 @@ func TestComplexChartFeatures(t *testing.T) {
 				return
 			}
 
-			// Generic execution for other test cases
+			// Generic execution for other test cases (outside the ingress-nginx specific block)
+			// Note: The os.ReadFile check for explicitOutputFile was moved inside the ingress-nginx block above
 			output, err := harness.ExecuteIRR(args...)
 			if err != nil {
 				t.Fatalf("Failed to execute irr override command: %v\nOutput:\n%s", err, output)
@@ -429,15 +419,14 @@ func TestRegistryMappingFile(t *testing.T) {
 
 	// 1. Create a temporary mapping file
 	mappingContent := `
-mappings:
-  - source: docker.io
-    target: dckr  # Custom mapping prefix
-  - source: quay.io
-    target: quaycustom
+docker.io: quay.io/instrumenta
+k8s.gcr.io: quay.io/instrumenta
+registry.k8s.io: quay.io/instrumenta
 `
-	mappingFilePath := filepath.Join(harness.tempDir, "custom-mappings.yaml")
-	err := os.WriteFile(mappingFilePath, []byte(mappingContent), 0644)
-	require.NoError(t, err, "Failed to write temporary mapping file")
+	mappingFilePath := filepath.Join(harness.tempDir, "test-mappings.yaml")
+	// G306: Use secure file permissions (0600)
+	err := os.WriteFile(mappingFilePath, []byte(mappingContent), 0600)
+	require.NoError(t, err, "Failed to write temp mapping file")
 
 	// 2. Setup chart (using minimal-test which has docker.io and quay.io images)
 	harness.SetupChart(testutil.GetChartPath("minimal-test"))
@@ -517,9 +506,14 @@ func TestMinimalGitImageOverride(t *testing.T) {
 	})
 
 	if !found {
-		overrideBytes, _ := os.ReadFile(harness.overridePath)
+		// errcheck: Check error from ReadFile before logging content
+		overrideBytes, readErr := os.ReadFile(harness.overridePath)
 		t.Errorf("Expected image repository '%s' not found in overrides", expectedRepo)
-		t.Logf("Overrides content:\n%s", string(overrideBytes))
+		if readErr != nil {
+			t.Logf("Additionally, failed to read overrides file %s for debugging: %v", harness.overridePath, readErr)
+		} else {
+			t.Logf("Overrides content:\n%s", string(overrideBytes))
+		}
 	}
 }
 
@@ -528,6 +522,7 @@ func TestMinimalGitImageOverride(t *testing.T) {
 // Helper functions
 
 func setupMinimalTestChart(t *testing.T, h *TestHarness) {
+	// G301: Use secure directory permissions (0750 or less)
 	chartDir := filepath.Join(h.tempDir, "minimal-chart")
 	require.NoError(t, os.MkdirAll(chartDir, 0750))
 
@@ -535,38 +530,45 @@ func setupMinimalTestChart(t *testing.T, h *TestHarness) {
 	chartYaml := `apiVersion: v2
 name: minimal-chart
 version: 0.1.0`
-	require.NoError(t, os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), []byte(chartYaml), 0644))
+	// G306: Use secure file permissions (0600)
+	require.NoError(t, os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), []byte(chartYaml), 0600))
 
 	// Create values.yaml
 	valuesYaml := `image:
   repository: nginx
   tag: "1.23"`
-	require.NoError(t, os.WriteFile(filepath.Join(chartDir, "values.yaml"), []byte(valuesYaml), 0644))
+	// G306: Use secure file permissions (0600)
+	require.NoError(t, os.WriteFile(filepath.Join(chartDir, "values.yaml"), []byte(valuesYaml), 0600))
 
 	h.chartPath = chartDir
 }
 
+// func setupChartWithUnsupportedStructure(t *testing.T, h *TestHarness) { // Keep the function, remove comment block
 func setupChartWithUnsupportedStructure(t *testing.T, h *TestHarness) {
 	t.Helper()
-	// t.Skip("Temporarily disabled - Need to create unsupported-test chart")
 	chartPath := testutil.GetChartPath("unsupported-test")
-	err := os.MkdirAll(filepath.Join(h.tempDir, chartPath), 0755)
+	// G301: Use secure directory permissions (0750 or less)
+	err := os.MkdirAll(filepath.Join(h.tempDir, chartPath), 0750)
 	require.NoError(t, err, "Failed to create unsupported-test chart directory")
 
 	// Create Chart.yaml
 	chartYaml := `apiVersion: v2
 name: unsupported-test
 version: 0.1.0`
-	require.NoError(t, os.WriteFile(filepath.Join(h.tempDir, chartPath, "Chart.yaml"), []byte(chartYaml), 0644))
+	// G306: Use secure file permissions (0600)
+	require.NoError(t, os.WriteFile(filepath.Join(h.tempDir, chartPath, "Chart.yaml"), []byte(chartYaml), 0600))
 
 	// Create values.yaml with unsupported structure
 	valuesYaml := `image:
   name: nginx
   version: 1.23  # Using 'version' instead of 'tag'`
-	require.NoError(t, os.WriteFile(filepath.Join(h.tempDir, chartPath, "values.yaml"), []byte(valuesYaml), 0644))
+	// G306: Use secure file permissions (0600)
+	require.NoError(t, os.WriteFile(filepath.Join(h.tempDir, chartPath, "values.yaml"), []byte(valuesYaml), 0600))
 
 	h.chartPath = filepath.Join(h.tempDir, chartPath)
 }
+
+// */ // Remove end comment block
 
 // nolint:unused // Kept for potential future uses
 func chartExists(name string) bool {
@@ -574,3 +576,41 @@ func chartExists(name string) bool {
 	_, err := os.Stat(filepath.Join("test-data", "charts", name))
 	return err == nil
 }
+
+// Test reading overrides from standard output when --output-file is not provided
+func TestReadOverridesFromStdout(t *testing.T) {
+	h := NewTestHarness(t)
+	defer h.Cleanup()
+	h.SetupChart("minimal-test")
+	h.SetRegistries("test.registry.io", []string{"docker.io"})
+
+	// Run irr override without --output-file
+	stdout, irrErr := h.ExecuteIRR("override", h.chartPath, "--target-registry", h.targetReg, "--source-registries", strings.Join(h.sourceRegs, ","))
+	require.NoError(t, irrErr, "irr override command failed")
+	require.NotEmpty(t, stdout, "stdout should contain the override YAML")
+
+	// Parse the overrides from stdout
+	var overrides map[string]interface{}
+	err := yaml.Unmarshal([]byte(stdout), &overrides)
+	require.NoError(t, err, "Failed to parse overrides from stdout")
+
+	// Basic validation
+	require.Contains(t, overrides, "image", "Overrides should contain the 'image' key")
+	imageMap, ok := overrides["image"].(map[string]interface{})
+	require.True(t, ok, "'image' key should be a map")
+	assert.Equal(t, "test.registry.io/library/nginx", imageMap["repository"], "Repository mismatch")
+	assert.Equal(t, "latest", imageMap["tag"], "Tag mismatch")
+
+	// Check that the original override file path doesn't exist
+	_, err = os.Stat(h.overridePath) // Use the harness's default override path
+	assert.True(t, os.IsNotExist(err), "Override file should not exist when outputting to stdout")
+}
+
+// Helper function to compare override content
+// func assertOverridesMatch(t *testing.T, harness *TestHarness, expectedRepo string) { // Keep commented out
+/* Unused function
+// Helper function to compare override content
+func assertOverridesMatch(t *testing.T, harness *TestHarness, expectedRepo string) {
+// ... (rest of assertOverridesMatch remains commented out)
+}
+*/

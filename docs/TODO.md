@@ -953,6 +953,171 @@ Implement a tiered classification system within the Python test script (`test/to
 - [x] Review and update code in `cmd/irr/main.go` and potentially `pkg/` libraries to precisely match the documented behavior for both flags.
 - [x] Ensure correct conditional logic for file writing (`--dry-run`) and error handling (`--strict`).
 
+## 20. Address Test and Lint Failures (April 6th)
+
+**Goal:** Resolve test failures reported by `make test` and linter errors from `golangci-lint run ./...` to stabilize the core functionality and codebase.
+
+### 20.1 Static Analysis Cleanup (`pkg/image/detection.go`)
+- [x] Address `ST1023` errors: Replace `var x []Type = make(...)` with `x := make([]Type, 0)`.
+- [x] Remove unused functions/variables: `getMapKeys`, `isStrictImageString`, `tagRegex`, `digestRegex`, `digestCharsRegex` after confirming they are no longer needed.
+- [ ] Address error reference issues after removing duplicate error definitions.
+
+### 20.2 Fix `pkg/strategy` Test Failures (`TestPrefixSourceRegistryStrategy*`)
+- [ ] Debug `TestPrefixSourceRegistryStrategy_GeneratePath`:
+    - [ ] Verify interaction between strategy (`pkg/strategy/path_strategy.go`) and registry sanitization/normalization (`pkg/image/parser.go` -> `SanitizeRegistryForPath`, handling of `docker.io/library/`).
+    - [ ] Ensure generated paths match test expectations for various registry inputs.
+- [ ] Debug `TestPrefixSourceRegistryStrategy_GeneratePath_WithMappings`:
+    - [ ] Ensure registry mappings are correctly loaded and applied *before* path generation logic.
+
+### 20.3 Fix `pkg/image` Test Failures (`TestImageDetector*`, `TestDetectImages*`)
+- [ ] Systematically analyze failing subtests in `pkg/image/detection_test.go`.
+- [ ] Refactor/debug `pkg/image/detection.go` focusing on:
+    - [ ] `DetectImages`/`detectImagesRecursive`: Correct context propagation (`GlobalRegistry`, `Strict`, `TemplateMode`), error handling.
+    - [ ] `tryExtractImageFromMap`: Robustness for missing keys, non-string types, `GlobalRegistry` context application.
+    - [ ] `tryExtractImageFromString`: Correct `TemplateMode` behavior (preserving `{{...}}`), `Strict` mode interaction.
+- [ ] Address specific test failures related to: partial maps, global registry logic, template variables, invalid types, strict mode, basic detection.
+
+### 20.4 Fix `test/integration` Failures
+- [ ] Re-run integration tests after fixing unit tests.
+- [ ] `TestCertManagerIntegration`: Investigate with verbose output if it still fails.
+- [ ] `TestRegistryMappingFile`: Debug file loading and mapping application logic within the test setup.
+- [ ] `TestReadOverridesFromStdout`: Verify CLI command execution and stdout capture in the test.
+
+### 20.5 Documentation Review
+- [ ] Ensure `GOLANGCILINT.md` doesn't require changes. (Likely no changes needed).
+- [x] Add this section (Section 20) to `docs/TODO.md`.
+
+## 21. Code Organization Refactoring and Error Handling Improvements
+
+**Goal:** Systematically refactor the error handling in the codebase, particularly in the `pkg/image` package, to eliminate duplication, improve maintainability, and establish clear patterns for future development.
+
+### 21.1 Error Definition Consolidation
+- [x] **Audit Error Declarations:**
+  - [x] Found duplicate error definitions between `pkg/image/detection.go` and `pkg/image/errors.go`
+    - In `detection.go` (lines ~22-28):
+      ```go
+      // ... (errors listed) ...
+      ```
+    - In `errors.go`, these errors are defined with slightly different messages, such as:
+      ```go
+      // ... (error listed) ...
+      ```
+  - [x] Checked `pkg/image/path_utils.go`, which uses errors defined in `errors.go` but doesn't define its own
+  - [x] Discovered an error naming issue - `errors.go` has both `ErrInvalidImageMapRepo` and `ErrInvalidImageMapRepositoryType` defined but with different error messages
+
+- [x] **Update Central Error Definitions:**
+  - [x] Audited error messages for consistency and clarity (in `pkg/image/errors.go`)
+  - [x] Ensured error messages in `errors.go` are descriptive and follow a consistent pattern
+  - [x] Organized errors logically in `errors.go` based on functionality:
+    ```go
+    // Map structure validation errors
+    // String parsing errors
+    // etc.
+    ```
+  - [x] Added a link comment at the top of relevant files:
+    ```go
+    // Error definitions for this package are centralized in errors.go
+    ```
+
+- [x] **Eliminate Duplications:**
+  - [x] Updated `detection.go` to use the errors from `errors.go` instead of its own definitions
+  - [x] Fixed error references in `detection.go` and `detection_test.go`:
+    - [x] Reconciled `ErrInvalidImageMapRepo` and `ErrInvalidImageMapRepositoryType` (used `ErrInvalidImageMapRepo`)
+    - [x] Reconciled `ErrBothTagAndDigestSpecified` and `ErrTagAndDigestPresent` (used `ErrTagAndDigestPresent`)
+  - [ ] Run tests to verify error references remain valid (**Note:** Tests pass for `pkg/image` compilation but functional tests are failing)
+  - [x] Added comments to error usages explaining the error's purpose for better maintenance
+
+### 21.2 Fix Immediate Linter Issues
+- [x] **Address `pkg/image/detection.go` Issues:**
+  - [x] Fixed the `ST1023` issues on lines 297-298
+  - [x] Removed unused functions and variables: `getMapKeys`, `tagRegex`, `digestRegex`, `digestCharsRegex` (partially - commented out invalid var declarations)
+  - [x] Ensured only one declaration of each error variable exists
+  - [x] Fixed invalid `var` syntax (removed `var /* ... */` lines)
+
+- [x] **Verify Linter Passes:**
+  - [x] Ran `golangci-lint run ./pkg/image/...` and `go vet ./pkg/image/...`, confirming no syntax or lint issues in this package.
+
+### 21.3 Test Failure Remediation (**Current Focus**)
+- [ ] **Fix Path Strategy Test Failures:**
+  - [ ] Check `pkg/strategy/path_strategy_test.go` expectations against actual implementation
+  - [ ] Verify the test setup and expected outputs for `TestPrefixSourceRegistryStrategy_GeneratePath`
+  - [ ] Debug registry sanitization behavior in `SanitizeRegistryForPath`
+  - [ ] Ensure registry mapping is correctly applied in `TestPrefixSourceRegistryStrategy_GeneratePath_WithMappings`
+
+- [ ] **Fix Image Detection Tests:**
+  - [ ] Examine failure patterns in `TestImageDetector` and `TestDetectImages` subtests (many failures observed after fixing syntax issues)
+  - [ ] Verify context propagation in `DetectImages` (especially for `GlobalRegistry`, `Strict`, and `TemplateMode`)
+  - [ ] Fix `tryExtractImageFromMap` to correctly handle partial maps and non-string types
+  - [ ] Update `tryExtractImageFromString` to properly handle template variables
+  - [ ] Address failures for tests involving edge cases and mixed valid/invalid images
+  - [ ] Debug `TestParseImageReference` panic related to digest parsing.
+
+- [ ] **Tackle Integration Tests:**
+  - [ ] Fix `TestCertManagerIntegration` after the package-level tests pass
+  - [ ] Debug registry mapping file loading in `TestRegistryMappingFile`
+  - [ ] Verify CLI command execution in `TestReadOverridesFromStdout`
+
+### 21.4 Code Organization Improvements
+- [x] **Add Code Navigation Comments:**
+  - [x] Added package overview comments to main package files
+  - [x] Added section markers to improve navigation in larger files
+  - [x] Added references to the canonical location of shared functionality (errors.go)
+
+- [ ] **Improve Documentation:**
+  - [ ] Update docstrings for public functions to clarify:
+    - Purpose and usage
+    - Parameter expectations
+    - Return value semantics
+    - Error conditions
+  - [ ] Add examples for complex functions
+  - [ ] Document design decisions and patterns for future developers
+
+- [ ] **Establish Best Practices:**
+  - [ ] Create `CONTRIBUTING.md` or update existing documentation with:
+    - Error handling patterns
+    - Code organization guidelines
+    - Test expectations
+  - [ ] Add lint configuration to enforce these patterns where possible
+
+### 21.5 Refactoring Validation
+- [ ] **Comprehensive Test Pass:**
+  - [ ] Ensure all unit tests pass after refactoring
+  - [ ] Verify integration tests function correctly
+  - [ ] Confirm no regressions in functionality
+
+- [ ] **Code Review:**
+  - [ ] Perform a self-review of all changes
+  - [ ] Document any areas that may need future improvements
+  - [ ] Consider peer review if available
+
+- [x] **Update Status:**
+  - [x] Marked completed items in this TODO section.
+  - [x] Documented remaining issues (test failures).
+
+### 21.6 Implementation Approach
+1. **Start with error consolidation** - [x] Done
+2. **Fix simple linter issues** - [x] Done
+3. **Address test failures systematically** - [ ] **In Progress**
+4. **Improve documentation and organization** - [ ] Partially Done
+5. **Validate through comprehensive testing** - [ ] Pending test fixes
+
+### 21.7 Immediate Recommended Solution
+
+- [x] **Clean Up Error Definitions**:
+  1. [x] Edit `pkg/image/errors.go` to consolidate duplicate error definitions.
+  2. [x] Remove the duplicate error block in `pkg/image/detection.go`.
+  3. [x] Update all references in `pkg/image/detection.go` and `pkg/image/detection_test.go` to use the consolidated error names.
+  4. [x] Run the linter to verify all undefined errors are resolved.
+  5. [ ] Run the tests to ensure the functionality remains correct:
+     ```shell
+     # go test ./pkg/image/...  <- Fails due to functional issues
+     ```
+
+- [x] **Add Documentation to Prevent Future Issues**:
+  1. [x] Add clear explanatory comments to `pkg/image/errors.go`.
+  2. [ ] Consider adding a simple validation test that fails if duplicate errors are detected.
+  3. [ ] Update CONTRIBUTING.md (if it exists) to document error handling best practices.
+
 
 
    

@@ -20,8 +20,8 @@ test: build
 	@IRR_TESTING=true go test ./... -v 
 
 test-json: build
-	@echo "Running unit tests filtering out success"
-    #@IRR_TESTING=true go test ./... -json | jq -r 'select((.Action == "fail") and .Test)'
+	@echo "Running unit tests , only showing failures, with json output"
+    @IRR_TESTING=true go test ./... -json | jq -r 'select((.Action == "fail") and .Test)'
 
 test-packages: build
 	@echo "Running package tests (skipping cmd/irr)..."

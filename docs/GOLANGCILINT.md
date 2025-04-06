@@ -129,6 +129,7 @@ Current blocking issues in integration tests:
    * ~~Ineffectual assignments to `result`~~ in `pkg/chart/generator.go`
    * Empty if branch in detection tests (`pkg/image/detection_test.go`) - REMAINS
    * Unnecessary separate variable declaration - REMAINS (Needs specific location)
+   * ~~Duplicate error definitions in pkg/image/detection.go~~ (RESOLVED)
 
 3. **Dead Code (unused)** - RESOLVED (v0.x.y)
    * ~~Unused functions in image detection package (`pkg/image/detection.go`)~~:
@@ -158,6 +159,7 @@ Current blocking issues in integration tests:
    * Fix ineffectual assignments in override package
    * ~~Remove or utilize unused functions in image detection~~ (Done)
    * Clean up empty branches and merge variable declarations
+   * ~~Remove duplicate error definitions in pkg/image/detection.go~~ (Done)
 
 2. **Error Handling Strategy**
    * Continue package-by-package error centralization

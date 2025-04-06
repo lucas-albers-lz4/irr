@@ -158,7 +158,7 @@ func (g *Generator) Generate() (*override.OverrideFile, error) {
 		// Combine details of unsupported structures into the error message
 		var details []string
 		for _, match := range unsupportedMatches {
-			details = append(details, fmt.Sprintf("path=%v type=%s pattern=%s", match.Location, locationTypeToString(match.LocationType), match.Pattern))
+			details = append(details, fmt.Sprintf("path=%v type=%d error='%v'", match.Location, match.Type, match.Error))
 		}
 		errMsg := fmt.Sprintf("strict mode enabled: unsupported structures found (%d): [%s]",
 			len(unsupportedMatches), strings.Join(details, "; "))
@@ -201,7 +201,7 @@ func (g *Generator) Generate() (*override.OverrideFile, error) {
 	for _, match := range unsupportedMatches {
 		unsupported = append(unsupported, override.UnsupportedStructure{
 			Path: match.Location,
-			Type: locationTypeToString(match.LocationType),
+			Type: locationTypeToString(image.LocationType(match.Type)),
 		})
 	}
 
@@ -230,13 +230,13 @@ func (g *Generator) Generate() (*override.OverrideFile, error) {
 		processingFailed := false
 
 		// No need to re-check source/exclude here, already filtered
-		debug.Printf("Processing eligible image %d/%d: Path: %v, Ref: %s (%s)", i+1, eligibleImagesCount, img.Location, img.Reference.String(), locationTypeToString(img.LocationType))
+		debug.Printf("Processing eligible image %d/%d: Path: %v, Ref: %s (%s)", i+1, eligibleImagesCount, img.Path, img.Reference.String(), img.Pattern)
 
 		if img.Reference == nil { // Keep guard clause
 			debug.Printf("Skipping image %d due to nil reference", i+1)
 			processingFailed = true
 			processingErrors = append(processingErrors, &ImageProcessingError{
-				Path: img.Location,
+				Path: img.Path,
 				Ref:  "<nil>",
 				Err:  errors.New("nil image reference detected during processing"),
 			})
@@ -249,7 +249,7 @@ func (g *Generator) Generate() (*override.OverrideFile, error) {
 			debug.Printf("Error generating path: %v", pathErr)
 			// Store error for later threshold check
 			processingErrors = append(processingErrors, &ImageProcessingError{
-				Path: img.Location,
+				Path: img.Path,
 				Ref:  img.Reference.String(),
 				Err:  fmt.Errorf("path strategy failed: %w", pathErr),
 			})
@@ -272,23 +272,23 @@ func (g *Generator) Generate() (*override.OverrideFile, error) {
 		}
 		// --- End Construct the target value MAP ---
 
-		debug.Printf("[DEBUG irr GEN] Processing Eligible Image: Path=%v, OriginalRef=%s, Type=%s", img.Location, img.Reference.String(), locationTypeToString(img.LocationType))
+		debug.Printf("[DEBUG irr GEN] Processing Eligible Image: Path=%v, OriginalRef=%s, Type=%s", img.Path, img.Reference.String(), img.Pattern)
 		debug.DumpValue("[DEBUG irr GEN] Value to set", valueToSet)
 
 		// Set the new value (map) in the copied values structure
-		debug.Printf("[DEBUG irr GEN] Calling SetValueAtPath with Path: %v", img.Location)
-		err = override.SetValueAtPath(modifiedValues, img.Location, valueToSet)
+		debug.Printf("[DEBUG irr GEN] Calling SetValueAtPath with Path: %v", img.Path)
+		err = override.SetValueAtPath(modifiedValues, img.Path, valueToSet)
 		if err != nil {
-			debug.Printf("Error setting value at path %v: %v", img.Location, err)
+			debug.Printf("Error setting value at path %v: %v", img.Path, err)
 			processingFailed = true
 			processingErrors = append(processingErrors, &ImageProcessingError{
-				Path: img.Location,
+				Path: img.Path,
 				Ref:  img.Reference.String(),
 				Err:  fmt.Errorf("failed to set override value: %w", err),
 			})
 			continue // Skip to next image on set value error
 		}
-		debug.Printf("[DEBUG irr GEN] SetValueAtPath successful for path: %v", img.Location)
+		debug.Printf("[DEBUG irr GEN] SetValueAtPath successful for path: %v", img.Path)
 
 		if !processingFailed {
 			imagesSuccessfullyProcessed++
@@ -330,28 +330,28 @@ func (g *Generator) Generate() (*override.OverrideFile, error) {
 
 	for _, img := range eligibleImages {
 		// Skip images that failed during processing (path gen or set value)
-		if failedPaths[strings.Join(img.Location, ".")] {
+		if failedPaths[strings.Join(img.Path, ".")] {
 			continue
 		}
 
-		pathKey := strings.Join(img.Location, ".")
+		pathKey := strings.Join(img.Path, ".")
 		if processedImagePaths[pathKey] {
 			continue // Already processed this exact path (shouldn't happen often)
 		}
 
 		// Retrieve the successfully modified value from the deep copy
-		modifiedValue, getErr := override.GetValueAtPath(modifiedValues, img.Location)
+		modifiedValue, getErr := override.GetValueAtPath(modifiedValues, img.Path)
 		if getErr != nil {
 			// This indicates an internal inconsistency, should be logged
-			debug.Printf("INTERNAL ERROR: Failed to get previously modified value at path %v: %v", img.Location, getErr)
+			debug.Printf("INTERNAL ERROR: Failed to get previously modified value at path %v: %v", img.Path, getErr)
 			continue // Skip this image if we can't retrieve its modified state
 		}
 
 		// Set this modified value into the final, minimal override map
-		setErr := override.SetValueAtPath(finalOverrides, img.Location, modifiedValue)
+		setErr := override.SetValueAtPath(finalOverrides, img.Path, modifiedValue)
 		if setErr != nil {
 			// This indicates an issue building the final map, should be logged
-			debug.Printf("INTERNAL ERROR: Failed to set value in final overrides at path %v: %v", img.Location, setErr)
+			debug.Printf("INTERNAL ERROR: Failed to set value in final overrides at path %v: %v", img.Path, setErr)
 			continue // Skip this image if we can't build its structure
 		}
 		processedImagePaths[pathKey] = true
@@ -493,7 +493,7 @@ func GenerateOverrides(chartData *chart.Chart, targetRegistry string, sourceRegi
 
 // ImageDetector defines the interface for detecting images in chart values
 type ImageDetector interface {
-	DetectImages(values interface{}, path []string) ([]image.DetectedImage, []image.DetectedImage, error)
+	DetectImages(values interface{}, path []string) ([]image.DetectedImage, []image.UnsupportedImage, error)
 }
 
 // processChartForOverrides processes a single chart and its values.
@@ -508,17 +508,17 @@ func processChartForOverrides(chartData *chart.Chart, targetRegistry string, sou
 	overrides := make(map[string]interface{})
 
 	// Use the provided detector
-	detectedImages, unsupported, err := detector.DetectImages(chartData.Values, []string{})
+	detectedImages, unsupportedMatches, err := detector.DetectImages(chartData.Values, []string{})
 	if err != nil {
 		return nil, fmt.Errorf("error detecting images: %w", err)
 	}
 
 	debug.Printf("Detected %d images", len(detectedImages))
-	debug.Printf("Found %d unsupported structures", len(unsupported))
+	debug.Printf("Found %d unsupported structures", len(unsupportedMatches))
 
 	// Process each detected image
 	for _, img := range detectedImages {
-		debug.Printf("Processing image at path: %v", img.Location)
+		debug.Printf("Processing image at path: %v", img.Path)
 		debug.DumpValue("Image Reference", img.Reference)
 
 		// Skip if the image is from an excluded registry
@@ -557,9 +557,9 @@ func processChartForOverrides(chartData *chart.Chart, targetRegistry string, sou
 		}
 
 		// Set the value at the correct path IN THE NEW OVERRIDES MAP
-		err = override.SetValueAtPath(overrides, img.Location, imageConfig)
+		err = override.SetValueAtPath(overrides, img.Path, imageConfig)
 		if err != nil {
-			debug.Printf("Error setting value in override map at path %v: %v", img.Location, err)
+			debug.Printf("Error setting value in override map at path %v: %v", img.Path, err)
 			continue // Skip if we cannot set the override
 		}
 	}

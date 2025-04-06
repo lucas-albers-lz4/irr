@@ -626,35 +626,35 @@ func TestGenerateOverrides(t *testing.T) {
 	detector := &MockImageDetector{
 		DetectedImages: []image.DetectedImage{
 			{ // Parent Image
-				Location: []string{"parentImage"},
+				Path: []string{"parentImage"},
 				Reference: &image.ImageReference{
 					Registry:   "docker.io",
 					Repository: "parent/app",
 					Tag:        "v1",
 				},
-				LocationType: image.TypeString, // Assuming it was detected as a simple string
+				Pattern: image.PatternString, // Changed TypeString to PatternString constant
 			},
 			{ // Child Image (from parent override)
-				Location: []string{"child", "image"}, // Path within merged values
+				Path: []string{"child", "image"}, // Path within merged values
 				Reference: &image.ImageReference{
 					// Assuming detector resolves missing registry to docker.io based on context or defaults
 					Registry:   "docker.io",
 					Repository: "my-child-repo",
 					Tag:        "child-tag",
 				},
-				LocationType: image.TypeMapRegistryRepositoryTag, // Assuming detected as a map
+				Pattern: image.PatternMap, // Changed TypeMapRegistryRepositoryTag to PatternMap constant
 			},
 			{ // Child Image (from child defaults)
-				Location: []string{"child", "anotherImage"}, // Path within merged values
+				Path: []string{"child", "anotherImage"}, // Path within merged values
 				Reference: &image.ImageReference{
 					Registry:   "docker.io",
 					Repository: "another/child",
 					Tag:        "stable",
 				},
-				LocationType: image.TypeString, // Assuming detected as a simple string
+				Pattern: image.PatternString, // Changed TypeString to PatternString constant
 			},
 		},
-		Unsupported: []image.DetectedImage{},
+		Unsupported: []image.UnsupportedImage{},
 		Error:       nil,
 	}
 
@@ -1137,11 +1137,11 @@ func TestCleanupTemplateVariables(t *testing.T) {
 // MockImageDetector for testing
 type MockImageDetector struct {
 	DetectedImages []image.DetectedImage
-	Unsupported    []image.DetectedImage
+	Unsupported    []image.UnsupportedImage
 	Error          error
 }
 
-func (m *MockImageDetector) DetectImages(values interface{}, path []string) ([]image.DetectedImage, []image.DetectedImage, error) {
+func (m *MockImageDetector) DetectImages(values interface{}, path []string) ([]image.DetectedImage, []image.UnsupportedImage, error) {
 	return m.DetectedImages, m.Unsupported, m.Error
 }
 
@@ -1161,7 +1161,7 @@ func TestProcessChartForOverrides(t *testing.T) {
 		name           string
 		chartData      *chart.Chart
 		detectedImages []image.DetectedImage
-		unsupported    []image.DetectedImage
+		unsupported    []image.UnsupportedImage
 		detectError    error
 		expected       map[string]interface{}
 		expectError    bool
@@ -1180,7 +1180,7 @@ func TestProcessChartForOverrides(t *testing.T) {
 			},
 			detectedImages: []image.DetectedImage{
 				{
-					Location: []string{"image"},
+					Path: []string{"image"},
 					Reference: &image.ImageReference{
 						Registry:   "docker.io",
 						Repository: "nginx",
@@ -1210,7 +1210,7 @@ func TestProcessChartForOverrides(t *testing.T) {
 			},
 			detectedImages: []image.DetectedImage{
 				{
-					Location: []string{"image"},
+					Path: []string{"image"},
 					Reference: &image.ImageReference{
 						Registry:   "internal.registry",
 						Repository: "app",
@@ -1234,7 +1234,7 @@ func TestProcessChartForOverrides(t *testing.T) {
 			},
 			detectedImages: []image.DetectedImage{
 				{
-					Location: []string{"image"},
+					Path: []string{"image"},
 					Reference: &image.ImageReference{
 						Registry:   "gcr.io",
 						Repository: "app",
@@ -1267,7 +1267,7 @@ func TestProcessChartForOverrides(t *testing.T) {
 			},
 			detectedImages: []image.DetectedImage{
 				{
-					Location: []string{"app", "image"},
+					Path: []string{"app", "image"},
 					Reference: &image.ImageReference{
 						Registry:   "docker.io",
 						Repository: "app",
@@ -1275,7 +1275,7 @@ func TestProcessChartForOverrides(t *testing.T) {
 					},
 				},
 				{
-					Location: []string{"sidecar", "image"},
+					Path: []string{"sidecar", "image"},
 					Reference: &image.ImageReference{
 						Registry:   "quay.io",
 						Repository: "helper",
@@ -1323,7 +1323,7 @@ func TestProcessChartForOverrides(t *testing.T) {
 			},
 			detectedImages: []image.DetectedImage{
 				{
-					Location: []string{"image"},
+					Path: []string{"image"},
 					Reference: &image.ImageReference{
 						Registry:   "docker.io",
 						Repository: "app",
