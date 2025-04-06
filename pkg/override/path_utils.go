@@ -1,6 +1,7 @@
 package override
 
 import (
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -122,6 +123,12 @@ func SetValueAtPath(data map[string]interface{}, path []string, value interface{
 		return WrapPathParsing(lastPart, err)
 	}
 
+	// --- START SetValueAtPath DEBUG ---
+	fmt.Printf("[DEBUG irr SPATH] Target Map (m) before setting key '%s': %#v\n", key, m)
+	fmt.Printf("[DEBUG irr SPATH] Path: %v, LastPart: %s, Key: %s, IsArray: %v, ArrayIndex: %d\n", path, lastPart, key, isArrayAccess, arrayIndex)
+	fmt.Printf("[DEBUG irr SPATH] Value to set: %#v\n", value)
+	// --- END SetValueAtPath DEBUG ---
+
 	if isArrayAccess {
 		// First get or create the array
 		arrInterface, exists := m[key]
@@ -169,6 +176,14 @@ func SetValueAtPath(data map[string]interface{}, path []string, value interface{
 			m[key] = value
 		}
 	}
+
+	// --- START SetValueAtPath DEBUG ---
+	fmt.Printf("[DEBUG irr SPATH] Target Map (m) AFTER setting key '%s': %#v\n", key, m)
+	// --- END SetValueAtPath DEBUG ---
+
+	// --- ADD FINAL DEBUG LOG BEFORE RETURN ---
+	fmt.Printf("[DEBUG irr SPATH] FINAL Target Map (m) state for key '%s': %#v\n", key, m)
+	// --- END FINAL DEBUG LOG ---
 
 	return nil
 }
