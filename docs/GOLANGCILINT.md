@@ -6,6 +6,81 @@
     *   **Diagnosis:** This appears to be caused by the Go toolchain or the pre-commit hook incorrectly receiving/generating a list of target paths separated by newlines instead of spaces. Standard troubleshooting (checking Makefile, `go clean -testcache`, build tags) did not resolve it. It likely points to a local environment configuration issue or a subtle interaction within the pre-commit hook's file handling.
     *   **Workaround:** When committing linting fixes, the pre-commit hook may fail due to this error. Use `git commit --no-verify -m "..."` to bypass the hook for these specific commits. Note that `make test` may continue to show this setup failure until the underlying environment issue is resolved.
 
+## Progress Report & Insights
+
+### What Has Worked Well
+1. **Incremental Error Handling Approach**
+   * Breaking down error handling improvements by package
+   * Creating dedicated error files per package
+   * Focusing on one function at a time for complex refactors
+
+2. **Test-Driven Fixes**
+   * Using failing tests to guide error handling improvements
+   * Adding test coverage alongside error handling changes
+   * Maintaining test coverage during refactoring
+
+3. **Modular Package Structure**
+   * Keeping error definitions close to their usage
+   * Clear separation of concerns between packages
+   * Consistent error handling patterns within packages
+
+### Current Issues (As of Latest Scan)
+
+1. **Error Checking (errcheck)**
+   * Unchecked `os.Setenv/Unsetenv` in test files
+   * Unchecked type assertions in override package
+   * **Files:** `cmd/irr/override_test.go`, `pkg/override/override.go`
+
+2. **Code Efficiency (ineffassign, staticcheck)**
+   * Ineffectual assignments to `newPrefix` in override package
+   * Empty if branch in detection tests
+   * Unnecessary separate variable declaration
+   * **Files:** `pkg/override/override.go`, `pkg/image/detection_test.go`
+
+3. **Dead Code (unused)**
+   * Unused functions in image detection package:
+     * `tryExtractImageFromMap`
+     * `normalizeImageReference`
+   * **Files:** `pkg/image/detection.go`
+
+### Challenges & Lessons
+1. **Complex Function Refactoring**
+   * Large functions (like `parseImageMap`) require careful, incremental changes
+   * Test coverage is crucial for safe refactoring
+   * Breaking changes need careful coordination across dependent packages
+
+2. **Integration Test Stability**
+   * Changes to error handling can cascade to integration tests
+   * Global registry context needs consistent handling
+   * Test data (charts, values) needs review for edge cases
+
+3. **Error Type Consistency**
+   * Balancing between sentinel errors and wrapped errors
+   * Ensuring error types are checked correctly in tests
+   * Maintaining backward compatibility during error refactoring
+
+### Next Steps & Recommendations
+1. **Immediate Actions**
+   * Add error checking for environment variable operations in tests
+   * Fix ineffectual assignments in override package
+   * Remove or utilize unused functions in image detection
+   * Clean up empty branches and merge variable declarations
+
+2. **Error Handling Strategy**
+   * Continue package-by-package error centralization
+   * Focus on high-impact functions first
+   * Document error handling patterns for consistency
+
+3. **Test Improvements**
+   * Add edge case tests for error conditions
+   * Improve test helper functions
+   * Consider property-based testing for complex functions
+
+4. **Code Organization**
+   * Review package boundaries
+   * Consider further modularization
+   * Document package-level design decisions
+
 ## 1. Prioritized Remediation Plan
 
 This plan outlines the steps to address the findings from `golangci-lint run`. Issues are prioritized based on security impact, code robustness, maintainability, and effort required.
@@ -32,6 +107,21 @@ This plan outlines the steps to address the findings from `golangci-lint run`. I
 
 ### Priority 2: Error Handling (err113, wrapcheck, nilnil, errcheck)
 *   **Goal:** Improve error handling consistency and robustness.
+*   **Status:** **IN PROGRESS**. The incremental approach has shown success:
+    * Created centralized error files for `pkg/image` and `pkg/chart`
+    * Improved error handling in `parseImageMap` and related functions
+    * Added comprehensive test coverage for error cases
+    * Fixed several integration test failures
+    * Remaining work focuses on:
+      * Completing error centralization in remaining packages
+      * Addressing complex function refactoring
+      * Ensuring consistent error wrapping patterns
+*   **Update:** Recent progress includes:
+    * Added new sentinel errors for invalid types
+    * Improved error messages for better debugging
+    * Fixed test cases to handle error conditions properly
+    * Resolved issues with global registry context
+    * Enhanced error handling in path utilities
 *   **Tasks:**
     *   Define sentinel errors (e.g., `var ErrChartPathRequired = errors.New("--chart-path is required")`) for common error conditions currently using `fmt.Errorf` without wrapping (`err113`).
     *   Replace dynamic `fmt.Errorf` calls with sentinel errors where applicable.

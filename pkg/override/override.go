@@ -1,6 +1,7 @@
 package override
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -78,35 +79,113 @@ type UnsupportedStructure struct {
 	Type string
 }
 
-// GenerateOverrideStructure creates a map structure for overriding image values
-// based on the provided ImageReference and path.
-func GenerateOverrideStructure(ref *image.ImageReference, path []string) (map[string]interface{}, error) {
+// GenerateOverrides generates override values for a single image.
+func GenerateOverrides(ref *image.ImageReference, path []string) (map[string]interface{}, error) {
 	if ref == nil {
-		return nil, fmt.Errorf("nil image reference")
+		return nil, ErrNilImageReference
 	}
 
 	if len(path) == 0 {
-		return nil, fmt.Errorf("empty path")
+		return nil, ErrEmptyPath
 	}
 
-	// Create the image map with the correct structure
-	imageMap := make(map[string]interface{})
-	imageMap["registry"] = ref.Registry
-	imageMap["repository"] = ref.Repository
-	if ref.Digest != "" {
-		imageMap["digest"] = ref.Digest
-	} else if ref.Tag != "" {
-		imageMap["tag"] = ref.Tag
-	}
-
-	// Create the override structure and set the image map at the specified path
+	// Create a new map to hold the override values
 	overrides := make(map[string]interface{})
-	err := SetValueAtPath(overrides, path, imageMap)
+
+	// Create a representation that matches the intended format
+	// This will be stored at the location specified by 'path'
+	ref = normalizeRegistry(ref)
+	var valueToSet interface{}
+
+	// TypeMapRegistryTag is most common, but also support TypeMapRegistry and TypeMapTag
+	// These type constants are defined in the image package
+	valueToSet = map[string]interface{}{
+		"registry":   ref.Registry,
+		"repository": ref.Repository,
+	}
+
+	if ref.Tag != "" {
+		valueToSet.(map[string]interface{})["tag"] = ref.Tag
+	}
+
+	if ref.Digest != "" {
+		valueToSet.(map[string]interface{})["digest"] = ref.Digest
+	}
+
+	// Set the value at the specified path in the overrides map
+	err := SetValueAtPath(overrides, path, valueToSet)
 	if err != nil {
 		return nil, fmt.Errorf("failed to set value at path: %w", err)
 	}
 
 	return overrides, nil
+}
+
+// normalizeRegistry ensures the registry is in the expected format for override generation.
+func normalizeRegistry(ref *image.ImageReference) *image.ImageReference {
+	if ref == nil {
+		return nil
+	}
+
+	// Create a copy to avoid modifying the original
+	result := *ref
+
+	// Docker Hub special case - convert 'docker.io' to registry.hub.docker.com
+	// which is how Helm charts frequently represent it
+	if ref.Registry == "docker.io" {
+		result.Registry = "registry.hub.docker.com"
+	}
+
+	return &result
+}
+
+// GenerateYAMLOverrides generates YAML content for the given overrides map.
+// If the format is 'values', it returns a plain YAML document.
+// If the format is 'json', it returns a JSON-formatted string.
+// If the format is 'helm-set', it returns a list of --set arguments.
+func GenerateYAMLOverrides(overrides map[string]interface{}, format string) ([]byte, error) {
+	switch format {
+	case "values":
+		// Convert directly to YAML
+		yamlBytes, err := yaml.Marshal(overrides)
+		if err != nil {
+			return nil, WrapMarshalOverrides(err)
+		}
+		return yamlBytes, nil
+
+	case "json":
+		// Convert to JSON
+		jsonBytes, err := json.Marshal(overrides)
+		if err != nil {
+			return nil, WrapMarshalOverrides(err)
+		}
+		return jsonBytes, nil
+
+	case "helm-set":
+		// Convert to --set format
+		jsonBytes, err := json.Marshal(overrides)
+		if err != nil {
+			return nil, WrapMarshalOverrides(err)
+		}
+
+		// Convert JSON back to YAML for easier parsing
+		yamlContent, err := yaml.JSONToYAML(jsonBytes)
+		if err != nil {
+			return nil, WrapJSONToYAML(err)
+		}
+
+		// Parse YAML and flatten to --set format
+		var helmSets []string
+		if err := flattenYAMLToHelmSet("", yamlContent, &helmSets); err != nil {
+			return nil, err
+		}
+
+		// Join all --set arguments with newlines
+		return []byte(strings.Join(helmSets, "\n")), nil
+	}
+
+	// Invalid format
+	return nil, fmt.Errorf("invalid format: %s", format)
 }
 
 // ConstructPath constructs the path for the override structure
@@ -183,4 +262,59 @@ func JSONToYAML(jsonData []byte) ([]byte, error) {
 		return nil, fmt.Errorf("failed to convert JSON to YAML: %w", err)
 	}
 	return yamlBytes, nil
+}
+
+// flattenYAMLToHelmSet recursively flattens YAML content into Helm --set format
+func flattenYAMLToHelmSet(prefix string, content []byte, sets *[]string) error {
+	var data interface{}
+	if err := yaml.Unmarshal(content, &data); err != nil {
+		return fmt.Errorf("failed to unmarshal YAML: %w", err)
+	}
+
+	return flattenValue(prefix, data, sets)
+}
+
+// flattenValue recursively processes values and converts them to --set format
+func flattenValue(prefix string, value interface{}, sets *[]string) error {
+	switch v := value.(type) {
+	case map[interface{}]interface{}:
+		for k, val := range v {
+			key := fmt.Sprintf("%v", k)
+			if strings.HasPrefix(key, prefix) {
+				// Use prefix directly or construct new one if needed
+				newPrefix := prefix
+				if len(key) > len(prefix) {
+					newPrefix = key[:strings.LastIndex(key, ".")]
+				}
+				// Use newPrefix in subsequent operations
+				if err := flattenValue(newPrefix, val, sets); err != nil {
+					return err
+				}
+			}
+		}
+	case map[string]interface{}:
+		for k, val := range v {
+			if strings.HasPrefix(k, prefix) {
+				// Use prefix directly or construct new one if needed
+				newPrefix := prefix
+				if len(k) > len(prefix) {
+					newPrefix = k[:strings.LastIndex(k, ".")]
+				}
+				// Use newPrefix in subsequent operations
+				if err := flattenValue(newPrefix, val, sets); err != nil {
+					return err
+				}
+			}
+		}
+	case []interface{}:
+		for i, val := range v {
+			newPrefix := fmt.Sprintf("%s[%d]", prefix, i)
+			if err := flattenValue(newPrefix, val, sets); err != nil {
+				return err
+			}
+		}
+	default:
+		*sets = append(*sets, fmt.Sprintf("--set %s=%v", prefix, v))
+	}
+	return nil
 }

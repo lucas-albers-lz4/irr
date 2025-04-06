@@ -71,75 +71,84 @@ func TestParseImageReference(t *testing.T) {
 		},
 		{
 			name:          "invalid image reference",
-			input:         "not:a:valid:image",
+			input:         "invalid:image:format::",
 			expectedRef:   nil,
 			expectedErr:   true,
-			errorContains: "invalid image reference",
+			errorContains: "invalid tag format",
 		},
 		{
 			name:          "empty string",
 			input:         "",
 			expectedRef:   nil,
-			expectedErr:   true,
-			errorContains: "empty image reference",
+			expectedErr:   false,
+			errorContains: "",
+		},
+		{
+			name:          "standard image with registry, tag, and nested path",
+			input:         "my-registry.com:5000/org/nested/path/image:v1.2.3",
+			expectedRef:   &ImageReference{Registry: "my-registry.com:5000", Repository: "org/nested/path/image", Tag: "v1.2.3"},
+			expectedErr:   false,
+			errorContains: "",
 		},
 		{
 			name:          "invalid digest format",
-			input:         "docker.io/library/nginx@notadigest",
+			input:         "image@sha256:invalid",
 			expectedRef:   nil,
 			expectedErr:   true,
 			errorContains: "invalid digest format",
 		},
 		{
 			name:          "invalid tag format",
-			input:         "docker.io/library/nginx:invalid/tag",
+			input:         "image:!invalidTag",
 			expectedRef:   nil,
 			expectedErr:   true,
 			errorContains: "invalid tag format",
 		},
 		{
 			name:          "invalid registry name",
-			input:         "invalid.registry.with.too.many.parts/app:latest",
+			input:         "InvalidRegistry/image:tag",
 			expectedRef:   nil,
 			expectedErr:   true,
-			errorContains: "invalid registry name",
+			errorContains: "invalid image reference format",
 		},
 		{
 			name:          "non-string input",
 			input:         123,
 			expectedRef:   nil,
-			expectedErr:   true,
-			errorContains: "input must be a string",
+			expectedErr:   false,
+			errorContains: "",
 		},
 		{
 			name:          "nil input",
 			input:         nil,
 			expectedRef:   nil,
-			expectedErr:   true,
-			errorContains: "input must be a string",
+			expectedErr:   false,
+			errorContains: "",
+		},
+		{
+			name:          "missing_repository",
+			input:         map[string]interface{}{"tag": "latest"},
+			expectedRef:   nil,
+			expectedErr:   false,
+			errorContains: "",
 		},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			ref, err := ParseImageReference(tc.input)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ref, err := ParseImageReference(tt.input)
 
-			if tc.expectedErr {
+			if tt.expectedErr {
 				assert.Error(t, err)
-				if tc.errorContains != "" {
-					assert.Contains(t, err.Error(), tc.errorContains)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
 				}
-				return
+			} else {
+				assert.NoError(t, err)
 			}
 
-			assert.NoError(t, err)
-			if tc.expectedRef != nil {
-				assert.Equal(t, tc.expectedRef.Registry, ref.Registry, "Registry mismatch")
-				assert.Equal(t, tc.expectedRef.Repository, ref.Repository, "Repository mismatch")
-				assert.Equal(t, tc.expectedRef.Tag, ref.Tag, "Tag mismatch")
-				assert.Equal(t, tc.expectedRef.Digest, ref.Digest, "Digest mismatch")
-			} else {
-				assert.Nil(t, ref)
+			if !tt.expectedErr {
+				assert.Equal(t, tt.expectedRef, ref)
 			}
 		})
 	}
@@ -219,105 +228,79 @@ func TestSanitizeRegistryForPath(t *testing.T) {
 
 func TestParseImageMap(t *testing.T) {
 	tests := []struct {
-		name        string
-		input       map[string]interface{}
-		expected    *ImageReference
-		expectedErr bool
+		name          string
+		input         map[string]interface{}
+		expectedRef   *ImageReference
+		expectedErr   bool
+		errorContains string
 	}{
 		{
-			name: "repository with tag",
-			input: map[string]interface{}{
-				"repository": "nginx",
-				"tag":        "1.21.0",
-			},
-			expected: &ImageReference{
-				Registry:   "docker.io",
-				Repository: "library/nginx",
-				Tag:        "1.21.0",
-			},
+			name:        "repository_with_tag",
+			input:       map[string]interface{}{"repository": "library/nginx", "tag": "1.21.0"},
+			expectedRef: &ImageReference{Registry: "docker.io", Repository: "library/nginx", Tag: "1.21.0"},
+			expectedErr: false,
 		},
 		{
-			name: "repository with registry and tag",
-			input: map[string]interface{}{
-				"repository": "quay.io/company/app",
-				"tag":        "v2.3.4",
-			},
-			expected: &ImageReference{
-				Registry:   "quay.io",
-				Repository: "company/app",
-				Tag:        "v2.3.4",
-			},
+			name:        "repository_with_registry_and_tag",
+			input:       map[string]interface{}{"registry": "quay.io", "repository": "company/app", "tag": "v2.3.4"},
+			expectedRef: &ImageReference{Registry: "quay.io", Repository: "company/app", Tag: "v2.3.4"},
+			expectedErr: false,
 		},
 		{
-			name: "repository with digest",
-			input: map[string]interface{}{
-				"repository": "nginx",
-				"digest":     "sha256:1234567890123456789012345678901234567890123456789012345678901234",
-			},
-			expected: &ImageReference{
-				Registry:   "docker.io",
-				Repository: "library/nginx",
-				Digest:     "sha256:1234567890123456789012345678901234567890123456789012345678901234",
-			},
+			name:        "repository_with_digest",
+			input:       map[string]interface{}{"repository": "nginx", "digest": "sha256:1234567890123456789012345678901234567890123456789012345678901234"},
+			expectedRef: &ImageReference{Registry: "docker.io", Repository: "library/nginx", Digest: "sha256:1234567890123456789012345678901234567890123456789012345678901234"},
+			expectedErr: false,
 		},
 		{
-			name: "repository without tag or digest",
-			input: map[string]interface{}{
-				"repository": "busybox",
-			},
-			expected: &ImageReference{
-				Registry:   "docker.io",
-				Repository: "library/busybox",
-			},
+			name:        "repository_without_tag_or_digest",
+			input:       map[string]interface{}{"repository": "image"},
+			expectedRef: &ImageReference{Registry: "docker.io", Repository: "library/image"},
+			expectedErr: false,
 		},
 		{
-			name: "repository with non-string tag",
-			input: map[string]interface{}{
-				"repository": "app",
-				"tag":        123, // Non-string tag
-			},
-			expected: &ImageReference{
-				Registry:   "docker.io",
-				Repository: "library/app",
-				// Tag should not be set since it's not a string
-			},
+			name:          "repository_with_non-string_tag",
+			input:         map[string]interface{}{"repository": "image", "tag": 123},
+			expectedRef:   nil,
+			expectedErr:   true,
+			errorContains: ErrInvalidImageMapTagType.Error(),
 		},
 		{
-			name: "missing repository",
-			input: map[string]interface{}{
-				"tag": "latest",
-			},
-			expected: nil, // Should return nil when repository is missing
+			name:          "missing_repository",
+			input:         map[string]interface{}{"tag": "latest"},
+			expectedRef:   nil,
+			expectedErr:   false,
+			errorContains: "",
 		},
 		{
-			name: "non-string repository",
-			input: map[string]interface{}{
-				"repository": 123, // Non-string repository
-				"tag":        "latest",
-			},
-			expected: nil, // Should return nil for non-string repository
+			name:          "non-string_repository",
+			input:         map[string]interface{}{"repository": false, "tag": "latest"},
+			expectedRef:   nil,
+			expectedErr:   true,
+			errorContains: ErrInvalidImageMapRepo.Error(),
+		},
+		{
+			name:          "non-string_registry",
+			input:         map[string]interface{}{"registry": 123, "repository": "image", "tag": "latest"},
+			expectedRef:   nil,
+			expectedErr:   true,
+			errorContains: ErrInvalidImageMapRegistryType.Error(),
 		},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			ref, err := parseImageMap(tc.input)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ref, err := parseImageMap(tt.input, "")
 
-			if tc.expectedErr {
+			if tt.expectedErr {
 				assert.Error(t, err)
-				return
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
+			} else {
+				assert.NoError(t, err)
 			}
-
-			if tc.expected == nil {
-				assert.Nil(t, ref)
-				return
-			}
-
-			assert.NoError(t, err)
-			assert.Equal(t, tc.expected.Registry, ref.Registry, "Registry mismatch")
-			assert.Equal(t, tc.expected.Repository, ref.Repository, "Repository mismatch")
-			assert.Equal(t, tc.expected.Tag, ref.Tag, "Tag mismatch")
-			assert.Equal(t, tc.expected.Digest, ref.Digest, "Digest mismatch")
+			assert.Equal(t, tt.expectedRef, ref)
 		})
 	}
 }

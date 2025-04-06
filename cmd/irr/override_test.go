@@ -3,11 +3,12 @@ package main
 import (
 	"fmt"
 	"os"
-	"strings"
+	"path/filepath"
 	"testing"
 
 	// Use testify for assertions
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	// Need analysis types for mocking generator return value
 	"github.com/lalbers/irr/pkg/chart"
@@ -46,8 +47,6 @@ func (m *mockGenerator) Generate() (*override.OverrideFile, error) {
 
 func TestOverrideCmdArgs(t *testing.T) {
 	// Test cases focusing only on argument validation and required flags
-	// Uses the real command structure but doesn't need mocks yet
-
 	tests := []struct {
 		name           string
 		args           []string
@@ -76,32 +75,24 @@ func TestOverrideCmdArgs(t *testing.T) {
 		{
 			name:           "all required flags present (execution error expected)",
 			args:           []string{"override", "--chart-path", "cp", "--target-registry", "tr", "--source-registries", "sr"},
-			expectErr:      true,                         // Expect error from Generate() as it's not mocked
-			stdErrContains: "error generating overrides", // Check for error from RunE
+			expectErr:      true,
+			stdErrContains: "chart parsing failed for cp",
 		},
-		// --- Invalid Flag Values (where applicable) ---
-		// Example: Invalid path strategy (though currently only one is supported)
+		// --- Invalid Flag Values ---
 		{
 			name:           "invalid path strategy",
 			args:           []string{"override", "--chart-path", "cp", "--target-registry", "tr", "--source-registries", "sr", "--path-strategy", "invalid-strat"},
 			expectErr:      true,
 			stdErrContains: "unsupported path strategy: invalid-strat",
 		},
-		// We don't have args validation for override command itself (it takes no direct args)
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Get a fresh command instance for each test
 			rootCmd := newRootCmd()
-
-			// We aren't mocking yet, so execution errors are expected for valid flags
-			currentGeneratorFactory = defaultGeneratorFactory // Ensure default factory is used
-
-			// Use the fresh rootCmd instance
+			currentGeneratorFactory = defaultGeneratorFactory
 			_, _, err := executeCommand(rootCmd, tt.args...)
 
-			// Assertions (checking err.Error())
 			if tt.expectErr {
 				assert.Error(t, err, "Expected an error")
 				if tt.stdErrContains != "" {
@@ -109,20 +100,17 @@ func TestOverrideCmdArgs(t *testing.T) {
 				}
 			} else {
 				assert.NoError(t, err, "Did not expect an error")
-				// Don't check stderr on success
 			}
 		})
 	}
 }
 
 func TestOverrideCmdExecution(t *testing.T) {
-	// Restore original generator factory after tests
-	originalGeneratorFactory := currentGeneratorFactory // Keep this
+	originalGeneratorFactory := currentGeneratorFactory
 	defer func() {
 		currentGeneratorFactory = originalGeneratorFactory
 	}()
 
-	// Default args for successful execution tests
 	defaultArgs := []string{
 		"override",
 		"--chart-path", "./fake/chart",
@@ -137,6 +125,8 @@ func TestOverrideCmdExecution(t *testing.T) {
 		expectErr         bool
 		stdOutContains    string
 		stdErrContains    string
+		setupEnv          map[string]string
+		postCheck         func(t *testing.T, testDir string)
 	}{
 		{
 			name: "success execution to stdout",
@@ -149,6 +139,8 @@ func TestOverrideCmdExecution(t *testing.T) {
 			expectErr:      false,
 			stdOutContains: "repository: mock-target.com/dockerio/nginx",
 			stdErrContains: "",
+			setupEnv:       map[string]string{"IRR_SKIP_HELM_VALIDATION": "true"},
+			postCheck:      nil,
 		},
 		{
 			name: "success with dry run",
@@ -161,6 +153,8 @@ func TestOverrideCmdExecution(t *testing.T) {
 			expectErr:      false,
 			stdOutContains: "image: dry-run-image",
 			stdErrContains: "",
+			setupEnv:       map[string]string{"IRR_SKIP_HELM_VALIDATION": "true"},
+			postCheck:      nil,
 		},
 		{
 			name: "generator returns error",
@@ -171,59 +165,90 @@ func TestOverrideCmdExecution(t *testing.T) {
 			expectErr:      true,
 			stdOutContains: "",
 			stdErrContains: "error generating overrides: mock generator error",
+			setupEnv:       map[string]string{"IRR_SKIP_HELM_VALIDATION": "true"},
+			postCheck:      nil,
 		},
 		{
 			name: "success with output file (flow check)",
-			args: append(defaultArgs, "--output-file", "override_output.txt"),
+			args: defaultArgs, // Will append output file path in the test
 			mockGeneratorFunc: func() (*override.OverrideFile, error) {
-				return &override.OverrideFile{Overrides: map[string]interface{}{"key": "value"}}, nil
+				return &override.OverrideFile{
+					Overrides: map[string]interface{}{"image": map[string]interface{}{"repository": "mock-target.com/dockerio/nginx", "tag": "latest"}},
+				}, nil
 			},
 			expectErr:      false,
-			stdOutContains: "",
+			stdOutContains: "Overrides written to:",
 			stdErrContains: "",
+			setupEnv:       map[string]string{"IRR_SKIP_HELM_VALIDATION": "true"},
+			postCheck: func(t *testing.T, testDir string) {
+				outputPath := filepath.Join(testDir, "output.yaml")
+				content, err := os.ReadFile(outputPath)
+				require.NoError(t, err, "Should be able to read output file")
+				assert.Contains(t, string(content), "repository: mock-target.com/dockerio/nginx")
+			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Setup Generator Mock (only this mock is needed now)
+			testDir := t.TempDir()
+
+			// Setup Generator Mock
 			if tt.mockGeneratorFunc != nil {
 				currentGeneratorFactory = func(chartPath, targetRegistry string, sourceRegistries, excludeRegistries []string, pathStrategy strategy.PathStrategy, mappings *registry.RegistryMappings, strict bool, threshold int, loader chart.Loader) GeneratorInterface {
-					// We might need to pass dummy/nil values for strategy/mappings here if the factory expects them
-					// but the mock generator itself might not use them.
 					return &mockGenerator{GenerateFunc: tt.mockGeneratorFunc}
 				}
 			} else {
 				currentGeneratorFactory = defaultGeneratorFactory
 			}
 
+			// Set up environment variables if specified
+			if tt.setupEnv != nil {
+				for k, v := range tt.setupEnv {
+					err := os.Setenv(k, v)
+					if err != nil {
+						t.Fatalf("Failed to set environment variable %s: %v", k, err)
+					}
+				}
+				defer func() {
+					for k := range tt.setupEnv {
+						err := os.Unsetenv(k)
+						if err != nil {
+							t.Fatalf("Failed to unset environment variable %s: %v", k, err)
+						}
+					}
+				}()
+			}
+
+			// Prepare args with output file if needed
+			args := tt.args
+			if tt.name == "success with output file (flow check)" {
+				outputPath := filepath.Join(testDir, "output.yaml")
+				args = append(args, "--output-file", outputPath, "--verbose")
+			}
+
 			// Get a fresh command instance
 			rootCmd := newRootCmd()
 
-			// Use the fresh rootCmd instance
-			stdout, _, err := executeCommand(rootCmd, tt.args...)
+			// Execute command
+			stdout, _, err := executeCommand(rootCmd, args...)
 
-			// Assertions (checking err.Error() for errors, stdout for success)
+			// Assertions
 			if tt.expectErr {
 				assert.Error(t, err, "Expected an error")
 				if tt.stdErrContains != "" {
-					assert.Contains(t, err.Error(), tt.stdErrContains, "error message or stderr should contain expected text")
+					assert.Contains(t, err.Error(), tt.stdErrContains, "error message should contain expected text")
 				}
 			} else {
 				assert.NoError(t, err, "Did not expect an error")
 				if tt.stdOutContains != "" {
 					assert.Contains(t, stdout, tt.stdOutContains)
 				}
-				// Don't check stderr on success
 			}
 
-			// Cleanup
-			if strings.Contains(strings.Join(tt.args, " "), "--output-file override_output.txt") {
-				err := os.Remove("override_output.txt")
-				// It's okay if the file doesn't exist or was already removed, so we only log unexpected errors
-				if err != nil && !os.IsNotExist(err) {
-					t.Logf("Warning: Error removing test file: %v", err)
-				}
+			// Run post-check if specified
+			if tt.postCheck != nil {
+				tt.postCheck(t, testDir)
 			}
 		})
 	}

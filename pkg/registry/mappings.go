@@ -34,32 +34,32 @@ func LoadMappings(path string) (*RegistryMappings, error) {
 	// Add check for CWD prefix
 	wd, err := os.Getwd()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get working directory: %w", err)
+		return nil, fmt.Errorf("getting working directory failed: %w", err)
 	}
 	// Skip CWD check during testing
 	if os.Getenv("IRR_TESTING") != "true" {
 		if !strings.HasPrefix(absPath, wd) {
-			return nil, fmt.Errorf("invalid mappings file path: must be within the current working directory tree")
+			return nil, WrapMappingPathNotInWD(path)
 		}
 	}
 	// End added check
 
 	if !strings.HasSuffix(absPath, ".yaml") && !strings.HasSuffix(absPath, ".yml") {
-		return nil, fmt.Errorf("invalid mappings file path: must end with .yaml or .yml")
+		return nil, WrapMappingExtension(path)
 	}
 
 	// Read the file content
 	data, err := os.ReadFile(path) // G304 mitigation: path validated above
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("mappings file does not exist: %v", err)
+			return nil, WrapMappingFileNotExist(path, err)
 		}
-		return nil, fmt.Errorf("failed to read mappings file: %v", err)
+		return nil, WrapMappingFileRead(path, err)
 	}
 
 	var mappings RegistryMappings
 	if err := yaml.Unmarshal(data, &mappings); err != nil {
-		return nil, fmt.Errorf("failed to parse mappings file: %v", err)
+		return nil, WrapMappingFileParse(path, err)
 	}
 
 	return &mappings, nil
