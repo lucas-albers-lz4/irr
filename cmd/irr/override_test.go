@@ -205,11 +205,17 @@ func TestOverrideCmdExecution(t *testing.T) {
 			// Set up environment variables if specified
 			if tt.setupEnv != nil {
 				for k, v := range tt.setupEnv {
-					os.Setenv(k, v)
+					err := os.Setenv(k, v)
+					if err != nil {
+						t.Fatalf("Failed to set environment variable %s: %v", k, err)
+					}
 				}
 				defer func() {
 					for k := range tt.setupEnv {
-						os.Unsetenv(k)
+						err := os.Unsetenv(k)
+						if err != nil {
+							t.Fatalf("Failed to unset environment variable %s: %v", k, err)
+						}
 					}
 				}()
 			}
