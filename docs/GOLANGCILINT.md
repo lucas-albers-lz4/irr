@@ -32,6 +32,8 @@ This plan outlines the steps to address the findings from `golangci-lint run`. I
 
 ### Priority 2: Error Handling (err113, wrapcheck, nilnil, errcheck)
 *   **Goal:** Improve error handling consistency and robustness.
+*   **Status:** **IN PROGRESS**. Initial attempts to refactor error handling encountered difficulties with automated modifications in complex functions (`pkg/image/detection.go`, `pkg/chart/generator.go`), particularly around specific logic like image parsing and threshold calculation. However, analysis shows significant progress was made with basic error wrapping and defining sentinel errors. We are now retrying this priority with a more incremental approach, focusing on specific functions like `parseImageMap`. Deeper refactoring of the most complex functions may still require manual review and correction if automated edits prove insufficient.
+*   **Update:** Centralized sentinel errors for `pkg/image` into `pkg/image/errors.go`. Refactored `parseImageMap` and `tryExtractImageFromString` in `pkg/image/detection.go` to improve logic, use the centralized errors, and correctly handle template variables in repository strings. Addressed several test failures in `pkg/image/detection_test.go`, including registry precedence and basic template variable handling. Remaining failures include specific cases in `TestParseImageMap_PartialMaps` related to global registry context and invalid registry types, along with integration test failures.
 *   **Tasks:**
     *   Define sentinel errors (e.g., `var ErrChartPathRequired = errors.New("--chart-path is required")`) for common error conditions currently using `fmt.Errorf` without wrapping (`err113`).
     *   Replace dynamic `fmt.Errorf` calls with sentinel errors where applicable.
