@@ -17,7 +17,7 @@ func TestMinimalChart(t *testing.T) {
 	defer harness.Cleanup()
 
 	harness.SetupChart(testutil.GetChartPath("minimal-test"))
-	harness.SetRegistries("target.io", []string{"source.io"})
+	harness.SetRegistries("target.io", []string{"source.io", "docker.io"})
 
 	if err := harness.GenerateOverrides(); err != nil {
 		t.Fatalf("Failed to generate overrides: %v", err)
@@ -33,7 +33,7 @@ func TestParentChart(t *testing.T) {
 	defer harness.Cleanup()
 
 	harness.SetupChart(testutil.GetChartPath("parent-test"))
-	harness.SetRegistries("target.io", []string{"source.io"})
+	harness.SetRegistries("target.io", []string{"source.io", "docker.io"})
 
 	if err := harness.GenerateOverrides(); err != nil {
 		t.Fatalf("Failed to generate overrides: %v", err)
