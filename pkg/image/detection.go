@@ -248,6 +248,7 @@ func (d *ImageDetector) DetectImages(values interface{}, path []string) ([]Detec
 	debug.FunctionEnter("DetectImages")
 	defer debug.FunctionExit("DetectImages")
 
+	// Initialize slices for results at THIS level
 	var detected []DetectedImage
 	var unsupported []DetectedImage
 
@@ -274,26 +275,25 @@ func (d *ImageDetector) DetectImages(values interface{}, path []string) ([]Detec
 	switch v := values.(type) {
 	case map[string]interface{}:
 		foundImageInMapStructure := false
-		// Check for a simple "image: <string>" pattern first
+		// Check for a simple "image: <string>" or "image: <map>" pattern first
 		if imageVal, ok := v["image"]; ok {
 			switch img := imageVal.(type) {
 			case string:
 				if ref, err := tryExtractImageFromString(img); err == nil && ref != nil {
-					// Found a valid image string under the "image" key
 					if ref.Registry == "" && d.context.GlobalRegistry != "" {
 						ref.Registry = d.context.GlobalRegistry
 					}
 					detected = append(detected, DetectedImage{
-						Location:     append(path, "image"), // Path points to the specific key
+						Location:     append(path, "image"),
 						LocationType: TypeString,
 						Reference:    ref,
 						Pattern:      "string",
 						Original:     img,
 					})
+					debug.Printf("DETECTED (image:string): Path=%v, Ref=%+v", append(path, "image"), ref)
 					foundImageInMapStructure = true
 				}
 			case map[string]interface{}:
-				// Try to parse the map itself as an image reference first
 				if ref, err := parseImageMap(img, d.context.GlobalRegistry); err == nil && ref != nil {
 					detected = append(detected, DetectedImage{
 						Location:     append(path, "image"),
@@ -302,13 +302,12 @@ func (d *ImageDetector) DetectImages(values interface{}, path []string) ([]Detec
 						Pattern:      "map",
 						Original:     img,
 					})
+					debug.Printf("DETECTED (image:map): Path=%v, Ref=%+v", append(path, "image"), ref)
 					foundImageInMapStructure = true
 				} else if err != nil {
-					// Propagate parsing errors (like invalid types)
 					return nil, nil, fmt.Errorf("error parsing image map: %w", err)
 				}
-				// ALWAYS recurse into the map found under the 'image' key, even if parseImageMap failed.
-				// This handles cases like { image: { repository: "foo" } } where tag/digest are missing.
+				// Recurse into the map found under the 'image' key
 				subPath := append(path, "image")
 				subDetected, subUnsupported, err := d.DetectImages(img, subPath)
 				if err != nil {
@@ -319,11 +318,10 @@ func (d *ImageDetector) DetectImages(values interface{}, path []string) ([]Detec
 			}
 		}
 
-		// If we didn't find an image via the "image" key,
 		// try detecting the map structure itself (e.g., {repository: ..., tag: ...})
 		if !foundImageInMapStructure {
 			if ref, err := parseImageMap(v, d.context.GlobalRegistry); err != nil {
-				return nil, nil, err // Propagate type errors
+				return nil, nil, err
 			} else if ref != nil {
 				detected = append(detected, DetectedImage{
 					Location:     path,
@@ -332,18 +330,12 @@ func (d *ImageDetector) DetectImages(values interface{}, path []string) ([]Detec
 					Pattern:      "map",
 					Original:     v,
 				})
-				// If detected as a map structure, don't recurse further into its keys
-				return detected, unsupported, nil
+				debug.Printf("DETECTED (map itself): Path=%v, Ref=%+v", path, ref)
 			}
 		}
 
-		// Always recurse into map keys to find nested images,
-		// unless the map itself was detected as an image structure above.
+		// Always recurse into map keys
 		for k, val := range v {
-			// Skip the simple "image" key if we already processed it above
-			if k == "image" && foundImageInMapStructure {
-				continue
-			}
 			newPath := append(path, k)
 			if len(path) == 0 && k == "global" {
 				continue
@@ -368,18 +360,10 @@ func (d *ImageDetector) DetectImages(values interface{}, path []string) ([]Detec
 		}
 
 	case string:
-		// More selective processing of strings
-		// Only process as potential image if:
-		// 1. It's in a path that's likely to contain an image (like .spec.containers[0].image)
-		// 2. Or it strictly matches an image reference pattern
 		shouldProcess := isImagePath(path) || isStrictImageString(v)
-
 		if shouldProcess {
 			if ref, err := tryExtractImageFromString(v); err == nil && ref != nil {
-				// Successfully parsed as an image
-				// Apply global registry only if the parsed reference didn't have one
-				parsedRegistry := ref.Registry
-				if parsedRegistry == "" && d.context.GlobalRegistry != "" {
+				if ref.Registry == "" && d.context.GlobalRegistry != "" {
 					ref.Registry = d.context.GlobalRegistry
 				}
 				detected = append(detected, DetectedImage{
@@ -389,9 +373,8 @@ func (d *ImageDetector) DetectImages(values interface{}, path []string) ([]Detec
 					Pattern:      "string",
 					Original:     v,
 				})
+				debug.Printf("DETECTED (string): Path=%v, Ref=%+v", path, ref)
 			} else if d.context.Strict && strings.Contains(v, ":") && !strings.Contains(v, "//") {
-				// In strict mode, if a string looks like an attempted image ref (has colon but no protocol)
-				// but isn't a valid image reference, add it to unsupported
 				unsupported = append(unsupported, DetectedImage{
 					Location:     path,
 					LocationType: TypeUnknown,
@@ -618,8 +601,9 @@ func parseImageMap(m map[string]interface{}, globalRegistry string) (*ImageRefer
 	debug.Printf("Normalized registry: %s", ref.Registry)
 
 	// Apply library namespace logic AFTER registry normalization
-	if ref.Registry == defaultRegistry && !strings.Contains(ref.Repository, "/") {
-		debug.Printf("Prepending 'library/' to repository '%s' for default registry", ref.Repository)
+	// Check the ORIGINAL repository string (repoStr) for slashes
+	if ref.Registry == defaultRegistry && !strings.Contains(repoStr, "/") {
+		debug.Printf("Prepending '%s/' to repository '%s' for default registry", libraryNamespace, ref.Repository)
 		ref.Repository = libraryNamespace + "/" + ref.Repository
 	}
 
