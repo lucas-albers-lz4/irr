@@ -225,6 +225,21 @@ helm-image-override \
     [--threshold <percentage>] \ # Success threshold (default: 100)
 ```
 
+**Detailed Flag Behavior:**
+
+*   **`--dry-run`:**
+    *   Performs all chart loading, value parsing, image identification, and override generation logic.
+    *   Prints the generated overrides YAML (or a summary/confirmation message) to standard output.
+    *   Does *not* write to the file specified by `--output-file`. If `--output-file` is omitted, it still prints the preview to standard output but does *not* behave like the default non-dry-run mode (which would print the final YAML to stdout).
+    *   Exits with code 0 if the dry run completes without processing errors.
+    *   Exits with relevant non-zero codes (1-4) for parsing/processing errors encountered *during* the dry run simulation.
+
+*   **`--strict`:**
+    *   When enabled, if an image value structure is encountered that is not explicitly supported (as defined in section 6.1.1), the tool immediately stops processing.
+    *   Prints an informative error message indicating the unsupported structure and its location (value path).
+    *   Exits with a specific error code (Exit Code 5).
+    *   If *no* unsupported structures are found, the tool proceeds normally.
+
 ## 7. Verification & Testing Strategy
 
 * **Unit Tests:** Cover parsing, URL generation, path manipulation logic.
