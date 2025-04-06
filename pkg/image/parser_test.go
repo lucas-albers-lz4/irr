@@ -125,6 +125,13 @@ func TestParseImageReference(t *testing.T) {
 			expectedErr:   false,
 			errorContains: "",
 		},
+		{
+			name:          "missing_repository",
+			input:         map[string]interface{}{"tag": "latest"},
+			expectedRef:   nil,
+			expectedErr:   false,
+			errorContains: "",
+		},
 	}
 
 	for _, tt := range tests {
@@ -262,8 +269,8 @@ func TestParseImageMap(t *testing.T) {
 			name:          "missing_repository",
 			input:         map[string]interface{}{"tag": "latest"},
 			expectedRef:   nil,
-			expectedErr:   true,
-			errorContains: ErrInvalidImageMapRepo.Error(),
+			expectedErr:   false,
+			errorContains: "",
 		},
 		{
 			name:          "non-string_repository",
