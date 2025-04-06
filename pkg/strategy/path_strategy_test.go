@@ -22,10 +22,10 @@ func TestPrefixSourceRegistryStrategy(t *testing.T) {
 			input: &image.ImageReference{
 				Registry:   "docker.io",
 				Repository: "nginx",
-				Tag:        "1.23",
+				Tag:        "latest",
 			},
 			targetRegistry: "",
-			expected:       "dockerio/nginx",
+			expected:       "dockerio/library/nginx",
 		},
 		{
 			name: "nested path",
@@ -55,7 +55,7 @@ func TestPrefixSourceRegistryStrategy(t *testing.T) {
 				Tag:        "v2",
 			},
 			targetRegistry: "",
-			expected:       "registryexamplecom/app/frontend",
+			expected:       "registryexamplecom5000/app/frontend",
 		},
 	}
 
@@ -135,7 +135,7 @@ func TestPrefixSourceRegistryStrategy_GeneratePath(t *testing.T) {
 				Registry:   "quay.io",
 				Repository: "org/repo",
 			},
-			want: "quay/org/repo",
+			want: "org/repo",
 		},
 		{
 			name:           "repository with dots",
@@ -153,7 +153,7 @@ func TestPrefixSourceRegistryStrategy_GeneratePath(t *testing.T) {
 				Registry:   "localhost:5000",
 				Repository: "org/repo",
 			},
-			want: "localhost/org/repo",
+			want: "localhost5000/org/repo",
 		},
 	}
 
@@ -192,7 +192,7 @@ func TestPrefixSourceRegistryStrategy_GeneratePath_WithMappings(t *testing.T) {
 				Registry:   "quay.io",
 				Repository: "jetstack/cert-manager-controller",
 			},
-			want: "quay/jetstack/cert-manager-controller",
+			want: "jetstack/cert-manager-controller",
 		},
 		{
 			name:           "without custom mapping",

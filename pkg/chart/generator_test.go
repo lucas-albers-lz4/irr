@@ -11,7 +11,6 @@ import (
 	"github.com/lalbers/irr/pkg/image"
 	"github.com/lalbers/irr/pkg/registry"
 	"github.com/lalbers/irr/pkg/strategy"
-	"gopkg.in/yaml.v3"
 )
 
 // MockPathStrategy for testing
@@ -140,12 +139,20 @@ func TestGenerate(t *testing.T) {
 
 		// Check the generated override structure
 		assert.Contains(t, overrideFile.Overrides, "appImage", "Overrides should contain appImage key")
-		if appImage, ok := overrideFile.Overrides["appImage"].(map[string]interface{}); ok {
-			assert.Equal(t, targetRegistry, appImage["registry"], "Registry in override mismatch")
+		if appImageMap, ok := overrideFile.Overrides["appImage"].(map[string]interface{}); ok {
+			assert.Equal(t, targetRegistry, appImageMap["registry"], "Registry in override mismatch")
 			// Repository should be the transformed path (strategy dependent, here MOCK strategy)
-			expectedRepo := targetRegistry + "/" + mockChart.Values["appImage"].(map[string]interface{})["repository"].(string) + ":" + mockChart.Values["appImage"].(map[string]interface{})["tag"].(string)
-			assert.Equal(t, expectedRepo, appImage["repository"], "Repository in override mismatch")
-			assert.Equal(t, "1.0.0", appImage["tag"], "Tag in override mismatch")
+			// Ensure original values are accessible map for comparison
+			originalAppImage, ok := mockChart.Values["appImage"].(map[string]interface{})
+			require.True(t, ok, "Original appImage value should be a map")
+			originalRepo, okRepo := originalAppImage["repository"].(string)
+			require.True(t, okRepo, "Original repository should be a string")
+			originalTag, okTag := originalAppImage["tag"].(string)
+			require.True(t, okTag, "Original tag should be a string")
+
+			expectedRepo := targetRegistry + "/" + originalRepo + ":" + originalTag
+			assert.Equal(t, expectedRepo, appImageMap["repository"], "Repository in override mismatch")
+			assert.Equal(t, originalTag, appImageMap["tag"], "Tag in override mismatch")
 		} else {
 			t.Errorf("appImage override is not a map[string]interface{}")
 		}
@@ -186,10 +193,11 @@ func TestGenerate(t *testing.T) {
 			assert.Equal(t, targetRegistry, workerImage["registry"], "Registry mismatch")
 			// Repository should be transformed path (MOCK strategy)
 			// Need to parse original string to get repo/tag for mock
-			originalRef, _ := image.ParseImageReference(imageStringValue)
+			originalRef, err := image.ParseImageReference(imageStringValue)
+			require.NoError(t, err, "Parsing original image string should not fail")
 			expectedRepo := targetRegistry + "/" + originalRef.Repository + ":" + originalRef.Tag
 			assert.Equal(t, expectedRepo, workerImage["repository"], "Repository mismatch")
-			assert.Equal(t, "v2", workerImage["tag"], "Tag mismatch")
+			assert.Equal(t, originalRef.Tag, workerImage["tag"], "Tag mismatch")
 		} else {
 			t.Errorf("workerImage override is not a map[string]interface{}")
 		}
@@ -231,10 +239,11 @@ func TestGenerate(t *testing.T) {
 		if publicImage, ok := overrideFile.Overrides["publicImage"].(map[string]interface{}); ok {
 			assert.Equal(t, targetRegistry, publicImage["registry"])
 			// Repository should be transformed path (MOCK strategy needs library)
-			originalRef, _ := image.ParseImageReference("docker.io/library/alpine:latest")
+			originalRef, err := image.ParseImageReference("docker.io/library/alpine:latest")
+			require.NoError(t, err, "Parsing original image string should not fail")
 			expectedRepo := targetRegistry + "/" + originalRef.Repository + ":" + originalRef.Tag
 			assert.Equal(t, expectedRepo, publicImage["repository"])
-			assert.Equal(t, "latest", publicImage["tag"])
+			assert.Equal(t, originalRef.Tag, publicImage["tag"])
 		} else {
 			t.Errorf("publicImage override is not a map[string]interface{}")
 		}
@@ -275,10 +284,11 @@ func TestGenerate(t *testing.T) {
 		if dockerImage, ok := overrideFile.Overrides["dockerImage"].(map[string]interface{}); ok {
 			assert.Equal(t, targetRegistry, dockerImage["registry"])
 			// Repository should be transformed path (MOCK strategy needs library)
-			originalRef, _ := image.ParseImageReference("docker.io/library/redis:alpine")
+			originalRef, err := image.ParseImageReference("docker.io/library/redis:alpine")
+			require.NoError(t, err, "Parsing original image string should not fail")
 			expectedRepo := targetRegistry + "/" + originalRef.Repository + ":" + originalRef.Tag
 			assert.Equal(t, expectedRepo, dockerImage["repository"])
-			assert.Equal(t, "alpine", dockerImage["tag"])
+			assert.Equal(t, originalRef.Tag, dockerImage["tag"])
 		} else {
 			t.Errorf("dockerImage override is not a map[string]interface{}")
 		}
@@ -598,7 +608,7 @@ func TestGenerateOverrides(t *testing.T) {
 		"child": map[string]interface{}{ // Alias used as key
 			// Values from parent's 'child:' block take precedence
 			"image": map[string]interface{}{
-				"repository": "my-child-repo",
+				"repository": "my-child-repo", // Registry might be implicitly docker.io or global? Test assumes detection handles it.
 				"tag":        "child-tag",
 			},
 			// Values only in child's defaults are merged in
@@ -607,30 +617,57 @@ func TestGenerateOverrides(t *testing.T) {
 	}
 
 	// Create a mock chart object containing ONLY the merged values
-	// Metadata isn't strictly needed for this test as we call process directly
 	mockMergedChart := &chart.Chart{
 		Metadata: &chart.Metadata{Name: "merged-chart-for-test"},
 		Values:   mergedValues,
-		// No dependencies needed here as values are pre-merged
 	}
 
-	// 2. Call processChartForOverrides directly with the merged values
-	overrides, err := processChartForOverrides(mockMergedChart, targetRegistry, sourceRegistries, excludeRegistries, prefixStrategy, mockMappings, verbose)
+	// Create a new detector for the test, including detections for child images
+	detector := &MockImageDetector{
+		DetectedImages: []image.DetectedImage{
+			{ // Parent Image
+				Location: []string{"parentImage"},
+				Reference: &image.ImageReference{
+					Registry:   "docker.io",
+					Repository: "parent/app",
+					Tag:        "v1",
+				},
+				LocationType: image.TypeString, // Assuming it was detected as a simple string
+			},
+			{ // Child Image (from parent override)
+				Location: []string{"child", "image"}, // Path within merged values
+				Reference: &image.ImageReference{
+					// Assuming detector resolves missing registry to docker.io based on context or defaults
+					Registry:   "docker.io",
+					Repository: "my-child-repo",
+					Tag:        "child-tag",
+				},
+				LocationType: image.TypeMapRegistryRepositoryTag, // Assuming detected as a map
+			},
+			{ // Child Image (from child defaults)
+				Location: []string{"child", "anotherImage"}, // Path within merged values
+				Reference: &image.ImageReference{
+					Registry:   "docker.io",
+					Repository: "another/child",
+					Tag:        "stable",
+				},
+				LocationType: image.TypeString, // Assuming detected as a simple string
+			},
+		},
+		Unsupported: []image.DetectedImage{},
+		Error:       nil,
+	}
 
-	// <<< Add Debugging >>>
-	overridesYAML, _ := yaml.Marshal(overrides)
-	t.Logf("Generated Overrides:\n%s", string(overridesYAML))
-
-	// 3. Assert Results
+	overrides, err := processChartForOverrides(mockMergedChart, targetRegistry, sourceRegistries, excludeRegistries, prefixStrategy, mockMappings, verbose, detector)
 	require.NoError(t, err)
 	require.NotNil(t, overrides)
 
 	// Check parent override (now map)
 	assert.Contains(t, overrides, "parentImage")
 	if parentImage, ok := overrides["parentImage"].(map[string]interface{}); ok {
-		assert.Equal(t, targetRegistry, parentImage["registry"])
-		assert.Equal(t, "dockerio/parent/app", parentImage["repository"])
-		assert.Equal(t, "v1", parentImage["tag"])
+		assert.Equal(t, targetRegistry, parentImage["registry"], "Parent registry mismatch")
+		assert.Equal(t, "dockerio/parent/app", parentImage["repository"], "Parent repository mismatch")
+		assert.Equal(t, "v1", parentImage["tag"], "Parent tag mismatch")
 	} else {
 		t.Errorf("Parent image override is not a map")
 	}
@@ -667,4 +704,661 @@ func TestGenerateOverrides(t *testing.T) {
 	// Note: This test now directly tests processChartForOverrides with merged values,
 	// implicitly covering how GenerateOverrides *should* work if Helm provides
 	// correctly merged values to the initial Load call.
+}
+
+func TestExtractSubtree(t *testing.T) {
+	tests := []struct {
+		name     string
+		data     map[string]interface{}
+		path     []string
+		expected map[string]interface{}
+	}{
+		{
+			name: "empty path",
+			data: map[string]interface{}{
+				"key": "value",
+			},
+			path:     []string{},
+			expected: nil,
+		},
+		{
+			name: "simple path",
+			data: map[string]interface{}{
+				"parent": map[string]interface{}{
+					"child": "value",
+				},
+			},
+			path: []string{"parent", "child"},
+			expected: map[string]interface{}{
+				"parent": map[string]interface{}{
+					"child": "value",
+				},
+			},
+		},
+		{
+			name: "nested path",
+			data: map[string]interface{}{
+				"level1": map[string]interface{}{
+					"level2": map[string]interface{}{
+						"level3": "value",
+					},
+				},
+			},
+			path: []string{"level1", "level2", "level3"},
+			expected: map[string]interface{}{
+				"level1": map[string]interface{}{
+					"level2": map[string]interface{}{
+						"level3": "value",
+					},
+				},
+			},
+		},
+		{
+			name: "array index path",
+			data: map[string]interface{}{
+				"containers": []interface{}{
+					map[string]interface{}{
+						"image": "nginx:latest",
+					},
+					map[string]interface{}{
+						"image": "redis:latest",
+					},
+				},
+			},
+			path: []string{"containers", "[1]", "image"},
+			expected: map[string]interface{}{
+				"containers": []interface{}{
+					nil,
+					map[string]interface{}{
+						"image": "redis:latest",
+					},
+				},
+			},
+		},
+		{
+			name: "invalid array index",
+			data: map[string]interface{}{
+				"containers": []interface{}{
+					map[string]interface{}{
+						"image": "nginx:latest",
+					},
+				},
+			},
+			path:     []string{"containers", "[invalid]", "image"},
+			expected: nil,
+		},
+		{
+			name: "path with non-existent key",
+			data: map[string]interface{}{
+				"key1": "value1",
+			},
+			path:     []string{"nonexistent", "key"},
+			expected: map[string]interface{}{},
+		},
+		{
+			name: "mixed types path",
+			data: map[string]interface{}{
+				"deployment": map[string]interface{}{
+					"containers": []interface{}{
+						map[string]interface{}{
+							"config": map[string]interface{}{
+								"image": "test:latest",
+							},
+						},
+					},
+				},
+			},
+			path: []string{"deployment", "containers", "[0]", "config", "image"},
+			expected: map[string]interface{}{
+				"deployment": map[string]interface{}{
+					"containers": []interface{}{
+						map[string]interface{}{
+							"config": map[string]interface{}{
+								"image": "test:latest",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := extractSubtree(tt.data, tt.path)
+			assert.Equal(t, tt.expected, result, "extractSubtree() result mismatch")
+		})
+	}
+}
+
+func TestMergeOverrides(t *testing.T) {
+	tests := []struct {
+		name     string
+		dest     map[string]interface{}
+		src      map[string]interface{}
+		expected map[string]interface{}
+	}{
+		{
+			name:     "merge empty maps",
+			dest:     map[string]interface{}{},
+			src:      map[string]interface{}{},
+			expected: map[string]interface{}{},
+		},
+		{
+			name: "merge into empty destination",
+			dest: map[string]interface{}{},
+			src: map[string]interface{}{
+				"key": "value",
+			},
+			expected: map[string]interface{}{
+				"key": "value",
+			},
+		},
+		{
+			name: "merge non-overlapping maps",
+			dest: map[string]interface{}{
+				"key1": "value1",
+			},
+			src: map[string]interface{}{
+				"key2": "value2",
+			},
+			expected: map[string]interface{}{
+				"key1": "value1",
+				"key2": "value2",
+			},
+		},
+		{
+			name: "merge overlapping primitive values",
+			dest: map[string]interface{}{
+				"key": "old_value",
+			},
+			src: map[string]interface{}{
+				"key": "new_value",
+			},
+			expected: map[string]interface{}{
+				"key": "new_value",
+			},
+		},
+		{
+			name: "merge nested maps",
+			dest: map[string]interface{}{
+				"nested": map[string]interface{}{
+					"key1": "value1",
+					"key2": "old_value",
+				},
+			},
+			src: map[string]interface{}{
+				"nested": map[string]interface{}{
+					"key2": "new_value",
+					"key3": "value3",
+				},
+			},
+			expected: map[string]interface{}{
+				"nested": map[string]interface{}{
+					"key1": "value1",
+					"key2": "new_value",
+					"key3": "value3",
+				},
+			},
+		},
+		{
+			name: "merge mixed types",
+			dest: map[string]interface{}{
+				"string": "old_string",
+				"number": 42,
+				"nested": map[string]interface{}{
+					"key": "value",
+				},
+			},
+			src: map[string]interface{}{
+				"string": "new_string",
+				"number": 84,
+				"nested": map[string]interface{}{
+					"new_key": "new_value",
+				},
+			},
+			expected: map[string]interface{}{
+				"string": "new_string",
+				"number": 84,
+				"nested": map[string]interface{}{
+					"key":     "value",
+					"new_key": "new_value",
+				},
+			},
+		},
+		{
+			name: "merge map with non-map",
+			dest: map[string]interface{}{
+				"key": map[string]interface{}{
+					"nested": "value",
+				},
+			},
+			src: map[string]interface{}{
+				"key": "simple_value",
+			},
+			expected: map[string]interface{}{
+				"key": "simple_value",
+			},
+		},
+		{
+			name: "deep nested merge",
+			dest: map[string]interface{}{
+				"level1": map[string]interface{}{
+					"level2": map[string]interface{}{
+						"level3": map[string]interface{}{
+							"key": "old_value",
+						},
+					},
+				},
+			},
+			src: map[string]interface{}{
+				"level1": map[string]interface{}{
+					"level2": map[string]interface{}{
+						"level3": map[string]interface{}{
+							"key":     "new_value",
+							"new_key": "value",
+						},
+					},
+				},
+			},
+			expected: map[string]interface{}{
+				"level1": map[string]interface{}{
+					"level2": map[string]interface{}{
+						"level3": map[string]interface{}{
+							"key":     "new_value",
+							"new_key": "value",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mergeOverrides(tt.dest, tt.src)
+			assert.Equal(t, tt.expected, tt.dest, "mergeOverrides() result mismatch")
+		})
+	}
+}
+
+func TestCleanupTemplateVariables(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    interface{}
+		expected interface{}
+	}{
+		{
+			name:     "simple string without template",
+			input:    "simple value",
+			expected: "simple value",
+		},
+		{
+			name:     "template variable in image field",
+			input:    "{{ .Values.image }}",
+			expected: "",
+		},
+		{
+			name:     "template variable in repository field",
+			input:    "{{ .Values.repository }}",
+			expected: "",
+		},
+		{
+			name:     "template variable in registry field",
+			input:    "{{ .Values.registry }}",
+			expected: "",
+		},
+		{
+			name:     "template variable in tag field",
+			input:    "{{ .Values.tag }}",
+			expected: "",
+		},
+		{
+			name:     "template variable in address field",
+			input:    "{{ .Values.address }}",
+			expected: "",
+		},
+		{
+			name:     "template variable in name field",
+			input:    "{{ .Values.name }}",
+			expected: "",
+		},
+		{
+			name:     "template variable in path field",
+			input:    "{{ .Values.path }}",
+			expected: "",
+		},
+		{
+			name:     "enabled boolean template",
+			input:    "{{ .Values.enabled }}",
+			expected: false,
+		},
+		{
+			name:     "disabled boolean template",
+			input:    "{{ .Values.disabled }}",
+			expected: false,
+		},
+		{
+			name:     "template with default true",
+			input:    "{{ .Values.enabled | default true }}",
+			expected: true,
+		},
+		{
+			name:     "template with default false",
+			input:    "{{ .Values.enabled | default false }}",
+			expected: false,
+		},
+		{
+			name:     "template with default number",
+			input:    "{{ .Values.replicas | default 3 }}",
+			expected: 3,
+		},
+		{
+			name:     "template with default string",
+			input:    "{{ .Values.name | default \"default-name\" }}",
+			expected: "default-name",
+		},
+		{
+			name: "nested map with templates",
+			input: map[string]interface{}{
+				"image": map[string]interface{}{
+					"repository": "{{ .Values.image.repository }}",
+					"tag":        "{{ .Values.image.tag }}",
+					"enabled":    "{{ .Values.image.enabled }}",
+				},
+				"simple": "value",
+			},
+			expected: map[string]interface{}{
+				"image": map[string]interface{}{
+					"repository": "",
+					"tag":        "",
+					"enabled":    false,
+				},
+				"simple": "value",
+			},
+		},
+		{
+			name: "array with templates",
+			input: []interface{}{
+				"{{ .Values.item1 }}",
+				map[string]interface{}{
+					"name": "{{ .Values.name }}",
+				},
+				"simple value",
+			},
+			expected: []interface{}{
+				"",
+				map[string]interface{}{
+					"name": "",
+				},
+				"simple value",
+			},
+		},
+		{
+			name: "complex nested structure",
+			input: map[string]interface{}{
+				"deployment": map[string]interface{}{
+					"enabled": "{{ .Values.enabled | default true }}",
+					"containers": []interface{}{
+						map[string]interface{}{
+							"image": "{{ .Values.image }}",
+							"name":  "{{ .Values.name | default \"container\" }}",
+						},
+					},
+				},
+			},
+			expected: map[string]interface{}{
+				"deployment": map[string]interface{}{
+					"enabled": true,
+					"containers": []interface{}{
+						map[string]interface{}{
+							"image": "",
+							"name":  "container",
+						},
+					},
+				},
+			},
+		},
+		{
+			name:     "environment variable template",
+			input:    "${REGISTRY_URL}",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := cleanupTemplateVariables(tt.input)
+			assert.Equal(t, tt.expected, result, "cleanupTemplateVariables() result mismatch")
+		})
+	}
+}
+
+// MockImageDetector for testing
+type MockImageDetector struct {
+	DetectedImages []image.DetectedImage
+	Unsupported    []image.DetectedImage
+	Error          error
+}
+
+func (m *MockImageDetector) DetectImages(values interface{}, path []string) ([]image.DetectedImage, []image.DetectedImage, error) {
+	return m.DetectedImages, m.Unsupported, m.Error
+}
+
+func TestProcessChartForOverrides(t *testing.T) {
+	// Common test setup
+	targetRegistry := "harbor.local"
+	sourceRegistries := []string{"docker.io", "quay.io"}
+	excludeRegistries := []string{"internal.registry"}
+	mockStrategy := &MockPathStrategy{
+		GeneratePathFunc: func(ref *image.ImageReference, targetRegistry string, mappings *registry.RegistryMappings) (string, error) {
+			return targetRegistry + "/" + ref.Repository, nil
+		},
+	}
+	var mockMappings *registry.RegistryMappings
+
+	tests := []struct {
+		name           string
+		chartData      *chart.Chart
+		detectedImages []image.DetectedImage
+		unsupported    []image.DetectedImage
+		detectError    error
+		expected       map[string]interface{}
+		expectError    bool
+	}{
+		{
+			name: "simple chart with one image",
+			chartData: &chart.Chart{
+				Metadata: &chart.Metadata{Name: "test-chart"},
+				Values: map[string]interface{}{
+					"image": map[string]interface{}{
+						"registry":   "docker.io",
+						"repository": "nginx",
+						"tag":        "latest",
+					},
+				},
+			},
+			detectedImages: []image.DetectedImage{
+				{
+					Location: []string{"image"},
+					Reference: &image.ImageReference{
+						Registry:   "docker.io",
+						Repository: "nginx",
+						Tag:        "latest",
+					},
+				},
+			},
+			expected: map[string]interface{}{
+				"image": map[string]interface{}{
+					"registry":   targetRegistry,
+					"repository": targetRegistry + "/nginx",
+					"tag":        "latest",
+				},
+			},
+		},
+		{
+			name: "chart with excluded registry",
+			chartData: &chart.Chart{
+				Metadata: &chart.Metadata{Name: "test-chart"},
+				Values: map[string]interface{}{
+					"image": map[string]interface{}{
+						"registry":   "internal.registry",
+						"repository": "app",
+						"tag":        "v1",
+					},
+				},
+			},
+			detectedImages: []image.DetectedImage{
+				{
+					Location: []string{"image"},
+					Reference: &image.ImageReference{
+						Registry:   "internal.registry",
+						Repository: "app",
+						Tag:        "v1",
+					},
+				},
+			},
+			expected: map[string]interface{}{}, // No overrides for excluded registry
+		},
+		{
+			name: "chart with non-source registry",
+			chartData: &chart.Chart{
+				Metadata: &chart.Metadata{Name: "test-chart"},
+				Values: map[string]interface{}{
+					"image": map[string]interface{}{
+						"registry":   "gcr.io",
+						"repository": "app",
+						"tag":        "v1",
+					},
+				},
+			},
+			detectedImages: []image.DetectedImage{
+				{
+					Location: []string{"image"},
+					Reference: &image.ImageReference{
+						Registry:   "gcr.io",
+						Repository: "app",
+						Tag:        "v1",
+					},
+				},
+			},
+			expected: map[string]interface{}{}, // No overrides for non-source registry
+		},
+		{
+			name: "chart with multiple images",
+			chartData: &chart.Chart{
+				Metadata: &chart.Metadata{Name: "test-chart"},
+				Values: map[string]interface{}{
+					"app": map[string]interface{}{
+						"image": map[string]interface{}{
+							"registry":   "docker.io",
+							"repository": "app",
+							"tag":        "v1",
+						},
+					},
+					"sidecar": map[string]interface{}{
+						"image": map[string]interface{}{
+							"registry":   "quay.io",
+							"repository": "helper",
+							"tag":        "latest",
+						},
+					},
+				},
+			},
+			detectedImages: []image.DetectedImage{
+				{
+					Location: []string{"app", "image"},
+					Reference: &image.ImageReference{
+						Registry:   "docker.io",
+						Repository: "app",
+						Tag:        "v1",
+					},
+				},
+				{
+					Location: []string{"sidecar", "image"},
+					Reference: &image.ImageReference{
+						Registry:   "quay.io",
+						Repository: "helper",
+						Tag:        "latest",
+					},
+				},
+			},
+			expected: map[string]interface{}{
+				"app": map[string]interface{}{
+					"image": map[string]interface{}{
+						"registry":   targetRegistry,
+						"repository": targetRegistry + "/app",
+						"tag":        "v1",
+					},
+				},
+				"sidecar": map[string]interface{}{
+					"image": map[string]interface{}{
+						"registry":   targetRegistry,
+						"repository": targetRegistry + "/helper",
+						"tag":        "latest",
+					},
+				},
+			},
+		},
+		{
+			name: "chart with detection error",
+			chartData: &chart.Chart{
+				Metadata: &chart.Metadata{Name: "test-chart"},
+				Values:   map[string]interface{}{},
+			},
+			detectError: fmt.Errorf("detection failed"),
+			expectError: true,
+		},
+		{
+			name: "chart with digest instead of tag",
+			chartData: &chart.Chart{
+				Metadata: &chart.Metadata{Name: "test-chart"},
+				Values: map[string]interface{}{
+					"image": map[string]interface{}{
+						"registry":   "docker.io",
+						"repository": "app",
+						"digest":     "sha256:1234567890",
+					},
+				},
+			},
+			detectedImages: []image.DetectedImage{
+				{
+					Location: []string{"image"},
+					Reference: &image.ImageReference{
+						Registry:   "docker.io",
+						Repository: "app",
+						Digest:     "sha256:1234567890",
+					},
+				},
+			},
+			expected: map[string]interface{}{
+				"image": map[string]interface{}{
+					"registry":   targetRegistry,
+					"repository": targetRegistry + "/app",
+					"digest":     "sha256:1234567890",
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a new detector for the test
+			detector := &MockImageDetector{
+				DetectedImages: tt.detectedImages,
+				Unsupported:    tt.unsupported,
+				Error:          tt.detectError,
+			}
+
+			result, err := processChartForOverrides(tt.chartData, targetRegistry, sourceRegistries, excludeRegistries, mockStrategy, mockMappings, true, detector)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				return
+			}
+
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expected, result, "processChartForOverrides() result mismatch")
+		})
+	}
 }
