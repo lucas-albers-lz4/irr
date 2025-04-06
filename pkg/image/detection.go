@@ -590,20 +590,19 @@ func ParseImageReference(input interface{}) (*ImageReference, error) {
 // It returns the ImageReference or nil if the map doesn't represent an image.
 // It returns an error only if the map seems intended to be an image map but has invalid types.
 func parseImageMap(m map[string]interface{}, globalRegistry string) (*ImageReference, error) {
-	debug.Printf("Parsing image map: %v with global registry: %s", m, globalRegistry)
-
+	debug.Printf("Attempting to parse image map: %+v", m)
 	ref := &ImageReference{}
 
 	// Get repository - required for an image map
 	repoVal, repoExists := m["repository"]
 	if !repoExists {
-		debug.Printf("Map missing 'repository', cannot parse as image map.")
-		return nil, ErrInvalidImageMapRepo // Return error if repository is missing
+		debug.Printf("Map missing 'repository', not an image map")
+		return nil, nil // Return nil without error for maps without repository
 	}
 	repoStr, repoIsString := repoVal.(string)
 	if !repoIsString {
 		debug.Printf("Map 'repository' exists but is not a string (type: %T).", repoVal)
-		return nil, ErrInvalidImageMapRepo // Also return error if repo is wrong type
+		return nil, ErrInvalidImageMapRepo // Return error if repo is wrong type
 	}
 
 	// Check for explicit registry
