@@ -272,30 +272,37 @@ func runDefault(cmd *cobra.Command, args []string) error {
 
 	// Restore Output results logic
 	if dryRun {
-		if verbose {
-			// Use cmd.OutOrStdout() for verbose output as well
-			fmt.Fprintln(cmd.OutOrStdout(), "Dry run enabled, printing overrides to stdout:")
+		debug.Println("Dry run enabled")
+		// Explicitly ignore both return values for stdout write
+		n, err := fmt.Fprintln(cmd.OutOrStdout(), "Dry run enabled, printing overrides to stdout:")
+		_ = n   // Ignore bytes written
+		_ = err // Ignore error
+
+		_, err = cmd.OutOrStdout().Write(yamlOutput) // Keep this error check as it involves the main output
+		if err != nil {
+			return fmt.Errorf("writing dry run output to stdout: %w", err)
 		}
-		// Write directly to the command's output stream
-		_, err = cmd.OutOrStdout().Write(yamlOutput)
 	} else if outputFile != "" {
 		// Use afero WriteFile
 		err = afero.WriteFile(AppFs, outputFile, yamlOutput, 0644)
 		if err == nil && verbose {
-			fmt.Fprintf(cmd.OutOrStdout(), "Overrides written to: %s\n", outputFile)
+			debug.Printf("Overrides written to: %s", outputFile)
+			// Explicitly ignore both return values for stdout write
+			n, err := fmt.Fprintf(cmd.OutOrStdout(), "Overrides written to: %s\n", outputFile)
+			_ = n   // Ignore bytes written
+			_ = err // Ignore error
 		}
 	} else {
-		// Write directly to the command's output stream
+		debug.Println("Writing overrides to stdout")
 		_, err = cmd.OutOrStdout().Write(yamlOutput)
-		// Add a newline for consistency with fmt.Println
-		if err == nil {
-			_, _ = cmd.OutOrStdout().Write([]byte("\n"))
+		if err != nil {
+			return fmt.Errorf("writing overrides to stdout: %w", err)
 		}
+		// Explicitly ignore both return values for writing the final newline to stdout
+		n, err := cmd.OutOrStdout().Write([]byte("\n")) // Ignore error here
+		_ = n                                           // Ignore bytes written
+		_ = err                                         // Ignore error
 	}
-	if err != nil {
-		return wrapExitCodeError(ExitGeneralRuntimeError, "error writing output", err)
-	}
-
 	return nil
 }
 
@@ -348,15 +355,14 @@ func newAnalyzeCmd() *cobra.Command {
 				}
 			} else {
 				debug.Println("Writing analysis output to stdout")
-				// Write directly to the command's output stream
 				_, err = cmd.OutOrStdout().Write([]byte(output))
-				// Add a newline for consistency with fmt.Println
-				if err == nil {
-					_, _ = cmd.OutOrStdout().Write([]byte("\n"))
-				}
 				if err != nil {
-					return wrapExitCodeError(ExitGeneralRuntimeError, "error writing analysis output", err)
+					return fmt.Errorf("writing analysis output: %w", err)
 				}
+				// Explicitly ignore both return values for writing the final newline to stdout
+				n, err := cmd.OutOrStdout().Write([]byte("\n")) // Ignore error here
+				_ = n                                           // Ignore bytes written
+				_ = err                                         // Ignore error
 			}
 
 			return nil
