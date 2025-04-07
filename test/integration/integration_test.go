@@ -248,45 +248,29 @@ func TestComplexChartFeatures(t *testing.T) {
 						}
 						expectedRepo = "dockerio/" + imgPart
 					} else if strings.HasPrefix(expectedImage, "registry.k8s.io/") {
-						expectedRepo = "registryk8sio/" + strings.TrimPrefix(expectedImage, "registry.k8s.io/")
-					} else if strings.HasPrefix(expectedImage, "quay.io/") {
-						expectedRepo = "quayio/" + strings.TrimPrefix(expectedImage, "quay.io/")
+						imgPart := strings.TrimPrefix(expectedImage, "registry.k8s.io/")
+						expectedRepo = "registryk8sio/" + imgPart
+					} else {
+						// Add other source registry prefixes if needed
+						t.Fatalf("Unhandled source registry prefix in expected image: %s", expectedImage)
 					}
-					if expectedRepo == "" {
-						t.Errorf("Could not determine expected rewritten repo path for: %s", expectedImage)
-						continue
-					}
-					found := false
-					harness.WalkImageFields(explicitOverrides, func(imagePath []string, imageValue interface{}) {
-						if found {
+					// Replace assertRepoExists with a manual check using WalkImageFields
+					foundInExplicit := false
+					harness.WalkImageFields(explicitOverrides, func(_ []string, imageValue interface{}) {
+						if foundInExplicit {
 							return
-						} // Short circuit if already found
-						switch val := imageValue.(type) {
-						case string:
-							if strings.Contains(val, expectedRepo) {
-								t.Logf("[DEBUG FOUND STRING] Path: %v, Value: %s, ExpectedRepo: %s", imagePath, val, expectedRepo)
-								found = true
-							}
-						case map[string]interface{}:
-							if repo, repoOk := val["repository"].(string); repoOk {
-								if strings.Contains(repo, expectedRepo) {
-									t.Logf("[DEBUG FOUND MAP] Path: %v, Repo: %s, ExpectedRepo: %s", imagePath, repo, expectedRepo)
-									found = true
+						} // Optimization: stop walking once found
+						if imageMap, ok := imageValue.(map[string]interface{}); ok {
+							if repo, ok := imageMap["repository"].(string); ok {
+								if repo == expectedRepo {
+									foundInExplicit = true
 								}
 							}
 						}
 					})
-					if !found {
-						t.Errorf("Expected image %s (looking for repo containing '%s') not found in explicit overrides for ingress-nginx", expectedImage, expectedRepo)
-						// Add logging for the overrides content on failure
-						// errcheck: Check error from ReadFile before logging content
-						// #nosec G304 // Reading test-controlled override file is safe
-						overrideBytes, readErr := os.ReadFile(explicitOutputFile)
-						if readErr != nil {
-							t.Logf("Additionally, failed to read overrides file %s for debugging: %v", explicitOutputFile, readErr)
-						} else {
-							t.Logf("Explicit Overrides content:\n%s", string(overrideBytes))
-						}
+					if !foundInExplicit {
+						t.Errorf("Expected image %s (looking for repo containing '%s') "+
+							"not found in explicit overrides for ingress-nginx", expectedImage, expectedRepo)
 					}
 				}
 				// Skip the generic execution and validation for this specific test case
@@ -436,7 +420,7 @@ func TestStrictMode(t *testing.T) {
 
 	// 3. Verify the specific exit code (Exit Code 5 based on plan)
 	// NOTE: This might still fail if the test harness doesn't capture os.Exit(5) correctly, showing 1 instead.
-	assert.Equal(t, 5, exitErr.ExitCode(), "Expected exit code 5 for strict mode failure. Output:\n%s", output)
+	require.Equal(t, 5, exitErr.ExitCode(), "Expected exit code 5 for strict mode failure. Output:\n%s", output)
 
 	// 4. Verify the error output contains expected message elements
 	//    Adjusted based on actual error log format.
@@ -495,12 +479,27 @@ quay.io: quaycustom
 	// Check docker.io image (should use 'dockerio' prefix)
 	dockerImageValue, ok := overrides["image"].(map[string]interface{})["repository"].(string)
 	assert.True(t, ok, "Failed to find repository for image [image]")
-	assert.Equal(t, "dockerio/library/nginx", dockerImageValue, "docker.io image should use 'dockerio' prefix, ignoring mapping target for prefix")
+	assert.Equal(t, "dockerio/library/nginx", dockerImageValue,
+		"docker.io image should use 'dockerio' prefix, ignoring mapping target for prefix")
 
 	// Check quay.io image (should use 'quayio' prefix)
 	quayImageValue, ok := overrides["quayImage"].(map[string]interface{})["image"].(map[string]interface{})["repository"].(string)
 	assert.True(t, ok, "Failed to find repository for image [quayImage][image]")
-	assert.Equal(t, "quayio/prometheus/node-exporter", quayImageValue, "quay.io image should use 'quayio' prefix, ignoring mapping target for prefix")
+	assert.Equal(t, "quayio/prometheus/node-exporter", quayImageValue,
+		"quay.io image should use 'quayio' prefix, ignoring mapping target for prefix")
+
+	// Check that the image without a mapping uses the prefix strategy
+	assert.Contains(t, output, "repository: mapped-docker.local/dockerio/library/nginx")
+	assert.Contains(t, output, "repository: mapped-quay.local/quayio/prometheus/node-exporter")
+
+	// Extract the value for the unmapped image (gcr.io/google-containers/pause)
+	// The path might vary slightly depending on chart structure, adjust if needed.
+	// Assuming 'gcrImage' is the top-level key based on minimal-test structure.
+	unmappedImageValue, ok := overrides["gcrImage"].(map[string]interface{})["image"].(map[string]interface{})["repository"].(string)
+	assert.True(t, ok, "Failed to find repository for image [gcrImage][image]")
+
+	// Check that the unmapped image uses the default target registry
+	assert.Equal(t, harness.targetReg+"/gcrio/google-containers/pause", unmappedImageValue)
 }
 
 // --- END NEW TEST ---

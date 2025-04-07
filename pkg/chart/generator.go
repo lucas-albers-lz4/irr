@@ -73,7 +73,15 @@ type Generator struct {
 }
 
 // NewGenerator creates a new Generator
-func NewGenerator(chartPath, targetRegistry string, sourceRegistries, excludeRegistries []string, pathStrategy strategy.PathStrategy, mappings *registry.Mappings, strict bool, threshold int, loader Loader) *Generator {
+func NewGenerator(
+	chartPath, targetRegistry string,
+	sourceRegistries, excludeRegistries []string,
+	pathStrategy strategy.PathStrategy,
+	mappings *registry.Mappings,
+	strict bool,
+	threshold int,
+	loader Loader,
+) *Generator {
 	if loader == nil {
 		loader = NewLoader()
 	}
@@ -175,7 +183,8 @@ func (g *Generator) Generate() (*override.File, error) {
 	images, unsupportedMatches, err := detector.DetectImages(chartData.Values, []string{}) // Pass empty path for root
 
 	// +++ LOGGING AFTER DetectImages +++
-	fmt.Printf("[STDLOG GENERATE] After DetectImages call. Error: %v, Detected: %d, Unsupported: %d\n", err, len(images), len(unsupportedMatches))
+	fmt.Printf("[STDLOG GENERATE] After DetectImages call. Error: %v, Detected: %d, Unsupported: %d\n",
+		err, len(images), len(unsupportedMatches))
 	debug.Printf("[GENERATE] After DetectImages - Error: %v", err)
 	debug.Printf("[GENERATE] After DetectImages - Detected Images Count: %d", len(images))
 	debug.DumpValue("[GENERATE] After DetectImages - Detected Images", images)
@@ -266,7 +275,7 @@ func (g *Generator) Generate() (*override.File, error) {
 		debug.Printf("No eligible images requiring override found in chart.")
 		return &override.File{
 			ChartPath:   g.chartPath,
-			ChartName:   filepath.Base(g.chartPath),
+			ChartName:   chartData.Name(),
 			Overrides:   make(map[string]interface{}),
 			Unsupported: unsupported,
 		}, nil
@@ -282,7 +291,8 @@ func (g *Generator) Generate() (*override.File, error) {
 		processingFailed := false
 
 		// No need to re-check source/exclude here, already filtered
-		debug.Printf("Processing eligible image %d/%d: Path: %v, Ref: %s (%s)", i+1, eligibleImagesCount, img.Path, img.Reference.String(), img.Pattern)
+		debug.Printf("Processing eligible image %d/%d: Path: %v, Ref: %s (%s)",
+			i+1, eligibleImagesCount, img.Path, img.Reference.String(), img.Pattern)
 
 		if img.Reference == nil { // Keep guard clause
 			debug.Printf("Skipping image %d due to nil reference", i+1)
@@ -295,8 +305,18 @@ func (g *Generator) Generate() (*override.File, error) {
 			continue
 		}
 
+		// Apply registry mappings to the target registry for this specific image if applicable
+		imageTargetRegistry := g.targetRegistry // Start with the global target
+		if g.mappings != nil {
+			mappedRegistry := g.mappings.GetTargetRegistry(img.Reference.Registry)
+			if mappedRegistry != "" {
+				imageTargetRegistry = mappedRegistry
+				debug.Printf("Using mapped target registry '%s' for source '%s'", imageTargetRegistry, img.Reference.Registry)
+			}
+		}
+
 		// Get the transformed repository path from the strategy
-		transformedRepoPath, pathErr := g.pathStrategy.GeneratePath(img.Reference, g.targetRegistry)
+		transformedRepoPath, pathErr := g.pathStrategy.GeneratePath(img.Reference, imageTargetRegistry)
 		if pathErr != nil {
 			debug.Printf("Error generating path: %v", pathErr)
 			// Store error for later threshold check
@@ -313,20 +333,8 @@ func (g *Generator) Generate() (*override.File, error) {
 		// Always override with the map structure, regardless of original type (string or map)
 		valueToSet := map[string]interface{}{}
 
-		// +++ Determine Correct Target Registry (Apply Mappings) +++
-		currentTargetRegistry := g.targetRegistry // Default
-		if g.mappings != nil {
-			mappedTarget := g.mappings.GetTargetRegistry(img.Reference.Registry)
-			found := mappedTarget != ""
-			if found {
-				debug.Printf("Applying registry mapping for source '%s': '%s' -> '%s'", img.Reference.Registry, img.Reference.Registry, mappedTarget)
-				currentTargetRegistry = mappedTarget
-			} else {
-				debug.Printf("No specific mapping found for source '%s', using default target: %s", img.Reference.Registry, g.targetRegistry)
-			}
-		}
 		// --- Use the determined target registry ---
-		valueToSet["registry"] = currentTargetRegistry
+		valueToSet["registry"] = imageTargetRegistry
 		valueToSet["repository"] = transformedRepoPath
 		// Preserve original tag or digest
 		if img.Reference.Digest != "" {
@@ -389,8 +397,8 @@ func (g *Generator) Generate() (*override.File, error) {
 	debug.DumpValue("Final generated overrides", finalOverrides)
 	return &override.File{
 		ChartPath:   g.chartPath,
-		ChartName:   chartData.Name(), // Use chart name from loaded data
-		Overrides:   finalOverrides,   // Use the correctly built overrides map
+		ChartName:   chartData.Name(),
+		Overrides:   finalOverrides,
 		Unsupported: unsupported,
 	}, nil
 }
@@ -505,7 +513,13 @@ func (g *Generator) isSourceRegistry(registry string) bool {
 }
 
 // GenerateOverrides generates the final override structure based on detected images and strategy.
-func GenerateOverrides(chartData *chart.Chart, targetRegistry string, sourceRegistries, excludeRegistries []string, pathStrategy strategy.PathStrategy, verbose bool) (map[string]interface{}, error) {
+func GenerateOverrides(
+	chartData *chart.Chart,
+	targetRegistry string,
+	sourceRegistries, excludeRegistries []string,
+	pathStrategy strategy.PathStrategy,
+	verbose bool,
+) (map[string]interface{}, error) {
 	debug.FunctionEnter("GenerateOverrides")
 	defer debug.FunctionExit("GenerateOverrides")
 
@@ -539,7 +553,14 @@ type ImageDetector interface {
 }
 
 // processChartForOverrides processes a single chart's values to generate partial overrides.
-func processChartForOverrides(chartData *chart.Chart, targetRegistry string, sourceRegistries, excludeRegistries []string, pathStrategy strategy.PathStrategy, _ bool, detector ImageDetector) (map[string]interface{}, error) {
+func processChartForOverrides(
+	chartData *chart.Chart,
+	targetRegistry string,
+	sourceRegistries, excludeRegistries []string,
+	pathStrategy strategy.PathStrategy,
+	_ bool, // verbose - currently unused in this specific function
+	detector ImageDetector,
+) (map[string]interface{}, error) {
 	debug.FunctionEnter("processChartForOverrides")
 	defer debug.FunctionExit("processChartForOverrides")
 
@@ -745,15 +766,6 @@ func validateYAML(yamlData []byte) error {
 		return fmt.Errorf("invalid YAML structure: %w", err) // Use original error message format
 	}
 	return nil // No error means valid YAML
-}
-
-// cleanupTemplateVariables recursively removes template braces `{{` and `}}` from string values.
-// It is used as a defensive measure before YAML marshaling, as PyYAML can
-// ... existing code ...
-			}
-		}
-	}
-	return nil
 }
 
 // OverridesToYAML converts a map of overrides to YAML format
