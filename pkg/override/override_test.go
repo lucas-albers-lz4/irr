@@ -13,14 +13,14 @@ import (
 func TestGenerateOverrides(t *testing.T) {
 	tests := []struct {
 		name     string
-		ref      *image.ImageReference
+		ref      *image.Reference
 		path     []string
 		expected map[string]interface{}
 		wantErr  bool
 	}{
 		{
 			name: "simple image override",
-			ref: &image.ImageReference{
+			ref: &image.Reference{
 				Registry:   "my-registry.example.com",
 				Repository: "dockerio/nginx",
 				Tag:        "1.23",
@@ -36,7 +36,7 @@ func TestGenerateOverrides(t *testing.T) {
 		},
 		{
 			name: "nested image override",
-			ref: &image.ImageReference{
+			ref: &image.Reference{
 				Registry:   "my-registry.example.com",
 				Repository: "quayio/prometheus/node-exporter",
 				Tag:        "v1.3.1",
@@ -54,7 +54,7 @@ func TestGenerateOverrides(t *testing.T) {
 		},
 		{
 			name: "digest reference",
-			ref: &image.ImageReference{
+			ref: &image.Reference{
 				Registry:   "my-registry.example.com",
 				Repository: "quayio/jetstack/cert-manager-controller",
 				Digest:     "sha256:1234567890abcdef",
@@ -72,7 +72,7 @@ func TestGenerateOverrides(t *testing.T) {
 		},
 		{
 			name:    "empty path",
-			ref:     &image.ImageReference{},
+			ref:     &image.Reference{},
 			path:    []string{},
 			wantErr: true,
 		},

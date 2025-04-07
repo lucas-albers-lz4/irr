@@ -15,10 +15,10 @@ import (
 
 // MockPathStrategy for testing
 type MockPathStrategy struct {
-	GeneratePathFunc func(originalRef *image.ImageReference, targetRegistry string) (string, error)
+	GeneratePathFunc func(originalRef *image.Reference, targetRegistry string) (string, error)
 }
 
-func (m *MockPathStrategy) GeneratePath(originalRef *image.ImageReference, targetRegistry string) (string, error) {
+func (m *MockPathStrategy) GeneratePath(originalRef *image.Reference, targetRegistry string) (string, error) {
 	if m.GeneratePathFunc != nil {
 		return m.GeneratePathFunc(originalRef, targetRegistry)
 	}
@@ -68,12 +68,14 @@ func TestNewGenerator(t *testing.T) {
 
 // MockChartLoader (specific to generator tests if needed, or reuse from analysis)
 type MockChartLoader struct {
-	ChartToReturn *chart.Chart
-	ErrorToReturn error
+	LoadFunc func(path string) (*chart.Chart, error)
 }
 
-func (m *MockChartLoader) Load(path string) (*chart.Chart, error) {
-	return m.ChartToReturn, m.ErrorToReturn
+func (m *MockChartLoader) Load(_ string) (*chart.Chart, error) {
+	if m.LoadFunc != nil {
+		return m.LoadFunc("")
+	}
+	return nil, nil
 }
 
 // --- Test Generate --- //
@@ -101,7 +103,9 @@ func TestGenerate(t *testing.T) {
 				"otherValue": 123,
 			},
 		}
-		mockLoader := &MockChartLoader{ChartToReturn: mockChart}
+		mockLoader := &MockChartLoader{LoadFunc: func(path string) (*chart.Chart, error) {
+			return mockChart, nil
+		}}
 
 		// 2. Mock Image Detection (Simulate result from image.DetectImages)
 		// Need to setup mock for image.DetectImages or inject results somehow.
@@ -166,7 +170,9 @@ func TestGenerate(t *testing.T) {
 				"workerImage": imageStringValue,
 			},
 		}
-		mockLoader := &MockChartLoader{ChartToReturn: mockChart}
+		mockLoader := &MockChartLoader{LoadFunc: func(path string) (*chart.Chart, error) {
+			return mockChart, nil
+		}}
 
 		// 2. Mock Image Detection HACK (see previous test)
 
@@ -216,7 +222,9 @@ func TestGenerate(t *testing.T) {
 				"publicImage": "docker.io/library/alpine:latest", // Should still be processed
 			},
 		}
-		mockLoader := &MockChartLoader{ChartToReturn: mockChart}
+		mockLoader := &MockChartLoader{LoadFunc: func(path string) (*chart.Chart, error) {
+			return mockChart, nil
+		}}
 
 		generator := NewGenerator(
 			dummyChartPath, targetRegistry, sourceRegistries, localExcludeRegistries, // Use local exclude list
@@ -261,7 +269,9 @@ func TestGenerate(t *testing.T) {
 				"dockerImage": "docker.io/library/redis:alpine", // Should be processed
 			},
 		}
-		mockLoader := &MockChartLoader{ChartToReturn: mockChart}
+		mockLoader := &MockChartLoader{LoadFunc: func(path string) (*chart.Chart, error) {
+			return mockChart, nil
+		}}
 
 		generator := NewGenerator(
 			dummyChartPath, targetRegistry, sourceRegistries, excludeRegistries,
@@ -305,7 +315,9 @@ func TestGenerate(t *testing.T) {
 				"imgGcr":    "gcr.io/google-containers/pause:3.2",
 			},
 		}
-		mockLoader := &MockChartLoader{ChartToReturn: mockChart}
+		mockLoader := &MockChartLoader{LoadFunc: func(path string) (*chart.Chart, error) {
+			return mockChart, nil
+		}}
 
 		// Need to include quay.io and gcr.io as sources for this test
 		localSourceRegistries := []string{"docker.io", "quay.io", "gcr.io"}
@@ -377,7 +389,9 @@ func TestGenerate(t *testing.T) {
 		}
 		parentChart.AddDependency(childChart) // Link child to parent
 
-		mockLoader := &MockChartLoader{ChartToReturn: parentChart}
+		mockLoader := &MockChartLoader{LoadFunc: func(path string) (*chart.Chart, error) {
+			return parentChart, nil
+		}}
 
 		// Use Prefix strategy for clearer path checking
 		prefixStrategy := strategy.NewPrefixSourceRegistryStrategy()
@@ -489,12 +503,14 @@ func TestOverridesToYAML(t *testing.T) {
 // --- Mocking for ValidateHelmTemplate ---
 
 type MockCommandRunner struct {
-	OutputToReturn []byte
-	ErrorToReturn  error
+	RunFunc func(name string, arg ...string) ([]byte, error)
 }
 
-func (m *MockCommandRunner) Run(name string, arg ...string) ([]byte, error) {
-	return m.OutputToReturn, m.ErrorToReturn
+func (m *MockCommandRunner) Run(_ string, arg ...string) ([]byte, error) {
+	if m.RunFunc != nil {
+		return m.RunFunc("", arg...)
+	}
+	return nil, nil
 }
 
 // --- Remove old exec.Command mocking ---
@@ -522,8 +538,9 @@ spec:
     - port: 80
 `
 		mockRunner := &MockCommandRunner{
-			OutputToReturn: []byte(validYAML),
-			ErrorToReturn:  nil,
+			RunFunc: func(name string, arg ...string) ([]byte, error) {
+				return []byte(validYAML), nil
+			},
 		}
 
 		err := ValidateHelmTemplate(mockRunner, dummyChartPath, dummyOverrides)
@@ -533,8 +550,9 @@ spec:
 	t.Run("Helm Command Error", func(t *testing.T) {
 		expectedErr := fmt.Errorf("helm process exited badly")
 		mockRunner := &MockCommandRunner{
-			OutputToReturn: []byte("Error: something went wrong executing helm"), // Include some output
-			ErrorToReturn:  expectedErr,
+			RunFunc: func(name string, arg ...string) ([]byte, error) {
+				return []byte("Error: something went wrong executing helm"), expectedErr
+			},
 		}
 
 		err := ValidateHelmTemplate(mockRunner, dummyChartPath, dummyOverrides)
@@ -545,8 +563,9 @@ spec:
 	t.Run("Invalid YAML Output", func(t *testing.T) {
 		invalidYAML := "key: value\nkey_no_indent: oops"
 		mockRunner := &MockCommandRunner{
-			OutputToReturn: []byte(invalidYAML),
-			ErrorToReturn:  nil, // Helm command succeeds
+			RunFunc: func(name string, arg ...string) ([]byte, error) {
+				return []byte(invalidYAML), nil // Helm command succeeds
+			},
 		}
 
 		// Relax assertion: Check if it runs without error for now.
@@ -572,8 +591,9 @@ spec:
 		  - list-item # Invalid YAML structure
 		`
 				mockRunner := &MockCommandRunner{
-					OutputToReturn: []byte(commonIssueYAML),
-					ErrorToReturn:  nil,
+					RunFunc: func(name string, arg ...string) ([]byte, error) {
+						return []byte(commonIssueYAML), nil
+					},
 				}
 
 				err := ValidateHelmTemplate(mockRunner, dummyChartPath, dummyOverrides)
@@ -624,7 +644,7 @@ func TestGenerateOverrides(t *testing.T) {
 		DetectedImages: []image.DetectedImage{
 			{ // Parent Image
 				Path: []string{"parentImage"},
-				Reference: &image.ImageReference{
+				Reference: &image.Reference{
 					Registry:   "docker.io",
 					Repository: "parent/app",
 					Tag:        "v1",
@@ -633,7 +653,7 @@ func TestGenerateOverrides(t *testing.T) {
 			},
 			{ // Child Image (from parent override)
 				Path: []string{"child", "image"}, // Path within merged values
-				Reference: &image.ImageReference{
+				Reference: &image.Reference{
 					// Assuming detector resolves missing registry to docker.io based on context or defaults
 					Registry:   "docker.io",
 					Repository: "my-child-repo",
@@ -643,7 +663,7 @@ func TestGenerateOverrides(t *testing.T) {
 			},
 			{ // Child Image (from child defaults)
 				Path: []string{"child", "anotherImage"}, // Path within merged values
-				Reference: &image.ImageReference{
+				Reference: &image.Reference{
 					Registry:   "docker.io",
 					Repository: "another/child",
 					Tag:        "stable",
@@ -1148,7 +1168,7 @@ func TestProcessChartForOverrides(t *testing.T) {
 	sourceRegistries := []string{"docker.io", "quay.io"}
 	excludeRegistries := []string{"internal.registry"}
 	mockStrategy := &MockPathStrategy{
-		GeneratePathFunc: func(ref *image.ImageReference, tr string) (string, error) {
+		GeneratePathFunc: func(ref *image.Reference, tr string) (string, error) {
 			return targetRegistry + "/" + ref.Repository, nil
 		},
 	}
@@ -1177,7 +1197,7 @@ func TestProcessChartForOverrides(t *testing.T) {
 			detectedImages: []image.DetectedImage{
 				{
 					Path: []string{"image"},
-					Reference: &image.ImageReference{
+					Reference: &image.Reference{
 						Registry:   "docker.io",
 						Repository: "nginx",
 						Tag:        "latest",
@@ -1207,7 +1227,7 @@ func TestProcessChartForOverrides(t *testing.T) {
 			detectedImages: []image.DetectedImage{
 				{
 					Path: []string{"image"},
-					Reference: &image.ImageReference{
+					Reference: &image.Reference{
 						Registry:   "internal.registry",
 						Repository: "app",
 						Tag:        "v1",
@@ -1231,7 +1251,7 @@ func TestProcessChartForOverrides(t *testing.T) {
 			detectedImages: []image.DetectedImage{
 				{
 					Path: []string{"image"},
-					Reference: &image.ImageReference{
+					Reference: &image.Reference{
 						Registry:   "gcr.io",
 						Repository: "app",
 						Tag:        "v1",
@@ -1264,7 +1284,7 @@ func TestProcessChartForOverrides(t *testing.T) {
 			detectedImages: []image.DetectedImage{
 				{
 					Path: []string{"app", "image"},
-					Reference: &image.ImageReference{
+					Reference: &image.Reference{
 						Registry:   "docker.io",
 						Repository: "app",
 						Tag:        "v1",
@@ -1272,7 +1292,7 @@ func TestProcessChartForOverrides(t *testing.T) {
 				},
 				{
 					Path: []string{"sidecar", "image"},
-					Reference: &image.ImageReference{
+					Reference: &image.Reference{
 						Registry:   "quay.io",
 						Repository: "helper",
 						Tag:        "latest",
@@ -1320,7 +1340,7 @@ func TestProcessChartForOverrides(t *testing.T) {
 			detectedImages: []image.DetectedImage{
 				{
 					Path: []string{"image"},
-					Reference: &image.ImageReference{
+					Reference: &image.Reference{
 						Registry:   "docker.io",
 						Repository: "app",
 						Digest:     "sha256:1234567890",

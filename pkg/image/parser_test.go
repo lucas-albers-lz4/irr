@@ -11,14 +11,14 @@ func TestParseImageReference(t *testing.T) {
 	tests := []struct {
 		name          string
 		input         string
-		expected      *ImageReference
+		expected      *Reference
 		wantErr       bool
 		errorContains string
 	}{
 		{
 			name:  "standard image with registry",
 			input: "docker.io/library/nginx:1.21.0",
-			expected: &ImageReference{
+			expected: &Reference{
 				Registry:   "docker.io",
 				Repository: "library/nginx",
 				Tag:        "1.21.0",
@@ -27,7 +27,7 @@ func TestParseImageReference(t *testing.T) {
 		{
 			name:  "image with nested path",
 			input: "quay.io/org/app/component:v1",
-			expected: &ImageReference{
+			expected: &Reference{
 				Registry:   "quay.io",
 				Repository: "org/app/component",
 				Tag:        "v1",
@@ -36,7 +36,7 @@ func TestParseImageReference(t *testing.T) {
 		{
 			name:  "image with implicit docker.io registry",
 			input: "nginx:1.21.0",
-			expected: &ImageReference{
+			expected: &Reference{
 				Registry:   "docker.io",
 				Repository: "library/nginx",
 				Tag:        "1.21.0",
@@ -45,7 +45,7 @@ func TestParseImageReference(t *testing.T) {
 		{
 			name:  "image with digest",
 			input: "gcr.io/project/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-			expected: &ImageReference{
+			expected: &Reference{
 				Registry:   "gcr.io",
 				Repository: "project/image",
 				Digest:     "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -54,7 +54,7 @@ func TestParseImageReference(t *testing.T) {
 		{
 			name:  "image with port in registry",
 			input: "localhost:5000/myimage:latest",
-			expected: &ImageReference{
+			expected: &Reference{
 				Registry:   "localhost:5000",
 				Repository: "myimage",
 				Tag:        "latest",
@@ -82,7 +82,7 @@ func TestParseImageReference(t *testing.T) {
 		{
 			name:  "standard image with registry, tag, and nested path",
 			input: "docker.io/library/nested/nginx:1.21.0",
-			expected: &ImageReference{
+			expected: &Reference{
 				Registry:   "docker.io",
 				Repository: "library/nested/nginx",
 				Tag:        "1.21.0",
@@ -127,7 +127,7 @@ func TestParseImageReference(t *testing.T) {
 }
 
 func TestIsSourceRegistry(t *testing.T) {
-	testRef := &ImageReference{
+	testRef := &Reference{
 		Registry:   "docker.io",
 		Repository: "nginx",
 		Tag:        "latest",

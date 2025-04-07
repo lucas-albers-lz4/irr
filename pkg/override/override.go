@@ -59,17 +59,11 @@ type ChartDependency struct {
 	Alias string
 }
 
-// Override represents a single override value and its path
-type Override struct {
-	Path  []string
-	Value interface{}
-}
-
-// OverrideFile represents a complete override file
-type OverrideFile struct {
-	ChartPath   string
-	ChartName   string
-	Overrides   map[string]interface{}
+// File represents the generated overrides for a single Helm chart.
+type File struct {
+	ChartPath   string                 `yaml:"-"` // Original path to the chart
+	ChartName   string                 `yaml:"-"` // Base name of the chart directory
+	Overrides   map[string]interface{} `yaml:"overrides"`
 	Unsupported []UnsupportedStructure
 }
 
@@ -80,9 +74,9 @@ type UnsupportedStructure struct {
 }
 
 // GenerateOverrides generates override values for a single image.
-func GenerateOverrides(ref *image.ImageReference, path []string) (map[string]interface{}, error) {
+func GenerateOverrides(ref *image.Reference, path []string) (map[string]interface{}, error) {
 	if ref == nil {
-		return nil, ErrNilImageReference
+		return nil, fmt.Errorf("cannot generate overrides for nil image reference")
 	}
 
 	if len(path) == 0 {
@@ -118,7 +112,7 @@ func GenerateOverrides(ref *image.ImageReference, path []string) (map[string]int
 }
 
 // normalizeRegistry ensures the registry is in the expected format for override generation.
-func normalizeRegistry(ref *image.ImageReference) *image.ImageReference {
+func normalizeRegistry(ref *image.Reference) *image.Reference {
 	if ref == nil {
 		return nil
 	}
@@ -218,30 +212,8 @@ func ConstructSubchartPath(deps []ChartDependency, path string) (string, error) 
 	return strings.Join(result, "."), nil
 }
 
-// MergeInto merges this override into the target map
-func (o *Override) MergeInto(target map[string]interface{}) map[string]interface{} {
-	current := target
-	for _, key := range o.Path[:len(o.Path)-1] {
-		next, exists := current[key]
-		if !exists {
-			next = make(map[string]interface{})
-			current[key] = next
-		}
-		if nextMap, ok := next.(map[string]interface{}); ok {
-			current = nextMap
-		} else {
-			// Convert the existing value to a map
-			nextMap := make(map[string]interface{})
-			current[key] = nextMap
-			current = nextMap
-		}
-	}
-	current[o.Path[len(o.Path)-1]] = o.Value
-	return target
-}
-
 // ToYAML serializes the override structure to YAML.
-func (o *OverrideFile) ToYAML() ([]byte, error) {
+func (o *File) ToYAML() ([]byte, error) {
 	yamlData, err := yaml.Marshal(o.Overrides)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal overrides to YAML: %w", err)

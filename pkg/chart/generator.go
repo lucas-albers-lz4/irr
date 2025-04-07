@@ -42,10 +42,11 @@ import (
 // @llm-helper The override structure matches Helm's value override format
 // @llm-helper Image references can be in multiple formats (string, map with repository/tag)
 
-// ImageReference represents an image reference found in a chart
-type ImageReference struct {
+// DetectedImage represents an image reference found within the chart's values.
+type DetectedImage struct {
+	Reference *image.Reference
 	Path      []string
-	Reference *image.ImageReference
+	Source    string // e.g., "values.yaml", "Chart.yaml"
 }
 
 // Generator generates image overrides for a Helm chart
@@ -96,22 +97,22 @@ func locationTypeToString(lt image.LocationType) string {
 }
 
 // Generate generates image overrides for the chart
-func (g *Generator) Generate() (*override.OverrideFile, error) {
+func (g *Generator) Generate() (*override.File, error) {
 	// <<< ADD fmt.Printf LOGGING HERE AT THE VERY BEGINNING >>>
 	debug.FunctionEnter("Generator.Generate")
 	defer debug.FunctionExit("Generator.Generate")
 
 	chartData, err := g.loader.Load(g.chartPath)
 	if err != nil {
-		// Return specific ChartParsingError
-		return nil, &ChartParsingError{FilePath: g.chartPath, Err: err}
+		// Return specific ParsingError (Corrected type)
+		return nil, &ParsingError{FilePath: g.chartPath, Err: err}
 	}
 
 	baseValuesCopy := override.DeepCopy(chartData.Values)
 	baseValues, ok := baseValuesCopy.(map[string]interface{})
 	if !ok {
 		// This indicates a fundamental issue with the chart's values structure
-		return nil, &ChartParsingError{FilePath: g.chartPath, Err: errors.New("chart values are not a map[string]interface{}")}
+		return nil, &ParsingError{FilePath: g.chartPath, Err: errors.New("chart values are not a map[string]interface{}")} // Corrected type
 	}
 	debug.DumpValue("Base values for type checking", baseValues)
 
@@ -132,7 +133,7 @@ func (g *Generator) Generate() (*override.OverrideFile, error) {
 		Strict:            g.strict,
 		// TemplateMode: false, // Assuming not needed for now
 	}
-	detector := image.NewImageDetector(detectionContext)
+	detector := image.NewDetector(*detectionContext)
 
 	// --- ADD DEBUG LOG BEFORE DetectImages ---
 	if chartData.Values == nil {
@@ -205,7 +206,7 @@ func (g *Generator) Generate() (*override.OverrideFile, error) {
 
 	if eligibleImagesCount == 0 {
 		debug.Printf("No eligible images requiring override found in chart.")
-		return &override.OverrideFile{
+		return &override.File{
 			ChartPath:   g.chartPath,
 			ChartName:   filepath.Base(g.chartPath),
 			Overrides:   make(map[string]interface{}),
@@ -316,52 +317,16 @@ func (g *Generator) Generate() (*override.OverrideFile, error) {
 	}
 
 	// --- Generate FINAL Override Structure (Minimal Output Logic) ---
-	finalOverrides := make(map[string]interface{})
-	processedImagePaths := make(map[string]bool) // Track paths we attempted to set
-
-	// Build a map of image paths that had processing errors
-	failedPaths := make(map[string]bool)
-	for _, procErr := range processingErrors {
-		failedPaths[strings.Join(procErr.Path, ".")] = true
-	}
-
-	for _, img := range eligibleImages {
-		// Skip images that failed during processing (path gen or set value)
-		if failedPaths[strings.Join(img.Path, ".")] {
-			continue
-		}
-
-		pathKey := strings.Join(img.Path, ".")
-		if processedImagePaths[pathKey] {
-			continue // Already processed this exact path (shouldn't happen often)
-		}
-
-		// Retrieve the successfully modified value from the deep copy
-		modifiedValue, getErr := override.GetValueAtPath(modifiedValues, img.Path)
-		if getErr != nil {
-			// This indicates an internal inconsistency, should be logged
-			debug.Printf("INTERNAL ERROR: Failed to get previously modified value at path %v: %v", img.Path, getErr)
-			continue // Skip this image if we can't retrieve its modified state
-		}
-
-		// Set this modified value into the final, minimal override map
-		setErr := override.SetValueAtPath(finalOverrides, img.Path, modifiedValue)
-		if setErr != nil {
-			// This indicates an issue building the final map, should be logged
-			debug.Printf("INTERNAL ERROR: Failed to set value in final overrides at path %v: %v", img.Path, setErr)
-			continue // Skip this image if we can't build its structure
-		}
-		processedImagePaths[pathKey] = true
-	}
-
-	debug.DumpValue("Returning fully modified values map as overrides", finalOverrides)
-
-	return &override.OverrideFile{
+	finalOverrides := &override.File{
 		ChartPath:   g.chartPath,
 		ChartName:   filepath.Base(g.chartPath),
-		Overrides:   finalOverrides,
+		Overrides:   modifiedValues,
 		Unsupported: unsupported,
-	}, nil
+	}
+
+	debug.DumpValue("Returning fully modified values map as overrides", finalOverrides.Overrides)
+
+	return finalOverrides, nil
 }
 
 // ThresholdError represents a failure due to not meeting the processing threshold.
@@ -471,10 +436,11 @@ func GenerateOverrides(chartData *chart.Chart, targetRegistry string, sourceRegi
 	debug.DumpValue("Path Strategy", pathStrategy)
 
 	// Create a new image detector with context
-	detector := image.NewImageDetector(&image.DetectionContext{
+	detectionContext := &image.DetectionContext{
 		GlobalRegistry: targetRegistry,
 		Strict:         false,
-	})
+	}
+	detector := image.NewDetector(*detectionContext)
 
 	// Process the main chart (Helm loader should have merged values)
 	debug.Printf("Processing combined chart values: %s", chartData.Name())
@@ -667,7 +633,6 @@ func ValidateHelmTemplate(runner CommandRunner, chartPath string, overrides []by
 	// Simplified check for common issues on the raw bytes for now
 	// A more robust check for lists as map keys would be implemented here
 	// This placeholder code is intentionally not implementing the check yet
-	// and will be developed in a future PR when we have better detection criteria
 	/*
 		if bytes.Contains(output, []byte("\n  - ")) && bytes.Contains(output, []byte(":\n")) { // Very crude check
 			// Placeholder: A more robust check for lists as map keys needed here.

@@ -26,15 +26,15 @@ import (
 
 // Mock Generator (implements GeneratorInterface from root.go)
 type mockGenerator struct {
-	GenerateFunc func() (*override.OverrideFile, error)
+	GenerateFunc func() (*override.File, error)
 }
 
-func (m *mockGenerator) Generate() (*override.OverrideFile, error) {
+func (m *mockGenerator) Generate() (*override.File, error) {
 	if m.GenerateFunc != nil {
 		return m.GenerateFunc()
 	}
 	// Default mock behavior
-	return &override.OverrideFile{Overrides: make(map[string]interface{})}, nil
+	return &override.File{Overrides: make(map[string]interface{})}, nil
 }
 
 // REMOVE Mock Strategy definition - we won't mock GetStrategy directly here
@@ -80,10 +80,10 @@ func TestOverrideCmdArgs(t *testing.T) {
 		},
 		// --- Invalid Flag Values ---
 		{
-			name:           "invalid path strategy",
-			args:           []string{"override", "--chart-path", "cp", "--target-registry", "tr", "--source-registries", "sr", "--path-strategy", "invalid-strat"},
+			name:           "invalid_path_strategy",
+			args:           []string{"override", "--chart-path", "./chart", "--target-registry", "tr", "--source-registries", "sr", "--path-strategy", "invalid-strat"},
 			expectErr:      true,
-			stdErrContains: "unsupported path strategy: invalid-strat",
+			stdErrContains: "unknown path strategy: invalid-strat",
 		},
 	}
 
@@ -121,7 +121,7 @@ func TestOverrideCmdExecution(t *testing.T) {
 	tests := []struct {
 		name              string
 		args              []string
-		mockGeneratorFunc func() (*override.OverrideFile, error)
+		mockGeneratorFunc func() (*override.File, error)
 		expectErr         bool
 		stdOutContains    string
 		stdErrContains    string
@@ -131,8 +131,8 @@ func TestOverrideCmdExecution(t *testing.T) {
 		{
 			name: "success execution to stdout",
 			args: defaultArgs,
-			mockGeneratorFunc: func() (*override.OverrideFile, error) {
-				return &override.OverrideFile{
+			mockGeneratorFunc: func() (*override.File, error) {
+				return &override.File{
 					Overrides: map[string]interface{}{"image": map[string]interface{}{"repository": "mock-target.com/dockerio/nginx"}},
 				}, nil
 			},
@@ -145,8 +145,8 @@ func TestOverrideCmdExecution(t *testing.T) {
 		{
 			name: "success with dry run",
 			args: append(defaultArgs, "--dry-run"),
-			mockGeneratorFunc: func() (*override.OverrideFile, error) {
-				return &override.OverrideFile{
+			mockGeneratorFunc: func() (*override.File, error) {
+				return &override.File{
 					Overrides: map[string]interface{}{"image": "dry-run-image"},
 				}, nil
 			},
@@ -159,7 +159,7 @@ func TestOverrideCmdExecution(t *testing.T) {
 		{
 			name: "generator returns error",
 			args: defaultArgs,
-			mockGeneratorFunc: func() (*override.OverrideFile, error) {
+			mockGeneratorFunc: func() (*override.File, error) {
 				return nil, fmt.Errorf("mock generator error")
 			},
 			expectErr:      true,
@@ -171,8 +171,8 @@ func TestOverrideCmdExecution(t *testing.T) {
 		{
 			name: "success with output file (flow check)",
 			args: defaultArgs, // Will append output file path in the test
-			mockGeneratorFunc: func() (*override.OverrideFile, error) {
-				return &override.OverrideFile{
+			mockGeneratorFunc: func() (*override.File, error) {
+				return &override.File{
 					Overrides: map[string]interface{}{"image": map[string]interface{}{"repository": "mock-target.com/dockerio/nginx", "tag": "latest"}},
 				}, nil
 			},
@@ -192,9 +192,9 @@ func TestOverrideCmdExecution(t *testing.T) {
 		{
 			name: "success_with_registry_mappings",
 			args: defaultArgs, // Base args, mapping file added in test body
-			mockGeneratorFunc: func() (*override.OverrideFile, error) {
+			mockGeneratorFunc: func() (*override.File, error) {
 				// Expect the output to use the mapped prefix 'dckrio' instead of 'dockerio'
-				return &override.OverrideFile{
+				return &override.File{
 					Overrides: map[string]interface{}{"image": map[string]interface{}{"repository": "mock-target.com/dckrio/nginx"}},
 				}, nil
 			},
@@ -212,7 +212,7 @@ func TestOverrideCmdExecution(t *testing.T) {
 
 			// Setup Generator Mock
 			if tt.mockGeneratorFunc != nil {
-				currentGeneratorFactory = func(_, targetRegistry string, sourceRegistries, excludeRegistries []string, pathStrategy strategy.PathStrategy, mappings *registrymapping.RegistryMappings, strict bool, threshold int, loader chart.Loader) GeneratorInterface {
+				currentGeneratorFactory = func(_, _ string, _, _ []string, _ strategy.PathStrategy, _ *registrymapping.RegistryMappings, _ bool, _ int, _ chart.Loader) GeneratorInterface {
 					return &mockGenerator{GenerateFunc: tt.mockGeneratorFunc}
 				}
 			} else {
@@ -246,19 +246,19 @@ func TestOverrideCmdExecution(t *testing.T) {
 			}
 			// ---- START Add logic for registry mapping test ----
 			if tt.name == "success_with_registry_mappings" {
-				// Create a temporary mapping file in the test's temp directory
+				// Create a temporary mapping file in the CWD for the test
 				mappingContent := []byte("docker.io: mock-target.com/dckrio")
-				mappingPath := filepath.Join(testDir, "temp-test-mappings.yaml")
-				err := os.WriteFile(mappingPath, mappingContent, 0600)
-				require.NoError(t, err, "Failed to create temp mapping file")
+				mappingFilename := "temp-test-mappings.yaml" // Relative path
+				err := os.WriteFile(mappingFilename, mappingContent, 0600)
+				require.NoError(t, err, "Failed to create temp mapping file in CWD")
 
-				// Add the registry-mappings flag with the absolute path
-				args = append(args, "--registry-mappings", mappingPath)
+				// Add the registry-mappings flag with the relative path
+				args = append(args, "--registry-mappings", mappingFilename)
 
-				// Ensure the temp mapping file is cleaned up, checking for errors
+				// Ensure the temp mapping file is cleaned up from CWD
 				defer func() {
-					err := os.Remove(mappingPath) // Check the error here
-					require.NoError(t, err, "Failed to remove temp mapping file")
+					err := os.Remove(mappingFilename) // Check the error here
+					require.NoError(t, err, "Failed to remove temp mapping file from CWD")
 				}()
 			}
 			// ---- END Add logic for registry mapping test ----

@@ -1,4 +1,4 @@
-// Package chart provides error definitions related to chart loading and processing.
+// Package errors provides centralized error definitions for the chart package.
 package chart
 
 import (
@@ -30,27 +30,44 @@ func (e *ThresholdNotMetError) Error() string {
 	return fmt.Sprintf("processing threshold not met: required %d%%, actual %d%%", e.Required, e.Actual)
 }
 
-// ChartParsingError indicates a failure during the loading or initial parsing
-// of the Helm chart itself (e.g., malformed Chart.yaml or values.yaml).
-type ChartParsingError struct {
+// ParsingError represents an error encountered during chart parsing.
+type ParsingError struct {
 	FilePath string
-	Err      error // Underlying error (e.g., from Helm loader or YAML parser)
+	Message  string
+	Err      error
 }
 
-func (e *ChartParsingError) Error() string {
-	return fmt.Sprintf("chart parsing failed for %s: %v", e.FilePath, e.Err)
+func (e *ParsingError) Error() string {
+	return fmt.Sprintf("error parsing chart: %s", e.Err)
 }
-func (e *ChartParsingError) Unwrap() error { return e.Err } // Allow unwrapping
 
-// ImageProcessingError indicates a failure during the processing of a specific
-// image reference after it has been detected.
+func (e *ParsingError) Unwrap() error {
+	return e.Err
+}
+
+// ImageProcessingError indicates an error occurred during image detection or processing.
 type ImageProcessingError struct {
-	Path []string
-	Ref  string // The problematic image reference string
-	Err  error  // Underlying error (e.g., from path strategy, normalization)
+	Path []string // Path within the values where the error occurred
+	Ref  string   // Image reference string, if available
+	Err  error
 }
 
 func (e *ImageProcessingError) Error() string {
-	return fmt.Sprintf("image processing failed at path %s for ref '%s': %v", strings.Join(e.Path, "."), e.Ref, e.Err)
+	if len(e.Path) > 0 {
+		return fmt.Sprintf("image processing error at path '%s' (ref: %s): %v", e.Path, e.Ref, e.Err)
+	}
+	return fmt.Sprintf("image processing error (ref: %s): %v", e.Ref, e.Err)
 }
-func (e *ImageProcessingError) Unwrap() error { return e.Err } // Allow unwrapping
+
+func (e *ImageProcessingError) Unwrap() error {
+	return e.Err
+}
+
+// ThresholdError indicates processing failed because the success threshold wasn't met
+// type ThresholdError struct {
+// 	Message string
+// }
+
+// func (e *ThresholdError) Error() string {
+// 	return e.Message
+// }

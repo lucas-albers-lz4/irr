@@ -22,13 +22,15 @@ const (
 	libraryNamespace = "library"
 )
 
-// ImageReference represents a container image reference
-type ImageReference struct {
-	Registry   string
+// Reference encapsulates the components of a container image reference.
+type Reference struct {
+	Original   string // The original string detected
+	Registry   string // e.g., docker.io, quay.io, gcr.io
 	Repository string
 	Tag        string
 	Digest     string
 	Path       []string // Path in the values structure where this reference was found
+	Detected   bool
 }
 
 // LocationType defines how an image reference was structured in the original values.
@@ -56,7 +58,7 @@ type DetectionContext struct {
 
 // DetectedImage represents an image found during detection
 type DetectedImage struct {
-	Reference *ImageReference
+	Reference *Reference
 	Path      []string
 	Pattern   string      // "map", "string", "global"
 	Original  interface{} // Original value (for template preservation)
@@ -88,13 +90,13 @@ const (
 	UnsupportedTypeError
 )
 
-// ImageDetector provides functionality for detecting images in values
-type ImageDetector struct {
+// Detector provides methods for finding image references within complex data structures.
+type Detector struct {
 	context *DetectionContext
 }
 
 // String returns the string representation of the image reference
-func (r *ImageReference) String() string {
+func (r *Reference) String() string {
 	if r.Registry != "" {
 		if r.Digest != "" {
 			return fmt.Sprintf("%s/%s@%s", r.Registry, r.Repository, r.Digest)
@@ -109,7 +111,7 @@ func (r *ImageReference) String() string {
 }
 
 // IsSourceRegistry checks if the image reference's registry matches any of the source registries
-func IsSourceRegistry(ref *ImageReference, sourceRegistries []string, excludeRegistries []string) bool {
+func IsSourceRegistry(ref *Reference, sourceRegistries []string, excludeRegistries []string) bool {
 	debug.FunctionEnter("IsSourceRegistry")
 	defer debug.FunctionExit("IsSourceRegistry")
 
@@ -272,14 +274,14 @@ func compilePathPatterns(patterns []string) []*regexp.Regexp {
 	return regexps
 }
 
-// NewImageDetector creates a new ImageDetector instance
-func NewImageDetector(ctx *DetectionContext) *ImageDetector {
-	return &ImageDetector{context: ctx}
+// NewDetector creates a new ImageDetector with the given context.
+func NewDetector(context DetectionContext) *Detector {
+	return &Detector{context: &context}
 }
 
 // DetectImages recursively traverses the values map to find image references.
 // It returns lists of detected and unsupported image structures, along with any error encountered.
-func (d *ImageDetector) DetectImages(values interface{}, path []string) ([]DetectedImage, []UnsupportedImage, error) {
+func (d *Detector) DetectImages(values interface{}, path []string) ([]DetectedImage, []UnsupportedImage, error) {
 	log.Debugf("[START] DetectImages with path=%v, strict=%v, templateMode=%v", path, d.context.Strict, d.context.TemplateMode)
 	defer log.Debugf("[END] DetectImages with path=%v", path)
 	debug.FunctionEnter("DetectImages")
@@ -391,10 +393,10 @@ func (d *ImageDetector) DetectImages(values interface{}, path []string) ([]Detec
 
 	case string:
 		vStr := v
-		log.Debugf("Processing string value at path %s: %q", path, vStr)
+		log.Debugf("[DEBUG irr DETECT STRING] Processing string value at path %s: %q", path, vStr)
 
 		// DETAILED LOGGING: Check strict context before path check
-		log.Debugf("[DEBUG STRING] Path: %v, Value: '%s', Strict Context: %v", path, vStr, d.context.Strict)
+		log.Debugf("[DEBUG irr DETECT STRING] Path: %v, Value: '%s', Strict Context: %v", path, vStr, d.context.Strict)
 
 		// First check: Is this at a path we recognize as potentially containing images?
 		isKnownImagePath := isImagePath(path)
@@ -414,10 +416,12 @@ func (d *ImageDetector) DetectImages(values interface{}, path []string) ([]Detec
 		}
 
 		// --- If it looks like an image and passes strict path check (if applicable), attempt to parse ---
+		log.Debugf("[DEBUG irr DETECT STRING] Attempting parse for string '%s' at path %s", vStr, path)
 		imgRef, err := d.tryExtractImageFromString(vStr, path)
 
 		if err != nil {
 			// --- Handle Parsing Error ---
+			log.Debugf("[DEBUG irr DETECT STRING] Parse error for string '%s' at path %s: %v", vStr, path, err)
 			if d.context.Strict {
 				// Strict mode: Always report parse errors if it looked like an image (and wasn't skipped above).
 				log.Debugf("Strict mode: Marking string '%s' at path %s as unsupported due to parse error: %v", vStr, path, err)
@@ -435,7 +439,9 @@ func (d *ImageDetector) DetectImages(values interface{}, path []string) ([]Detec
 			}
 		} else if imgRef != nil {
 			// --- Handle Successful Parse ---
+			log.Debugf("[DEBUG irr DETECT STRING] Parse successful for string '%s' at path %s: Ref=%+v", vStr, path, imgRef.Reference)
 			NormalizeImageReference(imgRef.Reference) // Normalize before checking source/path
+			log.Debugf("[DEBUG irr DETECT STRING] Normalized Ref: %+v", imgRef.Reference)
 
 			if isKnownImagePath {
 				// Parsed successfully AND path is known image path
@@ -481,8 +487,8 @@ func (d *ImageDetector) DetectImages(values interface{}, path []string) ([]Detec
 
 // tryExtractImageFromMap attempts to parse an image reference from a map structure.
 // It returns the DetectedImage, a boolean indicating if it was an image map, and an error.
-func (d *ImageDetector) tryExtractImageFromMap(m map[string]interface{}, path []string) (*DetectedImage, bool, error) {
-	ref := &ImageReference{Path: path}
+func (d *Detector) tryExtractImageFromMap(m map[string]interface{}, path []string) (*DetectedImage, bool, error) {
+	ref := &Reference{Path: path}
 	keys := make(map[string]bool)
 	for k := range m {
 		keys[k] = true
@@ -600,7 +606,7 @@ func (d *ImageDetector) tryExtractImageFromMap(m map[string]interface{}, path []
 }
 
 // tryExtractImageFromString attempts to parse an image reference from a string value.
-func (d *ImageDetector) tryExtractImageFromString(imgStr string, path []string) (*DetectedImage, error) {
+func (d *Detector) tryExtractImageFromString(imgStr string, path []string) (*DetectedImage, error) {
 	debug.FunctionEnter("tryExtractImageFromString")
 	defer debug.FunctionExit("tryExtractImageFromString")
 	debug.Printf("Attempting to parse string at path %v: '%s'", path, imgStr)
@@ -617,7 +623,7 @@ func (d *ImageDetector) tryExtractImageFromString(imgStr string, path []string) 
 		// For now, treat the whole thing as opaque if template detected.
 		// We still need to decide *if* it's an image string based on path.
 		// Let's assume if path matches, it IS an image, just templated.
-		ref := &ImageReference{
+		ref := &Reference{
 			// Attempt a simple split for repo, but mark as potentially incomplete
 			Repository: imgStr, // Store original templated string
 			Tag:        "",     // Cannot reliably parse tag
@@ -680,7 +686,7 @@ func (d *ImageDetector) tryExtractImageFromString(imgStr string, path []string) 
 
 // IsValidImageReference performs basic validation on a parsed ImageReference
 // Note: This checks structure, not necessarily registry reachability etc.
-func IsValidImageReference(ref *ImageReference) bool {
+func IsValidImageReference(ref *Reference) bool {
 	if ref == nil {
 		return false
 	}
@@ -707,7 +713,7 @@ func IsValidImageReference(ref *ImageReference) bool {
 
 // ParseImageReference parses a standard Docker image reference string (e.g., registry/repo:tag or repo@digest)
 // It returns an ImageReference or an error if parsing fails.
-func ParseImageReference(imgStr string) (*ImageReference, error) {
+func ParseImageReference(imgStr string) (*Reference, error) {
 	debug.FunctionEnter("ParseImageReference")
 	defer debug.FunctionExit("ParseImageReference")
 	debug.Printf("Parsing image string: '%s'", imgStr)
@@ -728,7 +734,7 @@ func ParseImageReference(imgStr string) (*ImageReference, error) {
 		}
 	}
 
-	var ref ImageReference
+	var ref Reference
 
 	// --- Prioritize Digest Parsing ---
 	if strings.Contains(imgStr, "@") {
@@ -937,7 +943,7 @@ func isValidRepositoryName(repo string) bool {
 
 // NormalizeImageReference ensures registry and potentially repository are set correctly,
 // especially handling Docker Library images (e.g., "nginx" -> "docker.io/library/nginx")
-func NormalizeImageReference(ref *ImageReference) {
+func NormalizeImageReference(ref *Reference) {
 	if ref == nil {
 		return
 	}
@@ -1017,7 +1023,7 @@ func DetectImages(values interface{}, path []string, sourceRegistries []string, 
 		Strict:            strict,
 		TemplateMode:      true, // Assume template mode for compatibility
 	}
-	detector := NewImageDetector(ctx)
+	detector := NewDetector(*ctx)
 	// Ensure this calls the METHOD on the detector instance
 	return detector.DetectImages(values, path)
 }

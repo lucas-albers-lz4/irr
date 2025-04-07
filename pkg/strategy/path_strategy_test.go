@@ -13,13 +13,13 @@ func TestPrefixSourceRegistryStrategy(t *testing.T) {
 
 	tests := []struct {
 		name           string
-		input          *image.ImageReference
+		input          *image.Reference
 		targetRegistry string
 		expected       string
 	}{
 		{
 			name: "standard image with registry",
-			input: &image.ImageReference{
+			input: &image.Reference{
 				Registry:   "docker.io",
 				Repository: "nginx",
 				Tag:        "latest",
@@ -29,7 +29,7 @@ func TestPrefixSourceRegistryStrategy(t *testing.T) {
 		},
 		{
 			name: "nested path",
-			input: &image.ImageReference{
+			input: &image.Reference{
 				Registry:   "quay.io",
 				Repository: "prometheus/node-exporter",
 				Tag:        "v1.3.1",
@@ -39,7 +39,7 @@ func TestPrefixSourceRegistryStrategy(t *testing.T) {
 		},
 		{
 			name: "digest reference",
-			input: &image.ImageReference{
+			input: &image.Reference{
 				Registry:   "gcr.io",
 				Repository: "google-containers/pause",
 				Digest:     "sha256:1234567890123456789012345678901234567890123456789012345678901234",
@@ -49,7 +49,7 @@ func TestPrefixSourceRegistryStrategy(t *testing.T) {
 		},
 		{
 			name: "registry_with_port",
-			input: &image.ImageReference{
+			input: &image.Reference{
 				Registry:   "registry.example.com:5000",
 				Repository: "app/frontend",
 				Tag:        "v1.2.0",
@@ -111,13 +111,13 @@ func TestPrefixSourceRegistryStrategy_GeneratePath(t *testing.T) {
 	tests := []struct {
 		name           string
 		targetRegistry string
-		imgRef         *image.ImageReference
+		imgRef         *image.Reference
 		want           string
 	}{
 		{
 			name:           "simple_repository",
 			targetRegistry: "",
-			imgRef: &image.ImageReference{
+			imgRef: &image.Reference{
 				Registry:   "quay.io",
 				Repository: "org/repo",
 				Tag:        "latest",
@@ -127,7 +127,7 @@ func TestPrefixSourceRegistryStrategy_GeneratePath(t *testing.T) {
 		{
 			name:           "repository_with_dots",
 			targetRegistry: "",
-			imgRef: &image.ImageReference{
+			imgRef: &image.Reference{
 				Registry:   "registry.k8s.io",
 				Repository: "pause",
 				Tag:        "3.9",
@@ -137,7 +137,7 @@ func TestPrefixSourceRegistryStrategy_GeneratePath(t *testing.T) {
 		{
 			name:           "repository_with_port",
 			targetRegistry: "",
-			imgRef: &image.ImageReference{
+			imgRef: &image.Reference{
 				Registry:   "localhost:5000",
 				Repository: "myimage",
 				Tag:        "dev",
@@ -160,14 +160,14 @@ func TestPrefixSourceRegistryStrategy_GeneratePath_WithMappings(t *testing.T) {
 	tests := []struct {
 		name           string
 		targetRegistry string
-		imgRef         *image.ImageReference
+		imgRef         *image.Reference
 		want           string
 		mapping        *registrymapping.RegistryMappings
 	}{
 		{
 			name:           "with_custom_mapping",
 			targetRegistry: "",
-			imgRef: &image.ImageReference{
+			imgRef: &image.Reference{
 				Registry:   "quay.io",
 				Repository: "jetstack/cert-manager-controller",
 				Tag:        "v1.5.3",
@@ -182,7 +182,7 @@ func TestPrefixSourceRegistryStrategy_GeneratePath_WithMappings(t *testing.T) {
 		{
 			name:           "without custom mapping",
 			targetRegistry: "",
-			imgRef: &image.ImageReference{
+			imgRef: &image.Reference{
 				Registry:   "docker.io",
 				Repository: "library/nginx",
 			},
@@ -192,7 +192,7 @@ func TestPrefixSourceRegistryStrategy_GeneratePath_WithMappings(t *testing.T) {
 		{
 			name:           "with digest",
 			targetRegistry: "",
-			imgRef: &image.ImageReference{
+			imgRef: &image.Reference{
 				Registry:   "docker.io",
 				Repository: "library/nginx",
 				Digest:     "sha256:1234567890123456789012345678901234567890123456789012345678901234",

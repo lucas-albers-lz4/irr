@@ -11,11 +11,11 @@ import (
 	"github.com/lalbers/irr/pkg/registrymapping"
 )
 
-// PathStrategy defines the interface for different path generation strategies.
+// PathStrategy defines the interface for generating new image paths.
 type PathStrategy interface {
-	// GeneratePath creates the target image reference string based on the strategy.
-	// It takes the original parsed reference and the overall target registry.
-	GeneratePath(originalRef *image.ImageReference, targetRegistry string) (string, error)
+	// GeneratePath takes an original image reference and the target registry (if any),
+	// and returns the new repository path (e.g., "new-registry/my-app").
+	GeneratePath(originalRef *image.Reference, targetRegistry string) (string, error)
 }
 
 // nolint:unused // Kept for potential future uses
@@ -37,22 +37,22 @@ func GetStrategy(name string, mappings *registrymapping.RegistryMappings) (PathS
 	}
 }
 
-// PrefixSourceRegistryStrategy prefixes the source registry name to the repository path
-type PrefixSourceRegistryStrategy struct {
-	// Mappings *registrymapping.RegistryMappings // Remove field
-}
+// PrefixSourceRegistryStrategy uses the source registry as a prefix in the new path.
+// Example: docker.io/library/nginx -> target-registry.com/docker.io/library/nginx
+type PrefixSourceRegistryStrategy struct{}
 
-// NewPrefixSourceRegistryStrategy creates a new PrefixSourceRegistryStrategy
+// NewPrefixSourceRegistryStrategy creates a new PrefixSourceRegistryStrategy.
 func NewPrefixSourceRegistryStrategy() *PrefixSourceRegistryStrategy {
 	return &PrefixSourceRegistryStrategy{}
 }
 
-// GeneratePath constructs the target image path using the prefix-source-registry strategy.
-// Example: docker.io/library/nginx -> target.com/dockerio/library/nginx
-// Example with mapping docker.io -> dckr: docker.io/library/nginx -> target.com/dckr/library/nginx
-// This function ONLY returns the repository path part (e.g., "dockerio/library/nginx" or "dckr/library/nginx").
-// The caller (generator) prepends the target registry and appends the tag/digest.
-func (s *PrefixSourceRegistryStrategy) GeneratePath(originalRef *image.ImageReference, targetRegistry string) (string, error) {
+// GeneratePath implements the PathStrategy interface.
+func (s *PrefixSourceRegistryStrategy) GeneratePath(originalRef *image.Reference, targetRegistry string) (string, error) {
+	// Handle potential nil reference
+	if originalRef == nil {
+		return "", fmt.Errorf("original image reference is nil")
+	}
+
 	debug.Printf("PrefixSourceRegistryStrategy: Generating path for original reference: %+v", originalRef)
 	debug.Printf("PrefixSourceRegistryStrategy: Target registry: %s", targetRegistry)
 
@@ -88,9 +88,8 @@ func (s *PrefixSourceRegistryStrategy) GeneratePath(originalRef *image.ImageRefe
 	return finalRepoPathPart, nil
 }
 
-// FlatStrategy implements the strategy where the source registry is ignored,
-// and the image path is placed directly under the target registry.
-// Example: docker.io/library/nginx -> target.com/library/nginx
+// FlatStrategy creates a flat path by replacing slashes with dashes.
+// Example: library/nginx -> library-nginx
 type FlatStrategy struct{}
 
 // NewFlatStrategy creates a new FlatStrategy.
@@ -98,15 +97,14 @@ func NewFlatStrategy() *FlatStrategy {
 	return &FlatStrategy{}
 }
 
-// GeneratePath constructs the target image path using the flat strategy.
-func (s *FlatStrategy) GeneratePath(originalRef *image.ImageReference, targetRegistry string) (string, error) {
+// GeneratePath implements the PathStrategy interface.
+func (s *FlatStrategy) GeneratePath(originalRef *image.Reference, targetRegistry string) (string, error) {
+	if originalRef == nil {
+		return "", fmt.Errorf("original image reference is nil")
+	}
+
 	debug.Printf("FlatStrategy: Generating path for original reference: %+v", originalRef)
 	debug.Printf("FlatStrategy: Target registry: %s", targetRegistry)
-
-	// Get the mapped target registry (only needed if we construct full path here)
-	// For Flat strategy, we just need the base repository path.
-	// var mappedTargetRegistry string // No longer needed here
-	// ... mapping logic removed ...
 
 	// Use the original repository path directly
 	baseRepoPath := originalRef.Repository

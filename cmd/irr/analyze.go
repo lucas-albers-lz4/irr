@@ -1,4 +1,4 @@
-// Package main is the entry point for the helm-image-override CLI.
+// Package main is the entry point for the irr CLI application.
 package main
 
 import (
@@ -25,7 +25,7 @@ var analyzeCmd = &cobra.Command{
 	Short: "Analyze a Helm chart to detect image references",
 	Long: `Analyzes a Helm chart's values and templates to identify container image 
 references based on specified source registries.`,
-	RunE: func(_ *cobra.Command, args []string) error {
+	RunE: func(_ *cobra.Command, _ []string) error {
 		// Basic logging setup
 		if analyzeVerbose {
 			log.SetLevel(log.LevelDebug)

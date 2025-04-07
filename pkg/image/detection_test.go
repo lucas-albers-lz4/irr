@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // comparePaths compares two paths represented as string slices.
@@ -96,7 +97,7 @@ func TestImageDetector(t *testing.T) {
 			},
 			wantDetected: []DetectedImage{
 				{
-					Reference: &ImageReference{Registry: "docker.io", Repository: "library/nginx", Tag: "1.23"},
+					Reference: &Reference{Registry: "docker.io", Repository: "library/nginx", Tag: "1.23"},
 					Path:      []string{"image"},
 					Pattern:   PatternMap,
 					Original:  map[string]interface{}{"repository": "nginx", "tag": "1.23"},
@@ -113,7 +114,7 @@ func TestImageDetector(t *testing.T) {
 			},
 			wantDetected: []DetectedImage{
 				{
-					Reference: &ImageReference{
+					Reference: &Reference{
 						Registry:   "docker.io",
 						Repository: "library/app",
 						Tag:        "latest",
@@ -145,7 +146,7 @@ func TestImageDetector(t *testing.T) {
 			},
 			wantDetected: []DetectedImage{
 				{
-					Reference: &ImageReference{Registry: "quay.io", Repository: "prometheus/node-exporter", Tag: "v1.3.1"},
+					Reference: &Reference{Registry: "quay.io", Repository: "prometheus/node-exporter", Tag: "v1.3.1"},
 					Path:      []string{"spec", "template", "spec", "containers", "[0]", "image"},
 					Pattern:   PatternString,
 					Original:  "quay.io/prometheus/node-exporter:v1.3.1",
@@ -162,7 +163,7 @@ func TestImageDetector(t *testing.T) {
 			},
 			wantDetected: []DetectedImage{
 				{
-					Reference: &ImageReference{Registry: "docker.io", Repository: "library/nginx", Tag: "{{ .Chart.AppVersion }}"},
+					Reference: &Reference{Registry: "docker.io", Repository: "library/nginx", Tag: "{{ .Chart.AppVersion }}"},
 					Path:      []string{"image"},
 					Pattern:   PatternMap,
 					Original:  map[string]interface{}{"repository": "nginx", "tag": "{{ .Chart.AppVersion }}"},
@@ -180,7 +181,7 @@ func TestImageDetector(t *testing.T) {
 			},
 			wantDetected: []DetectedImage{
 				{
-					Reference: &ImageReference{Registry: "docker.io", Repository: "library/nginx", Tag: "1.23"},
+					Reference: &Reference{Registry: "docker.io", Repository: "library/nginx", Tag: "1.23"},
 					Path:      []string{"image"},
 					Pattern:   PatternMap,
 					Original:  map[string]interface{}{"repository": "nginx", "tag": "1.23"},
@@ -203,13 +204,13 @@ func TestImageDetector(t *testing.T) {
 			},
 			wantDetected: []DetectedImage{
 				{
-					Reference: &ImageReference{Registry: "docker.io", Repository: "library/nginx", Tag: "1.23"},
+					Reference: &Reference{Registry: "docker.io", Repository: "library/nginx", Tag: "1.23"},
 					Path:      []string{"containers", "[0]", "image"},
 					Pattern:   PatternString,
 					Original:  "nginx:1.23",
 				},
 				{
-					Reference: &ImageReference{Registry: "docker.io", Repository: "library/fluentd", Tag: "v1.14"},
+					Reference: &Reference{Registry: "docker.io", Repository: "library/fluentd", Tag: "v1.14"},
 					Path:      []string{"containers", "[1]", "image"},
 					Pattern:   PatternString,
 					Original:  "fluentd:v1.14",
@@ -223,7 +224,7 @@ func TestImageDetector(t *testing.T) {
 			},
 			wantDetected: []DetectedImage{
 				{
-					Reference: &ImageReference{Registry: "docker.io", Repository: "library/nginx", Digest: "sha256:1234567890123456789012345678901234567890123456789012345678901234"},
+					Reference: &Reference{Registry: "docker.io", Repository: "library/nginx", Digest: "sha256:1234567890123456789012345678901234567890123456789012345678901234"},
 					Path:      []string{"image"},
 					Pattern:   PatternString,
 					Original:  "docker.io/nginx@sha256:1234567890123456789012345678901234567890123456789012345678901234",
@@ -243,7 +244,7 @@ func TestImageDetector(t *testing.T) {
 			},
 			wantDetected: []DetectedImage{
 				{
-					Reference: &ImageReference{Registry: "docker.io", Repository: "library/nginx", Tag: "1.23"},
+					Reference: &Reference{Registry: "docker.io", Repository: "library/nginx", Tag: "1.23"},
 					Path:      []string{"image"},
 					Pattern:   PatternMap,
 					Original:  map[string]interface{}{"repository": "nginx", "tag": "1.23"},
@@ -263,7 +264,7 @@ func TestImageDetector(t *testing.T) {
 				ctx.GlobalRegistry = "docker.io"
 			}
 
-			detector := NewImageDetector(ctx)
+			detector := NewDetector(*ctx)
 			gotDetected, gotUnsupported, err := detector.DetectImages(tc.values, []string{})
 			assert.NoError(t, err)
 			assert.Empty(t, gotUnsupported) // Assuming these tests should not produce unsupported images
@@ -344,7 +345,7 @@ func TestImageDetector_DetectImages_EdgeCases(t *testing.T) {
 			},
 			expected: []DetectedImage{
 				{
-					Reference: &ImageReference{
+					Reference: &Reference{
 						Registry:   defaultRegistry,
 						Repository: "library/nginx",
 						Tag:        "1.23",
@@ -373,7 +374,7 @@ func TestImageDetector_DetectImages_EdgeCases(t *testing.T) {
 			},
 			expected: []DetectedImage{
 				{
-					Reference: &ImageReference{
+					Reference: &Reference{
 						Registry:   defaultRegistry,
 						Repository: "library/nginx",
 						Tag:        "1.23",
@@ -396,7 +397,7 @@ func TestImageDetector_DetectImages_EdgeCases(t *testing.T) {
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
 			ctx := &DetectionContext{Strict: tc.strict, SourceRegistries: []string{defaultRegistry}}
-			detector := NewImageDetector(ctx)
+			detector := NewDetector(*ctx)
 			detected, unsupported, err := detector.DetectImages(tc.input, nil)
 
 			if tc.expectedError {
@@ -458,7 +459,7 @@ func TestImageDetector_GlobalRegistry(t *testing.T) {
 			globalReg: "my-global-registry.com",
 			wantDetected: []DetectedImage{
 				{
-					Reference: &ImageReference{
+					Reference: &Reference{
 						Registry:   "my-global-registry.com",
 						Repository: "backend-app",
 						Tag:        "v2.0",
@@ -469,7 +470,7 @@ func TestImageDetector_GlobalRegistry(t *testing.T) {
 					Original: map[string]interface{}{"repository": "backend-app", "tag": "v2.0"},
 				},
 				{
-					Reference: &ImageReference{
+					Reference: &Reference{
 						Registry:   "my-global-registry.com",
 						Repository: "frontend-app",
 						Tag:        "v1.0",
@@ -489,7 +490,7 @@ func TestImageDetector_GlobalRegistry(t *testing.T) {
 			globalReg: "global.registry.com",
 			wantDetected: []DetectedImage{
 				{
-					Reference: &ImageReference{
+					Reference: &Reference{
 						Registry:   "global.registry.com",
 						Repository: "nginx",
 						Tag:        "1.23",
@@ -509,7 +510,7 @@ func TestImageDetector_GlobalRegistry(t *testing.T) {
 			globalReg: "global.registry.com",
 			wantDetected: []DetectedImage{
 				{
-					Reference: &ImageReference{
+					Reference: &Reference{
 						Registry:   "specific.registry.com",
 						Repository: "nginx",
 						Tag:        "1.23",
@@ -555,7 +556,7 @@ func TestImageDetector_GlobalRegistry(t *testing.T) {
 				SourceRegistries: sourceRegistries, // Use dynamically built list
 				TemplateMode:     true,
 			}
-			detector := NewImageDetector(ctx)
+			detector := NewDetector(*ctx)
 			gotDetected, gotUnsupported, err := detector.DetectImages(tc.values, []string{})
 			assert.NoError(t, err)
 			assert.Empty(t, gotUnsupported)
@@ -597,7 +598,7 @@ func TestImageDetector_TemplateVariables(t *testing.T) {
 			},
 			wantDetected: []DetectedImage{
 				{
-					Reference: &ImageReference{
+					Reference: &Reference{
 						Registry:   "docker.io",
 						Repository: "library/nginx",
 						Tag:        "{{ .Chart.AppVersion }}",
@@ -620,7 +621,7 @@ func TestImageDetector_TemplateVariables(t *testing.T) {
 			},
 			wantDetected: []DetectedImage{
 				{
-					Reference: &ImageReference{
+					Reference: &Reference{
 						Registry:   "docker.io",
 						Repository: "{{ .Values.global.repository }}/nginx",
 						Tag:        "1.23",
@@ -642,7 +643,7 @@ func TestImageDetector_TemplateVariables(t *testing.T) {
 				SourceRegistries: []string{defaultRegistry},
 				TemplateMode:     true, // Enable template mode for this test
 			}
-			detector := NewImageDetector(ctx)
+			detector := NewDetector(*ctx)
 			gotDetected, gotUnsupported, err := detector.DetectImages(tc.values, []string{})
 			assert.NoError(t, err) // Assuming template vars themselves don't cause errors
 
@@ -696,7 +697,7 @@ func TestImageDetector_ContainerArrays(t *testing.T) {
 			},
 			wantDetected: []DetectedImage{
 				{
-					Reference: &ImageReference{
+					Reference: &Reference{
 						Registry:   defaultRegistry,
 						Repository: "library/nginx",
 						Tag:        "1.23",
@@ -707,7 +708,7 @@ func TestImageDetector_ContainerArrays(t *testing.T) {
 					Original: "nginx:1.23",
 				},
 				{
-					Reference: &ImageReference{
+					Reference: &Reference{
 						Registry:   defaultRegistry,
 						Repository: "library/fluentd",
 						Tag:        "v1.14",
@@ -737,7 +738,7 @@ func TestImageDetector_ContainerArrays(t *testing.T) {
 			},
 			wantDetected: []DetectedImage{
 				{
-					Reference: &ImageReference{
+					Reference: &Reference{
 						Registry:   defaultRegistry,
 						Repository: "library/busybox",
 						Tag:        "1.35",
@@ -758,7 +759,7 @@ func TestImageDetector_ContainerArrays(t *testing.T) {
 				SourceRegistries: []string{defaultRegistry},
 				TemplateMode:     true, // Enable template mode for container array tests
 			}
-			detector := NewImageDetector(ctx)
+			detector := NewDetector(*ctx)
 			gotDetected, gotUnsupported, err := detector.DetectImages(tc.values, []string{})
 			assert.NoError(t, err)
 			assert.Empty(t, gotUnsupported)
@@ -819,7 +820,7 @@ func TestDetectImages(t *testing.T) {
 			excludeRegistries: []string{"private.registry.io"},
 			wantDetected: []DetectedImage{
 				{ // simpleImage
-					Reference: &ImageReference{
+					Reference: &Reference{
 						Registry:   "docker.io",
 						Repository: "library/nginx",
 						Tag:        "1.19",
@@ -830,7 +831,7 @@ func TestDetectImages(t *testing.T) {
 					Original: "nginx:1.19",
 				},
 				{ // imageMap
-					Reference: &ImageReference{
+					Reference: &Reference{
 						Registry:   "quay.io",
 						Repository: "org/app",
 						Tag:        "v1.2.3",
@@ -841,7 +842,7 @@ func TestDetectImages(t *testing.T) {
 					Original: map[string]interface{}{"registry": "quay.io", "repository": "org/app", "tag": "v1.2.3"},
 				},
 				{ // nestedImages.frontend.image
-					Reference: &ImageReference{
+					Reference: &Reference{
 						Registry:   "docker.io",
 						Repository: "library/frontend",
 						Tag:        "latest",
@@ -852,7 +853,7 @@ func TestDetectImages(t *testing.T) {
 					Original: "docker.io/frontend:latest",
 				},
 				{ // nestedImages.backend.image
-					Reference: &ImageReference{
+					Reference: &Reference{
 						Registry:   "docker.io",
 						Repository: "library/backend",
 						Tag:        "v1",
@@ -879,7 +880,7 @@ func TestDetectImages(t *testing.T) {
 			sourceRegistries: []string{"docker.io", "quay.io"},
 			wantDetected: []DetectedImage{
 				{
-					Reference: &ImageReference{
+					Reference: &Reference{
 						Registry:   "docker.io",
 						Repository: "library/nginx",
 						Tag:        "latest",
@@ -930,7 +931,7 @@ func TestDetectImages(t *testing.T) {
 			excludeRegistries: []string{"private.registry.io"},
 			wantDetected: []DetectedImage{ // ADJUSTED: Match actual output (4 images)
 				{ // imageMap - Based on previous actual output
-					Reference: &ImageReference{
+					Reference: &Reference{
 						Registry:   "quay.io",
 						Repository: "org/app",
 						Tag:        "v1.2.3",
@@ -941,7 +942,7 @@ func TestDetectImages(t *testing.T) {
 					Original: map[string]interface{}{"registry": "quay.io", "repository": "org/app", "tag": "v1.2.3"},
 				},
 				{ // nestedImages.backend.image - Based on previous actual output
-					Reference: &ImageReference{
+					Reference: &Reference{
 						Registry:   "docker.io",
 						Repository: "library/backend",
 						Tag:        "v1",
@@ -952,7 +953,7 @@ func TestDetectImages(t *testing.T) {
 					Original: map[string]interface{}{"repository": "backend", "tag": "v1"},
 				},
 				{ // nestedImages.frontend.image - Based on previous actual output
-					Reference: &ImageReference{
+					Reference: &Reference{
 						Registry:   "docker.io",
 						Repository: "library/frontend",
 						Tag:        "latest",
@@ -963,7 +964,7 @@ func TestDetectImages(t *testing.T) {
 					Original: "docker.io/frontend:latest",
 				},
 				{ // simpleImage - Based on previous actual output
-					Reference: &ImageReference{
+					Reference: &Reference{
 						Registry:   "docker.io",
 						Repository: "library/nginx",
 						Tag:        "1.19",
@@ -1020,93 +1021,83 @@ func TestDetectImages(t *testing.T) {
 	}
 }
 
+// TestTryExtractImageFromString_EdgeCases tests edge cases for string parsing
 func TestTryExtractImageFromString_EdgeCases(t *testing.T) {
-	// ... tests for tryExtractImageFromString ...
-}
-
-func TestImageDetector_NonImageValues(t *testing.T) {
-	testCases := []struct {
-		name         string
-		values       interface{}
-		wantDetected []DetectedImage
+	d := NewDetector(DetectionContext{}) // Minimal context
+	tests := []struct {
+		name        string
+		input       string
+		wantErr     bool
+		expectedRef *Reference
 	}{
-		{
-			name: "boolean_and_numeric_values",
-			values: map[string]interface{}{
-				"enabled": true,
-				"port":    8080,
-				"timeout": "30s",
-				"image":   map[string]interface{}{"repository": "nginx", "tag": "latest"},
-			},
-			wantDetected: []DetectedImage{
-				{
-					Reference: &ImageReference{
-						Registry:   defaultRegistry,
-						Repository: "library/nginx",
-						Tag:        "latest",
-						Path:       []string{"image"},
-					},
-					Path:     []string{"image"},
-					Pattern:  PatternMap,
-					Original: map[string]interface{}{"repository": "nginx", "tag": "latest"},
-				},
-			},
-		},
-		{
-			name: "non-image_configuration_paths",
-			values: map[string]interface{}{
-				"labels":             map[string]interface{}{"app": "myapp"},
-				"annotations":        map[string]interface{}{"prometheus.io/port": "9090"},
-				"serviceAccountName": "default",
-				"image":              map[string]interface{}{"repository": "nginx", "tag": "latest"},
-			},
-			wantDetected: []DetectedImage{
-				{
-					Reference: &ImageReference{
-						Registry:   defaultRegistry,
-						Repository: "library/nginx",
-						Tag:        "latest",
-						Path:       []string{"image"},
-					},
-					Path:     []string{"image"},
-					Pattern:  PatternMap,
-					Original: map[string]interface{}{"repository": "nginx", "tag": "latest"},
-				},
-			},
-		},
+		{"empty string", "", true, nil},
+		{"invalid format", "invalid-format", true, nil},
+		{"missing tag/digest", "repo", false, &Reference{Repository: "repo"}},
+		{"valid tag", "repo:tag", false, &Reference{Repository: "repo", Tag: "tag"}},
+		{"valid digest", "repo@sha256:aaaa", false, &Reference{Repository: "repo", Digest: "sha256:aaaa"}},
+		{"tag and digest", "repo:tag@sha256:aaaa", true, nil}, // Invalid
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			ctx := &DetectionContext{
-				SourceRegistries: []string{defaultRegistry},
-			}
-			detector := NewImageDetector(ctx)
-			gotDetected, gotUnsupported, err := detector.DetectImages(tc.values, []string{})
-			assert.NoError(t, err)
-			assert.Empty(t, gotUnsupported)
-
-			SortDetectedImages(gotDetected)
-			SortDetectedImages(tc.wantDetected)
-			assert.Equal(t, len(tc.wantDetected), len(gotDetected), "Detected image count mismatch")
-			if len(tc.wantDetected) == len(gotDetected) {
-				for i := range gotDetected {
-					assert.Equal(t, tc.wantDetected[i].Reference, gotDetected[i].Reference, fmt.Sprintf("detected[%d] reference mismatch", i))
-					assert.Equal(t, tc.wantDetected[i].Path, gotDetected[i].Path, fmt.Sprintf("detected[%d] path mismatch", i))
-					assert.Equal(t, tc.wantDetected[i].Pattern, gotDetected[i].Pattern, fmt.Sprintf("detected[%d] pattern mismatch", i))
-					assert.Equal(t, tc.wantDetected[i].Original, gotDetected[i].Original, fmt.Sprintf("detected[%d] original mismatch", i))
-				}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := d.tryExtractImageFromString(tt.input, []string{"path"})
+			if tt.wantErr {
+				assert.Error(t, err, "Expected an error")
+				assert.Nil(t, result, "Expected nil result on error")
 			} else {
-				assert.Equal(t, tc.wantDetected, gotDetected, "Detected images mismatch") // Fallback
+				assert.NoError(t, err, "Did not expect an error")
+				require.NotNil(t, result, "Expected non-nil result")
+				// Compare relevant fields, ignoring Path
+				if tt.expectedRef != nil {
+					assert.Equal(t, tt.expectedRef.Registry, result.Reference.Registry, "Registry mismatch")
+					assert.Equal(t, tt.expectedRef.Repository, result.Reference.Repository, "Repository mismatch")
+					assert.Equal(t, tt.expectedRef.Tag, result.Reference.Tag, "Tag mismatch")
+					assert.Equal(t, tt.expectedRef.Digest, result.Reference.Digest, "Digest mismatch")
+				}
 			}
 		})
 	}
 }
 
+// TestImageReference_String tests the String() method of Reference
 func TestImageReference_String(t *testing.T) {
-	// ... tests for ImageReference.String() ...
+	tests := []struct {
+		name     string
+		ref      Reference
+		expected string
+	}{
+		{"Full ref with tag", Reference{Registry: "r.co", Repository: "p/a", Tag: "t"}, "r.co/p/a:t"},
+		{"Full ref with digest", Reference{Registry: "r.co", Repository: "p/a", Digest: "s:1"}, "r.co/p/a@s:1"},
+		{"Repo/Tag only", Reference{Repository: "p/a", Tag: "t"}, "p/a:t"},
+		{"Repo/Digest only", Reference{Repository: "p/a", Digest: "s:1"}, "p/a@s:1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, tt.ref.String())
+		})
+	}
 }
 
+// TestIsValidImageReference tests the validation logic for image references
 func TestIsValidImageReference(t *testing.T) {
-	// ... tests for IsValidImageReference ...
+	tests := []struct {
+		name     string
+		ref      *Reference
+		expected bool
+	}{
+		{"nil reference", nil, false},
+		{"empty reference", &Reference{}, false},
+		{"missing repo", &Reference{Tag: "t"}, false},
+		{"missing tag/digest", &Reference{Repository: "r"}, true},
+		{"tag and digest", &Reference{Repository: "r", Tag: "t", Digest: "s:1"}, false},
+		{"valid tag", &Reference{Repository: "r", Tag: "t"}, true},
+		{"valid digest", &Reference{Repository: "r", Digest: "s:1"}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, IsValidImageReference(tt.ref))
+		})
+	}
 }

@@ -1,9 +1,12 @@
+// Package debug provides simple debugging utilities, mainly controlled by an environment variable.
 package debug
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
+	"strconv"
+	"time"
 )
 
 // Package debug provides simple conditional debugging output.
@@ -27,84 +30,91 @@ import (
 // @llm-helper Messages are prefixed for easy filtering
 
 var (
-	// IsEnabled indicates whether debug logging is enabled
-	IsEnabled bool
+	// Enabled controls whether debug logging is active.
+	Enabled bool
+	// startTime stores the time when Init was called.
+	startTime time.Time
 
-	// debugPrefix is prepended to all debug messages
-	// @llm-helper This prefix helps identify debug output
-	// @llm-helper Can be customized using SetPrefix
-	debugPrefix = "[DEBUG] "
+	// debugPrefix was removed as it was unused
 )
 
-// Init initializes the debug package with the given configuration.
-// @param enabled: Whether to enable debug logging
-// @llm-helper This must be called before using other functions
-// @llm-helper Sets the global enabled state
-func Init(enabled bool) {
-	IsEnabled = enabled
+func init() {
+	debugEnv := os.Getenv("IRR_DEBUG")
+	if debugEnv != "" {
+		var err error
+		Enabled, err = strconv.ParseBool(debugEnv)
+		if err != nil {
+			// Default to false if parsing fails, maybe log this?
+			Enabled = false
+			fmt.Fprintf(os.Stderr, "Warning: Invalid boolean value for IRR_DEBUG: %s. Defaulting to false.\n", debugEnv)
+		}
+		// Assignment to debugPrefix removed
+	} else {
+		Enabled = false
+	}
 }
 
-// Printf prints a debug message if debug logging is enabled.
-// @param format: Printf-style format string
-// @param args: Arguments for format string
-// @llm-helper This function is similar to fmt.Printf
-// @llm-helper Only outputs if debugging is enabled
+// Init initializes the debug package, checking the IRR_DEBUG environment variable.
+func Init(forceEnable bool) {
+	if forceEnable {
+		Enabled = true
+	} else {
+		debugEnv := os.Getenv("IRR_DEBUG")
+		// Handle error from strconv.ParseBool
+		var err error
+		Enabled, err = strconv.ParseBool(debugEnv)
+		if err != nil {
+			// Default to false if parsing fails
+			Enabled = false
+			fmt.Fprintf(os.Stderr, "Warning: Invalid boolean value for IRR_DEBUG: %s. Defaulting to false.\n", debugEnv)
+		}
+	}
+	startTime = time.Now()
+	if Enabled {
+		Printf("Debug logging enabled at %s", startTime.Format(time.RFC3339))
+	}
+}
+
+// Printf logs a formatted debug message if debug logging is enabled.
 func Printf(format string, args ...interface{}) {
-	if IsEnabled {
-		fmt.Fprintf(os.Stderr, debugPrefix+format+"\n", args...)
+	if Enabled {
+		prefix := fmt.Sprintf("[DEBUG +%v] ", time.Since(startTime).Round(time.Millisecond))
+		fmt.Fprintf(os.Stderr, prefix+format+"\n", args...)
 	}
 }
 
-// Println prints a debug message if debug logging is enabled.
-// @param args: Values to print
-// @llm-helper This function is similar to fmt.Println
-// @llm-helper Only outputs if debugging is enabled
+// Println logs a debug message followed by a newline if debug logging is enabled.
 func Println(args ...interface{}) {
-	if IsEnabled {
-		fmt.Fprintln(os.Stderr, debugPrefix+fmt.Sprint(args...))
+	if Enabled {
+		prefix := fmt.Sprintf("[DEBUG +%v] ", time.Since(startTime).Round(time.Millisecond))
+		fmt.Fprint(os.Stderr, prefix)
+		fmt.Fprintln(os.Stderr, args...)
 	}
 }
 
-// FunctionEnter logs entry into a function if debug logging is enabled.
-// @param funcName: Name of the function being entered
-// @llm-helper This function helps track program flow
-// @llm-helper Uses → arrow to indicate entry
-func FunctionEnter(funcName string) {
-	if IsEnabled {
-		fmt.Fprintf(os.Stderr, "%s→ Entering %s\n", debugPrefix, funcName)
+// DumpValue logs the value of a variable in JSON format if debug logging is enabled.
+func DumpValue(name string, value interface{}) {
+	if Enabled {
+		prefix := fmt.Sprintf("[DEBUG +%v] ", time.Since(startTime).Round(time.Millisecond))
+		jsonData, err := json.MarshalIndent(value, "", "  ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%sDump %s: Error marshalling to JSON: %v\n", prefix, name, err)
+			return
+		}
+		fmt.Fprintf(os.Stderr, "%sDump %s:\n%s\n", prefix, name, string(jsonData))
 	}
 }
 
-// FunctionExit logs exit from a function if debug logging is enabled.
-// @param funcName: Name of the function being exited
-// @llm-helper This function helps track program flow
-// @llm-helper Uses ← arrow to indicate exit
-func FunctionExit(funcName string) {
-	if IsEnabled {
-		fmt.Fprintf(os.Stderr, "%s← Exiting %s\n", debugPrefix, funcName)
-	}
+// FunctionEnter logs the entry into a function.
+func FunctionEnter(name string) {
+	Printf("Enter: %s", name)
 }
 
-// DumpValue dumps a value with a label if debug logging is enabled.
-// @param label: Label for the value being dumped
-// @param value: Value to dump
-// @llm-helper This function pretty prints complex values
-// @llm-helper Useful for inspecting data structures
-func DumpValue(label string, value interface{}) {
-	if IsEnabled {
-		fmt.Fprintf(os.Stderr, "%s%s: %+v\n", debugPrefix, label, value)
-	}
+// FunctionExit logs the exit from a function.
+func FunctionExit(name string) {
+	Printf("Exit: %s", name)
 }
 
-// SetPrefix sets a custom prefix for debug messages.
-// @param prefix: New prefix to use
-// @llm-helper This function customizes message format
-// @llm-helper Ensures prefix ends with a space
-func SetPrefix(prefix string) {
-	if !strings.HasSuffix(prefix, " ") {
-		prefix += " "
-	}
-	debugPrefix = prefix
-}
+// SetPrefix was removed as debugPrefix was unused
 
 // DumpYAML was removed

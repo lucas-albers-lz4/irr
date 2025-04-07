@@ -6,22 +6,22 @@ import (
 	"path/filepath"
 	"strings"
 
-	"sigs.k8s.io/yaml"
+	"gopkg.in/yaml.v3"
 )
 
-// RegistryMapping represents a single source to target registry mapping
-type RegistryMapping struct {
-	Source string `yaml:"source"`
-	Target string `yaml:"target"`
+// Mapping defines a single source-to-target registry mapping.
+type Mapping struct {
+	Source string `yaml:"source"` // The source registry hostname (e.g., docker.io)
+	Target string `yaml:"target"` // The target registry hostname (e.g., my-proxy.com)
 }
 
-// RegistryMappings holds a collection of registry mappings
-type RegistryMappings struct {
-	Mappings []RegistryMapping `yaml:"mappings"`
+// Mappings holds a list of registry mappings.
+type Mappings struct {
+	Mappings []Mapping `yaml:"mappings"` // List of individual mappings
 }
 
 // LoadMappings loads registry mappings from a YAML file
-func LoadMappings(path string) (*RegistryMappings, error) {
+func LoadMappings(path string) (*Mappings, error) {
 	if path == "" {
 		return nil, nil
 	}
@@ -58,7 +58,7 @@ func LoadMappings(path string) (*RegistryMappings, error) {
 		return nil, WrapMappingFileRead(path, err)
 	}
 
-	var mappings RegistryMappings
+	var mappings Mappings
 	if err := yaml.Unmarshal(data, &mappings); err != nil {
 		return nil, WrapMappingFileParse(path, err)
 	}
@@ -66,14 +66,15 @@ func LoadMappings(path string) (*RegistryMappings, error) {
 	return &mappings, nil
 }
 
-// GetTargetRegistry returns the target registry for a given source registry
-func (m *RegistryMappings) GetTargetRegistry(source string) string {
+// GetTargetRegistry returns the mapped target registry for a given source registry.
+// If no mapping is found, it returns an empty string.
+func (m *Mappings) GetTargetRegistry(sourceRegistry string) string {
 	if m == nil {
 		return "" // Use default mapping
 	}
 
 	for _, mapping := range m.Mappings {
-		if mapping.Source == source {
+		if mapping.Source == sourceRegistry {
 			return mapping.Target
 		}
 	}

@@ -32,7 +32,7 @@ type MockChartLoader struct {
 }
 
 // Load returns the pre-configured chart or error.
-func (m *MockChartLoader) Load(path string) (*chart.Chart, error) {
+func (m *MockChartLoader) Load(_ string) (*chart.Chart, error) {
 	// This basic mock doesn't simulate the internal state required
 	// for the chart.Dependencies() loop within Analyze to function.
 	// Tests should focus on the structure of Values provided.

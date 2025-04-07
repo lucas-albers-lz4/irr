@@ -139,10 +139,12 @@ func TestAnalyzeCmd(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup mock for this test case if needed
 			if tt.mockAnalyzeFunc != nil {
-				currentAnalyzerFactory = func(chartPath string) AnalyzerInterface {
-					return &mockAnalyzer{
-						AnalyzeFunc: tt.mockAnalyzeFunc,
-					}
+				// Set up mock analyzer
+				mockAnalyzer := &mockAnalyzer{
+					AnalyzeFunc: tt.mockAnalyzeFunc,
+				}
+				currentAnalyzerFactory = func(_ string) AnalyzerInterface { // Rename chartPath to _
+					return mockAnalyzer
 				}
 			} else {
 				// Ensure tests not needing mock use the default (or a non-panicking stub)

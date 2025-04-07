@@ -95,9 +95,11 @@ type AnalyzerInterface interface {
 // --- End Factory ---
 
 // --- Factory for Generator ---
-// Interface matching chart.Generator for mocking
+
+// GeneratorInterface mirrors the chart.Generator interface for mocking.
+// It defines the Generate method expected by the command.
 type GeneratorInterface interface {
-	Generate() (*override.OverrideFile, error)
+	Generate() (*override.File, error)
 }
 
 // Allows overriding for testing
@@ -110,8 +112,6 @@ var defaultGeneratorFactory generatorFactoryFunc = func(chartPath, targetRegistr
 
 // Keep track of the current factory (can be replaced in tests)
 var currentGeneratorFactory = defaultGeneratorFactory
-
-// --- End Generator Factory ---
 
 // Regex for basic registry validation (hostname/IP + optional port)
 // Allows letters, numbers, hyphens, dots in hostname part.
@@ -289,7 +289,7 @@ func runOverride(cmd *cobra.Command, _ []string) error {
 
 	// --- Handle Generation Errors with Exit Codes ---
 	if genErr != nil {
-		var chartParsingErr *chart.ChartParsingError
+		var chartParsingErr *chart.ParsingError
 		var imgProcessingErr *chart.ImageProcessingError
 		var thresholdErr *chart.ThresholdError
 		var unsupportedErr *chart.UnsupportedStructureError // Assume this exists or adapt
@@ -342,11 +342,9 @@ func runOverride(cmd *cobra.Command, _ []string) error {
 		if err := afero.WriteFile(AppFs, outputFile, yamlData, 0600); err != nil {
 			return wrapExitCodeError(ExitGeneralRuntimeError, "failed to write overrides file", err)
 		}
-		// Only print confirmation if verbose is NOT set (avoid duplicate info)
-		if !verbose {
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Overrides written to: %s\n", outputFile); err != nil {
-				return fmt.Errorf("writing confirmation message to stdout: %w", err)
-			}
+		// Always print confirmation after successful write
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Overrides written to: %s\n", outputFile); err != nil {
+			return fmt.Errorf("writing confirmation message to stdout: %w", err)
 		}
 	} else {
 		debug.Println("Writing overrides to stdout")

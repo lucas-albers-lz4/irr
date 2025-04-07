@@ -306,9 +306,11 @@ func (a *Analyzer) isImageString(key, value string) bool {
 	return false
 }
 
-// isGlobalPattern checks if this is a global registry configuration
-func (a *Analyzer) isGlobalPattern(key string, value interface{}) bool {
-	return strings.HasPrefix(key, "global.") && strings.Contains(key, "registry")
+// isGlobalPattern checks if a key might represent a global pattern
+func (a *Analyzer) isGlobalPattern(key string, _ interface{}) bool {
+	// Simple heuristic: check if the key is within a 'global' map
+	// A more robust check might involve tracking the full path.
+	return key == "global" || strings.HasPrefix(key, "global.")
 }
 
 // mergeAnalysis merges dependency analysis into the main analysis
@@ -323,8 +325,9 @@ type AnalyzerInterface interface {
 	// ... existing code ...
 }
 
-// AnalysisResult holds the results of the chart analysis.
-// It includes lists of detected and unsupported image references.
-type AnalysisResult struct {
+// Result holds the findings of the Helm chart analysis.
+type Result struct {
+	ChartName    string `json:"chartName" yaml:"chartName"`
+	ChartVersion string `json:"chartVersion" yaml:"chartVersion"`
 	// ... existing code ...
 }
