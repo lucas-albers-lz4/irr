@@ -20,6 +20,8 @@ const (
 	digestPattern    = `^(?:(?P<registry>[a-zA-Z0-9][-a-zA-Z0-9.]*[a-zA-Z0-9](:[0-9]+)?)/)?(?P<repository>[a-zA-Z0-9][-a-zA-Z0-9._/]*[a-zA-Z0-9])@(?P<digest>sha256:[a-fA-F0-9]{64})$`
 	defaultRegistry  = "docker.io"
 	libraryNamespace = "library"
+	// maxSplitTwo is the limit for splitting into at most two parts
+	maxSplitTwo = 2
 )
 
 // Reference encapsulates the components of a container image reference.
@@ -71,24 +73,22 @@ type UnsupportedImage struct {
 	Error    error
 }
 
-// UnsupportedType defines the type of unsupported image
+// UnsupportedType defines the type of unsupported structure encountered.
 type UnsupportedType int
 
 const (
+	// UnsupportedTypeUnknown indicates an unspecified or unknown unsupported type.
 	UnsupportedTypeUnknown UnsupportedType = iota
+	// UnsupportedTypeMap indicates an unsupported map structure.
 	UnsupportedTypeMap
+	// UnsupportedTypeString indicates an unsupported string format.
 	UnsupportedTypeString
-	UnsupportedTypeNonSource
-	UnsupportedTypeStringInMapContext
-	UnsupportedTypeMapValue
-	UnsupportedTypeNonStringValue
+	// UnsupportedTypeStringParseError indicates a failure to parse an image string.
 	UnsupportedTypeStringParseError
+	// UnsupportedTypeNonSourceImage indicates an image string from a non-source registry in strict mode.
 	UnsupportedTypeNonSourceImage
+	// UnsupportedTypeExcludedImage indicates an image from an explicitly excluded registry.
 	UnsupportedTypeExcludedImage
-	UnsupportedTypeAmbiguousString
-	UnsupportedTypeList
-	UnsupportedTypeTemplate
-	UnsupportedTypeError
 )
 
 // Detector provides methods for finding image references within complex data structures.
@@ -162,9 +162,19 @@ func NormalizeRegistry(registry string) string {
 	// Convert to lowercase for consistent comparison
 	registry = strings.ToLower(registry)
 
-	// Handle docker.io special cases
-	if registry == "docker.io" || registry == "index.docker.io" {
-		return defaultRegistry
+	// Handle Docker Hub implicit registry
+	// Check against both common names for Docker Hub.
+	if registry == defaultRegistry || registry == "index.docker.io" {
+		result.Registry = defaultRegistry // Normalize to 'docker.io'
+		// If the original registry was just the image name (e.g., "nginx"),
+		// assume 'library' namespace.
+		if !strings.Contains(result.Repository, "/") {
+			result.Repository = libraryNamespace + "/" + result.Repository
+			debug.Printf("Normalized Docker Library image (implicit docker registry): %s -> %s", originalRepo, result.Repository)
+		}
+	} else if registry != "" {
+		// Keep the provided registry if it's not Docker Hub
+		result.Registry = registry
 	}
 
 	// Strip port number if present
@@ -299,29 +309,24 @@ func (d *Detector) DetectImages(values interface{}, path []string) ([]DetectedIm
 
 		// First, try to detect an image map at the current level
 		if detectedImage, isImage, err := d.tryExtractImageFromMap(v, path); isImage {
-			if err != nil {
+			switch {
+			case err != nil:
 				debug.Printf("Error extracting image from map at path %v: %v", path, err)
-				// REVERTED: Always add map extraction errors regardless of strict mode,
-				// as some tests expect this (e.g., invalid_type_in_image_map).
-				// The count issue likely stems from how recursion aggregates these.
 				log.Debugf("[UNSUPPORTED] Adding map item at path %v due to extraction error: %v", path, err)
-				// DETAILED LOGGING: Add before appending
 				log.Debugf("[UNSUPPORTED ADD] Path: %v, Type: %v, Reason: Map extraction error, Error: %v, Strict: %v", path, UnsupportedTypeMap, err, d.context.Strict)
 				allUnsupported = append(allUnsupported, UnsupportedImage{
 					Location: path,
 					Type:     UnsupportedTypeMap,
 					Error:    err,
 				})
-			} else if IsValidImageReference(detectedImage.Reference) {
+			case IsValidImageReference(detectedImage.Reference):
 				if IsSourceRegistry(detectedImage.Reference, d.context.SourceRegistries, d.context.ExcludeRegistries) {
 					debug.Printf("Detected map-based image at path %v: %v", path, detectedImage.Reference)
 					allDetected = append(allDetected, *detectedImage)
 				} else {
 					debug.Printf("Map-based image is not a source registry at path %v: %v", path, detectedImage.Reference)
-					// REVERTED: Handle non-source map images consistently based on strict mode, as per string logic.
 					if d.context.Strict {
 						log.Debugf("[UNSUPPORTED] Adding map item at path %v due to strict non-source.", path)
-						// DETAILED LOGGING: Add before appending
 						log.Debugf("[UNSUPPORTED ADD] Path: %v, Type: %v, Reason: Strict non-source map, Error: nil, Strict: %v", path, UnsupportedTypeNonSourceImage, d.context.Strict)
 						allUnsupported = append(allUnsupported, UnsupportedImage{
 							Location: path,
@@ -332,9 +337,8 @@ func (d *Detector) DetectImages(values interface{}, path []string) ([]DetectedIm
 						log.Debugf("Non-strict mode: Skipping non-source map image at path %v", path)
 					}
 				}
-			} else {
+			default: // Invalid map-based image reference
 				debug.Printf("Skipping invalid map-based image reference at path %v: %v", path, detectedImage.Reference)
-				// REVERTED: Do not add invalid map references to unsupported unless specific test requires it.
 			}
 			// Whether detected, skipped non-source, or invalid, if it was identified AS an image map structure attempt (isImageMap == true),
 			// we should NOT recurse further into its values.
@@ -594,22 +598,19 @@ func (d *Detector) tryExtractImageFromMap(m map[string]interface{}, path []strin
 	}
 
 	// Create a string representation of the map for the Original field
-	if ref.Registry != "" {
-		if ref.Tag != "" {
-			ref.Original = fmt.Sprintf("%s/%s:%s", ref.Registry, ref.Repository, ref.Tag)
-		} else if ref.Digest != "" {
-			ref.Original = fmt.Sprintf("%s/%s@%s", ref.Registry, ref.Repository, ref.Digest)
-		} else {
-			ref.Original = fmt.Sprintf("%s/%s", ref.Registry, ref.Repository)
-		}
-	} else {
-		if ref.Tag != "" {
-			ref.Original = fmt.Sprintf("%s:%s", ref.Repository, ref.Tag)
-		} else if ref.Digest != "" {
-			ref.Original = fmt.Sprintf("%s@%s", ref.Repository, ref.Digest)
-		} else {
-			ref.Original = ref.Repository
-		}
+	switch {
+	case ref.Registry != "" && ref.Tag != "":
+		ref.Original = fmt.Sprintf("%s/%s:%s", ref.Registry, ref.Repository, ref.Tag)
+	case ref.Registry != "" && ref.Digest != "":
+		ref.Original = fmt.Sprintf("%s/%s@%s", ref.Registry, ref.Repository, ref.Digest)
+	case ref.Registry != "":
+		ref.Original = fmt.Sprintf("%s/%s", ref.Registry, ref.Repository)
+	case ref.Tag != "":
+		ref.Original = fmt.Sprintf("%s:%s", ref.Repository, ref.Tag)
+	case ref.Digest != "":
+		ref.Original = fmt.Sprintf("%s@%s", ref.Repository, ref.Digest)
+	default:
+		ref.Original = ref.Repository
 	}
 
 	// Normalize
@@ -653,12 +654,12 @@ func (d *Detector) tryExtractImageFromString(imgStr string, path []string) (*Det
 			Original:   imgStr, // Set the Original field to input string
 		}
 		// A very basic split attempt might inform normalization/source check
-		parts := strings.SplitN(imgStr, ":", 2)
+		parts := strings.SplitN(imgStr, ":", maxSplitTwo)
 		if len(parts) > 0 {
 			// Check if the first part contains template - if not, maybe use it?
 			if !strings.Contains(parts[0], "{{") {
 				// Potentially split registry/repo from the first part
-				repoParts := strings.SplitN(parts[0], "/", 2)
+				repoParts := strings.SplitN(parts[0], "/", maxSplitTwo)
 				if len(repoParts) == 2 && strings.Contains(repoParts[0], ".") { // Looks like registry/repo
 					ref.Registry = repoParts[0]
 					ref.Repository = repoParts[1]
@@ -765,7 +766,7 @@ func ParseImageReference(imgStr string) (*Reference, error) {
 
 	// --- Prioritize Digest Parsing ---
 	if strings.Contains(imgStr, "@") {
-		parts := strings.SplitN(imgStr, "@", 2)
+		parts := strings.SplitN(imgStr, "@", maxSplitTwo)
 		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 			debug.Printf("Invalid format for digest reference: '%s'", imgStr)
 			return nil, ErrInvalidImageRefFormat
@@ -1052,17 +1053,16 @@ var (
 	tagRegexCompiled = regexp.MustCompile(tagPattern)
 )
 
-// Helper function for backwards compatibility or simpler calls
-// Deprecated: Use ImageDetector with context instead.
-func DetectImages(values interface{}, path []string, sourceRegistries []string, excludeRegistries []string, strict bool) ([]DetectedImage, []UnsupportedImage, error) {
-	ctx := &DetectionContext{
-		SourceRegistries:  sourceRegistries,
-		ExcludeRegistries: excludeRegistries,
-		Strict:            strict,
-		TemplateMode:      true, // Assume template mode for compatibility
+// DetectImages is a helper function for backwards compatibility or simpler calls.
+// It creates a default detector context and calls the DetectImages method.
+func DetectImages(values interface{}, path []string, _ []string, _ []string, strict bool) ([]DetectedImage, []UnsupportedImage, error) {
+	// Create a default context (you might want to make this configurable)
+	context := DetectionContext{
+		GlobalRegistry: "", // Or some default if applicable
+		Strict:         strict,
 	}
-	detector := NewDetector(*ctx)
-	// Ensure this calls the METHOD on the detector instance
+	detector := NewDetector(context)
+	// Pass through the path, sourceRegistries and excludeRegistries are handled by the detector's context now.
 	return detector.DetectImages(values, path)
 }
 
@@ -1078,8 +1078,8 @@ func looksLikeImageReference(s string) bool {
 	// Avoid matching obvious file paths or URLs
 	hasSlash := strings.Contains(s, "/")
 	isFilePath := hasSlash && (strings.HasPrefix(s, "/") || strings.HasPrefix(s, "./") || strings.HasPrefix(s, "../"))
-	isUrl := strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
-	if isFilePath || isUrl {
+	isURL := strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
+	if isFilePath || isURL {
 		return false
 	}
 

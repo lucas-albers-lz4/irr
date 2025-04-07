@@ -11,6 +11,11 @@ import (
 	"github.com/lalbers/irr/pkg/registry"
 )
 
+const (
+	// maxSplitTwo is used when splitting strings into at most two parts
+	maxSplitTwo = 2
+)
+
 // PathStrategy defines the interface for generating new image paths.
 type PathStrategy interface {
 	// GeneratePath takes an original image reference and the target registry (if any),
@@ -24,7 +29,7 @@ var strategyRegistry = map[string]PathStrategy{
 }
 
 // GetStrategy returns a path strategy based on the name
-func GetStrategy(name string, mappings *registry.Mappings) (PathStrategy, error) {
+func GetStrategy(name string, _ *registry.Mappings) (PathStrategy, error) {
 	debug.Printf("GetStrategy: Getting strategy for name: %s", name)
 
 	switch name {
@@ -48,13 +53,15 @@ func NewPrefixSourceRegistryStrategy() *PrefixSourceRegistryStrategy {
 
 // GeneratePath implements the PathStrategy interface.
 func (s *PrefixSourceRegistryStrategy) GeneratePath(originalRef *image.Reference, targetRegistry string) (string, error) {
-	// Handle potential nil reference
 	if originalRef == nil {
-		return "", fmt.Errorf("original image reference is nil")
+		return "", fmt.Errorf("cannot generate path for nil reference")
 	}
 
 	debug.Printf("PrefixSourceRegistryStrategy: Generating path for original reference: %+v", originalRef)
 	debug.Printf("PrefixSourceRegistryStrategy: Target registry: %s", targetRegistry)
+
+	// Split repository into org/name parts
+	repoPathParts := strings.SplitN(originalRef.Repository, "/", maxSplitTwo)
 
 	// Always use the sanitized source registry name as the prefix
 	pathPrefix := image.SanitizeRegistryForPath(originalRef.Registry)
@@ -62,7 +69,6 @@ func (s *PrefixSourceRegistryStrategy) GeneratePath(originalRef *image.Reference
 
 	// --- Base Repository Path Calculation (Keep existing logic) ---
 	// Ensure we only use the repository path part, excluding any original registry prefix
-	repoPathParts := strings.SplitN(originalRef.Repository, "/", 2)
 	baseRepoPath := originalRef.Repository
 	if len(repoPathParts) > 1 {
 		// Heuristic: Check if the first part looks like a domain (contains '.')

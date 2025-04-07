@@ -11,6 +11,15 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
+const (
+	// maxSplitTwo is used when splitting strings into at most two parts
+	maxSplitTwo = 2
+	// expectedDigestParts is the expected number of parts when splitting a digest reference
+	expectedDigestParts = 2
+	// expectedTagParts is the expected number of parts when splitting a tag reference
+	expectedTagParts = 2
+)
+
 // ImageLocation represents a location of an image in a Helm chart
 type ImageLocation struct {
 	Path              []string
@@ -28,10 +37,28 @@ type ImageReference struct {
 
 // ParseImageReference parses an image reference string into its components
 func ParseImageReference(ref string) (*ImageReference, error) {
+	if ref == "" {
+		return nil, fmt.Errorf("empty image reference")
+	}
+
+	// Split registry/repository
+	parts := strings.SplitN(ref, "/", maxSplitTwo)
+
+	// Check for digest
+	if digestParts := strings.SplitN(ref, "@", expectedDigestParts); len(digestParts) == expectedDigestParts {
+		// Handle digest case
+		return nil, fmt.Errorf("digest references not supported yet")
+	}
+
+	// Check for tag
+	if tagParts := strings.SplitN(ref, ":", expectedTagParts); len(tagParts) == expectedTagParts {
+		// Handle tag case
+		return nil, fmt.Errorf("tag references not supported yet")
+	}
+
 	result := &ImageReference{}
 
 	// Split registry and rest
-	parts := strings.SplitN(ref, "/", 2)
 	if len(parts) == 2 && strings.Contains(parts[0], ".") {
 		result.Registry = parts[0]
 		ref = parts[1]
@@ -40,13 +67,13 @@ func ParseImageReference(ref string) (*ImageReference, error) {
 	}
 
 	// Handle digest
-	if digestParts := strings.SplitN(ref, "@", 2); len(digestParts) == 2 {
+	if digestParts := strings.SplitN(ref, "@", maxSplitTwo); len(digestParts) == maxSplitTwo {
 		ref = digestParts[0]
 		result.Digest = digestParts[1]
 	}
 
 	// Handle tag
-	if tagParts := strings.SplitN(ref, ":", 2); len(tagParts) == 2 {
+	if tagParts := strings.SplitN(ref, ":", maxSplitTwo); len(tagParts) == maxSplitTwo {
 		ref = tagParts[0]
 		result.Tag = tagParts[1]
 	}
@@ -187,7 +214,12 @@ func ConstructPath(path []string) []string {
 
 // GenerateYAML generates YAML output for the override structure
 func GenerateYAML(overrides map[string]interface{}) ([]byte, error) {
-	return yaml.Marshal(overrides)
+	// Wrap the error from the external YAML library
+	yamlBytes, err := yaml.Marshal(overrides)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal overrides to YAML: %w", err)
+	}
+	return yamlBytes, nil
 }
 
 // ConstructSubchartPath converts a chart path to use aliases defined in dependencies

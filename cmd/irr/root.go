@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"regexp"
 	"strings"
@@ -17,6 +18,22 @@ import (
 	"github.com/lalbers/irr/pkg/strategy"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
+)
+
+const (
+	// DefaultPathDepth defines the maximum depth for recursive path traversal.
+	DefaultPathDepth = 10
+
+	// Standard file permissions
+	defaultFilePerm       fs.FileMode = 0o600 // Read/write for owner
+	defaultOutputFilePerm fs.FileMode = 0o644 // Read/write for owner, read for group/others
+
+	// Tabwriter settings
+	tabwriterMinWidth = 0
+	tabwriterTabWidth = 0
+	tabwriterPadding  = 2
+	tabwriterPadChar  = ' '
+	tabwriterFlags    = 0
 )
 
 // AppFs provides an abstraction over the filesystem.
@@ -158,7 +175,7 @@ Helm value overrides that redirect image references to a new registry.`,
 	rootCmd.PersistentFlags().BoolVar(&strictMode, "strict", false, "Enable strict mode")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output")
 	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "Preview changes instead of writing file")
-	rootCmd.PersistentFlags().IntVar(&pathDepth, "path-depth", 10, "Maximum recursion depth for values traversal")
+	rootCmd.PersistentFlags().IntVar(&pathDepth, "path-depth", DefaultPathDepth, "Maximum recursion depth for values traversal")
 	rootCmd.PersistentFlags().StringVar(&imageRegistry, "image-registry", "", "Global image registry override (DEPRECATED, use global-registry)")
 	rootCmd.PersistentFlags().StringVar(&globalRegistry, "global-registry", "", "Global image registry override")
 	rootCmd.PersistentFlags().StringVar(&registryFile, "registry-file", "", "Path to YAML file containing registry mappings")
@@ -276,16 +293,17 @@ func runOverride(_ *cobra.Command, _ []string) error {
 		var unsupportedErr *chart.UnsupportedStructureError
 		var thresholdErr *chart.ThresholdNotMetError
 
-		if errors.As(genErr, &parsingErr) {
+		switch {
+		case errors.As(genErr, &parsingErr):
 			// Handle specific parsing failure (using the chart package's definition)
 			return wrapExitCodeError(ExitChartParsingError, errMsg, genErr) // Use ExitChartParsingError
-		} else if errors.As(genErr, &unsupportedErr) {
+		case errors.As(genErr, &unsupportedErr):
 			// Handle unsupported structure error (if strict mode is enabled)
 			return wrapExitCodeError(ExitUnsupportedStructure, errMsg, genErr) // Use ExitUnsupportedStructure
-		} else if errors.As(genErr, &thresholdErr) {
+		case errors.As(genErr, &thresholdErr):
 			// Handle low threshold error
 			return wrapExitCodeError(ExitProcessingThresholdNotMet, errMsg, genErr) // Use ExitProcessingThresholdNotMet
-		} else {
+		default:
 			// Handle generic generation error
 			// Wrap the original error for context
 			return fmt.Errorf("failed to generate overrides: %w", genErr)
@@ -317,7 +335,7 @@ func runOverride(_ *cobra.Command, _ []string) error {
 			return wrapExitCodeError(ExitGeneralRuntimeError, "failed to marshal overrides to YAML for writing", err)
 		}
 		// Use afero to write the file
-		if writeErr := afero.WriteFile(AppFs, outputFilePath, yamlBytes, 0o600); writeErr != nil {
+		if writeErr := afero.WriteFile(AppFs, outputFilePath, yamlBytes, defaultFilePerm); writeErr != nil {
 			return wrapExitCodeError(ExitGeneralRuntimeError, fmt.Sprintf("failed to write overrides to file %s", outputFilePath), writeErr)
 		}
 		if verbose {
@@ -373,7 +391,7 @@ func newAnalyzeCmd() *cobra.Command {
 			if analyzeOutputFile != "" {
 				debug.Printf("Writing analysis output to file: %s", analyzeOutputFile)
 				// Use afero WriteFile
-				if err := afero.WriteFile(AppFs, analyzeOutputFile, []byte(output), 0o644); err != nil {
+				if err := afero.WriteFile(AppFs, analyzeOutputFile, []byte(output), defaultOutputFilePerm); err != nil {
 					return wrapExitCodeError(ExitGeneralRuntimeError, "failed to write analysis output", err)
 				}
 			} else {
@@ -412,7 +430,7 @@ func formatTextOutput(analysis *analysis.ChartAnalysis) string {
 
 	if len(analysis.ImagePatterns) > 0 {
 		sb.WriteString("Image Patterns:\n")
-		w := tabwriter.NewWriter(&sb, 0, 0, 2, ' ', 0)
+		w := tabwriter.NewWriter(&sb, tabwriterMinWidth, tabwriterTabWidth, tabwriterPadding, tabwriterPadChar, tabwriterFlags)
 		if _, err := fmt.Fprintln(w, "PATH\tTYPE\tDETAILS\tCOUNT"); err != nil {
 			return fmt.Sprintf("Error writing header to text output: %v", err)
 		}

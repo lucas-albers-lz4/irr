@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"errors"
+
 	"github.com/lalbers/irr/pkg/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -220,14 +222,17 @@ func TestComplexChartFeatures(t *testing.T) {
 			if tt.chartName == "ingress-nginx" {
 				// Special handling for ingress-nginx with explicit output file
 				explicitOutputFile := filepath.Join(harness.tempDir, "explicit-ingress-nginx-overrides.yaml")
-				explicitArgs := append(args, "--output-file", explicitOutputFile)
+				// Create a new slice for the explicit arguments
+				explicitArgs := make([]string, len(args), len(args)+2)
+				copy(explicitArgs, args)
+				explicitArgs = append(explicitArgs, "--output-file", explicitOutputFile)
 
 				// Execute IRR specifically for ingress-nginx
 				explicitOutput, err := harness.ExecuteIRR(explicitArgs...)
 				require.NoError(t, err, "Explicit ExecuteIRR failed for ingress-nginx. Output:\n%s", explicitOutput)
 
 				// Load the overrides generated specifically for this subtest
-				// #nosec G304 -- Test reads file path constructed from test data
+				// #nosec G304 // Reading test-controlled override file is safe
 				overridesBytes, err := os.ReadFile(explicitOutputFile)
 				require.NoError(t, err, "Failed to read explicit output file: %s", explicitOutputFile)
 				require.NotEmpty(t, overridesBytes, "Explicit output file should not be empty")
@@ -261,13 +266,14 @@ func TestComplexChartFeatures(t *testing.T) {
 						if found {
 							return
 						} // Short circuit if already found
-						if repoStr, ok := imageValue.(string); ok {
-							if strings.Contains(repoStr, expectedRepo) {
-								t.Logf("[DEBUG FOUND STRING] Path: %v, Value: %s, ExpectedRepo: %s", imagePath, repoStr, expectedRepo)
+						switch val := imageValue.(type) {
+						case string:
+							if strings.Contains(val, expectedRepo) {
+								t.Logf("[DEBUG FOUND STRING] Path: %v, Value: %s, ExpectedRepo: %s", imagePath, val, expectedRepo)
 								found = true
 							}
-						} else if imgMap, ok := imageValue.(map[string]interface{}); ok {
-							if repo, repoOk := imgMap["repository"].(string); repoOk {
+						case map[string]interface{}:
+							if repo, repoOk := val["repository"].(string); repoOk {
 								if strings.Contains(repo, expectedRepo) {
 									t.Logf("[DEBUG FOUND MAP] Path: %v, Repo: %s, ExpectedRepo: %s", imagePath, repo, expectedRepo)
 									found = true
@@ -279,6 +285,7 @@ func TestComplexChartFeatures(t *testing.T) {
 						t.Errorf("Expected image %s (looking for repo containing '%s') not found in explicit overrides for ingress-nginx", expectedImage, expectedRepo)
 						// Add logging for the overrides content on failure
 						// errcheck: Check error from ReadFile before logging content
+						// #nosec G304 // Reading test-controlled override file is safe
 						overrideBytes, readErr := os.ReadFile(explicitOutputFile)
 						if readErr != nil {
 							t.Logf("Additionally, failed to read overrides file %s for debugging: %v", explicitOutputFile, readErr)
@@ -309,52 +316,20 @@ func TestComplexChartFeatures(t *testing.T) {
 				t.Fatalf("Failed to get overrides: %v", err)
 			}
 
+			// Check each expected image is present
+			foundImages := make(map[string]bool)
+			harness.WalkImageFields(overrides, func(_ []string, imageValue interface{}) {
+				if imageMap, ok := imageValue.(map[string]interface{}); ok {
+					if repo, ok := imageMap["repository"].(string); ok {
+						foundImages[repo] = true
+						t.Logf("Found image repo in overrides: %s", repo)
+					}
+				}
+			})
+
 			for _, expectedImage := range tt.expectedImages {
-				// Modify assertion slightly: check if rewritten repo path exists
-				expectedRepo := ""
-				if strings.HasPrefix(expectedImage, "docker.io/") {
-					// Handle potential library prefix addition
-					imgPart := strings.TrimPrefix(expectedImage, "docker.io/")
-					if !strings.Contains(imgPart, "/") {
-						imgPart = "library/" + imgPart // Assume library if no org
-					}
-					expectedRepo = "dockerio/" + imgPart
-				} else if strings.HasPrefix(expectedImage, "registry.k8s.io/") {
-					expectedRepo = "registryk8sio/" + strings.TrimPrefix(expectedImage, "registry.k8s.io/")
-				} else if strings.HasPrefix(expectedImage, "quay.io/") {
-					expectedRepo = "quayio/" + strings.TrimPrefix(expectedImage, "quay.io/")
-				}
-
-				if expectedRepo == "" {
-					t.Errorf("Could not determine expected rewritten repo path for: %s", expectedImage)
-					continue
-				}
-
-				found := false
-				harness.WalkImageFields(overrides, func(imagePath []string, imageValue interface{}) {
-					// Check if the repository value in a map matches, or if a string value matches
-					if repoStr, ok := imageValue.(string); ok {
-						if strings.Contains(repoStr, expectedRepo) {
-							found = true
-						}
-					} else if imgMap, ok := imageValue.(map[string]interface{}); ok {
-						if repo, repoOk := imgMap["repository"].(string); repoOk {
-							if strings.Contains(repo, expectedRepo) {
-								found = true
-							}
-						}
-					}
-				})
-				if !found {
-					t.Errorf("Expected image %s (looking for repo containing '%s') not found in overrides", expectedImage, expectedRepo)
-					// Add logging for the overrides content on failure
-					// errcheck: Check error from ReadFile before logging content
-					overrideBytes, readErr := os.ReadFile(harness.overridePath)
-					if readErr != nil {
-						t.Logf("Additionally, failed to read overrides file %s for debugging: %v", harness.overridePath, readErr)
-					} else {
-						t.Logf("Overrides content:\n%s", string(overrideBytes))
-					}
+				if !foundImages[expectedImage] {
+					t.Errorf("Expected image %s not found in overrides", expectedImage)
 				}
 			}
 		})
@@ -432,7 +407,8 @@ func TestStrictMode(t *testing.T) {
 	require.Error(t, err, "Should fail in strict mode")
 
 	// Check for specific exit code (5)
-	if exitErr, ok := err.(*exec.ExitError); ok {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
 		assert.Equal(t, 5, exitErr.ExitCode(), "Expected exit code 5 in strict mode for unsupported structure")
 	} else {
 		t.Errorf("Expected an *exec.ExitError but got %T: %v", err, err)
@@ -540,6 +516,7 @@ func TestMinimalGitImageOverride(t *testing.T) {
 
 	if !found {
 		// errcheck: Check error from ReadFile before logging content
+		// #nosec G304 // Reading test-controlled override file is safe
 		overrideBytes, readErr := os.ReadFile(harness.overridePath)
 		t.Errorf("Expected image repository '%s' not found in overrides", expectedRepo)
 		if readErr != nil {
@@ -625,6 +602,7 @@ func TestReadOverridesFromStdout(t *testing.T) {
 	t.Logf("IRR command stdout/stderr (not used for parsing):\n%s", stdout)
 
 	// Read the content of the temporary output file
+	// #nosec G304 // Reading test-controlled temporary output file is safe
 	overrideBytes, err := os.ReadFile(tempOutputFile)
 	require.NoError(t, err, "Failed to read temporary override output file")
 	require.NotEmpty(t, overrideBytes, "Temporary override output file should not be empty")

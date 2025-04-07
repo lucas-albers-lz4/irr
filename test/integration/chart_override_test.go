@@ -2,7 +2,9 @@
 package integration
 
 import (
+	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/lalbers/irr/pkg/testutil"
@@ -10,6 +12,36 @@ import (
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
+
+// Helper function to validate a single image override structure
+func validateImageOverride(t *testing.T, overrides map[string]interface{}, keyPath []string, expectedTargetRegistry string, expectedRepoSubstring string) {
+	t.Helper()
+
+	// Navigate to the image map
+	current := overrides
+	var imageMap map[string]interface{}
+	var ok bool
+	for i, key := range keyPath {
+		if i == len(keyPath)-1 { // Last element is the image map itself
+			imageMap, ok = current[key].(map[string]interface{})
+			require.True(t, ok, fmt.Sprintf("%s should be a map", strings.Join(keyPath, ".")))
+			break
+		}
+		next, exists := current[key]
+		require.True(t, exists, fmt.Sprintf("key '%s' does not exist in path %v", key, keyPath[:i+1]))
+		current, ok = next.(map[string]interface{})
+		require.True(t, ok, fmt.Sprintf("%s should be a map", strings.Join(keyPath[:i+1], ".")))
+	}
+
+	require.NotNil(t, imageMap, "Image map was not found at path %v", keyPath)
+
+	// Validate registry, repository, and tag
+	assert.Equal(t, expectedTargetRegistry, imageMap["registry"], fmt.Sprintf("registry mismatch for %s", strings.Join(keyPath, ".")))
+	repository, ok := imageMap["repository"].(string)
+	require.True(t, ok, fmt.Sprintf("repository should be a string for %s", strings.Join(keyPath, ".")))
+	assert.Contains(t, repository, expectedRepoSubstring, fmt.Sprintf("repository mismatch for %s", strings.Join(keyPath, ".")))
+	assert.NotEmpty(t, imageMap["tag"], fmt.Sprintf("tag should be present for %s", strings.Join(keyPath, ".")))
+}
 
 func TestChartOverrideStructures(t *testing.T) {
 	tests := []struct {
@@ -46,28 +78,8 @@ func TestChartOverrideStructures(t *testing.T) {
 			targetRegistry: "my-registry.example.com",
 			sourceRegs:     []string{"docker.io"},
 			validateFunc: func(t *testing.T, overrides map[string]interface{}) {
-				// Validate WordPress container override structure
-				image, ok := overrides["image"].(map[string]interface{})
-				require.True(t, ok, "image key should be a map")
-
-				assert.Equal(t, "my-registry.example.com", image["registry"], "registry should be set correctly")
-				repository, ok := image["repository"].(string)
-				require.True(t, ok, "repository should be a string")
-				assert.Contains(t, repository, "dockerio/wordpress", "repository should be transformed correctly")
-				assert.NotEmpty(t, image["tag"], "tag should be present")
-
-				// Validate MariaDB container override structure
-				mariadb, ok := overrides["mariadb"].(map[string]interface{})
-				require.True(t, ok, "mariadb key should be a map")
-
-				mariaImage, ok := mariadb["image"].(map[string]interface{})
-				require.True(t, ok, "mariadb.image key should be a map")
-
-				assert.Equal(t, "my-registry.example.com", mariaImage["registry"], "mariadb registry should be set correctly")
-				repository, ok = mariaImage["repository"].(string)
-				require.True(t, ok, "mariadb repository should be a string")
-				assert.Contains(t, repository, "dockerio/mariadb", "mariadb repository should be transformed correctly")
-				assert.NotEmpty(t, mariaImage["tag"], "mariadb tag should be present")
+				validateImageOverride(t, overrides, []string{"image"}, "my-registry.example.com", "dockerio/wordpress")
+				validateImageOverride(t, overrides, []string{"mariadb", "image"}, "my-registry.example.com", "dockerio/mariadb")
 			},
 			skip:       true,
 			skipReason: "wordpress chart not available in test-data/charts",
@@ -78,28 +90,8 @@ func TestChartOverrideStructures(t *testing.T) {
 			targetRegistry: "my-registry.example.com",
 			sourceRegs:     []string{"quay.io"},
 			validateFunc: func(t *testing.T, overrides map[string]interface{}) {
-				// Validate cert-manager container override structure
-				image, ok := overrides["image"].(map[string]interface{})
-				require.True(t, ok, "image key should be a map")
-
-				assert.Equal(t, "my-registry.example.com", image["registry"], "registry should be set correctly")
-				repository, ok := image["repository"].(string)
-				require.True(t, ok, "repository should be a string")
-				assert.Contains(t, repository, "quayio/jetstack/cert-manager-controller", "repository should be transformed correctly")
-				assert.NotEmpty(t, image["tag"], "tag should be present")
-
-				// Validate webhook container override structure
-				webhook, ok := overrides["webhook"].(map[string]interface{})
-				require.True(t, ok, "webhook key should be a map")
-
-				webhookImage, ok := webhook["image"].(map[string]interface{})
-				require.True(t, ok, "webhook.image key should be a map")
-
-				assert.Equal(t, "my-registry.example.com", webhookImage["registry"], "webhook registry should be set correctly")
-				repository, ok = webhookImage["repository"].(string)
-				require.True(t, ok, "webhook repository should be a string")
-				assert.Contains(t, repository, "quayio/jetstack/cert-manager-webhook", "webhook repository should be transformed correctly")
-				assert.NotEmpty(t, webhookImage["tag"], "webhook tag should be present")
+				validateImageOverride(t, overrides, []string{"image"}, "my-registry.example.com", "quayio/jetstack/cert-manager-controller")
+				validateImageOverride(t, overrides, []string{"webhook", "image"}, "my-registry.example.com", "quayio/jetstack/cert-manager-webhook")
 			},
 			skip:       true,
 			skipReason: "cert-manager chart validation fails with YAML syntax errors",

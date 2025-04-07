@@ -253,8 +253,9 @@ func GetValueAtPath(data map[string]interface{}, path []string) (interface{}, er
 			return nil, WrapPathParsing(part, err)
 		}
 
-		if currentMap, ok := current.(map[string]interface{}); ok {
-			nextVal, exists := currentMap[key]
+		switch typedCurrent := current.(type) {
+		case map[string]interface{}:
+			nextVal, exists := typedCurrent[key]
 			if !exists {
 				return nil, WrapPathNotFound(path[:i+1])
 			}
@@ -271,16 +272,14 @@ func GetValueAtPath(data map[string]interface{}, path []string) (interface{}, er
 			} else {
 				current = nextVal
 			}
-		} else if currentArray, ok := current.([]interface{}); ok {
-			// This case handles accessing elements within an array directly (e.g., path = ["[0]", "key"])
-			// Note: The current implementation of parsePathPart might not produce paths like this,
-			// but including for robustness / future path formats.
-			index, convErr := strconv.Atoi(key) // Assuming key is the index string here
-			if convErr != nil || index < 0 || index >= len(currentArray) {
-				return nil, WrapArrayIndexOutOfBounds(index, len(currentArray))
+		case []interface{}:
+			// Handle accessing elements within an array directly
+			index, convErr := strconv.Atoi(key) // Assuming key is the index string
+			if convErr != nil || index < 0 || index >= len(typedCurrent) {
+				return nil, WrapArrayIndexOutOfBounds(index, len(typedCurrent))
 			}
-			current = currentArray[index]
-		} else {
+			current = typedCurrent[index]
+		default:
 			// Cannot traverse further if not a map or array
 			return nil, WrapNonMapOrArrayTraversal(path[:i])
 		}

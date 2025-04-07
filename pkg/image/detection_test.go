@@ -79,6 +79,47 @@ func sortUnsupportedImages(images []UnsupportedImage) {
 	})
 }
 
+// assertDetectedImages compares two slices of DetectedImage field by field.
+// It assumes the slices have been sorted beforehand.
+func assertDetectedImages(t *testing.T, expected, actual []DetectedImage, checkOriginal bool) {
+	t.Helper()
+	assert.Equal(t, len(expected), len(actual), "Detected image count mismatch")
+	if len(expected) == len(actual) {
+		for i := range actual {
+			assert.Equal(t, expected[i].Reference.Registry, actual[i].Reference.Registry, fmt.Sprintf("detected[%d] Registry mismatch", i))
+			assert.Equal(t, expected[i].Reference.Repository, actual[i].Reference.Repository, fmt.Sprintf("detected[%d] Repository mismatch", i))
+			assert.Equal(t, expected[i].Reference.Tag, actual[i].Reference.Tag, fmt.Sprintf("detected[%d] Tag mismatch", i))
+			assert.Equal(t, expected[i].Reference.Digest, actual[i].Reference.Digest, fmt.Sprintf("detected[%d] Digest mismatch", i))
+			assert.Equal(t, expected[i].Path, actual[i].Path, fmt.Sprintf("detected[%d] path mismatch", i))
+			assert.Equal(t, expected[i].Pattern, actual[i].Pattern, fmt.Sprintf("detected[%d] pattern mismatch", i))
+			if checkOriginal {
+				assert.Equal(t, expected[i].Original, actual[i].Original, fmt.Sprintf("detected[%d] original mismatch", i))
+			}
+		}
+	} else {
+		assert.Equal(t, expected, actual, "Detected images mismatch (fallback diff)") // Fallback for detailed diff on length mismatch
+	}
+}
+
+// assertUnsupportedImages compares two slices of UnsupportedImage.
+// It assumes the slices have been sorted beforehand.
+func assertUnsupportedImages(t *testing.T, expected, actual []UnsupportedImage) {
+	t.Helper()
+	assert.Equal(t, len(expected), len(actual), "Unsupported image count mismatch")
+	if len(expected) == len(actual) {
+		for i := range actual {
+			assert.Equal(t, expected[i].Location, actual[i].Location, fmt.Sprintf("unsupported[%d] location mismatch", i))
+			assert.Equal(t, expected[i].Type, actual[i].Type, fmt.Sprintf("unsupported[%d] type mismatch", i))
+			if expected[i].Error != nil {
+				assert.Error(t, actual[i].Error, fmt.Sprintf("unsupported[%d] should have error", i))
+				assert.Equal(t, expected[i].Error.Error(), actual[i].Error.Error(), fmt.Sprintf("unsupported[%d] error string mismatch", i))
+			} else {
+				assert.NoError(t, actual[i].Error, fmt.Sprintf("unsupported[%d] should not have error", i))
+			}
+		}
+	} // No else needed, length assertion covers mismatch
+}
+
 func TestImageDetector(t *testing.T) {
 	type testCase struct {
 		name         string
@@ -412,38 +453,11 @@ func TestImageDetector_DetectImages_EdgeCases(t *testing.T) {
 			sortUnsupportedImages(unsupported)
 			sortUnsupportedImages(tc.expectedUnsupported)
 
-			// Compare Detected Images field by field
-			assert.Equal(t, len(tc.expected), len(detected), "Detected image count mismatch")
-			if len(tc.expected) == len(detected) {
-				for i := range detected {
-					// Check Reference fields individually instead of comparing the whole struct
-					assert.Equal(t, tc.expected[i].Reference.Registry, detected[i].Reference.Registry, fmt.Sprintf("detected[%d] Registry mismatch", i))
-					assert.Equal(t, tc.expected[i].Reference.Repository, detected[i].Reference.Repository, fmt.Sprintf("detected[%d] Repository mismatch", i))
-					assert.Equal(t, tc.expected[i].Reference.Tag, detected[i].Reference.Tag, fmt.Sprintf("detected[%d] Tag mismatch", i))
-					assert.Equal(t, tc.expected[i].Reference.Digest, detected[i].Reference.Digest, fmt.Sprintf("detected[%d] Digest mismatch", i))
-					// Skip comparing Original field as it may differ between implementations
+			// Compare Detected Images field by field using helper (checking Original field)
+			assertDetectedImages(t, tc.expected, detected, true)
 
-					assert.Equal(t, tc.expected[i].Path, detected[i].Path, fmt.Sprintf("detected[%d] path mismatch", i))
-					assert.Equal(t, tc.expected[i].Pattern, detected[i].Pattern, fmt.Sprintf("detected[%d] pattern mismatch", i))
-				}
-			} else {
-				assert.Equal(t, tc.expected, detected, "Detected images mismatch") // Fallback for detailed diff on length mismatch
-			}
-
-			// Check unsupported images count and content (comparing error strings)
-			assert.Len(t, unsupported, tc.expectedUnsupportedCount)
-			if len(unsupported) == tc.expectedUnsupportedCount {
-				for i := range unsupported {
-					assert.Equal(t, tc.expectedUnsupported[i].Location, unsupported[i].Location, fmt.Sprintf("unsupported[%d] location mismatch", i))
-					assert.Equal(t, tc.expectedUnsupported[i].Type, unsupported[i].Type, fmt.Sprintf("unsupported[%d] type mismatch", i))
-					if tc.expectedUnsupported[i].Error != nil {
-						assert.Error(t, unsupported[i].Error, fmt.Sprintf("unsupported[%d] should have error", i))
-						assert.Equal(t, tc.expectedUnsupported[i].Error.Error(), unsupported[i].Error.Error(), fmt.Sprintf("unsupported[%d] error string mismatch", i))
-					} else {
-						assert.NoError(t, unsupported[i].Error, fmt.Sprintf("unsupported[%d] should not have error", i))
-					}
-				}
-			} // No else needed, Length assertion already covers mismatch
+			// Compare Unsupported Images using helper
+			assertUnsupportedImages(t, tc.expectedUnsupported, unsupported)
 		})
 	}
 }
@@ -569,21 +583,8 @@ func TestImageDetector_GlobalRegistry(t *testing.T) {
 			SortDetectedImages(gotDetected)
 			SortDetectedImages(tc.wantDetected)
 
-			// Compare Detected Images field by field
-			assert.Equal(t, len(tc.wantDetected), len(gotDetected), "Detected image count mismatch")
-			if len(tc.wantDetected) == len(gotDetected) {
-				for i := range gotDetected {
-					assert.Equal(t, tc.wantDetected[i].Reference.Registry, gotDetected[i].Reference.Registry, fmt.Sprintf("detected[%d] Registry mismatch", i))
-					assert.Equal(t, tc.wantDetected[i].Reference.Repository, gotDetected[i].Reference.Repository, fmt.Sprintf("detected[%d] Repository mismatch", i))
-					assert.Equal(t, tc.wantDetected[i].Reference.Tag, gotDetected[i].Reference.Tag, fmt.Sprintf("detected[%d] Tag mismatch", i))
-					assert.Equal(t, tc.wantDetected[i].Reference.Digest, gotDetected[i].Reference.Digest, fmt.Sprintf("detected[%d] Digest mismatch", i))
-					assert.Equal(t, tc.wantDetected[i].Path, gotDetected[i].Path, fmt.Sprintf("detected[%d] path mismatch", i))
-					assert.Equal(t, tc.wantDetected[i].Pattern, gotDetected[i].Pattern, fmt.Sprintf("detected[%d] pattern mismatch", i))
-					assert.Equal(t, tc.wantDetected[i].Original, gotDetected[i].Original, fmt.Sprintf("detected[%d] original mismatch", i))
-				}
-			} else {
-				assert.Equal(t, tc.wantDetected, gotDetected, "Detected images mismatch") // Fallback
-			}
+			// Compare Detected Images field by field using helper (checking Original field)
+			assertDetectedImages(t, tc.wantDetected, gotDetected, true)
 		})
 	}
 }
@@ -657,28 +658,14 @@ func TestImageDetector_TemplateVariables(t *testing.T) {
 
 			SortDetectedImages(gotDetected)
 			SortDetectedImages(tc.wantDetected)
-			assert.Equal(t, len(tc.wantDetected), len(gotDetected), "Detected image count mismatch")
-			if len(tc.wantDetected) == len(gotDetected) {
-				for i := range gotDetected {
-					// Check Reference fields individually instead of comparing the whole struct
-					assert.Equal(t, tc.wantDetected[i].Reference.Registry, gotDetected[i].Reference.Registry, fmt.Sprintf("detected[%d] Registry mismatch", i))
-					assert.Equal(t, tc.wantDetected[i].Reference.Repository, gotDetected[i].Reference.Repository, fmt.Sprintf("detected[%d] Repository mismatch", i))
-					assert.Equal(t, tc.wantDetected[i].Reference.Tag, gotDetected[i].Reference.Tag, fmt.Sprintf("detected[%d] Tag mismatch", i))
-					assert.Equal(t, tc.wantDetected[i].Reference.Digest, gotDetected[i].Reference.Digest, fmt.Sprintf("detected[%d] Digest mismatch", i))
-					// Skip comparing Original field as it may differ between implementations
-
-					assert.Equal(t, tc.wantDetected[i].Path, gotDetected[i].Path, fmt.Sprintf("detected[%d] path mismatch", i))
-					assert.Equal(t, tc.wantDetected[i].Pattern, gotDetected[i].Pattern, fmt.Sprintf("detected[%d] pattern mismatch", i))
-					assert.Equal(t, tc.wantDetected[i].Original, gotDetected[i].Original, fmt.Sprintf("detected[%d] original mismatch", i))
-				}
-			} else {
-				assert.Equal(t, tc.wantDetected, gotDetected, "Detected images mismatch") // Fallback
-			}
-
-			// Compare unsupported images (adjust expectations based on strict mode)
 			SortUnsupportedImages(gotUnsupported)
 			SortUnsupportedImages(tc.wantUnsupported)
-			assert.Equal(t, tc.wantUnsupported, gotUnsupported, "Unsupported images mismatch")
+
+			// Compare Detected Images using helper (checking Original field)
+			assertDetectedImages(t, tc.wantDetected, gotDetected, true)
+
+			// Compare Unsupported Images using helper
+			assertUnsupportedImages(t, tc.wantUnsupported, gotUnsupported)
 		})
 	}
 }
@@ -784,20 +771,8 @@ func TestImageDetector_ContainerArrays(t *testing.T) {
 			SortDetectedImages(gotDetected)
 			SortDetectedImages(tc.wantDetected)
 
-			assert.Equal(t, len(tc.wantDetected), len(gotDetected), "Detected image count mismatch")
-			if len(tc.wantDetected) == len(gotDetected) {
-				for i := range gotDetected {
-					assert.Equal(t, tc.wantDetected[i].Reference.Registry, gotDetected[i].Reference.Registry, fmt.Sprintf("detected[%d] Registry mismatch", i))
-					assert.Equal(t, tc.wantDetected[i].Reference.Repository, gotDetected[i].Reference.Repository, fmt.Sprintf("detected[%d] Repository mismatch", i))
-					assert.Equal(t, tc.wantDetected[i].Reference.Tag, gotDetected[i].Reference.Tag, fmt.Sprintf("detected[%d] Tag mismatch", i))
-					assert.Equal(t, tc.wantDetected[i].Reference.Digest, gotDetected[i].Reference.Digest, fmt.Sprintf("detected[%d] Digest mismatch", i))
-					assert.Equal(t, tc.wantDetected[i].Path, gotDetected[i].Path, fmt.Sprintf("detected[%d] path mismatch", i))
-					assert.Equal(t, tc.wantDetected[i].Pattern, gotDetected[i].Pattern, fmt.Sprintf("detected[%d] pattern mismatch", i))
-					assert.Equal(t, tc.wantDetected[i].Original, gotDetected[i].Original, fmt.Sprintf("detected[%d] original mismatch", i))
-				}
-			} else {
-				assert.Equal(t, tc.wantDetected, gotDetected, "Detected images mismatch") // Fallback
-			}
+			// Compare Detected Images field by field using helper (checking Original field)
+			assertDetectedImages(t, tc.wantDetected, gotDetected, true)
 		})
 	}
 }
@@ -1013,41 +988,16 @@ func TestDetectImages(t *testing.T) {
 			assert.NoError(t, err) // Assuming detection itself doesn't error easily
 
 			// Sort results for comparison
-			SortDetectedImages(gotDetected)
-			SortDetectedImages(tt.wantDetected)
-			SortUnsupportedImages(gotUnsupported)
-			SortUnsupportedImages(tt.wantUnsupported)
+			sortDetectedImages(gotDetected)
+			sortDetectedImages(tt.wantDetected)
+			sortUnsupportedImages(gotUnsupported)
+			sortUnsupportedImages(tt.wantUnsupported)
 
-			// Compare Detected Images field by field
-			assert.Equal(t, len(tt.wantDetected), len(gotDetected), "Detected image count mismatch")
-			if len(tt.wantDetected) == len(gotDetected) {
-				for i := range gotDetected {
-					assert.Equal(t, tt.wantDetected[i].Reference.Registry, gotDetected[i].Reference.Registry, fmt.Sprintf("detected[%d] Registry mismatch", i))
-					assert.Equal(t, tt.wantDetected[i].Reference.Repository, gotDetected[i].Reference.Repository, fmt.Sprintf("detected[%d] Repository mismatch", i))
-					assert.Equal(t, tt.wantDetected[i].Reference.Tag, gotDetected[i].Reference.Tag, fmt.Sprintf("detected[%d] Tag mismatch", i))
-					assert.Equal(t, tt.wantDetected[i].Reference.Digest, gotDetected[i].Reference.Digest, fmt.Sprintf("detected[%d] Digest mismatch", i))
-					assert.Equal(t, tt.wantDetected[i].Path, gotDetected[i].Path, fmt.Sprintf("detected[%d] path mismatch", i))
-					assert.Equal(t, tt.wantDetected[i].Pattern, gotDetected[i].Pattern, fmt.Sprintf("detected[%d] pattern mismatch", i))
-				}
-			} else {
-				assert.Equal(t, tt.wantDetected, gotDetected, "Detected images mismatch") // Fallback
-			}
+			// Compare Detected Images field by field using helper
+			assertDetectedImages(t, tt.wantDetected, gotDetected, false)
 
-			// Compare Unsupported Images field by field (comparing error strings)
-			assert.Equal(t, len(tt.wantUnsupported), len(gotUnsupported), "Unsupported images count mismatch")
-			if len(tt.wantUnsupported) == len(gotUnsupported) {
-				for i := range gotUnsupported {
-					assert.Equal(t, tt.wantUnsupported[i].Location, gotUnsupported[i].Location, fmt.Sprintf("unsupported[%d] location mismatch", i))
-					assert.Equal(t, tt.wantUnsupported[i].Type, gotUnsupported[i].Type, fmt.Sprintf("unsupported[%d] type mismatch", i))
-					// Error comparison can be brittle, maybe check for specific error types or messages if needed
-					if tt.wantUnsupported[i].Error != nil {
-						require.Error(t, gotUnsupported[i].Error, "Expected an error for unsupported image [%d]", i)
-						// assert.ErrorContains(t, gotUnsupported[i].Error, tt.wantUnsupported[i].Error.Error(), "Unsupported error message mismatch [%d]", i)
-					} else {
-						assert.NoError(t, gotUnsupported[i].Error, "Did not expect an error for unsupported image [%d]")
-					}
-				}
-			} // No else needed, Length assertion already covers mismatch
+			// Check unsupported images count and content using helper
+			assertUnsupportedImages(t, tt.wantUnsupported, gotUnsupported)
 		})
 	}
 }

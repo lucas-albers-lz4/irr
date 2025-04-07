@@ -15,6 +15,13 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
+const (
+	// defaultDirPerm defines the default directory permissions (rwxr-x---)
+	defaultDirPerm = 0o750
+	// defaultFilePerm defines the default file permissions (rw-------)
+	defaultFilePerm = 0o600
+)
+
 // TestHarness provides a structure for setting up and running integration tests.
 type TestHarness struct {
 	t            *testing.T
@@ -35,7 +42,7 @@ func NewTestHarness(t *testing.T) *TestHarness {
 
 	// Ensure overrides directory exists with correct permissions (using a fixed relative path)
 	// G301 fix
-	if err := os.MkdirAll("../test-data/overrides", 0o750); err != nil {
+	if err := os.MkdirAll("../test-data/overrides", defaultDirPerm); err != nil {
 		require.NoError(t, err, "Failed to create test overrides directory: %v", err)
 	}
 
@@ -79,7 +86,7 @@ func (h *TestHarness) createDefaultRegistryMappingFile() (string, error) {
 
 	mappingsPath := filepath.Join(h.tempDir, "default-registry-mappings.yaml")
 	// G306 fix: Use secure file permissions (0600)
-	if err := os.WriteFile(mappingsPath, mappingsData, 0600); err != nil {
+	if err := os.WriteFile(mappingsPath, mappingsData, defaultFilePerm); err != nil {
 		return "", fmt.Errorf("failed to write default registry mappings file: %w", err)
 	}
 	return mappingsPath, nil
@@ -119,7 +126,7 @@ func (h *TestHarness) SetRegistries(target string, sources []string) {
 
 	// Ensure the test overrides directory exists
 	testOverridesDir := filepath.Join("..", "..", "test", "overrides") // Relative path to project root
-	if err := os.MkdirAll(testOverridesDir, 0750); err != nil {
+	if err := os.MkdirAll(testOverridesDir, defaultDirPerm); err != nil {
 		h.t.Fatalf("Failed to create test overrides directory %s: %v", testOverridesDir, err)
 	}
 
@@ -150,8 +157,8 @@ func (h *TestHarness) SetRegistries(target string, sources []string) {
 		h.t.Fatalf("Failed to marshal registry mappings: %v", err)
 	}
 
-	// G306 fix: Use secure file permissions (0600)
-	if err := os.WriteFile(mappingsPath, mappingsData, 0600); err != nil {
+	// G306 fix: Use secure file permissions
+	if err := os.WriteFile(mappingsPath, mappingsData, defaultFilePerm); err != nil {
 		h.t.Fatalf("Failed to write registry mappings to %s: %v", mappingsPath, err)
 	}
 	h.t.Logf("Registry mappings file created at: %s", mappingsPath) // Log the path
@@ -228,9 +235,8 @@ func (h *TestHarness) ValidateOverrides() error {
 
 	// Write the potentially modified overrides to a *temporary* file for helm template validation
 	tempValidationOverridesPath := filepath.Join(h.tempDir, "validation-overrides.yaml")
-	// G306 fix: Use secure file permissions (0600)
-	err = os.WriteFile(tempValidationOverridesPath, currentOverrides, 0600)
-	if err != nil {
+	// G306 fix: Use secure file permissions
+	if err := os.WriteFile(tempValidationOverridesPath, currentOverrides, defaultFilePerm); err != nil {
 		return fmt.Errorf("failed to write temporary validation overrides file '%s': %w", tempValidationOverridesPath, err)
 	}
 	h.t.Logf("Wrote %d bytes to temporary validation file: %s", len(currentOverrides), tempValidationOverridesPath)

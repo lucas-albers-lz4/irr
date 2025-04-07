@@ -6,6 +6,11 @@ import (
 	"strconv"
 )
 
+const (
+	// minPathLengthForIndex defines the minimum path length required for array index assignment
+	minPathLengthForIndex = 2
+)
+
 // GetValueAtPath retrieves a value from a nested map structure based on a path.
 // It handles maps and slices/arrays within the path.
 // Returns the value and true if found, (nil, false) if not found.
@@ -13,25 +18,26 @@ func GetValueAtPath(data map[string]interface{}, path []string) (interface{}, bo
 	current := interface{}(data)
 
 	for _, key := range path {
-		// Check if current level is a map
-		if currentMap, ok := current.(map[string]interface{}); ok {
-			val, exists := currentMap[key]
+		// Use type switch for cleaner handling
+		switch typedCurrent := current.(type) {
+		case map[string]interface{}:
+			val, exists := typedCurrent[key]
 			if !exists {
 				return nil, false
 			}
 			current = val
-		} else if currentSlice, ok := current.([]interface{}); ok {
+		case []interface{}:
 			// Handle slice/array index
 			index, err := strconv.Atoi(key)
 			if err != nil {
 				return nil, false // Invalid index format, path doesn't match
 			}
 
-			if index < 0 || index >= len(currentSlice) {
+			if index < 0 || index >= len(typedCurrent) {
 				return nil, false // Index out of bounds
 			}
-			current = currentSlice[index]
-		} else {
+			current = typedCurrent[index]
+		default:
 			// Current level is not a map or slice, but path continues
 			return nil, false // Path mismatch
 		}
@@ -90,7 +96,7 @@ func SetValueAtPath(data map[string]interface{}, path []string, value interface{
 
 	// Handle final array index assignment
 	if index, err := strconv.Atoi(lastKey); err == nil {
-		if len(path) < 2 {
+		if len(path) < minPathLengthForIndex {
 			return ErrArrayIndexAsOnlyElement
 		}
 		parentKey := path[len(path)-2]

@@ -322,44 +322,97 @@
                 * Error handling should be consistent with the documented behavior.
                 * Exit codes should match the expected values.
 
-4.  **Address Linter Warnings (Medium Priority -> Now Prioritized)**
-    *   **Goal:** Fix the remaining 187 linter warnings based on priority.
-    *   **High Priority (Fix First - Potential Bugs/Debugging Impediments):**
-        *   [ ] `errcheck` (4): Fix unchecked errors (e.g., `os.Remove`, `Close`, `json.MarshalIndent` in test files - some overlap with existing test fixes).
-        *   [ ] `wrapcheck` (6): Wrap errors returned from external packages (`helm`, `os/exec`, `yaml`) and interface methods to improve error context (e.g., in `cmd/irr/root.go`, `pkg/analysis/analyzer.go`, `pkg/chart/generator.go`).
-        *   [ ] `nilnil` (1): Fix ambiguous `nil, nil` return in `pkg/chart/generator_test.go` mock. Use a sentinel error.
-        *   [ ] `revive: unused-parameter` (11): Rename unused parameters to `_` to explicitly signal intent and improve code clarity. This change:
-            * Makes it clear that parameters are intentionally unused (self-documenting code)
-            * Helps compiler optimization by indicating values will never be referenced
-            * Prevents confusion during code review about potentially forgotten implementation
-            * Common in mock implementations and interface satisfaction where not all parameters are needed
-            * Implementation: Review all function signatures, especially in test files and mock implementations
-            * Validation: Ensure interface contracts are still satisfied after renaming
-    *   **Medium Priority (Maintainability/Refactoring/Potential Issues):**
-        *   [ ] `dupl` (7): Refactor duplicated assertion blocks in `pkg/image/detection_test.go` and validation logic in `test/integration/chart_override_test.go` into helper functions.
-        *   [ ] `errorlint` (1): Fix type assertion on `*exec.ExitError` in `test/integration/integration_test.go`; use `errors.As`.
-        *   [ ] `gocritic` (Refactoring): Address `ifElseChain`/`typeAssertChain` (rewrite as `switch`), `appendAssign` (review assignments in `test/integration/`).
-        *   [ ] `gosec` (4): Review `G304` warnings in test files (`pkg/registry/mappings_test.go`, `test/integration/integration_test.go`). Likely false positives, but confirm and add `#nosec` comments with justifications if safe.
-        *   [ ] `mnd` (14): Replace magic numbers with constants across various packages (e.g., `cmd/irr/root.go`, `pkg/chart/generator.go`, `pkg/image/detection.go`).
-        *   [ ] `revive` (Stuttering): Address `exported: type name ... stutters` (e.g., `analysis.AnalysisOptions`). Defer this until critical functionality is stable, as renaming requires careful refactoring across packages. (Note: Existing deferral maintained).
-    *   **Low Priority (Stylistic/Minor Readability - Refined Sequence):**
-        *   **Phase 1 (Safest Stylistic Fixes):**
-            *   [ ] `gocritic: octalLiteral` (6+): Use `0o` prefix for octal literals (e.g., `0o600`).
-            *   [ ] `revive: unused-parameter` (11): Rename unused parameters to `_`.
-            *   [ ] `revive: var-naming` (1): Fix `isUrl` -> `isURL` in `pkg/image/detection.go`.
-            *   [ ] `goconst` (2): Use constants for repeated strings (`"harbor.local"`, `"docker.io"` - verify constant usage).
-            *   [ ] `gocritic: emptyStringTest` (2): Replace `len(s) == 0` with `s == ""`, etc.
-            *   [ ] `gocritic: regexpSimplify` (1): Apply suggested regex simplification.
-            *   [ ] `gocritic: paramTypeCombine` (4): Combine adjacent parameters of the same type in function signatures.
-        *   **Phase 2 (Cleanup & Minor Refactoring):**
-            *   [ ] `revive: empty-block` (1): Remove the empty `for dec.Decode()` loop body in `pkg/chart/generator.go`.
-            *   [ ] `gocritic: commentedOutCode` (11+): Review and remove commented-out code blocks.
-            *   [ ] `revive: exported` (3): Add/fix comments for exported symbols (const `UnsupportedTypeUnknown`, function `DetectImages`, check others).
-            *   [ ] `gocritic: unnamedResult` (2): Add names to function results for clarity.
-            *   [ ] `gocritic: nestingReduce` (1): Invert simple if condition to reduce nesting in `pkg/override/path_utils_test.go`.
-        *   **Phase 3 (Potentially More Impactful):**
-            *   [ ] `lll` (62): Fix long lines (> 140 chars). Review each case; break lines or refactor where appropriate, especially complex function signatures and test assertions.
-    *   [ ] Run `golangci-lint run --config=.golangci.yml --fix ./...` periodically and address new issues.
+4.  **Address Linter Warnings (High Priority)**
+    *   **Goal:** Fix the remaining 101 linter warnings based on priority.
+    *   **High Priority (Fix First - Code Correctness & Maintainability):**
+        *   [ ] `revive` (7 issues):
+            * Fix exported comments for better documentation
+            * Fix variable naming (`isUrl` -> `isURL`)
+            * Fix type stutter (`AnalysisOptions`)
+            * Fix empty blocks
+            * Implementation:
+                1. Add proper comments for exported symbols
+                2. Rename variables to follow Go conventions
+                3. Consider renaming stuttering types
+                4. Remove or fill empty blocks with meaningful logic
+            * Files to update:
+                - `pkg/analysis/types.go`
+                - `pkg/image/detection.go`
+                - `pkg/chart/generator.go`
+                - `cmd/irr/root.go`
+
+        *   [ ] `goconst` (3 issues):
+            * Create constants for repeated strings:
+                - `"./test-chart"` -> `testChartPath`
+                - `"harbor.local"` -> `defaultTargetRegistry`
+                - `"docker.io"` -> use existing `defaultRegistry`
+            * Files to update:
+                - `pkg/chart/generator_test.go`
+                - `pkg/image/detection.go`
+
+        *   [ ] `misspell` (1 issue):
+            * Fix "marshalling" to "marshaling" in `pkg/chart/generator_test.go`
+
+    *   **Medium Priority (Code Style & Readability):**
+        *   [ ] `gocritic` (38 issues):
+            * Fix in order:
+                1. Remove commented-out imports (3 in `cmd/irr/override_test.go`)
+                2. Fix parameter type combinations (7 files)
+                3. Fix empty string tests (2 in `pkg/image/detection.go`)
+                4. Fix unnamed results (2 files)
+                5. Fix regexp simplification (1 in `cmd/irr/root.go`)
+                6. Fix nesting reduction (1 in `pkg/override/path_utils_test.go`)
+                7. Remove commented-out code (11 instances)
+                8. Fix append assignments (1 in `test/integration/harness.go`)
+                9. Fix if-else chains (2 in `test/integration/integration_test.go`)
+                10. Fix octal literal style (4 instances)
+
+    *   **Low Priority (Line Length & Formatting):**
+        *   [ ] `lll` (52 issues):
+            * Group by file type:
+                1. Command files (11 in `cmd/`)
+                2. Test files (21 in `test/`)
+                3. Core package files (20 in `pkg/`)
+            * Implementation approach:
+                1. Break long function signatures into multiple lines
+                2. Extract long string literals into constants
+                3. Split long test assertions into multiple statements
+                4. Use type aliases for long type names
+                5. Consider line wrapping for long error messages
+
+    **Implementation Strategy:**
+    1. Use individual linter runs to focus on one category at a time:
+        ```bash
+        # For each category
+        golangci-lint run --enable-only=<linter-name>
+        ```
+
+    2. Fix issues in this order:
+        1. `revive` - Documentation and naming issues
+        2. `goconst` - String constants
+        3. `misspell` - Simple spelling fixes
+        4. `gocritic` - Code style improvements
+        5. `lll` - Line length issues
+
+    3. After each category:
+        ```bash
+        # Verify fixes
+        golangci-lint run --enable-only=<linter-name>
+        # Run all linters to ensure no regressions
+        golangci-lint run
+        ```
+
+    4. Track progress:
+        - [ ] High Priority (11 issues)
+        - [ ] Medium Priority (38 issues)
+        - [ ] Low Priority (52 issues)
+
+    **Success Criteria:**
+    - All high and medium priority issues resolved
+    - Line length issues addressed where practical
+    - No regressions in previously fixed issues
+    - Code readability improved
+    - Documentation more consistent
 
 **Dependencies Between Tasks**
 

@@ -303,7 +303,7 @@ func (a *Analyzer) isImageString(key, value string) bool {
 	if strings.Contains(strings.ToLower(key), "image") {
 		// Basic check for image reference format: repo/name[:tag][@digest]
 		parts := strings.Split(value, "/")
-		if len(parts) >= 2 {
+		if len(parts) >= minimumSplitParts {
 			lastPart := parts[len(parts)-1]
 			return strings.Contains(lastPart, ":") || strings.Contains(lastPart, "@")
 		}
@@ -336,3 +336,8 @@ type Result struct {
 	ChartVersion string `json:"chartVersion" yaml:"chartVersion"`
 	// ... existing code ...
 }
+
+const (
+	// minimumSplitParts defines the minimum number of parts expected when checking if a string looks like repo/name:tag
+	minimumSplitParts = 2
+)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +20,15 @@ import (
 	"github.com/lalbers/irr/pkg/override"
 	"github.com/lalbers/irr/pkg/registry"
 	"github.com/lalbers/irr/pkg/strategy"
+)
+
+const (
+	// defaultFilePerm specifies the default file permission (read/write for owner)
+	defaultFilePerm fs.FileMode = 0o600
+	// percentageMultiplier is used for calculating percentages
+	percentageMultiplier = 100
+	// maxSplitTwo is the limit for splitting into at most two parts
+	maxSplitTwo = 2
 )
 
 // Package chart provides functionality for loading charts, detecting images, and generating override files.
@@ -291,7 +301,7 @@ func (g *Generator) Generate() (*override.File, error) {
 
 	// Check if processing threshold was met
 	if eligibleImagesCount > 0 {
-		successRate := float64(imagesSuccessfullyProcessed) / float64(eligibleImagesCount) * 100
+		successRate := float64(imagesSuccessfullyProcessed) / float64(eligibleImagesCount) * percentageMultiplier
 		debug.Printf("Image processing success rate: %.2f%% (Processed: %d, Eligible: %d, Threshold: %d%%)",
 			successRate, imagesSuccessfullyProcessed, eligibleImagesCount, g.threshold)
 		if int(successRate) < g.threshold {
@@ -337,7 +347,7 @@ type ThresholdError struct {
 
 func (e *ThresholdError) Error() string {
 	errMsg := fmt.Sprintf("processing failed: success rate %.2f%% below threshold %d%% (%d/%d eligible images processed)",
-		float64(e.ActualRate)/float64(e.Eligible)*100, e.Threshold, e.Processed, e.Eligible)
+		float64(e.ActualRate)/float64(e.Eligible)*percentageMultiplier, e.Threshold, e.Processed, e.Eligible)
 	if len(e.WrappedErrs) > 0 {
 		var errDetails []string
 		for _, err := range e.WrappedErrs {
@@ -621,7 +631,7 @@ func ValidateHelmTemplate(runner CommandRunner, chartPath string, overrides []by
 	}() // Clean up temp dir
 
 	overrideFilePath := filepath.Join(tempDir, "overrides.yaml")
-	if err := os.WriteFile(overrideFilePath, overrides, 0o600); err != nil {
+	if err := os.WriteFile(overrideFilePath, overrides, defaultFilePerm); err != nil {
 		return fmt.Errorf("failed to write temp overrides file: %w", err)
 	}
 	debug.Printf("Temporary override file written to: %s", overrideFilePath)
@@ -663,19 +673,19 @@ func ValidateHelmTemplate(runner CommandRunner, chartPath string, overrides []by
 // validateYAML checks if the byte slice contains valid YAML.
 // Keep this unexported as it's an internal helper for ValidateHelmTemplate.
 func validateYAML(yamlData []byte) error {
-	// Use yaml.v3 decoder which is stricter
 	dec := yaml.NewDecoder(bytes.NewReader(yamlData))
 	var node yaml.Node
-	for dec.Decode(&node) == nil {
-		// Successfully decoded a document, continue
+	for dec.Decode(&node) == nil { //revive:disable-line:empty-block
+		// This loop consumes all YAML documents in the stream.
 	}
 
-	// After the loop, check for decoding errors
+	// After the loop, check for decoding errors that are not EOF.
+	// The last call to Decode that returns io.EOF signifies successful parsing of all documents.
 	if err := dec.Decode(&node); err != nil && !errors.Is(err, io.EOF) {
 		debug.Printf("YAML validation failed: %v", err)
-		return fmt.Errorf("invalid YAML structure: %w", err)
+		return fmt.Errorf("invalid YAML structure: %w", err) // Use original error message format
 	}
-	return nil
+	return nil // No error means valid YAML
 }
 
 // validateCommonIssues checks for specific problematic patterns in parsed YAML.
@@ -693,7 +703,7 @@ func cleanupTemplateVariables(value interface{}) interface{} {
 		if strings.Contains(v, "{{") || strings.Contains(v, "${") {
 			// First, try to extract default value if present
 			if strings.Contains(v, "| default") {
-				parts := strings.SplitN(v, "| default", 2)
+				parts := strings.SplitN(v, "| default", maxSplitTwo)
 				if len(parts) > 1 {
 					defaultValStr := strings.TrimSpace(parts[1])
 					// More robustly remove trailing template characters like '}}', ' }', etc.

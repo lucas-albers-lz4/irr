@@ -42,17 +42,8 @@ func NewChartAnalysis() *ChartAnalysis {
 	}
 }
 
-// AnalysisOptions represents options for chart analysis
-type AnalysisOptions struct {
-	OutputFormat string // text or json
-	Mode         string // basic or detailed
-	Filter       string // empty or image-only
-	OutputFile   string // empty for stdout
-	Strict       bool   `json:"strict" yaml:"strict"`
-}
-
 // Options configures the analysis process.
 type Options struct {
-	ValuesFiles  []string `json:"valuesFiles" yaml:"valuesFiles"`
-	StringValues []string `json:"stringValues" yaml:"stringValues"`
+	ChartPath string `yaml:"chartPath"`
+	// Add other configuration fields as needed
 }

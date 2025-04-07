@@ -25,6 +25,7 @@ func TestLoadMappings(t *testing.T) {
 
 	// Create an empty temporary file
 	emptyTmpFile := filepath.Join(tmpDir, "empty.yaml")
+	// #nosec G304 // Testing file operations with temporary files is safe
 	emptyFile, err := os.Create(emptyTmpFile)
 	require.NoError(t, err)
 	if err := emptyFile.Close(); err != nil { // Close immediately after creation
@@ -39,6 +40,7 @@ func TestLoadMappings(t *testing.T) {
 
 	// Create a temporary file with an invalid extension
 	invalidExtTmpFile := filepath.Join(tmpDir, "mappings.txt")
+	// #nosec G304 // Testing file operations with temporary files is safe
 	invalidExtFile, err := os.Create(invalidExtTmpFile)
 	require.NoError(t, err)
 	if err := invalidExtFile.Close(); err != nil {
