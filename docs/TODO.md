@@ -146,17 +146,13 @@
 
 **Completed Tasks:**
 
-*   **Registry Consolidation (Critical Priority):** Successfully consolidated duplicated logic from `pkg/registrymapping` into `pkg/registry`, updating all codebase imports and tests. Removed the legacy `pkg/registrymapping` package.
-*   **Core Logic Unit Test Fixes (High Priority):**
-    *   Resolved import and type errors related to registry consolidation in `pkg/image/detection_test.go` and `cmd/irr/override_test.go`.
-    *   Fixed significant regressions in `pkg/image` parsing logic (`ParseImageReference`, `TryExtract...`), updated dependent tests (`TestDetectImages`, `TestImageDetector_ContainerArrays`, etc.) and verified normalization. Added focused unit tests for internal functions (`traverseValues`, `tryExtractImageFromMap`, `tryExtractImageFromString`, registry filtering, error paths) for better isolation.
-    *   Fixed `pkg/strategy` unit tests (`TestPrefixSourceRegistryStrategy_GeneratePath_WithMappings`) to work with the consolidated registry package.
-*   **Command Layer & Integration Test Fixes (Partial):**
-    *   Fixed `TestReadOverridesFromStdout` integration test by using `--output-file`.
-*   **Linter Warning Fixes (High & Medium Priority):**
-    *   Resolved all high-priority `revive`, `goconst`, and `misspell` warnings.
-    *   Fixed the `typecheck` error.
-    *   Resolved several medium-priority `gocritic` warnings (commented imports, param type combinations, empty string tests, unnamed results, regexp simplification).
+*   **Registry Consolidation:** Consolidated logic into `pkg/registry`, removed `pkg/registrymapping`, and fixed related import/type errors in tests.
+*   **Core Logic Unit Test Fixes:**
+    *   Fixed significant regressions in `pkg/image` parsing/detection (`ParseImageReference`, `TryExtract...`, `traverseValues`), updated tests, and added focused tests for internal functions.
+    *   Fixed `pkg/strategy` unit tests for consolidated registry compatibility.
+    *   Fixed `pkg/chart` generator tests (`TestGenerate/*`) resolving issues with nested map detection and registry mapping application.
+*   **Partial Integration Test Fixes:** Fixed `TestReadOverridesFromStdout` integration test.
+*   **Linter Fixes:** Resolved high-priority (`revive`, `goconst`, `misspell`, `typecheck`) and several medium-priority (`gocritic`) warnings.
 
 **Remaining Tasks & Priorities:**
 
@@ -166,32 +162,27 @@
 +- When making linter fixes, verify functionality isn't broken by running relevant tests
 +
 1.  **Fix Remaining Core Logic Unit Test Failures (High Priority)**
-    *   **`pkg/chart` & `pkg/generator`:**
-        *   [ ] Debug `TestGenerate/*` failures in `pkg/chart/generator_test.go`:
-            *   **Files:** `pkg/chart/generator_test.go`, `pkg/chart/generator.go`
-            *   **Hints:** In `generator_test.go`, trace `registry.Mappings` into `Generator.Generate`. In `generator.go`, check the loop calling `PathStrategy.GeneratePath`. Add `require.NoError` for `os.Remove` calls and check map accesses in tests.
-+           *   **Testing:** `go test -v ./pkg/chart/... -run TestGenerate`
-+           *   **Dependencies:** None, but success here is required before integration tests will pass
+    *   **(Completed)** ~~`pkg/chart` & `pkg/generator`~~
 
 2.  **Fix Remaining Command Layer & Integration Test Failures (Medium Priority)**
     *   **`cmd/irr`:**
-        *   [ ] Address `TestRunOverride/errcheck` failures in `cmd/irr/override_test.go`: Ensure `os.Remove` errors are checked for reliable test cleanup.
+        *   [x] Investigated `errcheck` findings in `cmd/irr/override_test.go` (`TestOverrideCmdExecution`).
             *   **Files:** `cmd/irr/override_test.go`
-            *   **Hints:** Locate `os.Remove` calls (likely in `defer` blocks) and wrap with `require.NoError(t, err)`.
-+           *   **Testing:** `go test -v ./cmd/irr/... -run TestRunOverride`
-+           *   **Risk:** Low - this fix only affects tests, not functionality
+            *   **Outcome:** No code changes needed. The `os.Remove` for the temporary registry mapping file already includes error checking. The `os.RemoveAll` for the temporary test directory intentionally omits the error check in the `defer`, consistent with common Go testing patterns for cleanup.
++           *   **Testing:** Verified via code review.
++           *   **Risk:** N/A (No change)
     *   **Integration Tests (`test/integration`):**
         *   [ ] Fix `TestStrictMode`: Debug the full `--strict` flag flow: Verify CLI parsing, check that detection logic identifies the specific unsupported structure in `unsupported-test` chart, and confirm translation to Exit Code 5.
             *   **Files:** `test/integration/integration_test.go`, `cmd/irr/main.go` (or `root.go`), `pkg/image/detection.go`, `test/fixtures/charts/unsupported-test`
             *   **Hints:** Ensure `--strict` flag is passed in test. Trace flag processing in `cmd/`. Verify detection logic in `pkg/image`. Confirm error handling leads to `os.Exit(5)`.
 +           *   **Testing:** `go test -v ./test/integration/... -run TestStrictMode`
 +           *   **Dependencies:** Depends on core logic unit tests passing, particularly `pkg/image` detection logic
-        *   [ ] Fix remaining failures (e.g., `TestComplexChartFeatures/*`): Debug specific interactions: e.g., Does `--registry-mapping` work with `--path-strategy` for images in `globals`? How are templated image fields (`{{ .Values... }}`) handled? Does it handle partially specified images (repo/tag only) in complex nested values?
+        *   [x] Fix remaining failures (e.g., `TestComplexChartFeatures/*`): Debug specific interactions: e.g., Does `--registry-mapping` work with `--path-strategy` for images in `globals`? How are templated image fields (`{{ .Values... }}`) handled? Does it handle partially specified images (repo/tag only) in complex nested values?
             *   **Files:** `test/integration/integration_test.go`, `cmd/irr/main.go` (and related cmd files), `pkg/image/detection.go`, `pkg/override/generator.go`, `pkg/strategy/*.go`, `test/fixtures/charts/*`
-            *   **Hints:** Add targeted logging in `cmd/`, `pkg/image`, `pkg/strategy`, `pkg/override` to trace flag interpretation, image detection, path generation, and override construction for the specific failing chart fixture.
-+           *   **Testing:** `go test -v ./test/integration/... -run TestComplexChartFeatures`
+            *   **Hints:** Ran tests with `DEBUG=1`, observed all sub-tests passed successfully. Previous fixes likely resolved underlying issues.
++           *   **Testing:** `DEBUG=1 go test -v ./test/integration/... -run TestComplexChartFeatures` passed.
 +           *   **Dependencies:** Depends on all core logic unit tests passing, particularly `pkg/image`, `pkg/strategy`, and `pkg/override`
-+           *   **Debug Strategy:** Add temporary debug logs with `DEBUG=1 go test -v ./test/integration/...` and examine the full trace of image detection, path strategy application, and override generation
++           *   **Debug Strategy:** No further debugging needed as tests are passing.
 
 3.  **Address Remaining Linter Warnings (Medium / Low Priority)**
 +   *   **Important Note:** After each linter fix, run relevant tests to ensure no functionality is broken:
