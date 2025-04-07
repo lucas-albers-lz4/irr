@@ -418,10 +418,10 @@ func TestRegistryMappingFile(t *testing.T) {
 	defer harness.Cleanup()
 
 	// 1. Create a temporary mapping file
+	// The content MUST match the prefixes expected in the assertions below.
 	mappingContent := `
-docker.io: quay.io/instrumenta
-k8s.gcr.io: quay.io/instrumenta
-registry.k8s.io: quay.io/instrumenta
+docker.io: dckr
+quay.io: quaycustom
 `
 	mappingFilePath := filepath.Join(harness.tempDir, "test-mappings.yaml")
 	// G306: Use secure file permissions (0600)

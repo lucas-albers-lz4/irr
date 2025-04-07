@@ -75,6 +75,7 @@ const (
 	UnsupportedTypeUnknown UnsupportedType = iota
 	UnsupportedTypeMap
 	UnsupportedTypeString
+	UnsupportedTypeNonSource
 )
 
 // ImageDetector provides functionality for detecting images in values
@@ -164,30 +165,30 @@ func NormalizeRegistry(registry string) string {
 	return registry
 }
 
-// SanitizeRegistryForPath makes a registry name safe for use in a path
+// SanitizeRegistryForPath makes a registry name safe for use in a path component.
+// It primarily removes dots and ports.
 func SanitizeRegistryForPath(registry string) string {
-	// For docker.io, normalize to a standard "dockerio"
-	if registry == "docker.io" || registry == "index.docker.io" {
+	// Normalize docker.io variants first
+	if registry == "docker.io" || registry == "index.docker.io" || registry == "" {
 		return "dockerio"
 	}
 
-	// Extract port if present
-	var port string
+	// Strip port number if present
 	if portIndex := strings.LastIndex(registry, ":"); portIndex != -1 {
-		port = registry[portIndex+1:]
-		registry = registry[:portIndex]
+		potentialPort := registry[portIndex+1:]
+		if _, err := fmt.Sscan(potentialPort, new(int)); err == nil {
+			registry = registry[:portIndex]
+		} else {
+			debug.Printf("SanitizeRegistryForPath: ':' found in '%s' but part after it ('%s') is not numeric, not treating as port.", registry, potentialPort)
+		}
 	}
 
-	// Replace dots with empty string (remove them)
+	// Remove dots
 	sanitized := strings.ReplaceAll(registry, ".", "")
 
-	// Replace slashes with dashes
-	sanitized = strings.ReplaceAll(sanitized, "/", "-")
+	// DO NOT replace slashes
 
-	// Add back port if it was present
-	if port != "" {
-		sanitized = sanitized + port
-	}
+	// DO NOT add port back
 
 	return sanitized
 }
@@ -321,37 +322,90 @@ func (d *ImageDetector) DetectImages(values interface{}, path []string) ([]Detec
 		}
 
 	case string:
-		debug.Println("Processing string")
-		// Heuristic: Check if string looks potentially like an image OR if path is known image path
-		looksLikeImage := strings.Contains(v, ":") || strings.Contains(v, "@")
-		shouldProcess := isImagePath(path) || looksLikeImage
+		processThisString := false
+		isKnownImagePath := isImagePath(path)
+		looksLikeAnImage := strings.Contains(v, ":") || strings.Contains(v, "@") || strings.Count(v, "/") > 0
 
-		if shouldProcess {
+		if d.context.Strict {
+			// In strict mode, process if it's a known image path OR if it looks like an image (even if path is unknown)
+			// We will categorize errors/non-source later.
+			processThisString = isKnownImagePath || looksLikeAnImage
+			if !processThisString && !isNonImagePath(path) { // Log only truly ambiguous skips
+				debug.Printf("Strict mode: Skipping string at path %v (not known image path, doesn't look like image): '%s'", path, v)
+			} else if !processThisString && isNonImagePath(path) {
+				debug.Printf("Strict mode: Skipping string at known non-image path %v: '%s'", path, v)
+			}
+		} else {
+			// Non-strict: Process if known path OR looks like image, AND not known non-image path
+			processThisString = (isKnownImagePath || looksLikeAnImage) && !isNonImagePath(path)
+			if !processThisString {
+				debug.Printf("Non-strict: Skipping string at path %v (isKnown=%v, looksLike=%v, isNonImage=%v): '%s'", path, isKnownImagePath, looksLikeAnImage, isNonImagePath(path), v)
+			}
+		}
+
+		if processThisString {
+			debug.Printf("Processing string at path %v: '%s'", path, v)
 			detectedImage, err := d.tryExtractImageFromString(v, path)
 
-			// Check if parsing was successful and the reference is valid
 			if err == nil && detectedImage != nil && IsValidImageReference(detectedImage.Reference) {
-				// Parsed successfully and looks valid, now check if it's a source registry
-				if IsSourceRegistry(detectedImage.Reference, d.context.SourceRegistries, d.context.ExcludeRegistries) {
-					debug.Printf("Detected valid string-based image at path %v: %v", path, detectedImage.Reference)
-					allDetected = append(allDetected, *detectedImage)
+				// Parsed OK, valid reference
+				debug.Printf("Checking IsSourceRegistry for path %v, image %s", path, detectedImage.Reference.String())
+				isSource := IsSourceRegistry(detectedImage.Reference, d.context.SourceRegistries, d.context.ExcludeRegistries)
+				debug.Printf("IsSourceRegistry result for path %v: %v", path, isSource)
+
+				if isSource {
+					// Valid source image
+					if !d.context.Strict {
+						// Non-strict: Add to detected
+						debug.Printf("Detected valid source string-based image at path %v: %v", path, detectedImage.Reference)
+						allDetected = append(allDetected, *detectedImage)
+					} else { // Strict mode
+						if isKnownImagePath {
+							// Strict & Known Path: Add to detected
+							debug.Printf("Detected valid source string-based image at known path %v: %v", path, detectedImage.Reference)
+							allDetected = append(allDetected, *detectedImage)
+						} else {
+							// Strict & Ambiguous Path: Mark unsupported
+							debug.Printf("Strict mode: Parsed valid source image '%s' at ambiguous path %v. Marking unsupported.", v, path)
+							allUnsupported = append(allUnsupported, UnsupportedImage{Location: path, Type: UnsupportedTypeString, Error: ErrAmbiguousStringPath})
+						}
+					}
+				} else { // Not a source registry
+					debug.Printf("Entered 'Not a source registry' block for path %v", path)
+					debug.Printf("String parsed OK but not a source registry at path %v: %v", path, detectedImage.Reference)
+					if d.context.Strict {
+						// Strict: Mark unsupported (NonSource)
+						debug.Printf("Strict mode: Marking non-source image as unsupported: %v", path)
+						allUnsupported = append(allUnsupported, UnsupportedImage{Location: path, Type: UnsupportedTypeNonSource, Error: nil})
+					}
+					// Non-strict ignores non-source images
+				}
+			} else { // Parsing failed OR reference is invalid
+				parseErr := err
+				if parseErr == nil {
+					parseErr = fmt.Errorf("parsed reference is invalid")
+					debug.Printf("String parsed but reference invalid at path %v: '%s'", path, v)
 				} else {
-					debug.Printf("Skipping valid string-based image (not a source registry) at path %v: %v", path, detectedImage.Reference)
+					debug.Printf("String parsing failed at path %v for value '%s': %v", path, v, parseErr)
 				}
-			} else if err != nil {
-				// Parsing failed, log it and decide if it's unsupported based on strictness and path
-				debug.Printf("String parsing failed at path %v for value '%s': %v", path, v, err)
-				// Only add to unsupported in strict mode IF it's NOT known to be a non-image path
-				if d.context.Strict && !isNonImagePath(path) && errors.Is(err, ErrInvalidImageString) {
-					allUnsupported = append(allUnsupported, UnsupportedImage{Location: path, Type: UnsupportedTypeString, Error: err})
+
+				if d.context.Strict {
+					// Strict: Any parse failure/invalid ref for a processed string is unsupported
+					finalError := parseErr
+					// Check if the failure was ambiguous (looks like image, but not known path AND parse failed/invalid)
+					if !isKnownImagePath && looksLikeAnImage {
+						debug.Printf("Strict mode: Marking ambiguous/unparseable string as unsupported: %v (original error: %v)", path, parseErr)
+						// Wrap the original parse error with the ambiguous path error if it's not already that error
+						if !errors.Is(parseErr, ErrAmbiguousStringPath) {
+							finalError = fmt.Errorf("%w: %w", ErrAmbiguousStringPath, parseErr)
+						}
+					} else {
+						debug.Printf("Strict mode: Marking invalid/unparseable string at known path as unsupported: %v", path)
+					}
+					allUnsupported = append(allUnsupported, UnsupportedImage{Location: path, Type: UnsupportedTypeString, Error: finalError})
 				}
-				// Ignore other errors (like empty string, templates handled in tryExtract) unless debugging
+				// Non-strict ignores parse failures
 			}
-			// If err == nil but detectedImage == nil or !IsValidImageReference (shouldn't happen often now)
-			// or if parsing succeeded but it wasn't a source registry, we just ignore it.
-		} else {
-			// String didn't look like an image and wasn't at a known image path
-			debug.Printf("Skipping string at path %v as it doesn't look like an image: %s", path, v)
 		}
 
 	case bool, float64, int, nil:
@@ -365,6 +419,19 @@ func (d *ImageDetector) DetectImages(values interface{}, path []string) ([]Detec
 	}
 
 	return allDetected, allUnsupported, nil
+}
+
+// equalPath checks if two path slices are identical.
+func equalPath(p1, p2 []string) bool {
+	if len(p1) != len(p2) {
+		return false
+	}
+	for i := range p1 {
+		if p1[i] != p2[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // tryExtractImageFromMap attempts to parse an image reference from a map structure.

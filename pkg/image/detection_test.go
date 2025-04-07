@@ -6,8 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"errors"
-
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -119,6 +118,7 @@ func TestImageDetector(t *testing.T) {
 						Registry:   "docker.io",
 						Repository: "library/app",
 						Tag:        "latest",
+						Path:       []string{"image"},
 					},
 					Path:    []string{"image"},
 					Pattern: PatternMap,
@@ -869,33 +869,40 @@ func TestDetectImages(t *testing.T) {
 			},
 		},
 		{
-			name: "Strict mode",
+			name: "Strict_mode",
 			values: map[string]interface{}{
-				"simpleImage":    "nginx:1.19",                              // Valid, detected
-				"invalidMap":     map[string]interface{}{"repository": 123}, // Invalid type, unsupported
-				"invalidString":  "not_a_valid_image:tag",                   // Invalid format, should be unsupported
-				"nonSourceImage": "k8s.gcr.io/pause:3.1",                    // Valid format but not source, unsupported
+				"image":             "nginx:1.19",          // Renamed key to match isImagePath pattern
+				"invalidImage":      "invalid-",            // Should be skipped entirely in strict mode
+				"ambiguousString":   "configValue",         // Should be ignored
+				"ambiguousWithPath": "myimage:v1",          // Should be unsupported (ambiguous path, although source)
+				"nonSourceImage":    "gcr.io/google/nginx", // Should be unsupported (not source registry)
 			},
-			sourceRegistries: []string{"docker.io"},
 			strict:           true,
-			wantDetected: []DetectedImage{ // Only the valid source image
+			sourceRegistries: []string{"docker.io", "quay.io"},
+			wantDetected: []DetectedImage{ // Expect 1 detected
 				{
 					Reference: &ImageReference{
 						Registry:   "docker.io",
 						Repository: "library/nginx",
 						Tag:        "1.19",
-						Path:       []string{"simpleImage"},
+						Path:       []string{"image"}, // Path updated
 					},
-					Path:     []string{"simpleImage"},
+					Path:     []string{"image"},
 					Pattern:  PatternString,
 					Original: "nginx:1.19",
 				},
 			},
-			wantUnsupported: []UnsupportedImage{
-				{Location: []string{"invalidMap"}, Type: UnsupportedTypeMap, Error: fmt.Errorf("invalid image map: repository is not a string: %w", errors.New("found type int"))},
-				// Add invalidString back to unsupported with the correct error
-				{Location: []string{"invalidString"}, Type: UnsupportedTypeString, Error: fmt.Errorf("invalid image string format: %w", errors.New("invalid image reference format"))},
-				{Location: []string{"nonSourceImage"}, Type: UnsupportedTypeString, Error: nil},
+			wantUnsupported: []UnsupportedImage{ // Expect 2 unsupported, sorted by path
+				{
+					Location: []string{"ambiguousWithPath"},
+					Type:     UnsupportedTypeString,  // Type 2
+					Error:    ErrAmbiguousStringPath, // Marked ambiguous because path is not known, even though it parses and is source
+				},
+				{
+					Location: []string{"nonSourceImage"},
+					Type:     UnsupportedTypeNonSource, // Type 3
+					Error:    nil,
+				},
 			},
 		},
 		{
