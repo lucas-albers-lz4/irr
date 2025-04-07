@@ -1,1 +1,0 @@
-Error: chart "prometheus-operator-admiss..." matching  not found in prometheus-community index. (try 'helm repo update'): no chart name found
