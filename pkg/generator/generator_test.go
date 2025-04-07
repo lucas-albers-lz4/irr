@@ -1,3 +1,4 @@
+// Package generator_test contains tests for the generator package.
 package generator
 
 import (
@@ -77,7 +78,7 @@ func TestGenerate_WithMappings(t *testing.T) {
 	}
 	strategy := strategy.NewPrefixSourceRegistryStrategy()
 	mappings := &registry.Mappings{
-		Mappings: []registry.Mapping{
+		Entries: []registry.Mapping{
 			{Source: "old-registry.com", Target: "mapped-registry.com/oldreg"},
 			// No mapping for other-registry.com
 		},

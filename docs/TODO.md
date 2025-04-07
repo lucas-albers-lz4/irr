@@ -188,6 +188,26 @@
                     *   [x] Verify `GetTargetRegistry` tests cover: basic mapping, normalization, nil/empty maps, no match, carriage returns.
                     *   [x] Verify test fixtures cover all scenarios.
                     *   [x] Verify error handling coverage for all defined errors.
+    *   **Fix Import and Type Issues (High Priority)** ✓ COMPLETED
+        *   **Dependencies & Notes:** These two test file fixes can largely be done independently, but the final verification step depends on both being complete. Fixing these might uncover deeper logic issues masked by the current compile errors.
+        *   [x] Fix `pkg/image/detection_test.go`:
+            *   Add `UnsupportedTypeExcludedImage` constant/type to `pkg/image/errors.go` (and potentially `stringer` map if used).
+            *   **Potential Issue:** Verify the logic in `detection.go` correctly *uses* this new type when filtering excluded registries. If not, the detection logic itself may need adjustment for the test to pass.
+            *   Update test cases to expect `UnsupportedTypeExcludedImage`.
+            *   Verify all relevant test cases pass.
+        *   [x] Fix `cmd/irr/override_test.go`:
+            *   Update import from `registrymapping` to `registry`.
+            *   Update type references from `registrymapping.RegistryMappings` to `registry.Mappings`.
+            *   Update mock generator factory signature in the test setup (`currentGeneratorFactory = func(...)`) to use `registry.Mappings`.
+                *   **Potential Issue:** This signature change might affect *multiple* tests within `override_test.go` that use this factory setup.
+            *   **Dependency:** Relies on the consolidated `pkg/registry` functions (`LoadMappings`, etc.) behaving as expected. Test failures might indicate issues in the consolidation itself.
+            *   Update test cases as needed.
+            *   Verify all tests in the file pass.
+        *   [x] Verify no other files still reference the old `registrymapping` package:
+            *   Run `go mod tidy` and review changes carefully.
+            *   Use `grep -r 'registrymapping' .` (or similar) to search for remaining references (including comments/docs).
+            *   Update any found references.
+            *   Update references to `.Mappings` field to use `.Entries` in relevant files (`analyze.go`, test files).
     *   **`pkg/image`:**
         *   **Note:** Significant regression detected in `ParseImageReference` logic after refactoring, causing widespread unit test failures (`TestParseImageReference`, `TestTryExtractImageFromString_EdgeCases`, `TestDetectImages`, etc.). The parsing of registry/repo/tag/digest components seemed incorrect. Plan is to revert `ParseImageReference` to a known-good state and re-apply necessary changes carefully.
         *   **Debugging Progress:**
@@ -233,7 +253,7 @@
                 * Use descriptive test names clearly indicating the tested scenario.
                 * Include both positive and negative test cases (valid input → success, invalid input → correct error).
                 * Document any assumptions or dependencies between tests.
-    *   **`pkg/strategy`:**
+    *   **pkg/strategy**:
         *   [x] Debug `TestPrefixSourceRegistryStrategy_GeneratePath_WithMappings`: 
             * Verify interaction with the *consolidated* `pkg/registry` package.
             * Ensure mappings are loaded and applied correctly *before* path generation logic.
@@ -247,9 +267,9 @@
                 * Test should verify that the path generated includes the correctly mapped target registry.
                 * Test should validate handling of both mapped and unmapped source registries.
                 * Test should verify registry name sanitization (dots removed, etc.).
-    *   **`pkg/chart` & `pkg/generator`:**
+    *   **pkg/chart` & `pkg/generator`:**
         *   [ ] Debug `TestGenerate/*` failures in `pkg/chart/generator_test.go`:
-            * [ ] Verify `Generator.Generate` logic interacts correctly with the consolidated `pkg/registry` and fixed `pkg/image`, `pkg/strategy`. 
+            * [ ] Verify `Generator.Generate` logic interacts correctly with the consolidated `pkg/registry` package.
                 * Implementation: 
                   * Check import statements to ensure they reference the consolidated `pkg/registry` package.
                   * Update any type references that might still use the old registry types.
@@ -302,25 +322,44 @@
                 * Error handling should be consistent with the documented behavior.
                 * Exit codes should match the expected values.
 
-4.  **Address Linter Warnings (Medium Priority)**
-    *   [ ] Fix remaining straightforward `revive` warnings:
-        *   [ ] `package-comments`: Add missing comments to packages.
-             * Implementation: Add a package comment at the top of each Go file following the format: `// Package <name> provides ...`
-        *   [ ] `unused-parameter`: Rename unused parameters to `_`.
-             * Implementation: Scan for function parameters that aren't used in the function body and rename them to `_`.
-        *   [ ] `exported: comment ... should be of the form`: Fix format/add comments.
-             * Implementation: Ensure exported function comments follow the format `// FunctionName does ...`
-        *   [ ] `exported: exported const ... should have comment`: Add comment.
-             * Implementation: Add comments to exported constants describing their purpose.
-        *   [ ] `empty-block`: Remove empty loop or block statements.
-             * Implementation: Either add functionality to empty blocks or remove them if not needed.
-    *   [ ] Fix remaining `staticcheck` / `unused` warnings (e.g., `S1005`, `digestRegexCompiled`).
-        * Implementation: Address each warning individually by understanding the underlying issue.
-        * For `digestRegexCompiled` specifically, ensure it's properly used or remove if unused.
+4.  **Address Linter Warnings (Medium Priority -> Now Prioritized)**
+    *   **Goal:** Fix the remaining 187 linter warnings based on priority.
+    *   **High Priority (Fix First - Potential Bugs/Debugging Impediments):**
+        *   [ ] `errcheck` (4): Fix unchecked errors (e.g., `os.Remove`, `Close`, `json.MarshalIndent` in test files - some overlap with existing test fixes).
+        *   [ ] `wrapcheck` (6): Wrap errors returned from external packages (`helm`, `os/exec`, `yaml`) and interface methods to improve error context (e.g., in `cmd/irr/root.go`, `pkg/analysis/analyzer.go`, `pkg/chart/generator.go`).
+        *   [ ] `nilnil` (1): Fix ambiguous `nil, nil` return in `pkg/chart/generator_test.go` mock. Use a sentinel error.
+        *   [ ] `revive: unused-parameter` (11): Rename unused parameters to `_` to explicitly signal intent and improve code clarity. This change:
+            * Makes it clear that parameters are intentionally unused (self-documenting code)
+            * Helps compiler optimization by indicating values will never be referenced
+            * Prevents confusion during code review about potentially forgotten implementation
+            * Common in mock implementations and interface satisfaction where not all parameters are needed
+            * Implementation: Review all function signatures, especially in test files and mock implementations
+            * Validation: Ensure interface contracts are still satisfied after renaming
+    *   **Medium Priority (Maintainability/Refactoring/Potential Issues):**
+        *   [ ] `dupl` (7): Refactor duplicated assertion blocks in `pkg/image/detection_test.go` and validation logic in `test/integration/chart_override_test.go` into helper functions.
+        *   [ ] `errorlint` (1): Fix type assertion on `*exec.ExitError` in `test/integration/integration_test.go`; use `errors.As`.
+        *   [ ] `gocritic` (Refactoring): Address `ifElseChain`/`typeAssertChain` (rewrite as `switch`), `appendAssign` (review assignments in `test/integration/`).
+        *   [ ] `gosec` (4): Review `G304` warnings in test files (`pkg/registry/mappings_test.go`, `test/integration/integration_test.go`). Likely false positives, but confirm and add `#nosec` comments with justifications if safe.
+        *   [ ] `mnd` (14): Replace magic numbers with constants across various packages (e.g., `cmd/irr/root.go`, `pkg/chart/generator.go`, `pkg/image/detection.go`).
+        *   [ ] `revive` (Stuttering): Address `exported: type name ... stutters` (e.g., `analysis.AnalysisOptions`). Defer this until critical functionality is stable, as renaming requires careful refactoring across packages. (Note: Existing deferral maintained).
+    *   **Low Priority (Stylistic/Minor Readability - Refined Sequence):**
+        *   **Phase 1 (Safest Stylistic Fixes):**
+            *   [ ] `gocritic: octalLiteral` (6+): Use `0o` prefix for octal literals (e.g., `0o600`).
+            *   [ ] `revive: unused-parameter` (11): Rename unused parameters to `_`.
+            *   [ ] `revive: var-naming` (1): Fix `isUrl` -> `isURL` in `pkg/image/detection.go`.
+            *   [ ] `goconst` (2): Use constants for repeated strings (`"harbor.local"`, `"docker.io"` - verify constant usage).
+            *   [ ] `gocritic: emptyStringTest` (2): Replace `len(s) == 0` with `s == ""`, etc.
+            *   [ ] `gocritic: regexpSimplify` (1): Apply suggested regex simplification.
+            *   [ ] `gocritic: paramTypeCombine` (4): Combine adjacent parameters of the same type in function signatures.
+        *   **Phase 2 (Cleanup & Minor Refactoring):**
+            *   [ ] `revive: empty-block` (1): Remove the empty `for dec.Decode()` loop body in `pkg/chart/generator.go`.
+            *   [ ] `gocritic: commentedOutCode` (11+): Review and remove commented-out code blocks.
+            *   [ ] `revive: exported` (3): Add/fix comments for exported symbols (const `UnsupportedTypeUnknown`, function `DetectImages`, check others).
+            *   [ ] `gocritic: unnamedResult` (2): Add names to function results for clarity.
+            *   [ ] `gocritic: nestingReduce` (1): Invert simple if condition to reduce nesting in `pkg/override/path_utils_test.go`.
+        *   **Phase 3 (Potentially More Impactful):**
+            *   [ ] `lll` (62): Fix long lines (> 140 chars). Review each case; break lines or refactor where appropriate, especially complex function signatures and test assertions.
     *   [ ] Run `golangci-lint run --config=.golangci.yml --fix ./...` periodically and address new issues.
-        * Implementation: Integrate this into the development workflow, possibly adding a pre-commit hook.
-    *   [ ] **Defer:** `revive: exported: type name ... stutters`. Consider renaming types like `ImageReference` to `Reference`.
-        * Note: While type renaming improves code quality, it should be deferred until critical functionality is stabilized to avoid introducing new issues.
 
 **Dependencies Between Tasks**
 

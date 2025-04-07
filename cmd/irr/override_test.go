@@ -13,7 +13,7 @@ import (
 	// Need analysis types for mocking generator return value
 	"github.com/lalbers/irr/pkg/chart"
 	"github.com/lalbers/irr/pkg/override"
-	registrymapping "github.com/lalbers/irr/pkg/registrymapping"
+	registry "github.com/lalbers/irr/pkg/registry"
 	"github.com/lalbers/irr/pkg/strategy"
 	// Import necessary packages (bytes, os, strings might be needed later)
 	// "bytes"
@@ -81,9 +81,9 @@ func TestOverrideCmdArgs(t *testing.T) {
 		// --- Invalid Flag Values ---
 		{
 			name:           "invalid_path_strategy",
-			args:           []string{"override", "--chart-path", "./chart", "--target-registry", "tr", "--source-registries", "sr", "--path-strategy", "invalid-strat"},
+			args:           []string{"override", "--chart-path", "./chart", "--target-registry", "tr", "--source-registries", "sr", "--path-strategy", "invalid-start"},
 			expectErr:      true,
-			stdErrContains: "unknown path strategy: invalid-strat",
+			stdErrContains: "unknown path strategy: invalid-start",
 		},
 	}
 
@@ -212,7 +212,7 @@ func TestOverrideCmdExecution(t *testing.T) {
 
 			// Setup Generator Mock
 			if tt.mockGeneratorFunc != nil {
-				currentGeneratorFactory = func(_, _ string, _, _ []string, _ strategy.PathStrategy, _ *registrymapping.RegistryMappings, _ bool, _ int, _ chart.Loader) GeneratorInterface {
+				currentGeneratorFactory = func(_, _ string, _, _ []string, _ strategy.PathStrategy, _ *registry.Mappings, _ bool, _ int, _ chart.Loader) GeneratorInterface {
 					return &mockGenerator{GenerateFunc: tt.mockGeneratorFunc}
 				}
 			} else {
@@ -249,7 +249,7 @@ func TestOverrideCmdExecution(t *testing.T) {
 				// Create a temporary mapping file in the CWD for the test
 				mappingContent := []byte("docker.io: mock-target.com/dckrio")
 				mappingFilename := "temp-test-mappings.yaml" // Relative path
-				err := os.WriteFile(mappingFilename, mappingContent, 0600)
+				err := os.WriteFile(mappingFilename, mappingContent, 0o600)
 				require.NoError(t, err, "Failed to create temp mapping file in CWD")
 
 				// Add the registry-mappings flag with the relative path

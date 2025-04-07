@@ -2,7 +2,7 @@ package image
 
 import "errors"
 
-// Package image errors
+// Package image defines errors related to image reference parsing and detection.
 //
 // This file contains all error definitions for the image package.
 // DO NOT define package errors in other files.

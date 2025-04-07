@@ -1,4 +1,4 @@
-// Package image provides functionality for parsing, detecting, and manipulating container image references.
+// Package image provides core functionality for detecting, parsing, and normalizing container image references within Helm chart values.
 package image
 
 import (
@@ -84,6 +84,7 @@ const (
 	UnsupportedTypeNonStringValue
 	UnsupportedTypeStringParseError
 	UnsupportedTypeNonSourceImage
+	UnsupportedTypeExcludedImage
 	UnsupportedTypeAmbiguousString
 	UnsupportedTypeList
 	UnsupportedTypeTemplate

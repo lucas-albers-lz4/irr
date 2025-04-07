@@ -1,3 +1,4 @@
+// Package image_test contains tests related to linting and validation within the image package.
 package image
 
 import (

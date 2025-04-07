@@ -1,4 +1,4 @@
-// Package registry provides error definitions for registry-related operations.
+// Package registry handles registry mapping logic and associated errors.
 package registry
 
 import (

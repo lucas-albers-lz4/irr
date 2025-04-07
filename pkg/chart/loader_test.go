@@ -1,3 +1,4 @@
+// Package chart_test contains tests for the chart package.
 package chart
 
 import (
@@ -18,17 +19,17 @@ func createTempChartDir(t *testing.T, name string, chartYaml string, valuesYaml 
 	tempDir := t.TempDir()
 
 	chartPath := filepath.Join(tempDir, name)
-	err := os.MkdirAll(filepath.Join(chartPath, "templates"), 0750)
+	err := os.MkdirAll(filepath.Join(chartPath, "templates"), 0o750)
 	require.NoError(t, err, "Failed to create chart dir structure")
 
-	err = os.WriteFile(filepath.Join(chartPath, "Chart.yaml"), []byte(chartYaml), 0600)
+	err = os.WriteFile(filepath.Join(chartPath, "Chart.yaml"), []byte(chartYaml), 0o600)
 	require.NoError(t, err, "Failed to write Chart.yaml")
 
-	err = os.WriteFile(filepath.Join(chartPath, "values.yaml"), []byte(valuesYaml), 0600)
+	err = os.WriteFile(filepath.Join(chartPath, "values.yaml"), []byte(valuesYaml), 0o600)
 	require.NoError(t, err, "Failed to write values.yaml")
 
 	// Add a dummy template file
-	err = os.WriteFile(filepath.Join(chartPath, "templates", "dummy.yaml"), []byte("kind: Pod"), 0600)
+	err = os.WriteFile(filepath.Join(chartPath, "templates", "dummy.yaml"), []byte("kind: Pod"), 0o600)
 	require.NoError(t, err, "Failed to write dummy template")
 
 	return chartPath
@@ -79,7 +80,7 @@ image:
 
 	t.Run("Load From File Path (Not Dir or TGZ)", func(t *testing.T) {
 		filePath := filepath.Join(t.TempDir(), "not-a-chart.txt")
-		err := os.WriteFile(filePath, []byte("hello"), 0600)
+		err := os.WriteFile(filePath, []byte("hello"), 0o600)
 		require.NoError(t, err)
 
 		chartInstance, loadErr := loader.Load(filePath)

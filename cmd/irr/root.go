@@ -25,31 +25,35 @@ var AppFs afero.Fs = afero.NewOsFs()
 
 // Global flag variables (consider scoping if appropriate)
 var (
-	chartPath            string
-	targetRegistry       string
-	sourceRegistries     string
-	outputFile           string // Used by multiple commands
-	pathStrategy         string
-	verbose              bool
-	dryRun               bool
-	strictMode           bool
-	excludeRegistries    string
-	threshold            int
-	debugEnabled         bool // Used by multiple commands
-	registryMappingsFile string
+	chartPath         string
+	targetRegistry    string
+	sourceRegistries  []string
+	outputFile        string // Used by multiple commands
+	pathStrategy      string
+	verbose           bool
+	dryRun            bool
+	strictMode        bool
+	excludeRegistries []string
+	pathDepth         int
+	debugEnabled      bool   // Used by multiple commands
+	registryFile      string // Renamed from registryMappingsFile
+	imageRegistry     string
+	globalRegistry    string
+	templateMode      bool
 )
 
 // Exit codes (keep public if needed elsewhere, otherwise consider keeping private)
 const (
-	ExitSuccess                 = 0
-	ExitGeneralRuntimeError     = 1
-	ExitInputConfigurationError = 2
-	ExitChartParsingError       = 3
-	ExitImageProcessingError    = 4
-	ExitUnsupportedStructError  = 5
-	ExitThresholdNotMetError    = 6
-	ExitCodeInvalidStrategy     = 7
-	ExitHelmTemplateError       = 8
+	ExitSuccess                   = 0
+	ExitGeneralRuntimeError       = 1
+	ExitInputConfigurationError   = 2
+	ExitChartParsingError         = 3
+	ExitParsingError              = 3 // Added for image parsing
+	ExitImageProcessingError      = 4
+	ExitUnsupportedStructure      = 5 // Added for strict mode
+	ExitProcessingThresholdNotMet = 6 // Added for threshold
+	ExitCodeInvalidStrategy       = 7
+	ExitHelmTemplateError         = 8
 )
 
 // ExitCodeError struct (keep public if needed)
@@ -140,11 +144,30 @@ Helm value overrides that redirect image references to a new registry.`,
 	}
 
 	// Add persistent flags available to all commands
-	rootCmd.PersistentFlags().BoolVar(&debugEnabled, "debug", false, "Enable debug logging")
+	rootCmd.PersistentFlags().BoolVar(&debugEnabled, "debug", false, "Enable verbose debug logging")
 
 	// Add subcommands
 	rootCmd.AddCommand(newDefaultCmd()) // Renamed to overrideCmd?
 	rootCmd.AddCommand(newAnalyzeCmd())
+
+	// Add Persistent Flags
+	rootCmd.PersistentFlags().StringVarP(&chartPath, "chart-path", "p", "", "Path to the Helm chart directory or archive")
+	rootCmd.PersistentFlags().StringVarP(&targetRegistry, "target-registry", "t", "", "Target container registry URL")
+	rootCmd.PersistentFlags().StringSliceVarP(&sourceRegistries, "source-registries", "s", []string{}, "Source container registry URLs")
+	rootCmd.PersistentFlags().StringSliceVarP(&excludeRegistries, "exclude-registries", "e", []string{}, "Source registries to exclude")
+	rootCmd.PersistentFlags().BoolVar(&strictMode, "strict", false, "Enable strict mode")
+	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output")
+	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "Preview changes instead of writing file")
+	rootCmd.PersistentFlags().IntVar(&pathDepth, "path-depth", 10, "Maximum recursion depth for values traversal")
+	rootCmd.PersistentFlags().StringVar(&imageRegistry, "image-registry", "", "Global image registry override (DEPRECATED, use global-registry)")
+	rootCmd.PersistentFlags().StringVar(&globalRegistry, "global-registry", "", "Global image registry override")
+	rootCmd.PersistentFlags().StringVar(&registryFile, "registry-file", "", "Path to YAML file containing registry mappings")
+	rootCmd.PersistentFlags().StringVarP(&outputFile, "output-file", "o", "", "Path to the output override file")
+	rootCmd.PersistentFlags().StringVar(&pathStrategy, "path-strategy", "prefix-source-registry", "Path generation strategy")
+	rootCmd.PersistentFlags().BoolVar(&templateMode, "template-mode", true, "Enable template variable detection")
+
+	// NOTE: Cannot mark persistent flags as required conditionally for a specific subcommand here.
+	// Validation must happen within the RunE function of the command.
 
 	return rootCmd
 }
@@ -170,7 +193,7 @@ func Execute() {
 func newDefaultCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "override [flags]",
-		Short: "Generate Helm overrides for redirecting container images (default action)",
+		Short: "Generate Helm overrides for redirecting container images",
 		Long: `Generate Helm value overrides that redirect container images from source registries
 to a target registry. This is the original functionality of IRR. If no subcommand is specified, this command runs by default.`,
 		RunE: runOverride,
@@ -178,200 +201,132 @@ to a target registry. This is the original functionality of IRR. If no subcomman
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-
-	// Add flags specific to the override command
-	f := cmd.Flags()
-	f.StringVar(&chartPath, "chart-path", "", "Path to the Helm chart (directory or .tgz archive)")
-	f.StringVar(&targetRegistry, "target-registry", "", "Target registry URL (e.g., harbor.example.com:5000)")
-	f.StringVar(&sourceRegistries, "source-registries", "", "Comma-separated list of source registries to rewrite (e.g., docker.io,quay.io)")
-	f.StringVar(&outputFile, "output-file", "", "Output file path for overrides (default: stdout)")
-	f.StringVar(&pathStrategy, "path-strategy", "prefix-source-registry", "Path strategy to use (currently only prefix-source-registry is supported)")
-	f.BoolVar(&verbose, "verbose", false, "Enable verbose output")
-	f.BoolVar(&dryRun, "dry-run", false, "Preview changes without writing file")
-	f.BoolVar(&strictMode, "strict", false, "Fail on unrecognized image structures")
-	f.StringVar(&excludeRegistries, "exclude-registries", "", "Comma-separated list of registries to exclude from processing")
-	f.IntVar(&threshold, "threshold", 100, "Success threshold percentage (0-100)")
-	f.StringVar(&registryMappingsFile, "registry-mappings", "", "Path to YAML file containing registry mappings")
-
-	// Mark required flags for override command
-	if err := cmd.MarkFlagRequired("chart-path"); err != nil {
-		// This should never happen, but log it in case it does
-		fmt.Fprintf(os.Stderr, "Error marking chart-path as required: %v\n", err)
-	}
-	if err := cmd.MarkFlagRequired("target-registry"); err != nil {
-		fmt.Fprintf(os.Stderr, "Error marking target-registry as required: %v\n", err)
-	}
-	if err := cmd.MarkFlagRequired("source-registries"); err != nil {
-		fmt.Fprintf(os.Stderr, "Error marking source-registries as required: %v\n", err)
-	}
-
 	return cmd
 }
 
 // runOverride implements the logic for the override command.
-func runOverride(cmd *cobra.Command, _ []string) error {
-	debug.FunctionEnter("runDefault (overrideCmd)") // Keep debug context name for now
-	defer debug.FunctionExit("runDefault (overrideCmd)")
+func runOverride(_ *cobra.Command, _ []string) error {
+	debug.FunctionEnter("runOverride")
+	defer debug.FunctionExit("runOverride")
 
 	debug.Println("Validating inputs...")
 	// --- Input Validation ---
-	if chartPath == "" || targetRegistry == "" || sourceRegistries == "" {
-		// Required flags are handled by Cobra, but double-check just in case.
-		return wrapExitCodeError(ExitInputConfigurationError, "missing required flags", errors.New("chart-path, target-registry, and source-registries are required"))
+	if chartPath == "" || targetRegistry == "" || len(sourceRegistries) == 0 {
+		return &ExitCodeError{Code: ExitInputConfigurationError, Err: errors.New("missing required flags: --chart-path, --target-registry, --source-registries must be provided")}
 	}
+
+	// Validate target registry format
 	if !registryRegex.MatchString(targetRegistry) {
-		return wrapExitCodeError(ExitInputConfigurationError, "invalid target registry format", fmt.Errorf("target registry '%s' is invalid", targetRegistry))
+		return &ExitCodeError{Code: ExitInputConfigurationError, Err: fmt.Errorf("invalid target registry format: %s", targetRegistry)}
 	}
-	debug.Printf("Target Registry Input: %s", targetRegistry)
-
-	// Validate source registries format
-	srcRegs := strings.Split(sourceRegistries, ",")
-	validSrcRegs := []string{}
-	for _, reg := range srcRegs {
-		trimmedReg := strings.TrimSpace(reg)
-		if trimmedReg == "" {
-			continue // Skip empty entries
-		}
-		// Optional: Add regex validation for each source registry if needed
-		// if !registryRegex.MatchString(trimmedReg) { ... }
-		validSrcRegs = append(validSrcRegs, trimmedReg)
-	}
-	if len(validSrcRegs) == 0 {
-		return wrapExitCodeError(ExitInputConfigurationError, "invalid source registries", errors.New("source-registries must contain at least one non-empty registry"))
-	}
-	debug.Println("Input validation passed.")
-
-	// Parse exclude registries
-	var validExcludeRegs []string
-	if excludeRegistries != "" {
-		excludeRegsList := strings.Split(excludeRegistries, ",")
-		for _, reg := range excludeRegsList {
-			trimmedReg := strings.TrimSpace(reg)
-			if trimmedReg != "" {
-				validExcludeRegs = append(validExcludeRegs, trimmedReg)
-			}
+	// Validate source registry formats
+	for _, sr := range sourceRegistries {
+		if !registryRegex.MatchString(sr) {
+			return &ExitCodeError{Code: ExitInputConfigurationError, Err: fmt.Errorf("invalid source registry format: %s", sr)}
 		}
 	}
-	debug.Printf("Source Registries: %v", validSrcRegs)
-	debug.Printf("Exclude Registries: %v", validExcludeRegs)
+	// Validate exclude registry formats
+	for _, er := range excludeRegistries {
+		if !registryRegex.MatchString(er) {
+			return &ExitCodeError{Code: ExitInputConfigurationError, Err: fmt.Errorf("invalid exclude registry format: %s", er)}
+		}
+	}
 
-	// --- Load Registry Mappings ---
+	// Load registry mappings if provided
 	var mappings *registry.Mappings
 	var loadMappingsErr error
-	if registryMappingsFile != "" {
-		debug.Printf("Loading registry mappings from: %s", registryMappingsFile)
-		mappings, loadMappingsErr = registry.LoadMappings(registryMappingsFile)
+	if registryFile != "" {
+		debug.Printf("Loading registry mappings from: %s", registryFile)
+		mappings, loadMappingsErr = registry.LoadMappings(registryFile)
 		if loadMappingsErr != nil {
-			return wrapExitCodeError(ExitInputConfigurationError, "failed to load registry mappings", loadMappingsErr)
+			// Wrap the error for exit code handling
+			return wrapExitCodeError(ExitInputConfigurationError, fmt.Sprintf("failed to load registry mappings from %s", registryFile), loadMappingsErr)
 		}
-		debug.Printf("[DEBUG root.go] Loaded registryMappings: %+v (is nil: %t)", mappings, mappings == nil)
-		if mappings != nil {
-			debug.Printf("[DEBUG root.go] Loaded Mappings list: %+v", mappings.Mappings)
-		}
+		debug.Printf("[DEBUG root.go] Loaded registry mappings: %+v (is nil: %t)", mappings, mappings == nil)
 	}
 
-	// --- Get Path Strategy ---
-	debug.Printf("GetStrategy: Getting strategy for name: %s", pathStrategy)
-	strat, strategyErr := strategy.GetStrategy(pathStrategy, mappings)
+	// --- Get Path Strategy --- // Moved validation earlier, now just get strategy
+	selectedStrategy, strategyErr := strategy.GetStrategy(pathStrategy, mappings) // Pass mappings
 	if strategyErr != nil {
-		// Wrap the specific strategy error with the correct exit code
 		return &ExitCodeError{Code: ExitCodeInvalidStrategy, Err: strategyErr}
 	}
-	debug.Printf("GetStrategy: Using %T", strat)
+	debug.Printf("Using path strategy: %T", selectedStrategy)
 
-	// --- Create Generator ---
-	// Use the factory to create the generator, passing the parsed flags
-	// Crucially, pass the 'strictMode' boolean variable bound to the --strict flag
-	generator := currentGeneratorFactory(chartPath, targetRegistry, validSrcRegs, validExcludeRegs, strat, mappings, strictMode, threshold, nil) // Pass nil loader to use default
+	// Use the global flag variables like chartPath, targetRegistry, sourceRegistries etc.
+	debug.Printf("Chart Path: %s", chartPath)
+	debug.Printf("Target Registry: %s", targetRegistry)
+	debug.Printf("Source Registries: %v", sourceRegistries)
+	debug.Printf("Exclude Registries: %v", excludeRegistries)
+	debug.Printf("Registry File: %s", registryFile)
+
+	// --- Instantiate Generator ---
+	generator := currentGeneratorFactory(chartPath, targetRegistry, sourceRegistries, excludeRegistries, selectedStrategy, mappings, strictMode, pathDepth, nil)
 
 	// --- Generate Overrides ---
-	overrideFile, genErr := generator.Generate()
-
-	// --- Handle Generation Errors with Exit Codes ---
+	debug.Println("Generating overrides...")
+	overrideData, genErr := generator.Generate()
 	if genErr != nil {
-		var chartParsingErr *chart.ParsingError
-		var imgProcessingErr *chart.ImageProcessingError
-		var thresholdErr *chart.ThresholdError
-		var unsupportedErr *chart.UnsupportedStructureError // Assume this exists or adapt
+		debug.Printf("Error during override generation: %v", genErr)
 
 		errMsg := fmt.Sprintf("error generating overrides: %s", genErr.Error())
 		debug.Printf(errMsg) // Log the detailed error
 
-		// Check error types and wrap with appropriate exit codes
-		if errors.As(genErr, &chartParsingErr) {
-			return &ExitCodeError{Code: ExitChartParsingError, Err: errors.New(errMsg)}
-		} else if errors.As(genErr, &imgProcessingErr) {
-			// Distinguish between general processing error and unsupported structure in strict mode
-			// The generator should ideally return a specific error type for strict mode failure.
-			// For now, let's assume the generator's error message indicates strict mode failure if applicable.
-			// OR, we check the unsupportedMatches directly *before* this error check in the Generator itself.
-			// Based on current generator code, it returns a generic error for strict mode failure.
-			// We rely on that error message containing "strict mode enabled".
-			if strictMode && strings.Contains(genErr.Error(), "unsupported structures found") {
-				// Return specific exit code for strict mode failure
-				return &ExitCodeError{Code: ExitUnsupportedStructError, Err: errors.New(errMsg)}
-			}
-			return &ExitCodeError{Code: ExitImageProcessingError, Err: errors.New(errMsg)}
-		} else if errors.As(genErr, &thresholdErr) {
-			return &ExitCodeError{Code: ExitThresholdNotMetError, Err: errors.New(errMsg)}
-		} else if errors.As(genErr, &unsupportedErr) { // Hypothetical specific error type
-			return &ExitCodeError{Code: ExitUnsupportedStructError, Err: errors.New(errMsg)}
-		} else if strings.Contains(genErr.Error(), "unsupported structures found") {
-			// Catch-all for strict mode error if specific type doesn't exist yet
-			return &ExitCodeError{Code: ExitUnsupportedStructError, Err: errors.New(errMsg)}
-		}
+		// Check errors in a reasonable order, using correct types from pkg/chart
+		var parsingErr *chart.ParsingError
+		var unsupportedErr *chart.UnsupportedStructureError
+		var thresholdErr *chart.ThresholdNotMetError
 
-		// Default to general runtime error if type is unknown
-		return &ExitCodeError{Code: ExitGeneralRuntimeError, Err: errors.New(errMsg)}
+		if errors.As(genErr, &parsingErr) {
+			// Handle specific parsing failure (using the chart package's definition)
+			return wrapExitCodeError(ExitChartParsingError, errMsg, genErr) // Use ExitChartParsingError
+		} else if errors.As(genErr, &unsupportedErr) {
+			// Handle unsupported structure error (if strict mode is enabled)
+			return wrapExitCodeError(ExitUnsupportedStructure, errMsg, genErr) // Use ExitUnsupportedStructure
+		} else if errors.As(genErr, &thresholdErr) {
+			// Handle low threshold error
+			return wrapExitCodeError(ExitProcessingThresholdNotMet, errMsg, genErr) // Use ExitProcessingThresholdNotMet
+		} else {
+			// Handle generic generation error
+			// Wrap the original error for context
+			return fmt.Errorf("failed to generate overrides: %w", genErr)
+		}
 	}
+	debug.Println("Override generation complete.")
 
 	// --- Handle Output ---
-	yamlData, err := overrideFile.ToYAML()
-	if err != nil {
-		return wrapExitCodeError(ExitGeneralRuntimeError, "failed to marshal overrides to YAML", err)
-	}
-
 	if dryRun {
-		debug.Println("Dry run enabled, printing overrides to stdout.")
-		if _, err := fmt.Fprintln(cmd.OutOrStdout(), string(yamlData)); err != nil {
-			return fmt.Errorf("writing dry-run output to stdout: %w", err)
+		fmt.Println("--- Dry Run: Generated Overrides ---")
+		outputBytes, err := overrideData.ToYAML()
+		if err != nil {
+			return wrapExitCodeError(ExitGeneralRuntimeError, "failed to marshal overrides to YAML for dry run", err)
 		}
-	} else if outputFile != "" {
-		debug.Printf("Writing overrides to file: %s", outputFile)
-		// G306: Use secure file permissions (0600)
-		if err := afero.WriteFile(AppFs, outputFile, yamlData, 0600); err != nil {
-			return wrapExitCodeError(ExitGeneralRuntimeError, "failed to write overrides file", err)
-		}
-		// Always print confirmation after successful write
-		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Overrides written to: %s\n", outputFile); err != nil {
-			return fmt.Errorf("writing confirmation message to stdout: %w", err)
-		}
+		fmt.Println(string(outputBytes))
+		fmt.Println("--- End Dry Run ---")
 	} else {
-		debug.Println("Writing overrides to stdout")
-		if _, err := fmt.Fprintln(cmd.OutOrStdout(), string(yamlData)); err != nil {
-			return fmt.Errorf("writing output to stdout: %w", err)
+		// Determine output file path
+		outputFilePath := outputFile // Use the flag value directly
+		if outputFilePath == "" {
+			// Use a static default filename
+			outputFilePath = "chart-overrides.yaml"
+			debug.Printf("Output file not specified, defaulting to: %s", outputFilePath)
+		}
+
+		debug.Printf("Writing overrides to file: %s", outputFilePath)
+		yamlBytes, err := overrideData.ToYAML()
+		if err != nil {
+			return wrapExitCodeError(ExitGeneralRuntimeError, "failed to marshal overrides to YAML for writing", err)
+		}
+		// Use afero to write the file
+		if writeErr := afero.WriteFile(AppFs, outputFilePath, yamlBytes, 0o600); writeErr != nil {
+			return wrapExitCodeError(ExitGeneralRuntimeError, fmt.Sprintf("failed to write overrides to file %s", outputFilePath), writeErr)
+		}
+		if verbose {
+			fmt.Printf("Overrides written to: %s\n", outputFilePath)
 		}
 	}
 
-	if verbose {
-		// Print summary information if verbose
-		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "\n--- Summary ---\n"); err != nil {
-			return fmt.Errorf("writing verbose summary header: %w", err)
-		}
-		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Chart Processed: %s\n", overrideFile.ChartName); err != nil {
-			return fmt.Errorf("writing verbose summary chart name: %w", err)
-		}
-		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Overrides Generated: %d\n", len(overrideFile.Overrides)); err != nil { // Count top-level keys
-			return fmt.Errorf("writing verbose summary override count: %w", err)
-		}
-		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Unsupported Structures Found: %d\n", len(overrideFile.Unsupported)); err != nil {
-			return fmt.Errorf("writing verbose summary unsupported count: %w", err)
-		}
-		// Add more details if needed
-	}
-
-	debug.Println("Override generation successful.")
-	return nil // ExitSuccess
+	debug.Println("Override command finished successfully.")
+	return nil
 }
 
 // --- Analyze Command --- Moved from analyze.go
@@ -418,7 +373,7 @@ func newAnalyzeCmd() *cobra.Command {
 			if analyzeOutputFile != "" {
 				debug.Printf("Writing analysis output to file: %s", analyzeOutputFile)
 				// Use afero WriteFile
-				if err := afero.WriteFile(AppFs, analyzeOutputFile, []byte(output), 0644); err != nil {
+				if err := afero.WriteFile(AppFs, analyzeOutputFile, []byte(output), 0o644); err != nil {
 					return wrapExitCodeError(ExitGeneralRuntimeError, "failed to write analysis output", err)
 				}
 			} else {

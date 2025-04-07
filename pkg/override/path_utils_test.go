@@ -1,3 +1,4 @@
+// Package override_test contains tests for the override package, specifically focusing on path utilities.
 package override
 
 import (

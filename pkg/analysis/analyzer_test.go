@@ -1,3 +1,4 @@
+// Package analysis_test contains tests for the analysis package.
 package analysis
 
 import (

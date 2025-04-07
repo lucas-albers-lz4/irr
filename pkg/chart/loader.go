@@ -1,3 +1,4 @@
+// Package chart provides functionality for loading and processing Helm charts.
 package chart
 
 import (

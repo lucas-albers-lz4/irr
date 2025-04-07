@@ -1,4 +1,4 @@
-// Package errors provides centralized error definitions for the chart package.
+// Package chart provides functionality for loading and processing Helm charts, including error definitions.
 package chart
 
 import (

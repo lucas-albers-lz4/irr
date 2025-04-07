@@ -1305,7 +1305,7 @@ func TestDetector_DetectImages_TraversalLogic(t *testing.T) {
 			wantUnsupported: []UnsupportedImage{
 				{
 					Location: []string{"excludedImage"},
-					Type:     UnsupportedTypeExcludedImage,
+					Type:     UnsupportedTypeExcludedImage, // CORRECT: Use the new type here
 					Error:    nil,
 				},
 			},

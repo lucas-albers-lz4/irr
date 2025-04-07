@@ -1,3 +1,4 @@
+// Package registry_test contains tests for the registry package.
 package registry
 
 import (
@@ -26,7 +27,9 @@ func TestLoadMappings(t *testing.T) {
 	emptyTmpFile := filepath.Join(tmpDir, "empty.yaml")
 	emptyFile, err := os.Create(emptyTmpFile)
 	require.NoError(t, err)
-	emptyFile.Close() // Close immediately after creation
+	if err := emptyFile.Close(); err != nil { // Close immediately after creation
+		t.Logf("Warning: failed to close empty temp file: %v", err)
+	}
 
 	// Create a temporary file with invalid YAML
 	invalidYAMLContent := `"key: value" : missing_quote`
@@ -38,11 +41,13 @@ func TestLoadMappings(t *testing.T) {
 	invalidExtTmpFile := filepath.Join(tmpDir, "mappings.txt")
 	invalidExtFile, err := os.Create(invalidExtTmpFile)
 	require.NoError(t, err)
-	invalidExtFile.Close()
+	if err := invalidExtFile.Close(); err != nil {
+		t.Logf("Warning: failed to close invalid extension temp file: %v", err)
+	}
 
 	// Create a temporary directory
 	tmpSubDir := filepath.Join(tmpDir, "subdir")
-	err = os.Mkdir(tmpSubDir, 0o750)
+	err = os.MkdirAll(tmpSubDir, 0o750)
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -56,7 +61,7 @@ func TestLoadMappings(t *testing.T) {
 			name: "valid mappings file",
 			path: tmpFile,
 			wantMappings: &Mappings{ // Use consolidated Mappings type
-				Mappings: []Mapping{ // Use consolidated Mapping type
+				Entries: []Mapping{ // Use .Entries
 					{Source: "quay.io", Target: "my-registry.example.com/quay-mirror"},
 					{Source: "docker.io", Target: "my-registry.example.com/docker-mirror"},
 				},
@@ -123,7 +128,7 @@ func TestLoadMappings(t *testing.T) {
 				assert.Nil(t, got) // Correct expectation for empty path
 			} else {
 				// Use ElementsMatch because the order from map iteration is not guaranteed
-				assert.ElementsMatch(t, tt.wantMappings.Mappings, got.Mappings)
+				assert.ElementsMatch(t, tt.wantMappings.Entries, got.Entries) // Use .Entries
 			}
 		})
 	}
@@ -132,7 +137,7 @@ func TestLoadMappings(t *testing.T) {
 // Test function names updated to match consolidated functions
 func TestGetTargetRegistry(t *testing.T) {
 	mappings := &Mappings{ // Use consolidated Mappings type
-		Mappings: []Mapping{ // Use consolidated Mapping type
+		Entries: []Mapping{ // Use .Entries
 			{Source: "quay.io", Target: "my-registry.example.com/quay-mirror"},
 			{Source: "docker.io", Target: "my-registry.example.com/docker-mirror"},
 		},
@@ -176,7 +181,7 @@ func TestGetTargetRegistry(t *testing.T) {
 		},
 		{
 			name:     "empty mappings list",
-			mappings: &Mappings{Mappings: []Mapping{}}, // Empty list, not nil
+			mappings: &Mappings{Entries: []Mapping{}}, // Use .Entries
 			source:   "quay.io",
 			want:     "",
 		},

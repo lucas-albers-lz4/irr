@@ -1,7 +1,9 @@
+// Package integration contains integration tests for the irr CLI tool.
 package integration
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -275,7 +277,14 @@ func TestComplexChartFeatures(t *testing.T) {
 					})
 					if !found {
 						t.Errorf("Expected image %s (looking for repo containing '%s') not found in explicit overrides for ingress-nginx", expectedImage, expectedRepo)
-						t.Logf("Explicit Overrides content:\n%s", string(overridesBytes))
+						// Add logging for the overrides content on failure
+						// errcheck: Check error from ReadFile before logging content
+						overrideBytes, readErr := os.ReadFile(explicitOutputFile)
+						if readErr != nil {
+							t.Logf("Additionally, failed to read overrides file %s for debugging: %v", explicitOutputFile, readErr)
+						} else {
+							t.Logf("Explicit Overrides content:\n%s", string(overrideBytes))
+						}
 					}
 				}
 				// Skip the generic execution and validation for this specific test case
@@ -337,7 +346,15 @@ func TestComplexChartFeatures(t *testing.T) {
 					}
 				})
 				if !found {
-					t.Errorf("Expected image %s not found in overrides", expectedImage)
+					t.Errorf("Expected image %s (looking for repo containing '%s') not found in overrides", expectedImage, expectedRepo)
+					// Add logging for the overrides content on failure
+					// errcheck: Check error from ReadFile before logging content
+					overrideBytes, readErr := os.ReadFile(harness.overridePath)
+					if readErr != nil {
+						t.Logf("Additionally, failed to read overrides file %s for debugging: %v", harness.overridePath, readErr)
+					} else {
+						t.Logf("Overrides content:\n%s", string(overrideBytes))
+					}
 				}
 			}
 		})
@@ -411,8 +428,21 @@ func TestStrictMode(t *testing.T) {
 	}
 
 	// Use the harness to execute the command with --strict
-	_, err = harness.ExecuteIRR(argsStrict...) // Re-assign err
-	assert.Error(t, err, "Should fail in strict mode")
+	output, err := harness.ExecuteIRR(argsStrict...) // Capture output for error message check
+	require.Error(t, err, "Should fail in strict mode")
+
+	// Check for specific exit code (5)
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		assert.Equal(t, 5, exitErr.ExitCode(), "Expected exit code 5 in strict mode for unsupported structure")
+	} else {
+		t.Errorf("Expected an *exec.ExitError but got %T: %v", err, err)
+	}
+
+	// TODO: Check for specific error message in output/stderr if harness captures it.
+	// Need to confirm how harness.ExecuteIRR surfaces stderr.
+	// Assuming ExecuteIRR error includes stderr:
+	assert.Contains(t, err.Error(), "Unsupported image structure found at path 'image'", "Error message should indicate the unsupported structure")
+	_ = output // Prevent unused variable error, might use output later if needed
 }
 
 // --- ADDING NEW TEST ---
@@ -428,7 +458,7 @@ quay.io: quaycustom
 `
 	mappingFilePath := filepath.Join(harness.tempDir, "test-mappings.yaml")
 	// G306: Use secure file permissions (0600)
-	err := os.WriteFile(mappingFilePath, []byte(mappingContent), 0600)
+	err := os.WriteFile(mappingFilePath, []byte(mappingContent), 0o600)
 	require.NoError(t, err, "Failed to write temp mapping file")
 
 	// 2. Setup chart (using minimal-test which has docker.io and quay.io images)
@@ -527,14 +557,14 @@ func TestMinimalGitImageOverride(t *testing.T) {
 func setupMinimalTestChart(t *testing.T, h *TestHarness) {
 	// G301: Use secure directory permissions (0750 or less)
 	chartDir := filepath.Join(h.tempDir, "minimal-chart")
-	require.NoError(t, os.MkdirAll(chartDir, 0750))
+	require.NoError(t, os.MkdirAll(chartDir, 0o750))
 
 	// Create Chart.yaml
 	chartYaml := `apiVersion: v2
 name: minimal-chart
 version: 0.1.0`
 	// G306: Use secure file permissions (0600)
-	require.NoError(t, os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), []byte(chartYaml), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), []byte(chartYaml), 0o600))
 
 	// Create values.yaml
 	valuesYaml := `image:
@@ -611,8 +641,14 @@ func TestReadOverridesFromStdout(t *testing.T) {
 	require.NoError(t, err, "Failed to parse overrides from temp file content")
 
 	// --- BEGIN DEBUG LOGGING ---
-	overridesJSON, _ := json.MarshalIndent(overrides, "", "  ")
-	t.Logf("Parsed overrides map:\n%s", string(overridesJSON))
+	overridesJSON, err := json.MarshalIndent(overrides, "", "  ")
+	var overridesStr string
+	if err != nil {
+		overridesStr = fmt.Sprintf("[JSON marshal error: %v]", err)
+	} else {
+		overridesStr = string(overridesJSON)
+	}
+	t.Logf("Parsed overrides map:\n%s", overridesStr)
 	// --- END DEBUG LOGGING ---
 
 	// Basic validation
@@ -621,8 +657,14 @@ func TestReadOverridesFromStdout(t *testing.T) {
 	require.True(t, ok, "'image' key should be a map")
 
 	// --- BEGIN DEBUG LOGGING ---
-	imageMapJSON, _ := json.MarshalIndent(imageMap, "", "  ")
-	t.Logf("Extracted imageMap:\n%s", string(imageMapJSON))
+	imageMapJSON, err := json.MarshalIndent(imageMap, "", "  ")
+	var imageMapStr string
+	if err != nil {
+		imageMapStr = fmt.Sprintf("[JSON marshal error: %v]", err)
+	} else {
+		imageMapStr = string(imageMapJSON)
+	}
+	t.Logf("Extracted imageMap:\n%s", imageMapStr)
 	// --- END DEBUG LOGGING ---
 
 	assert.Equal(t, "test.registry.io", imageMap["registry"], "Registry mismatch")

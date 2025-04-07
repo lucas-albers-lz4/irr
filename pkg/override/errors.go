@@ -1,4 +1,4 @@
-// Package override provides error definitions related to override generation.
+// Package override handles the generation and manipulation of Helm override values, including error definitions.
 package override
 
 import (

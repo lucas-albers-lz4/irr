@@ -1,4 +1,4 @@
-// Package strategy defines interfaces and implementations for generating image paths.
+// Package strategy defines interfaces and implementations for different image path generation strategies.
 package strategy
 
 import (

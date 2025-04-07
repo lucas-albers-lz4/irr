@@ -1,3 +1,4 @@
+// Package image provides utility functions for manipulating image reference paths.
 package image
 
 import (

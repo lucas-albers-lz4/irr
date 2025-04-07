@@ -1,3 +1,4 @@
+// Package analysis defines types used during the chart analysis process.
 package analysis
 
 // PatternType represents the type of pattern found

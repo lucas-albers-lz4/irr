@@ -1,10 +1,8 @@
-// Package generator provides functionality for generating Helm override files.
+// Package generator orchestrates the process of loading charts, detecting images, and generating override files.
 package generator
 
 import (
 	"fmt"
-
-	"gopkg.in/yaml.v3"
 
 	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/image"
@@ -106,9 +104,16 @@ func (g *Generator) Generate(_ string, values map[string]interface{}) (map[strin
 }
 
 // OverridesToYAML converts the generated override map to YAML.
-func OverridesToYAML(overrides map[string]interface{}) ([]byte, error) {
-	return yaml.Marshal(overrides)
-}
+// Deprecated: Use override.File.ToYAML() instead.
+// func OverridesToYAML(overrides map[string]interface{}) ([]byte, error) {
+// 	debug.Printf("Marshaling overrides to YAML")
+// 	// Wrap error from external YAML library
+// 	 yamlBytes, err := yaml.Marshal(overrides)
+// 	 if err != nil {
+// 		 return nil, fmt.Errorf("failed to marshal overrides to YAML: %w", err)
+// 	 }
+// 	 return yamlBytes, nil
+// }
 
 // Interface defines the methods expected from a generator.
 type Interface interface {

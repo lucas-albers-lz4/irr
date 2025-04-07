@@ -1,3 +1,4 @@
+// Package image_test contains tests for the image package, focusing on reference parsing.
 package image
 
 import (

@@ -1,4 +1,4 @@
-// Package testutil provides utility functions for testing.
+// Package testutil provides utility functions for tests, such as finding test data paths.
 package testutil
 
 import (

@@ -1,3 +1,4 @@
+// Package strategy_test contains tests for the strategy package.
 package strategy
 
 import (
@@ -173,7 +174,7 @@ func TestPrefixSourceRegistryStrategy_GeneratePath_WithMappings(t *testing.T) {
 				Tag:        "v1.5.3",
 			},
 			mapping: &registry.Mappings{
-				Mappings: []registry.Mapping{
+				Entries: []registry.Mapping{
 					{Source: "quay.io", Target: "custom.registry.local/proxy"},
 				},
 			},

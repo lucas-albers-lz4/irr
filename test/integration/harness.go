@@ -1,3 +1,4 @@
+// Package integration contains integration tests for the irr CLI tool.
 package integration
 
 import (
@@ -34,7 +35,7 @@ func NewTestHarness(t *testing.T) *TestHarness {
 
 	// Ensure overrides directory exists with correct permissions (using a fixed relative path)
 	// G301 fix
-	if err := os.MkdirAll("../test-data/overrides", 0750); err != nil {
+	if err := os.MkdirAll("../test-data/overrides", 0o750); err != nil {
 		require.NoError(t, err, "Failed to create test overrides directory: %v", err)
 	}
 
@@ -221,7 +222,7 @@ func (h *TestHarness) ValidateOverrides() error {
 			currentOverrides = append(currentOverrides, cloneGitYAML...)
 			h.t.Logf("Appended cloneStaticSiteFromGit structure (%d bytes) to overrides for validation of %s", len(cloneGitYAML), h.chartName)
 		} else {
-			h.t.Logf("Marshalled cloneStaticSiteFromGit structure was empty, not appending.")
+			h.t.Logf("Marshaled cloneStaticSiteFromGit structure was empty, not appending.")
 		}
 	}
 
@@ -259,12 +260,12 @@ func (h *TestHarness) ValidateOverrides() error {
 func (h *TestHarness) GetOverrides() (map[string]interface{}, error) {
 	data, err := os.ReadFile(h.overridePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read overrides file %s: %v", h.overridePath, err)
+		return nil, fmt.Errorf("failed to read overrides file %s: %w", h.overridePath, err)
 	}
 
 	var overrides map[string]interface{}
 	if err := yaml.Unmarshal(data, &overrides); err != nil {
-		return nil, fmt.Errorf("failed to parse overrides YAML from %s: %v", h.overridePath, err)
+		return nil, fmt.Errorf("failed to parse overrides YAML from %s: %w", h.overridePath, err)
 	}
 	return overrides, nil
 }

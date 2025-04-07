@@ -1,3 +1,4 @@
+// Package override provides utility functions for working with nested map paths used in Helm overrides.
 package override
 
 import (

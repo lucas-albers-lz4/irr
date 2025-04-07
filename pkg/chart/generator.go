@@ -21,7 +21,7 @@ import (
 	"github.com/lalbers/irr/pkg/strategy"
 )
 
-// Package chart provides functionality for handling Helm charts and generating image override values.
+// Package chart provides functionality for loading charts, detecting images, and generating override files.
 // This package is responsible for processing Helm charts and generating override structures
 // that can be used to modify image references in the chart's values.
 
@@ -215,12 +215,7 @@ func (g *Generator) Generate() (*override.File, error) {
 	}
 
 	imagesSuccessfullyProcessed := 0
-	modifiedValuesCopy := override.DeepCopy(baseValues)
-	modifiedValues, ok := modifiedValuesCopy.(map[string]interface{})
-	if !ok {
-		// This should ideally not happen if DeepCopy is correct, but return a generic error if it does.
-		return nil, errors.New("internal error: failed to create deep copy of values map")
-	}
+	finalOverrides := make(map[string]interface{}) // Initialize empty map for overrides
 
 	var processingErrors []*ImageProcessingError
 
@@ -274,9 +269,9 @@ func (g *Generator) Generate() (*override.File, error) {
 		debug.Printf("[DEBUG irr GEN] Processing Eligible Image: Path=%v, OriginalRef=%s, Type=%s", img.Path, img.Reference.String(), img.Pattern)
 		debug.DumpValue("[DEBUG irr GEN] Value to set", valueToSet)
 
-		// Set the new value (map) in the copied values structure
+		// Set the new value (map) in the NEW override structure
 		debug.Printf("[DEBUG irr GEN] Calling SetValueAtPath with Path: %v", img.Path)
-		err = override.SetValueAtPath(modifiedValues, img.Path, valueToSet)
+		err = override.SetValueAtPath(finalOverrides, img.Path, valueToSet) // Use finalOverrides map
 		if err != nil {
 			debug.Printf("Error setting value at path %v: %v", img.Path, err)
 			processingFailed = true
@@ -294,48 +289,63 @@ func (g *Generator) Generate() (*override.File, error) {
 		}
 	} // End loop over images
 
-	// --- Threshold Check ---
-	successRate := 0
-	if eligibleImagesCount > 0 { // Base rate on eligible images
-		successRate = (imagesSuccessfullyProcessed * 100) / eligibleImagesCount
-	}
-	debug.Printf("Final success rate: %d%% (%d/%d eligible images)", successRate, imagesSuccessfullyProcessed, eligibleImagesCount)
-
-	if successRate < g.threshold {
-		errMsg := fmt.Sprintf("processing failed: success rate %d%% below threshold %d%% (%d/%d eligible images processed)",
-			successRate, g.threshold, imagesSuccessfullyProcessed, eligibleImagesCount)
-		// Include details of processing errors if any
-		if len(processingErrors) > 0 {
-			var errDetails []string
-			for _, pe := range processingErrors {
-				errDetails = append(errDetails, fmt.Sprintf("path=%v ref=%s err=\"%v\"", pe.Path, pe.Ref, pe.Err))
+	// Check if processing threshold was met
+	if eligibleImagesCount > 0 {
+		successRate := float64(imagesSuccessfullyProcessed) / float64(eligibleImagesCount) * 100
+		debug.Printf("Image processing success rate: %.2f%% (Processed: %d, Eligible: %d, Threshold: %d%%)",
+			successRate, imagesSuccessfullyProcessed, eligibleImagesCount, g.threshold)
+		if int(successRate) < g.threshold {
+			combinedErr := combineProcessingErrors(processingErrors)
+			thresholdErr := &ThresholdError{
+				Threshold:   g.threshold,
+				ActualRate:  int(successRate),
+				Eligible:    eligibleImagesCount,
+				Processed:   imagesSuccessfullyProcessed,
+				WrappedErrs: combinedErr,
 			}
-			errMsg = fmt.Sprintf("%s - Errors: [%s]", errMsg, strings.Join(errDetails, "; "))
+			return nil, thresholdErr
 		}
-		// Indicate threshold failure specifically (maybe a custom error type later)
-		return nil, &ThresholdError{Message: errMsg} // Use a specific error type
 	}
 
-	// --- Generate FINAL Override Structure (Minimal Output Logic) ---
-	finalOverrides := &override.File{
+	// Return the generated override file
+	debug.DumpValue("Final generated overrides", finalOverrides)
+	return &override.File{
 		ChartPath:   g.chartPath,
-		ChartName:   filepath.Base(g.chartPath),
-		Overrides:   modifiedValues,
+		ChartName:   chartData.Name(), // Use chart name from loaded data
+		Overrides:   finalOverrides,   // Use the correctly built overrides map
 		Unsupported: unsupported,
+	}, nil
+}
+
+// combineProcessingErrors converts a slice of *ImageProcessingError to a slice of error.
+func combineProcessingErrors(processingErrors []*ImageProcessingError) []error {
+	errs := make([]error, len(processingErrors))
+	for i, pe := range processingErrors {
+		errs[i] = pe // *ImageProcessingError already satisfies the error interface
 	}
-
-	debug.DumpValue("Returning fully modified values map as overrides", finalOverrides.Overrides)
-
-	return finalOverrides, nil
+	return errs
 }
 
 // ThresholdError represents a failure due to not meeting the processing threshold.
 type ThresholdError struct {
-	Message string
+	Threshold   int
+	ActualRate  int
+	Eligible    int
+	Processed   int
+	WrappedErrs []error
 }
 
 func (e *ThresholdError) Error() string {
-	return e.Message
+	errMsg := fmt.Sprintf("processing failed: success rate %.2f%% below threshold %d%% (%d/%d eligible images processed)",
+		float64(e.ActualRate)/float64(e.Eligible)*100, e.Threshold, e.Processed, e.Eligible)
+	if len(e.WrappedErrs) > 0 {
+		var errDetails []string
+		for _, err := range e.WrappedErrs {
+			errDetails = append(errDetails, err.Error())
+		}
+		errMsg = fmt.Sprintf("%s - Errors: [%s]", errMsg, strings.Join(errDetails, "; "))
+	}
+	return errMsg
 }
 
 // extractSubtree extracts a submap from a nested map structure based on a path
@@ -585,7 +595,12 @@ func NewOSCommandRunner() CommandRunner {
 func (r *osCommandRunner) Run(name string, arg ...string) ([]byte, error) {
 	cmd := exec.Command(name, arg...)
 	// Using CombinedOutput captures both stdout and stderr, useful for debugging Helm errors.
-	return cmd.CombinedOutput()
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		// Wrap error from external command execution
+		return nil, fmt.Errorf("helm command failed: %w", err)
+	}
+	return output, nil
 }
 
 // ValidateHelmTemplate runs `helm template` and validates the output.
@@ -606,7 +621,7 @@ func ValidateHelmTemplate(runner CommandRunner, chartPath string, overrides []by
 	}() // Clean up temp dir
 
 	overrideFilePath := filepath.Join(tempDir, "overrides.yaml")
-	if err := os.WriteFile(overrideFilePath, overrides, 0600); err != nil {
+	if err := os.WriteFile(overrideFilePath, overrides, 0o600); err != nil {
 		return fmt.Errorf("failed to write temp overrides file: %w", err)
 	}
 	debug.Printf("Temporary override file written to: %s", overrideFilePath)
@@ -760,7 +775,13 @@ func cleanupTemplateVariables(value interface{}) interface{} {
 
 // OverridesToYAML converts a map of overrides to YAML format
 func OverridesToYAML(overrides map[string]interface{}) ([]byte, error) {
-	return yaml.Marshal(overrides)
+	debug.Printf("Marshaling overrides to YAML")
+	// Wrap error from external YAML library
+	yamlBytes, err := yaml.Marshal(overrides)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal overrides to YAML: %w", err)
+	}
+	return yamlBytes, nil
 }
 
 // Helper function to check if a registry is in a list

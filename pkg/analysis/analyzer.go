@@ -1,4 +1,4 @@
-// Package analysis provides functionality for analyzing Helm charts to identify container images.
+// Package analysis provides the core logic for analyzing Helm chart values to detect container images.
 package analysis
 
 import (
@@ -20,7 +20,12 @@ type HelmChartLoader struct{}
 
 // Load uses the Helm library to load a chart.
 func (h *HelmChartLoader) Load(path string) (*chart.Chart, error) {
-	return loader.Load(path)
+	chartData, err := loader.Load(path)
+	if err != nil {
+		// Wrap the error from the external loader package
+		return nil, fmt.Errorf("failed to load chart from path '%s': %w", path, err)
+	}
+	return chartData, nil
 }
 
 // Analyzer provides functionality for analyzing Helm charts

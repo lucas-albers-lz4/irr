@@ -1,0 +1,27 @@
+- [x] Debug `TestGenerate/*` failures in `pkg/chart/generator_test.go`
+    - [x] Verify interaction of `Generator.Generate` logic with consolidated `pkg/registry`, `pkg/image`, `pkg/strategy`.
+    - [x] Fix logic in `Generator.Generate` to create a separate `finalOverrides` map instead of modifying a copy of the original values.
+    - [x] Update `ChartName` assertion in `TestGenerate/Simple_Image_Map_Override` to match mock data (`testchart`).
+- [x] Address `errcheck` warnings/missing error handling in `pkg/chart/generator*.go`
+    - [x] Ran `errcheck ./pkg/chart/...` - no issues found.
+- [ ] Enhance `DetectImages` & `extractImages`: Handle more complex/nested Helm template structures & unsupported types.
+    - [ ] Review `UnsupportedStructureError` and its usage.
+    - [x] Verify test fixtures cover all scenarios.
+    - [x] Verify error handling coverage for all defined errors.
+- [x] Fix Import and Type Issues (High Priority)
+    - [x] Update any found references.
+    - [x] Update references to `.Mappings` field to use `.Entries` in relevant files (`analyze.go`, test files).
+- [ ] Verify error wrapping and error message formatting are consistent.
+- [x] Debug `TestPrefixSourceRegistryStrategy_GeneratePath_WithMappings`: (COMPLETED)
+    - Test should verify registry name sanitization (dots removed, etc.).
+- [x] Debug `TestGenerate/*` failures in `pkg/chart/generator_test.go`:
+    - [x] Verified `Generator.Generate` interaction with consolidated packages.
+    - [x] Fixed override logic to use a new `finalOverrides` map, resolving incorrect output structure.
+    - [x] Added `combineProcessingErrors` helper function.
+    - [x] Updated `ChartName` assertion to match mock data.
+    - [x] Confirmed all `pkg/chart` tests pass after fixes.
+- [x] Address `errcheck` warnings/missing error handling in `pkg/chart/generator*.go`
+    - [x] Installed `errcheck`.
+    - [x] Ran `errcheck ./pkg/chart/...` via `go run` - no issues found.
+
+3. **Fix Command Layer & Integration Test Failures (Medium Priority)**

@@ -12,15 +12,15 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-// Mapping represents a single source to target registry mapping (Renamed from RegistryMapping)
+// Mapping represents a single source to target registry mapping
 type Mapping struct {
 	Source string `yaml:"source"`
 	Target string `yaml:"target"`
 }
 
-// Mappings holds a collection of registry mappings (Renamed from RegistryMappings)
+// Mappings holds a collection of registry mappings
 type Mappings struct {
-	Mappings []Mapping `yaml:"mappings"` // Updated type to Mapping
+	Entries []Mapping `yaml:"mappings"`
 }
 
 // LoadMappings loads registry mappings from a YAML file
@@ -65,7 +65,7 @@ func LoadMappings(path string) (*Mappings, error) { // Updated return type
 		return nil, WrapMappingFileRead(path, err)
 	}
 
-	// --- PARSING LOGIC from registrymapping ---
+	// --- PARSING LOGIC adopted from previous implementation ---
 	// Unmarshal into a temporary map first, as the input format is map[string]string
 	var rawMappings map[string]string
 	if err := yaml.Unmarshal(data, &rawMappings); err != nil {
@@ -75,13 +75,13 @@ func LoadMappings(path string) (*Mappings, error) { // Updated return type
 
 	// Convert the map into the expected []Mapping slice
 	finalMappings := &Mappings{ // Updated type
-		Mappings: make([]Mapping, 0, len(rawMappings)), // Updated type
+		Entries: make([]Mapping, 0, len(rawMappings)), // Updated type
 	}
 
 	for source, target := range rawMappings {
 		trimmedSource := strings.TrimSpace(source)
 		trimmedTarget := strings.TrimSpace(target)
-		finalMappings.Mappings = append(finalMappings.Mappings, Mapping{ // Updated type
+		finalMappings.Entries = append(finalMappings.Entries, Mapping{ // Updated type
 			Source: trimmedSource,
 			Target: trimmedTarget,
 		})
@@ -89,21 +89,21 @@ func LoadMappings(path string) (*Mappings, error) { // Updated return type
 	}
 	// --- END PARSING LOGIC ---
 
-	debug.Printf("LoadMappings: Successfully loaded and trimmed %d mappings from %s", len(finalMappings.Mappings), path)
+	debug.Printf("LoadMappings: Successfully loaded and trimmed %d mappings from %s", len(finalMappings.Entries), path)
 	return finalMappings, nil
 }
 
 // GetTargetRegistry returns the target registry for a given source registry
 func (m *Mappings) GetTargetRegistry(source string) string { // Updated receiver type
 	debug.Printf("GetTargetRegistry: Looking for source '%s' in mappings: %+v", source, m)
-	if m == nil || m.Mappings == nil {
+	if m == nil || m.Entries == nil {
 		debug.Printf("GetTargetRegistry: Mappings are nil or empty.")
 		return ""
 	}
 	normalizedSourceInput := image.NormalizeRegistry(source)
 	debug.Printf("GetTargetRegistry: Normalized source INPUT: '%s'", normalizedSourceInput)
 
-	for _, mapping := range m.Mappings {
+	for _, mapping := range m.Entries {
 		// Explicitly trim \r from the mapping source
 		cleanedMappingSource := strings.TrimRight(mapping.Source, "\r")
 

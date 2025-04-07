@@ -1,4 +1,4 @@
-// Package debug provides simple debugging utilities, mainly controlled by an environment variable.
+// Package debug provides simple debug logging capabilities controlled by an environment variable.
 package debug
 
 import (
@@ -98,7 +98,7 @@ func DumpValue(name string, value interface{}) {
 		prefix := fmt.Sprintf("[DEBUG +%v] ", time.Since(startTime).Round(time.Millisecond))
 		jsonData, err := json.MarshalIndent(value, "", "  ")
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "%sDump %s: Error marshalling to JSON: %v\n", prefix, name, err)
+			fmt.Fprintf(os.Stderr, "%sDump %s: Error marshaling to JSON: %v\n", prefix, name, err)
 			return
 		}
 		fmt.Fprintf(os.Stderr, "%sDump %s:\n%s\n", prefix, name, string(jsonData))

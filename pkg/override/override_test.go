@@ -1,3 +1,4 @@
+// Package override_test contains tests for the override package.
 package override
 
 import (

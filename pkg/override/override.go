@@ -1,3 +1,4 @@
+// Package override provides types and functions for creating and manipulating Helm override structures.
 package override
 
 import (
@@ -5,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/image"
 	"sigs.k8s.io/yaml"
 )
@@ -213,12 +215,14 @@ func ConstructSubchartPath(deps []ChartDependency, path string) (string, error) 
 }
 
 // ToYAML serializes the override structure to YAML.
-func (o *File) ToYAML() ([]byte, error) {
-	yamlData, err := yaml.Marshal(o.Overrides)
+func (f *File) ToYAML() ([]byte, error) {
+	debug.Printf("Marshaling override.File to YAML")
+	yamlBytes, err := yaml.Marshal(f.Overrides)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal overrides to YAML: %w", err)
+		// Wrap error from external YAML library
+		return nil, fmt.Errorf("failed to marshal override content to YAML: %w", err)
 	}
-	return yamlData, nil
+	return yamlBytes, nil
 }
 
 // JSONToYAML converts JSON data to YAML format

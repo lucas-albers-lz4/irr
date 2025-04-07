@@ -1,3 +1,4 @@
+// Package image_test contains tests for image path utility functions.
 package image
 
 import (

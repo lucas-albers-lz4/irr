@@ -68,7 +68,7 @@ func TestNewGenerator(t *testing.T) {
 
 // MockChartLoader (specific to generator tests if needed, or reuse from analysis)
 type MockChartLoader struct {
-	LoadFunc func(path string) (*chart.Chart, error)
+	LoadFunc func(_ string) (*chart.Chart, error)
 }
 
 func (m *MockChartLoader) Load(_ string) (*chart.Chart, error) {
@@ -103,7 +103,7 @@ func TestGenerate(t *testing.T) {
 				"otherValue": 123,
 			},
 		}
-		mockLoader := &MockChartLoader{LoadFunc: func(path string) (*chart.Chart, error) {
+		mockLoader := &MockChartLoader{LoadFunc: func(_ string) (*chart.Chart, error) {
 			return mockChart, nil
 		}}
 
@@ -170,7 +170,7 @@ func TestGenerate(t *testing.T) {
 				"workerImage": imageStringValue,
 			},
 		}
-		mockLoader := &MockChartLoader{LoadFunc: func(path string) (*chart.Chart, error) {
+		mockLoader := &MockChartLoader{LoadFunc: func(_ string) (*chart.Chart, error) {
 			return mockChart, nil
 		}}
 
@@ -222,7 +222,7 @@ func TestGenerate(t *testing.T) {
 				"publicImage": "docker.io/library/alpine:latest", // Should still be processed
 			},
 		}
-		mockLoader := &MockChartLoader{LoadFunc: func(path string) (*chart.Chart, error) {
+		mockLoader := &MockChartLoader{LoadFunc: func(_ string) (*chart.Chart, error) {
 			return mockChart, nil
 		}}
 
@@ -269,7 +269,7 @@ func TestGenerate(t *testing.T) {
 				"dockerImage": "docker.io/library/redis:alpine", // Should be processed
 			},
 		}
-		mockLoader := &MockChartLoader{LoadFunc: func(path string) (*chart.Chart, error) {
+		mockLoader := &MockChartLoader{LoadFunc: func(_ string) (*chart.Chart, error) {
 			return mockChart, nil
 		}}
 
@@ -315,7 +315,7 @@ func TestGenerate(t *testing.T) {
 				"imgGcr":    "gcr.io/google-containers/pause:3.2",
 			},
 		}
-		mockLoader := &MockChartLoader{LoadFunc: func(path string) (*chart.Chart, error) {
+		mockLoader := &MockChartLoader{LoadFunc: func(_ string) (*chart.Chart, error) {
 			return mockChart, nil
 		}}
 
@@ -389,7 +389,7 @@ func TestGenerate(t *testing.T) {
 		}
 		parentChart.AddDependency(childChart) // Link child to parent
 
-		mockLoader := &MockChartLoader{LoadFunc: func(path string) (*chart.Chart, error) {
+		mockLoader := &MockChartLoader{LoadFunc: func(_ string) (*chart.Chart, error) {
 			return parentChart, nil
 		}}
 
@@ -503,7 +503,7 @@ func TestOverridesToYAML(t *testing.T) {
 // --- Mocking for ValidateHelmTemplate ---
 
 type MockCommandRunner struct {
-	RunFunc func(name string, arg ...string) ([]byte, error)
+	RunFunc func(_ string, _ ...string) ([]byte, error)
 }
 
 func (m *MockCommandRunner) Run(_ string, arg ...string) ([]byte, error) {
@@ -538,7 +538,7 @@ spec:
     - port: 80
 `
 		mockRunner := &MockCommandRunner{
-			RunFunc: func(name string, arg ...string) ([]byte, error) {
+			RunFunc: func(_ string, _ ...string) ([]byte, error) {
 				return []byte(validYAML), nil
 			},
 		}
@@ -550,7 +550,7 @@ spec:
 	t.Run("Helm Command Error", func(t *testing.T) {
 		expectedErr := fmt.Errorf("helm process exited badly")
 		mockRunner := &MockCommandRunner{
-			RunFunc: func(name string, arg ...string) ([]byte, error) {
+			RunFunc: func(_ string, _ ...string) ([]byte, error) {
 				return []byte("Error: something went wrong executing helm"), expectedErr
 			},
 		}
@@ -563,7 +563,7 @@ spec:
 	t.Run("Invalid YAML Output", func(t *testing.T) {
 		invalidYAML := "key: value\nkey_no_indent: oops"
 		mockRunner := &MockCommandRunner{
-			RunFunc: func(name string, arg ...string) ([]byte, error) {
+			RunFunc: func(_ string, _ ...string) ([]byte, error) {
 				return []byte(invalidYAML), nil // Helm command succeeds
 			},
 		}
@@ -1379,8 +1379,109 @@ func TestProcessChartForOverrides(t *testing.T) {
 	}
 }
 
-func TestGenerateOverrides_Integration(t *testing.T) {
-	// ... existing code ...
-	// Removed unused mockStrategy declaration that was here
-	// ... rest of TestGenerateOverrides_Integration ...
+func TestGenerateOverrides_Integration(_ *testing.T) {
+	// Integration test for generating overrides
+	targetRegistry := "harbor.local"
+	sourceRegistries := []string{"docker.io"}
+	excludeRegistries := []string{}
+	mockStrategy := &MockPathStrategy{}
+	strict := true
+	threshold := 100
+	chartPath := "./test-chart"
+
+	// Create test chart with various image patterns
+	mockChart := &chart.Chart{
+		Metadata: &chart.Metadata{Name: "test-chart"},
+		Values: map[string]interface{}{
+			"image": "docker.io/myapp:v1",
+			"sidecar": map[string]interface{}{
+				"image": map[string]interface{}{
+					"registry":   "docker.io",
+					"repository": "helper",
+					"tag":        "latest",
+				},
+			},
+			"nonImage": "some-value",
+		},
+	}
+
+	mockLoader := &MockChartLoader{
+		LoadFunc: func(_ string) (*chart.Chart, error) {
+			return mockChart, nil
+		},
+	}
+
+	generator := NewGenerator(
+		chartPath,
+		targetRegistry,
+		sourceRegistries,
+		excludeRegistries,
+		mockStrategy,
+		nil,
+		strict,
+		threshold,
+		mockLoader,
+	)
+
+	overrideFile, err := generator.Generate()
+	if err != nil {
+		panic(err)
+	}
+
+	// Verify overrides were generated correctly
+	if overrideFile == nil {
+		panic("overrideFile is nil")
+	}
+
+	// Check chart metadata
+	if overrideFile.ChartPath != chartPath {
+		panic("chartPath mismatch")
+	}
+	if overrideFile.ChartName != "test-chart" {
+		panic("chartName mismatch")
+	}
+
+	// Check overrides
+	if len(overrideFile.Overrides) != 2 {
+		panic("unexpected number of overrides")
+	}
+
+	// Check image string override
+	if imageOverride, ok := overrideFile.Overrides["image"].(map[string]interface{}); ok {
+		if imageOverride["registry"] != targetRegistry {
+			panic("image registry mismatch")
+		}
+		if imageOverride["repository"] != "harbor.local/myapp" {
+			panic("image repository mismatch")
+		}
+		if imageOverride["tag"] != "v1" {
+			panic("image tag mismatch")
+		}
+	} else {
+		panic("image override not found or wrong type")
+	}
+
+	// Check nested image map override
+	if sidecar, ok := overrideFile.Overrides["sidecar"].(map[string]interface{}); ok {
+		if sidecarImage, ok := sidecar["image"].(map[string]interface{}); ok {
+			if sidecarImage["registry"] != targetRegistry {
+				panic("sidecar registry mismatch")
+			}
+			if sidecarImage["repository"] != "harbor.local/helper" {
+				panic("sidecar repository mismatch")
+			}
+			if sidecarImage["tag"] != "latest" {
+				panic("sidecar tag mismatch")
+			}
+		} else {
+			panic("sidecar image not found or wrong type")
+		}
+	} else {
+		panic("sidecar override not found or wrong type")
+	}
+
+	// Verify non-image values were not included
+	if _, exists := overrideFile.Overrides["nonImage"]; exists {
+		panic("non-image value should not be in overrides")
+	}
 }

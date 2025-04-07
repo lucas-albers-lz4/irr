@@ -1,6 +1,6 @@
 //go:build integration
 
-// Package integration contains integration tests for the helm-image-override tool.
+// Package integration contains integration tests for the irr CLI tool.
 package integration
 
 import (

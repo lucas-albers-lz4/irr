@@ -41,7 +41,7 @@ references based on specified source registries.`,
 			return fmt.Errorf("error loading registry mappings: %w", err)
 		}
 		if mappings != nil {
-			log.Debugf("Loaded %d registry mappings", len(mappings.Mappings))
+			log.Debugf("Loaded %d registry mappings", len(mappings.Entries))
 		}
 
 		// Create Analyzer using the factory defined in root.go
