@@ -285,20 +285,20 @@ func runOverride(_ *cobra.Command, _ []string) error {
 		debug.Printf("Error during override generation: %v", err)
 
 		// Default exit code and error message
-		exitCode := ExitImageProcessingError
+		exitCode := ExitImageProcessingError // Default unless overridden
 		errMsg := fmt.Sprintf("error generating overrides: %v", err)
 
-		// Check for strict mode violation
-		if strictMode {
-			// A more robust check might involve creating and checking for a specific error type
-			// from the generator package (e.g., chart.ErrStrictValidationFailed).
-			// For now, rely on the error message content based on logs.
-			if strings.Contains(err.Error(), "unsupported structures found") {
-				debug.Println("Strict mode violation detected, returning exit code 5.")
-				exitCode = ExitUnsupportedStructure // Use specific exit code 5
-				// Optionally adjust the message for clarity
-				errMsg = fmt.Sprintf("strict mode violation: %v", err)
-			}
+		// Check if the error IS the specific strict validation failure
+		if errors.Is(err, chart.ErrStrictValidationFailed) {
+			debug.Println("Strict mode violation detected (using errors.Is), returning exit code 5.")
+			exitCode = ExitUnsupportedStructure // Use specific exit code 5
+			// Use the specific error message from the wrapped error
+			errMsg = err.Error() // The wrapped error already contains the detailed message
+		} else {
+			// Handle other potential errors from Generate()
+			// Could check for chart.ParsingError, chart.ImageProcessingError etc. if needed
+			// For now, stick with the default ExitImageProcessingError
+			debug.Printf("Non-strict error encountered: %v", err)
 		}
 
 		return &ExitCodeError{Code: exitCode, Err: errors.New(errMsg)}
