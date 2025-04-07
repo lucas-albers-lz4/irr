@@ -212,7 +212,7 @@ func TestOverrideCmdExecution(t *testing.T) {
 
 			// Setup Generator Mock
 			if tt.mockGeneratorFunc != nil {
-				currentGeneratorFactory = func(chartPath, targetRegistry string, sourceRegistries, excludeRegistries []string, pathStrategy strategy.PathStrategy, mappings *registrymapping.RegistryMappings, strict bool, threshold int, loader chart.Loader) GeneratorInterface {
+				currentGeneratorFactory = func(_, targetRegistry string, sourceRegistries, excludeRegistries []string, pathStrategy strategy.PathStrategy, mappings *registrymapping.RegistryMappings, strict bool, threshold int, loader chart.Loader) GeneratorInterface {
 					return &mockGenerator{GenerateFunc: tt.mockGeneratorFunc}
 				}
 			} else {
@@ -246,27 +246,20 @@ func TestOverrideCmdExecution(t *testing.T) {
 			}
 			// ---- START Add logic for registry mapping test ----
 			if tt.name == "success_with_registry_mappings" {
-				// Create a temporary mapping file in the current directory
-				mappingContent := []byte(`
-mappings:
-  - source: docker.io
-    target: dckr.io
-  - source: quay.io
-    target: quaycustom
-`)
-				// Use a predictable name within the CWD for the test
-				tempMappingFilename := "./temp-test-mappings.yaml"
-				// #nosec G304 -- Writing to a predictable path in CWD is acceptable for tests
-				err := os.WriteFile(tempMappingFilename, mappingContent, 0600)
-				if err != nil {
-					t.Fatalf("Failed to create temp mapping file in CWD: %v", err)
-				}
+				// Create a temporary mapping file in the test's temp directory
+				mappingContent := []byte("docker.io: mock-target.com/dckrio")
+				mappingPath := filepath.Join(testDir, "temp-test-mappings.yaml")
+				err := os.WriteFile(mappingPath, mappingContent, 0600)
+				require.NoError(t, err, "Failed to create temp mapping file")
 
-				// Add the flag to args (using the relative path)
-				args = append(args, "--registry-mappings", tempMappingFilename)
+				// Add the registry-mappings flag with the absolute path
+				args = append(args, "--registry-mappings", mappingPath)
 
-				// Ensure cleanup
-				defer os.Remove(tempMappingFilename)
+				// Ensure the temp mapping file is cleaned up, checking for errors
+				defer func() {
+					err := os.Remove(mappingPath) // Check the error here
+					require.NoError(t, err, "Failed to remove temp mapping file")
+				}()
 			}
 			// ---- END Add logic for registry mapping test ----
 

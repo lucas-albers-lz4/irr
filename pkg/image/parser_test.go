@@ -61,10 +61,11 @@ func TestParseImageReference(t *testing.T) {
 			},
 		},
 		{
-			name:          "image with both tag and digest",
-			input:         "myimage:tag@sha256:abcdef123",
+			name:          "image_with_both_tag_and_digest",
+			input:         "myrepo/myimage:tag@sha256:f6e1a063d1f00c0b9a9e7f1f9a5c4d0d9e6b8b4b3a1e9d5b3b4b3b3b3b3b3b3b",
 			wantErr:       true,
-			errorContains: "both tag and digest present",
+			errorContains: "image cannot have both tag and digest specified",
+			expected:      nil,
 		},
 		{
 			name:          "invalid image reference",

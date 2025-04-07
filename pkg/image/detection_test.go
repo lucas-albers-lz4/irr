@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -320,17 +319,14 @@ func TestImageDetector_DetectImages_EdgeCases(t *testing.T) {
 		},
 		"invalid_type_in_image_map": {
 			input: map[string]interface{}{
-				"image": map[string]interface{}{
-					"repository": 123, // Invalid type
-					"tag":        "1.23",
-				},
+				"image": map[string]interface{}{"repository": 123, "tag": "v1"},
 			},
 			expected:                 []DetectedImage{},
 			strict:                   true,
-			expectedError:            false, // Should be handled as unsupported
+			expectedError:            false,
 			expectedUnsupportedCount: 1,
 			expectedUnsupported: []UnsupportedImage{
-				{Location: []string{"image"}, Type: UnsupportedTypeMap, Error: fmt.Errorf("invalid image map: repository is not a string: %w", errors.New("found type int"))},
+				{Location: []string{"image"}, Type: UnsupportedTypeMap, Error: fmt.Errorf("image map has invalid repository type (must be string): found type int")},
 			},
 		},
 		"deeply_nested_valid_image": {
@@ -392,7 +388,7 @@ func TestImageDetector_DetectImages_EdgeCases(t *testing.T) {
 			expectedError:            false,
 			expectedUnsupportedCount: 1,
 			expectedUnsupported: []UnsupportedImage{
-				{Location: []string{"invalid", "image"}, Type: UnsupportedTypeString, Error: fmt.Errorf("invalid image string format: %w", errors.New("invalid image reference format"))},
+				{Location: []string{"invalid", "image"}, Type: UnsupportedTypeStringParseError, Error: fmt.Errorf("invalid image string format: invalid image reference format")},
 			},
 		},
 	}
@@ -871,36 +867,38 @@ func TestDetectImages(t *testing.T) {
 		{
 			name: "Strict_mode",
 			values: map[string]interface{}{
-				"image":             "nginx:1.19",          // Renamed key to match isImagePath pattern
-				"invalidImage":      "invalid-",            // Should be skipped entirely in strict mode
-				"ambiguousString":   "configValue",         // Should be ignored
-				"ambiguousWithPath": "myimage:v1",          // Should be unsupported (ambiguous path, although source)
-				"nonSourceImage":    "gcr.io/google/nginx", // Should be unsupported (not source registry)
+				"app.image":                 "docker.io/library/nginx:latest",  // Should be detected (known path ends with .image)
+				"invalid.image":             "docker.io/library/nginx::badtag", // Should be unsupported (known path, parse error)
+				"validImageUnknownPath":     "quay.io/org/tool:v1",             // Should be skipped (path not known)
+				"nonSource.image":           "private.registry/app:1.0",        // Should be unsupported (known path, non-source)
+				"notAnImageStringKnownPath": "not_a_valid_image:tag",           // Should be skipped (path not known)
+				"definitelyNotAnImage":      "value",                           // Should be skipped
 			},
+			startingPath:     []string{},
 			strict:           true,
 			sourceRegistries: []string{"docker.io", "quay.io"},
-			wantDetected: []DetectedImage{ // Expect 1 detected
+			wantDetected: []DetectedImage{
 				{
 					Reference: &ImageReference{
 						Registry:   "docker.io",
 						Repository: "library/nginx",
-						Tag:        "1.19",
-						Path:       []string{"image"}, // Path updated
+						Tag:        "latest",
+						Path:       []string{"app.image"},
 					},
-					Path:     []string{"image"},
+					Path:     []string{"app.image"},
 					Pattern:  PatternString,
-					Original: "nginx:1.19",
+					Original: "docker.io/library/nginx:latest",
 				},
 			},
-			wantUnsupported: []UnsupportedImage{ // Expect 2 unsupported, sorted by path
+			wantUnsupported: []UnsupportedImage{
 				{
-					Location: []string{"ambiguousWithPath"},
-					Type:     UnsupportedTypeString,  // Type 2
-					Error:    ErrAmbiguousStringPath, // Marked ambiguous because path is not known, even though it parses and is source
+					Location: []string{"invalid.image"},
+					Type:     UnsupportedTypeStringParseError,
+					Error:    fmt.Errorf("invalid image string format: invalid image reference format"),
 				},
 				{
-					Location: []string{"nonSourceImage"},
-					Type:     UnsupportedTypeNonSource, // Type 3
+					Location: []string{"nonSource.image"},
+					Type:     UnsupportedTypeNonSourceImage,
 					Error:    nil,
 				},
 			},

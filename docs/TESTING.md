@@ -136,7 +136,36 @@ someApp:
       registry: docker.io # Explicit docker.io
 ```
 
-### 8. Command-Line Option Validation
+### 8. Path Strategy and Registry Mapping Testing
+
+**Path Strategy Testing:**
+- Test each path strategy with various registry patterns
+- Verify correct handling of Docker Hub library images (`nginx` → `library/nginx`)
+- Ensure registry sanitization works correctly (`registry.k8s.io` → `registryk8sio`)
+- Validate the path generation with and without registry mappings
+
+**Registry Mapping File Handling:**
+- **File Path Handling:**
+  - Use `filepath.Abs()` in tests when creating temporary mapping files
+  - Set the `IRR_TESTING=true` environment variable in tests to bypass working directory checks
+  - Always use a unique temporary filename within the current working directory
+  - Ensure proper cleanup with error checking: `defer func() { err := os.Remove(file); if err != nil { t.Logf("Warning: %v", err) } }()`
+
+- **Format Testing:**
+  - Test both supported formats:
+    - Simple map: `docker.io: target-registry/docker-mirror`
+    - Structured format with mappings array
+  - Test edge cases:
+    - Empty mapping file
+    - Mapping file with no entries for test registries
+    - Mapping file with inconsistent formatting (extra whitespace, etc.)
+
+- **Integration Test Guidelines:**
+  - Create mapping files in a temporary directory using the test harness
+  - Use absolute paths when passing mapping files to commands
+  - Validate that the generated override values correctly reflect the configured mappings
+
+### 9. Command-Line Option Validation
 
 Test all CLI options individually and in combination:
 - `--chart-path` (directory and .tgz)

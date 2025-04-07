@@ -15,12 +15,12 @@ import (
 
 // MockPathStrategy for testing
 type MockPathStrategy struct {
-	GeneratePathFunc func(originalRef *image.ImageReference, targetRegistry string, mappings *registrymapping.RegistryMappings) (string, error)
+	GeneratePathFunc func(originalRef *image.ImageReference, targetRegistry string) (string, error)
 }
 
-func (m *MockPathStrategy) GeneratePath(originalRef *image.ImageReference, targetRegistry string, mappings *registrymapping.RegistryMappings) (string, error) {
+func (m *MockPathStrategy) GeneratePath(originalRef *image.ImageReference, targetRegistry string) (string, error) {
 	if m.GeneratePathFunc != nil {
-		return m.GeneratePathFunc(originalRef, targetRegistry, mappings)
+		return m.GeneratePathFunc(originalRef, targetRegistry)
 	}
 	return "mockpath/" + originalRef.Repository, nil
 }
@@ -83,8 +83,7 @@ func TestGenerate(t *testing.T) {
 	targetRegistry := "harbor.local"
 	sourceRegistries := []string{"docker.io"}
 	var excludeRegistries []string
-	var mockMappings *registrymapping.RegistryMappings // Updated type here
-	mockStrategy := &MockPathStrategy{}                // Use simple default mock strategy
+	mockStrategy := &MockPathStrategy{} // Use simple default mock strategy
 	strict := false
 	threshold := 100
 	dummyChartPath := "./test-chart"
@@ -120,7 +119,7 @@ func TestGenerate(t *testing.T) {
 			sourceRegistries,
 			excludeRegistries,
 			mockStrategy,
-			mockMappings,
+			nil,
 			strict,
 			threshold,
 			mockLoader, // Pass mock loader
@@ -174,7 +173,7 @@ func TestGenerate(t *testing.T) {
 		// 3. Create Generator
 		generator := NewGenerator(
 			dummyChartPath, targetRegistry, sourceRegistries, excludeRegistries,
-			mockStrategy, mockMappings, strict, threshold, mockLoader,
+			mockStrategy, nil, strict, threshold, mockLoader,
 		)
 
 		// 4. Call Generate
@@ -221,7 +220,7 @@ func TestGenerate(t *testing.T) {
 
 		generator := NewGenerator(
 			dummyChartPath, targetRegistry, sourceRegistries, localExcludeRegistries, // Use local exclude list
-			mockStrategy, mockMappings, strict, threshold, mockLoader,
+			mockStrategy, nil, strict, threshold, mockLoader,
 		)
 
 		overrideFile, err := generator.Generate()
@@ -266,7 +265,7 @@ func TestGenerate(t *testing.T) {
 
 		generator := NewGenerator(
 			dummyChartPath, targetRegistry, sourceRegistries, excludeRegistries,
-			mockStrategy, mockMappings, strict, threshold, mockLoader,
+			mockStrategy, nil, strict, threshold, mockLoader,
 		)
 
 		overrideFile, err := generator.Generate()
@@ -296,7 +295,7 @@ func TestGenerate(t *testing.T) {
 	t.Run("Prefix Source Registry Strategy", func(t *testing.T) {
 		// Use the actual strategy
 		// Pass nil mappings as we aren't testing mapping interaction here
-		actualStrategy := strategy.NewPrefixSourceRegistryStrategy(mockMappings)
+		actualStrategy := strategy.NewPrefixSourceRegistryStrategy()
 
 		mockChart := &chart.Chart{
 			Metadata: &chart.Metadata{Name: "strategychart"},
@@ -314,7 +313,7 @@ func TestGenerate(t *testing.T) {
 		generator := NewGenerator(
 			dummyChartPath, targetRegistry, localSourceRegistries, excludeRegistries,
 			actualStrategy, // Use the actual strategy instance
-			mockMappings, strict, threshold, mockLoader,
+			nil, strict, threshold, mockLoader,
 		)
 
 		overrideFile, err := generator.Generate()
@@ -381,11 +380,11 @@ func TestGenerate(t *testing.T) {
 		mockLoader := &MockChartLoader{ChartToReturn: parentChart}
 
 		// Use Prefix strategy for clearer path checking
-		prefixStrategy := strategy.NewPrefixSourceRegistryStrategy(nil)
+		prefixStrategy := strategy.NewPrefixSourceRegistryStrategy()
 
 		generator := NewGenerator(
 			dummyChartPath, targetRegistry, sourceRegistries, excludeRegistries,
-			prefixStrategy, mockMappings, strict, threshold, mockLoader,
+			prefixStrategy, nil, strict, threshold, mockLoader,
 		)
 
 		overrideFile, err := generator.Generate()
@@ -597,8 +596,7 @@ func TestGenerateOverrides(t *testing.T) {
 	targetRegistry := "harbor.local"
 	sourceRegistries := []string{"docker.io"}
 	var excludeRegistries []string
-	var mockMappings *registrymapping.RegistryMappings
-	prefixStrategy := strategy.NewPrefixSourceRegistryStrategy(nil)
+	prefixStrategy := strategy.NewPrefixSourceRegistryStrategy()
 	verbose := false // Keep test output clean
 
 	// 1. Define the EXPECTED MERGED values structure Helm would create
@@ -657,7 +655,7 @@ func TestGenerateOverrides(t *testing.T) {
 		Error:       nil,
 	}
 
-	overrides, err := processChartForOverrides(mockMergedChart, targetRegistry, sourceRegistries, excludeRegistries, prefixStrategy, mockMappings, verbose, detector)
+	overrides, err := processChartForOverrides(mockMergedChart, targetRegistry, sourceRegistries, excludeRegistries, prefixStrategy, verbose, detector)
 	require.NoError(t, err)
 	require.NotNil(t, overrides)
 
@@ -1150,11 +1148,10 @@ func TestProcessChartForOverrides(t *testing.T) {
 	sourceRegistries := []string{"docker.io", "quay.io"}
 	excludeRegistries := []string{"internal.registry"}
 	mockStrategy := &MockPathStrategy{
-		GeneratePathFunc: func(ref *image.ImageReference, tr string, m *registrymapping.RegistryMappings) (string, error) {
+		GeneratePathFunc: func(ref *image.ImageReference, tr string) (string, error) {
 			return targetRegistry + "/" + ref.Repository, nil
 		},
 	}
-	var mockMappings *registrymapping.RegistryMappings
 
 	tests := []struct {
 		name           string
@@ -1349,7 +1346,7 @@ func TestProcessChartForOverrides(t *testing.T) {
 				Error:          tt.detectError,
 			}
 
-			result, err := processChartForOverrides(tt.chartData, targetRegistry, sourceRegistries, excludeRegistries, mockStrategy, mockMappings, true, detector)
+			result, err := processChartForOverrides(tt.chartData, targetRegistry, sourceRegistries, excludeRegistries, mockStrategy, true, detector)
 
 			if tt.expectError {
 				assert.Error(t, err)

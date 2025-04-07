@@ -88,7 +88,7 @@ Manually identifying and overriding all container image references (including th
     *   Other structures (e.g., maps with only `repository`, maps using non-standard keys, values that only incidentally match image patterns) are explicitly **not** supported in the initial version. Support may be added based on testing feedback.
 4. **Image Parsing:** Extract source registry, repository path, and tag/digest from identified image references. Handle default registry (`docker.io`) if not explicitly specified.
 5. **Filtering:** Match the extracted source registry against the user-provided list.
-6. **Target URL Construction:** Generate the new image URL using a configurable strategy (see Section 8).
+6. **Target URL Construction:** Generate the new image URL using a configurable strategy.
 7. **Override Structure Generation:** Build a new dictionary mirroring the path to the original value within the `values.yaml` structure. This dictionary will contain **only** the minimal set of keys required to redirect the image according to the chosen path strategy (typically just `repository`, or `registry` and `repository` if the registry needs explicit setting). Unmodified sibling keys like `tag` or `pullPolicy` will **not** be included in the generated override file. Handle subchart paths correctly using the alias defined in the parent chart's `Chart.yaml` dependencies section (e.g., `subchartAlias.image.repository`).
 8. **Output:** Serialize the override dictionary to YAML format.
 
@@ -172,6 +172,37 @@ Processing Helm `values.yaml` files presents several complexities that necessita
 5.  **Heuristic Identification:** Distinguishing image references from general configuration values (e.g., `replicas: 3`, `service.type: ClusterIP`) relies on heuristics (like the `isImageMap` function and pattern matching). Careful handling of different data types is crucial to avoid misidentifying values and causing errors.
 
 In essence, the tool processes complex, varied, and template-filled input files to produce minimal yet structurally valid override files that correctly modify only image references without breaking downstream Helm processing.
+
+### 6.1.7 Path Strategy and Registry Mappings
+
+**Path Strategy Interface**
+
+The tool uses a flexible strategy pattern for generating image paths in the target registry:
+
+```go
+type PathStrategy interface {
+    // GeneratePath creates the target image reference string based on the strategy.
+    // It takes the original parsed reference and the overall target registry.
+    GeneratePath(originalRef *image.ImageReference, targetRegistry string) (string, error)
+}
+```
+
+**PrefixSourceRegistryStrategy (Default)**
+- Uses the sanitized source registry name as a prefix for repository paths
+- Example: `docker.io/library/nginx` → `target.registry/dockerio/library/nginx`
+- Important: This strategy only returns the repository part (`dockerio/library/nginx`); the caller adds the target registry
+
+**Registry Mapping Format**
+The tool supports a simple YAML key-value mapping format:
+```yaml
+docker.io: target.registry/docker-mirror
+quay.io: target.registry/quay-mirror
+```
+
+**Path Handling Requirements**
+- Registry mapping files must be specified with absolute paths or relative paths within the working directory
+- The tool validates paths to prevent directory traversal attacks
+- Paths must use `.yaml` or `.yml` extensions
 
 ### 6.2. Technology Stack
 

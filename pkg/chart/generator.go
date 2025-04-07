@@ -98,8 +98,6 @@ func locationTypeToString(lt image.LocationType) string {
 // Generate generates image overrides for the chart
 func (g *Generator) Generate() (*override.OverrideFile, error) {
 	// <<< ADD fmt.Printf LOGGING HERE AT THE VERY BEGINNING >>>
-	fmt.Printf("[DEBUG irr] Entering Generator.Generate for chart: %s\n", g.chartPath)
-
 	debug.FunctionEnter("Generator.Generate")
 	defer debug.FunctionExit("Generator.Generate")
 
@@ -137,7 +135,6 @@ func (g *Generator) Generate() (*override.OverrideFile, error) {
 	detector := image.NewImageDetector(detectionContext)
 
 	// --- ADD DEBUG LOG BEFORE DetectImages ---
-	fmt.Printf("[DEBUG irr GEN] >>> Calling DetectImages. Initial path: []. Chart values type: map[string]interface{}\n")
 	if chartData.Values == nil {
 		fmt.Println("[DEBUG irr GEN] >>> WARNING: chartData.Values is nil before calling DetectImages!")
 	} else {
@@ -297,10 +294,9 @@ func (g *Generator) Generate() (*override.OverrideFile, error) {
 	} // End loop over images
 
 	// --- Threshold Check ---
-	totalImagesFound := len(images) // Use total found before filtering
 	successRate := 0
-	if totalImagesFound > 0 {
-		successRate = (imagesSuccessfullyProcessed * 100) / eligibleImagesCount // Base rate on eligible images
+	if eligibleImagesCount > 0 { // Base rate on eligible images
+		successRate = (imagesSuccessfullyProcessed * 100) / eligibleImagesCount
 	}
 	debug.Printf("Final success rate: %d%% (%d/%d eligible images)", successRate, imagesSuccessfullyProcessed, eligibleImagesCount)
 
@@ -363,7 +359,7 @@ func (g *Generator) Generate() (*override.OverrideFile, error) {
 	return &override.OverrideFile{
 		ChartPath:   g.chartPath,
 		ChartName:   filepath.Base(g.chartPath),
-		Overrides:   finalOverrides, // <-- Use the minimal map
+		Overrides:   finalOverrides,
 		Unsupported: unsupported,
 	}, nil
 }
@@ -465,7 +461,7 @@ func (g *Generator) isSourceRegistry(registry string) bool {
 // @returns: map[string]interface{} containing the override structure
 // @returns: error if processing fails
 // @llm-helper This is the main entry point for generating overrides
-func GenerateOverrides(chartData *chart.Chart, targetRegistry string, sourceRegistries []string, excludeRegistries []string, pathStrategy strategy.PathStrategy, mappings *registrymapping.RegistryMappings, verbose bool) (map[string]interface{}, error) {
+func GenerateOverrides(chartData *chart.Chart, targetRegistry string, sourceRegistries []string, excludeRegistries []string, pathStrategy strategy.PathStrategy, verbose bool) (map[string]interface{}, error) {
 	debug.FunctionEnter("GenerateOverrides")
 	defer debug.FunctionExit("GenerateOverrides")
 
@@ -483,7 +479,7 @@ func GenerateOverrides(chartData *chart.Chart, targetRegistry string, sourceRegi
 	// Process the main chart (Helm loader should have merged values)
 	debug.Printf("Processing combined chart values: %s", chartData.Name())
 	// Call processChartForOverrides just once with the potentially merged chartData
-	overrides, err := processChartForOverrides(chartData, targetRegistry, sourceRegistries, excludeRegistries, pathStrategy, mappings, verbose, detector)
+	overrides, err := processChartForOverrides(chartData, targetRegistry, sourceRegistries, excludeRegistries, pathStrategy, verbose, detector)
 	if err != nil {
 		// Changed error wrapping to match original intent better
 		return nil, fmt.Errorf("error processing chart values: %w", err)
@@ -498,7 +494,7 @@ type ImageDetector interface {
 }
 
 // processChartForOverrides processes a single chart and its values.
-func processChartForOverrides(chartData *chart.Chart, targetRegistry string, sourceRegistries []string, excludeRegistries []string, pathStrategy strategy.PathStrategy, mappings *registrymapping.RegistryMappings, verbose bool, detector ImageDetector) (map[string]interface{}, error) {
+func processChartForOverrides(chartData *chart.Chart, targetRegistry string, sourceRegistries []string, excludeRegistries []string, pathStrategy strategy.PathStrategy, _ bool, detector ImageDetector) (map[string]interface{}, error) {
 	debug.FunctionEnter("processChartForOverrides")
 	defer debug.FunctionExit("processChartForOverrides")
 

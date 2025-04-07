@@ -1,4 +1,4 @@
-// Package strategy defines interfaces and implementations for different image path generation strategies.
+// Package strategy defines interfaces and implementations for generating image paths.
 package strategy
 
 import (
@@ -20,7 +20,7 @@ type PathStrategy interface {
 
 // nolint:unused // Kept for potential future uses
 var strategyRegistry = map[string]PathStrategy{
-	"prefix-source-registry": NewPrefixSourceRegistryStrategy(nil),
+	"prefix-source-registry": NewPrefixSourceRegistryStrategy(),
 }
 
 // GetStrategy returns a path strategy based on the name
@@ -30,7 +30,7 @@ func GetStrategy(name string, mappings *registrymapping.RegistryMappings) (PathS
 	switch name {
 	case "prefix-source-registry":
 		debug.Printf("GetStrategy: Using PrefixSourceRegistryStrategy")
-		return NewPrefixSourceRegistryStrategy(mappings), nil
+		return NewPrefixSourceRegistryStrategy(), nil
 	default:
 		debug.Printf("GetStrategy: Unknown strategy name: %s", name)
 		return nil, fmt.Errorf("unknown path strategy: %s", name)
@@ -39,38 +39,26 @@ func GetStrategy(name string, mappings *registrymapping.RegistryMappings) (PathS
 
 // PrefixSourceRegistryStrategy prefixes the source registry name to the repository path
 type PrefixSourceRegistryStrategy struct {
-	Mappings *registrymapping.RegistryMappings
+	// Mappings *registrymapping.RegistryMappings // Remove field
 }
 
 // NewPrefixSourceRegistryStrategy creates a new PrefixSourceRegistryStrategy
-func NewPrefixSourceRegistryStrategy(mappings *registrymapping.RegistryMappings) *PrefixSourceRegistryStrategy {
-	return &PrefixSourceRegistryStrategy{Mappings: mappings}
+func NewPrefixSourceRegistryStrategy() *PrefixSourceRegistryStrategy {
+	return &PrefixSourceRegistryStrategy{}
 }
 
 // GeneratePath constructs the target image path using the prefix-source-registry strategy.
 // Example: docker.io/library/nginx -> target.com/dockerio/library/nginx
-// This function ONLY returns the repository path part (e.g., "dockerio/library/nginx").
+// Example with mapping docker.io -> dckr: docker.io/library/nginx -> target.com/dckr/library/nginx
+// This function ONLY returns the repository path part (e.g., "dockerio/library/nginx" or "dckr/library/nginx").
 // The caller (generator) prepends the target registry and appends the tag/digest.
 func (s *PrefixSourceRegistryStrategy) GeneratePath(originalRef *image.ImageReference, targetRegistry string) (string, error) {
 	debug.Printf("PrefixSourceRegistryStrategy: Generating path for original reference: %+v", originalRef)
 	debug.Printf("PrefixSourceRegistryStrategy: Target registry: %s", targetRegistry)
 
-	var pathPrefix string
-	var mappedPrefix string // Store the custom mapping target prefix if it exists
-
-	if s.Mappings != nil {
-		mappedPrefix = s.Mappings.GetTargetRegistry(originalRef.Registry)
-	}
-
-	if mappedPrefix != "" {
-		// Use the custom mapping target prefix directly, BUT sanitize it first
-		pathPrefix = image.SanitizeRegistryForPath(mappedPrefix)
-		debug.Printf("PrefixSourceRegistryStrategy: Using sanitized custom mapping target '%s' as prefix (original mapping target: '%s')", pathPrefix, mappedPrefix)
-	} else {
-		// No custom mapping, use the sanitized source registry name
-		pathPrefix = image.SanitizeRegistryForPath(originalRef.Registry)
-		debug.Printf("PrefixSourceRegistryStrategy: Using default sanitized prefix '%s'", pathPrefix)
-	}
+	// Always use the sanitized source registry name as the prefix
+	pathPrefix := image.SanitizeRegistryForPath(originalRef.Registry)
+	debug.Printf("PrefixSourceRegistryStrategy: Using sanitized source registry prefix '%s'", pathPrefix)
 
 	// --- Base Repository Path Calculation (Keep existing logic) ---
 	// Ensure we only use the repository path part, excluding any original registry prefix

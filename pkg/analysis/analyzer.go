@@ -1,4 +1,4 @@
-// Package analysis provides functionality to analyze Helm charts for image references.
+// Package analysis provides functionality for analyzing Helm charts to identify container images.
 package analysis
 
 import (
@@ -315,4 +315,16 @@ func (a *Analyzer) isGlobalPattern(key string, value interface{}) bool {
 func (a *ChartAnalysis) mergeAnalysis(dep *ChartAnalysis) {
 	a.ImagePatterns = append(a.ImagePatterns, dep.ImagePatterns...)
 	a.GlobalPatterns = append(a.GlobalPatterns, dep.GlobalPatterns...)
+}
+
+// AnalyzerInterface defines the interface for chart analysis.
+// It allows for different implementations of the analysis logic.
+type AnalyzerInterface interface {
+	// ... existing code ...
+}
+
+// AnalysisResult holds the results of the chart analysis.
+// It includes lists of detected and unsupported image references.
+type AnalysisResult struct {
+	// ... existing code ...
 }

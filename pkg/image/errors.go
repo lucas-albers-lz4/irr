@@ -17,15 +17,17 @@ var (
 	// --- Map Structure Parsing Errors ---
 
 	// ErrInvalidImageMapRepo occurs when the 'repository' field in an image map is not a string.
-	ErrInvalidImageMapRepo = errors.New("invalid image map: repository is not a string")
+	ErrInvalidImageMapRepo = errors.New("image map has invalid repository type (must be string)")
 	// ErrInvalidImageMapRegistryType occurs when the 'registry' field in an image map is not a string.
-	ErrInvalidImageMapRegistryType = errors.New("invalid image map: registry is not a string")
+	ErrInvalidImageMapRegistryType = errors.New("image map has invalid registry type (must be string)")
 	// ErrInvalidImageMapTagType occurs when the 'tag' field in an image map is not a string.
-	ErrInvalidImageMapTagType = errors.New("invalid image map: tag is not a string")
+	ErrInvalidImageMapTagType = errors.New("image map has invalid tag type (must be string)")
 	// ErrInvalidImageMapDigestType occurs when the 'digest' field in an image map is not a string.
-	ErrInvalidImageMapDigestType = errors.New("invalid image map: digest is not a string")
+	ErrInvalidImageMapDigestType = errors.New("image map has invalid digest type (must be string)")
 	// ErrRepoNotFound occurs when the 'repository' key is missing or not a string in an image map.
-	ErrRepoNotFound = errors.New("repository not found or not a string") // Keep or reconcile with ErrInvalidImageMapRepo? Keeping for now.
+	ErrRepoNotFound = errors.New("repository key not found in image map") // Should logically be caught earlier
+	// ErrMissingRepoInImageMap occurs when the 'repository' key is missing in an image map.
+	ErrMissingRepoInImageMap = errors.New("image map is missing required 'repository' key")
 
 	// --- String Parsing Errors ---
 
@@ -57,7 +59,7 @@ var (
 	// ErrMissingTagOrDigest occurs when an image map or string lacks both a tag and a digest.
 	ErrMissingTagOrDigest = errors.New("missing tag or digest")
 	// ErrTagAndDigestPresent occurs when an image map or string specifies both a tag and a digest.
-	ErrTagAndDigestPresent = errors.New("both tag and digest present")
+	ErrTagAndDigestPresent = errors.New("image cannot have both tag and digest specified")
 	// ErrInvalidImageReference is a general error for invalid references after parsing.
 	ErrInvalidImageReference = errors.New("invalid image reference") // Keep or reconcile? Keeping for now.
 

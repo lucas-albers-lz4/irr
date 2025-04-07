@@ -1,4 +1,4 @@
-// Package registry provides functionality for managing container registry information.
+// Package registry provides error definitions for registry-related operations.
 package registry
 
 import (

@@ -1,4 +1,4 @@
-// Package generator provides functionality for generating Helm override files.
+// Package generator provides functionality to generate Helm override files based on image analysis.
 package generator
 
 import (
@@ -65,20 +65,30 @@ func (g *Generator) Generate(chartPath string, values map[string]interface{}) (m
 
 	for _, detected := range detectedImages {
 		ref := detected.Reference
+		debug.Printf("[DEBUG irr GEN] Processing detected image: Path=%v, Ref=%s", detected.Path, ref.String())
 
-		// Check if the image needs rewriting based on source/exclude registries
+		// Check if the image should be processed based on source/exclude registries and mappings
 		if image.IsSourceRegistry(ref, g.sourceRegistries, g.excludeRegistries) {
-			debug.Printf("[DEBUG irr GEN] Processing Eligible Image: Path=%v, OriginalRef=%s, Type=%s", detected.Path, ref.String(), detected.Pattern)
-
-			// Determine the target registry using mappings
+			debug.Printf("[DEBUG irr GEN] Image %s IS in source/exclude list. Checking mappings...", ref.String())
+			// Get the target registry (could be the original if no mapping exists)
 			targetRegistry := g.registryMappings.GetTargetRegistry(ref.Registry)
+			if g.registryMappings != nil {
+				if mappedTarget := g.registryMappings.GetTargetRegistry(ref.Registry); mappedTarget != "" {
+					debug.Printf("[DEBUG irr GEN] Found mapping for %s -> %s", ref.Registry, mappedTarget)
+					targetRegistry = mappedTarget
+				} else {
+					debug.Printf("[DEBUG irr GEN] No mapping found for %s, using default target %s", ref.Registry, targetRegistry)
+				}
+			}
+
+			// Ensure we don't proceed if mapping check resulted in an empty target
 			if targetRegistry == "" {
 				debug.Printf("[WARN irr GEN] Could not find mapping for source registry: %s. Skipping rewrite.", ref.Registry)
 				continue // Skip this image if mapping is missing
 			}
 
 			// Generate the *repository path part* using the strategy
-			newRepoPath, err := g.pathStrategy.GeneratePath(ref, targetRegistry, g.registryMappings)
+			newRepoPath, err := g.pathStrategy.GeneratePath(ref, targetRegistry)
 			if err != nil {
 				debug.Printf("[ERROR irr GEN] Error generating repo path for %v: %v. Skipping.", detected.Path, err)
 				continue // Skip on error generating path
@@ -169,4 +179,10 @@ func (g *Generator) Generate(chartPath string, values map[string]interface{}) (m
 	}
 
 	return overrides, nil
+}
+
+// GeneratorInterface defines the interface for generating override files.
+// This allows for different generation strategies or implementations.
+type GeneratorInterface interface {
+	// ... existing code ...
 }

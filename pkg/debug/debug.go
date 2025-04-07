@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// Package debug provides simple debug logging capabilities.
+// Package debug provides simple conditional debugging output.
 // This package implements a simple but effective debugging system that can be
 // enabled at runtime to help diagnose issues and track program flow.
 

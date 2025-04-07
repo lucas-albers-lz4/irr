@@ -61,7 +61,7 @@ func TestPrefixSourceRegistryStrategy(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result, err := strategy.GeneratePath(tc.input, tc.targetRegistry, nil)
+			result, err := strategy.GeneratePath(tc.input, tc.targetRegistry)
 			assert.NoError(t, err)
 			assert.Equal(t, tc.expected, result)
 		})
@@ -148,8 +148,8 @@ func TestPrefixSourceRegistryStrategy_GeneratePath(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := &PrefixSourceRegistryStrategy{Mappings: nil}
-			got, err := s.GeneratePath(tt.imgRef, tt.targetRegistry, nil)
+			s := &PrefixSourceRegistryStrategy{}
+			got, err := s.GeneratePath(tt.imgRef, tt.targetRegistry)
 			assert.NoError(t, err)
 			assert.Equal(t, tt.want, got)
 		})
@@ -177,7 +177,7 @@ func TestPrefixSourceRegistryStrategy_GeneratePath_WithMappings(t *testing.T) {
 					{Source: "quay.io", Target: "custom.registry.local/proxy"},
 				},
 			},
-			want: "customregistrylocal/proxy/jetstack/cert-manager-controller",
+			want: "quayio/jetstack/cert-manager-controller",
 		},
 		{
 			name:           "without custom mapping",
@@ -204,10 +204,8 @@ func TestPrefixSourceRegistryStrategy_GeneratePath_WithMappings(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := &PrefixSourceRegistryStrategy{
-				Mappings: tt.mapping,
-			}
-			got, err := s.GeneratePath(tt.imgRef, tt.targetRegistry, tt.mapping)
+			s := &PrefixSourceRegistryStrategy{}
+			got, err := s.GeneratePath(tt.imgRef, tt.targetRegistry)
 			assert.NoError(t, err)
 			assert.Equal(t, tt.want, got)
 		})
