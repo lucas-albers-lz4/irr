@@ -8,7 +8,7 @@ import (
 
 	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/image"
-	"github.com/lalbers/irr/pkg/registrymapping"
+	"github.com/lalbers/irr/pkg/registry"
 )
 
 // PathStrategy defines the interface for generating new image paths.
@@ -24,7 +24,7 @@ var strategyRegistry = map[string]PathStrategy{
 }
 
 // GetStrategy returns a path strategy based on the name
-func GetStrategy(name string, mappings *registrymapping.RegistryMappings) (PathStrategy, error) {
+func GetStrategy(name string, mappings *registry.Mappings) (PathStrategy, error) {
 	debug.Printf("GetStrategy: Getting strategy for name: %s", name)
 
 	switch name {

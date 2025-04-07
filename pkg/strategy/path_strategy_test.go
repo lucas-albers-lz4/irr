@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/lalbers/irr/pkg/image"
-	"github.com/lalbers/irr/pkg/registrymapping"
+	"github.com/lalbers/irr/pkg/registry"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -72,7 +72,7 @@ func TestGetStrategy(t *testing.T) {
 	tests := []struct {
 		name         string
 		strategyName string
-		mappings     *registrymapping.RegistryMappings
+		mappings     *registry.Mappings
 		wantErr      bool
 		errMsg       string
 	}{
@@ -162,7 +162,7 @@ func TestPrefixSourceRegistryStrategy_GeneratePath_WithMappings(t *testing.T) {
 		targetRegistry string
 		imgRef         *image.Reference
 		want           string
-		mapping        *registrymapping.RegistryMappings
+		mapping        *registry.Mappings
 	}{
 		{
 			name:           "with_custom_mapping",
@@ -172,8 +172,8 @@ func TestPrefixSourceRegistryStrategy_GeneratePath_WithMappings(t *testing.T) {
 				Repository: "jetstack/cert-manager-controller",
 				Tag:        "v1.5.3",
 			},
-			mapping: &registrymapping.RegistryMappings{
-				Mappings: []registrymapping.RegistryMapping{
+			mapping: &registry.Mappings{
+				Mappings: []registry.Mapping{
 					{Source: "quay.io", Target: "custom.registry.local/proxy"},
 				},
 			},

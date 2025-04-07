@@ -9,39 +9,94 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Test function names updated to match consolidated functions
 func TestLoadMappings(t *testing.T) {
 	// Create a temporary mappings file
-	content := `mappings:
-  - source: "quay.io"
-    target: "my-registry.example.com/quay-mirror"
-  - source: "docker.io"
-    target: "my-registry.example.com/docker-mirror"
-`
+	// **NOTE:** Updated fixture to match map[string]string format expected by LoadMappings.
+	content := `
+ "quay.io": "my-registry.example.com/quay-mirror"
+ "docker.io": "my-registry.example.com/docker-mirror"
+ `
 	tmpDir := t.TempDir()
 	tmpFile := filepath.Join(tmpDir, "mappings.yaml")
-	err := os.WriteFile(tmpFile, []byte(content), 0600)
+	err := os.WriteFile(tmpFile, []byte(content), 0o600)
+	require.NoError(t, err)
+
+	// Create an empty temporary file
+	emptyTmpFile := filepath.Join(tmpDir, "empty.yaml")
+	emptyFile, err := os.Create(emptyTmpFile)
+	require.NoError(t, err)
+	emptyFile.Close() // Close immediately after creation
+
+	// Create a temporary file with invalid YAML
+	invalidYAMLContent := `"key: value" : missing_quote`
+	invalidTmpFile := filepath.Join(tmpDir, "invalid.yaml")
+	err = os.WriteFile(invalidTmpFile, []byte(invalidYAMLContent), 0o600)
+	require.NoError(t, err)
+
+	// Create a temporary file with an invalid extension
+	invalidExtTmpFile := filepath.Join(tmpDir, "mappings.txt")
+	invalidExtFile, err := os.Create(invalidExtTmpFile)
+	require.NoError(t, err)
+	invalidExtFile.Close()
+
+	// Create a temporary directory
+	tmpSubDir := filepath.Join(tmpDir, "subdir")
+	err = os.Mkdir(tmpSubDir, 0o750)
 	require.NoError(t, err)
 
 	tests := []struct {
 		name          string
 		path          string
-		wantMappings  *RegistryMappings
+		wantMappings  *Mappings // Use consolidated Mappings type
 		wantErr       bool
 		errorContains string
 	}{
 		{
 			name: "valid mappings file",
 			path: tmpFile,
-			wantMappings: &RegistryMappings{
-				Mappings: []RegistryMapping{
+			wantMappings: &Mappings{ // Use consolidated Mappings type
+				Mappings: []Mapping{ // Use consolidated Mapping type
 					{Source: "quay.io", Target: "my-registry.example.com/quay-mirror"},
 					{Source: "docker.io", Target: "my-registry.example.com/docker-mirror"},
 				},
 			},
+			wantErr:       false, // Should succeed now
+			errorContains: "",
 		},
 		{
 			name:          "nonexistent file",
 			path:          "nonexistent.yaml",
+			wantErr:       true,
+			errorContains: "mappings file does not exist", // Check specific error text from WrapMappingFileNotExist
+		},
+		{
+			name:          "empty file",
+			path:          emptyTmpFile,
+			wantErr:       true,
+			errorContains: "mappings file is empty",
+		},
+		{
+			name:          "invalid yaml format",
+			path:          invalidTmpFile,
+			wantErr:       true,
+			errorContains: "failed to parse mappings file",
+		},
+		{
+			name:          "invalid file extension",
+			path:          invalidExtTmpFile,
+			wantErr:       true,
+			errorContains: "mappings file path must end with .yaml or .yml",
+		},
+		{
+			name:          "path is a directory",
+			path:          tmpSubDir,
+			wantErr:       true,
+			errorContains: "is a directory",
+		},
+		{
+			name:          "invalid path traversal",
+			path:          "../../../etc/passwd", // Example invalid path
 			wantErr:       true,
 			errorContains: "mappings file does not exist",
 		},
@@ -56,6 +111,7 @@ func TestLoadMappings(t *testing.T) {
 			// Set env variable to skip CWD check in LoadMappings during testing
 			t.Setenv("IRR_TESTING", "true")
 
+			// Call the consolidated LoadMappings function
 			got, err := LoadMappings(tt.path)
 			if tt.wantErr {
 				require.Error(t, err)
@@ -64,17 +120,19 @@ func TestLoadMappings(t *testing.T) {
 			}
 			require.NoError(t, err)
 			if tt.path == "" {
-				assert.Nil(t, got)
+				assert.Nil(t, got) // Correct expectation for empty path
 			} else {
-				assert.Equal(t, tt.wantMappings, got)
+				// Use ElementsMatch because the order from map iteration is not guaranteed
+				assert.ElementsMatch(t, tt.wantMappings.Mappings, got.Mappings)
 			}
 		})
 	}
 }
 
+// Test function names updated to match consolidated functions
 func TestGetTargetRegistry(t *testing.T) {
-	mappings := &RegistryMappings{
-		Mappings: []RegistryMapping{
+	mappings := &Mappings{ // Use consolidated Mappings type
+		Mappings: []Mapping{ // Use consolidated Mapping type
 			{Source: "quay.io", Target: "my-registry.example.com/quay-mirror"},
 			{Source: "docker.io", Target: "my-registry.example.com/docker-mirror"},
 		},
@@ -82,7 +140,7 @@ func TestGetTargetRegistry(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		mappings *RegistryMappings
+		mappings *Mappings // Use consolidated Mappings type
 		source   string
 		want     string
 	}{
@@ -90,6 +148,18 @@ func TestGetTargetRegistry(t *testing.T) {
 			name:     "existing mapping",
 			mappings: mappings,
 			source:   "quay.io",
+			want:     "my-registry.example.com/quay-mirror",
+		},
+		{
+			name:     "existing mapping - normalization docker.io",
+			mappings: mappings,                          // docker.io maps to my-registry.example.com/docker-mirror
+			source:   "index.docker.io/library/myimage", // Should normalize to docker.io
+			want:     "my-registry.example.com/docker-mirror",
+		},
+		{
+			name:     "existing mapping - normalization with CR",
+			mappings: mappings,    // quay.io maps to my-registry.example.com/quay-mirror
+			source:   "quay.io\r", // Carriage return should be stripped
 			want:     "my-registry.example.com/quay-mirror",
 		},
 		{
@@ -104,10 +174,17 @@ func TestGetTargetRegistry(t *testing.T) {
 			source:   "quay.io",
 			want:     "",
 		},
+		{
+			name:     "empty mappings list",
+			mappings: &Mappings{Mappings: []Mapping{}}, // Empty list, not nil
+			source:   "quay.io",
+			want:     "",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Call the consolidated GetTargetRegistry method
 			got := tt.mappings.GetTargetRegistry(tt.source)
 			assert.Equal(t, tt.want, got)
 		})

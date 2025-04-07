@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/lalbers/irr/pkg/log"
-	registrymapping "github.com/lalbers/irr/pkg/registrymapping"
+	"github.com/lalbers/irr/pkg/registry"
 	"github.com/spf13/cobra"
 )
 
@@ -36,7 +36,7 @@ references based on specified source registries.`,
 			analyzeChartPath, analyzeMappingsFile, analyzeStrict)
 
 		// Load Mappings
-		mappings, err := registrymapping.LoadMappings(analyzeMappingsFile)
+		mappings, err := registry.LoadMappings(analyzeMappingsFile)
 		if err != nil {
 			return fmt.Errorf("error loading registry mappings: %w", err)
 		}

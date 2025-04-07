@@ -139,7 +139,6 @@ issues:
   exclude:
     # Regex for paths to exclude from analysis
     - "zz_generated.*\\.go" # Exclude auto-generated files
-    - "pkg/registrymapping/" # Exclude specific directory
 
 output:
   # Removing keys that seem invalid in config file format

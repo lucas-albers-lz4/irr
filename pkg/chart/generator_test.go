@@ -9,7 +9,7 @@ import (
 	"helm.sh/helm/v3/pkg/chart"
 
 	"github.com/lalbers/irr/pkg/image"
-	"github.com/lalbers/irr/pkg/registrymapping"
+	"github.com/lalbers/irr/pkg/registry"
 	"github.com/lalbers/irr/pkg/strategy"
 )
 
@@ -30,7 +30,7 @@ func TestNewGenerator(t *testing.T) {
 	targetRegistry := "my.registry.com"
 	sourceRegistries := []string{"docker.io"}
 	excludeRegistries := []string{"internal.com"}
-	var mockMappings *registrymapping.RegistryMappings // Updated type here
+	var mockMappings *registry.Mappings // Updated type here
 	mockStrategy := &MockPathStrategy{}
 	strict := false
 	threshold := 90

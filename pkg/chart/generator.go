@@ -17,7 +17,7 @@ import (
 	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/image"
 	"github.com/lalbers/irr/pkg/override"
-	"github.com/lalbers/irr/pkg/registrymapping"
+	"github.com/lalbers/irr/pkg/registry"
 	"github.com/lalbers/irr/pkg/strategy"
 )
 
@@ -56,14 +56,14 @@ type Generator struct {
 	sourceRegistries  []string
 	excludeRegistries []string
 	pathStrategy      strategy.PathStrategy
-	mappings          *registrymapping.RegistryMappings
+	mappings          *registry.Mappings
 	strict            bool
 	threshold         int
 	loader            Loader
 }
 
 // NewGenerator creates a new Generator
-func NewGenerator(chartPath, targetRegistry string, sourceRegistries, excludeRegistries []string, pathStrategy strategy.PathStrategy, mappings *registrymapping.RegistryMappings, strict bool, threshold int, loader Loader) *Generator {
+func NewGenerator(chartPath, targetRegistry string, sourceRegistries, excludeRegistries []string, pathStrategy strategy.PathStrategy, mappings *registry.Mappings, strict bool, threshold int, loader Loader) *Generator {
 	if loader == nil {
 		loader = NewLoader()
 	}

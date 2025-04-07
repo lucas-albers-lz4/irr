@@ -13,7 +13,7 @@ import (
 	"github.com/lalbers/irr/pkg/chart"
 	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/override"
-	"github.com/lalbers/irr/pkg/registrymapping"
+	"github.com/lalbers/irr/pkg/registry"
 	"github.com/lalbers/irr/pkg/strategy"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
@@ -103,10 +103,10 @@ type GeneratorInterface interface {
 }
 
 // Allows overriding for testing
-type generatorFactoryFunc func(chartPath, targetRegistry string, sourceRegistries, excludeRegistries []string, pathStrategy strategy.PathStrategy, mappings *registrymapping.RegistryMappings, strict bool, threshold int, loader chart.Loader) GeneratorInterface
+type generatorFactoryFunc func(chartPath, targetRegistry string, sourceRegistries, excludeRegistries []string, pathStrategy strategy.PathStrategy, mappings *registry.Mappings, strict bool, threshold int, loader chart.Loader) GeneratorInterface
 
 // Default factory creates the real generator
-var defaultGeneratorFactory generatorFactoryFunc = func(chartPath, targetRegistry string, sourceRegistries, excludeRegistries []string, pathStrategy strategy.PathStrategy, mappings *registrymapping.RegistryMappings, strict bool, threshold int, loader chart.Loader) GeneratorInterface {
+var defaultGeneratorFactory generatorFactoryFunc = func(chartPath, targetRegistry string, sourceRegistries, excludeRegistries []string, pathStrategy strategy.PathStrategy, mappings *registry.Mappings, strict bool, threshold int, loader chart.Loader) GeneratorInterface {
 	return chart.NewGenerator(chartPath, targetRegistry, sourceRegistries, excludeRegistries, pathStrategy, mappings, strict, threshold, loader)
 }
 
@@ -256,11 +256,11 @@ func runOverride(cmd *cobra.Command, _ []string) error {
 	debug.Printf("Exclude Registries: %v", validExcludeRegs)
 
 	// --- Load Registry Mappings ---
-	var mappings *registrymapping.RegistryMappings
+	var mappings *registry.Mappings
 	var loadMappingsErr error
 	if registryMappingsFile != "" {
 		debug.Printf("Loading registry mappings from: %s", registryMappingsFile)
-		mappings, loadMappingsErr = registrymapping.LoadMappings(registryMappingsFile)
+		mappings, loadMappingsErr = registry.LoadMappings(registryMappingsFile)
 		if loadMappingsErr != nil {
 			return wrapExitCodeError(ExitInputConfigurationError, "failed to load registry mappings", loadMappingsErr)
 		}
