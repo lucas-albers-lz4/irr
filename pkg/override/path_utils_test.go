@@ -101,34 +101,37 @@ func TestDeepCopy(t *testing.T) {
 
 			// For maps, verify it's a different instance
 			if m, ok := tt.src.(map[string]interface{}); ok {
-				if reflect.ValueOf(result).Pointer() == reflect.ValueOf(m).Pointer() {
+				if result != nil && reflect.ValueOf(result).Pointer() == reflect.ValueOf(m).Pointer() {
 					t.Error("DeepCopy() returned same map instance")
 				}
 			}
 
 			// For arrays, verify they're different instances
-			if m, ok := tt.src.(map[string]interface{}); ok {
-				for k, v := range m {
-					if arr, ok := v.([]interface{}); ok {
-						resultMap, ok := result.(map[string]interface{})
-						if !ok {
-							t.Error("DeepCopy() result is not a map[string]interface{}")
-							continue
-						}
-						resultVal, ok := resultMap[k]
-						if !ok {
-							t.Errorf("DeepCopy() result missing key %s", k)
-							continue
-						}
-						resultArr, ok := resultVal.([]interface{})
-						if !ok {
-							t.Errorf("DeepCopy() value at key %s is not []interface{}", k)
-							continue
-						}
-						if len(arr) > 0 && len(resultArr) > 0 {
-							if reflect.ValueOf(arr).Pointer() == reflect.ValueOf(resultArr).Pointer() {
-								t.Error("DeepCopy() returned same array instance")
-							}
+			srcMap, srcIsMap := tt.src.(map[string]interface{})
+			resultMap, resultIsMap := result.(map[string]interface{})
+
+			if srcIsMap && resultIsMap {
+				for k, srcVal := range srcMap {
+					srcArr, srcIsArr := srcVal.([]interface{})
+					if !srcIsArr {
+						continue // Skip if source value is not an array
+					}
+
+					resultVal, ok := resultMap[k]
+					if !ok {
+						t.Errorf("DeepCopy() result missing key %s", k)
+						continue
+					}
+
+					resultArr, ok := resultVal.([]interface{})
+					if !ok {
+						t.Errorf("DeepCopy() value at key %s is not []interface{}", k)
+						continue
+					}
+
+					if len(srcArr) > 0 && len(resultArr) > 0 {
+						if reflect.ValueOf(srcArr).Pointer() == reflect.ValueOf(resultArr).Pointer() {
+							t.Error("DeepCopy() returned same array instance for key %s", k)
 						}
 					}
 				}
