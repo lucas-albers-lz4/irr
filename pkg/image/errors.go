@@ -60,6 +60,9 @@ var (
 	ErrTagAndDigestPresent = errors.New("both tag and digest present")
 	// ErrInvalidImageReference is a general error for invalid references after parsing.
 	ErrInvalidImageReference = errors.New("invalid image reference") // Keep or reconcile? Keeping for now.
+
+	// String parsing errors
+	ErrAmbiguousStringPath = errors.New("string found at path not typically used for images, but resembles an image reference")
 )
 
 // Sentinel errors related to path manipulation (originally in path_utils.go).
