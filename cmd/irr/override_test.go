@@ -76,8 +76,14 @@ func TestOverrideCmdArgs(t *testing.T) {
 		},
 		// --- Invalid Flag Values ---
 		{
-			name:           "invalid_path_strategy",
-			args:           []string{"override", "--chart-path", "./chart", "--target-registry", "tr", "--source-registries", "sr", "--path-strategy", "invalid-start"},
+			name: "invalid_path_strategy",
+			args: []string{
+				"override",
+				"--chart-path", "./chart",
+				"--target-registry", "tr",
+				"--source-registries", "sr",
+				"--path-strategy", "invalid-start",
+			},
 			expectErr:      true,
 			stdErrContains: "unknown path strategy: invalid-start",
 		},
@@ -208,7 +214,14 @@ func TestOverrideCmdExecution(t *testing.T) {
 
 			// Setup Generator Mock
 			if tt.mockGeneratorFunc != nil {
-				currentGeneratorFactory = func(_, _ string, _, _ []string, _ strategy.PathStrategy, _ *registry.Mappings, _ bool, _ int, _ chart.Loader) GeneratorInterface {
+				currentGeneratorFactory = func(
+					_ string, _ string, // chartPath, targetRegistry
+					_ []string, _ []string, // sourceRegistries, excludeRegistries
+					_ strategy.PathStrategy, // pathStrategy
+					_ *registry.Mappings, // mappings
+					_ bool, _ int, // strict, threshold
+					_ chart.Loader, // loader
+				) GeneratorInterface {
 					return &mockGenerator{GenerateFunc: tt.mockGeneratorFunc}
 				}
 			} else {

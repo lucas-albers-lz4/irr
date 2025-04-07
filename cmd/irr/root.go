@@ -124,11 +124,31 @@ type GeneratorInterface interface {
 }
 
 // Allows overriding for testing
-type generatorFactoryFunc func(chartPath, targetRegistry string, sourceRegistries, excludeRegistries []string, pathStrategy strategy.PathStrategy, mappings *registry.Mappings, strict bool, threshold int, loader chart.Loader) GeneratorInterface
+type generatorFactoryFunc func(
+	chartPath, targetRegistry string,
+	sourceRegistries, excludeRegistries []string,
+	pathStrategy strategy.PathStrategy,
+	mappings *registry.Mappings,
+	strict bool,
+	threshold int,
+	loader chart.Loader,
+) GeneratorInterface
 
 // Default factory creates the real generator
-var defaultGeneratorFactory generatorFactoryFunc = func(chartPath, targetRegistry string, sourceRegistries, excludeRegistries []string, pathStrategy strategy.PathStrategy, mappings *registry.Mappings, strict bool, threshold int, loader chart.Loader) GeneratorInterface {
-	return chart.NewGenerator(chartPath, targetRegistry, sourceRegistries, excludeRegistries, pathStrategy, mappings, strict, threshold, loader)
+var defaultGeneratorFactory generatorFactoryFunc = func(
+	chartPath, targetRegistry string,
+	sourceRegistries, excludeRegistries []string,
+	pathStrategy strategy.PathStrategy,
+	mappings *registry.Mappings,
+	strict bool,
+	threshold int,
+	loader chart.Loader,
+) GeneratorInterface {
+	return chart.NewGenerator(
+		chartPath, targetRegistry,
+		sourceRegistries, excludeRegistries,
+		pathStrategy, mappings, strict, threshold, loader,
+	)
 }
 
 // Keep track of the current factory (can be replaced in tests)
@@ -175,7 +195,8 @@ Helm value overrides that redirect image references to a new registry.`,
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output")
 	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "Preview changes instead of writing file")
 	rootCmd.PersistentFlags().IntVar(&pathDepth, "path-depth", DefaultPathDepth, "Maximum recursion depth for values traversal")
-	rootCmd.PersistentFlags().StringVar(&imageRegistry, "image-registry", "", "Global image registry override (DEPRECATED, use global-registry)")
+	rootCmd.PersistentFlags().StringVar(&imageRegistry, "image-registry", "",
+		"Global image registry override (DEPRECATED, use global-registry)")
 	rootCmd.PersistentFlags().StringVar(&globalRegistry, "global-registry", "", "Global image registry override")
 	rootCmd.PersistentFlags().StringVar(&registryFile, "registry-file", "", "Path to YAML file containing registry mappings")
 	rootCmd.PersistentFlags().StringVarP(&outputFile, "output-file", "o", "", "Path to the output override file")
@@ -228,7 +249,10 @@ func runOverride(_ *cobra.Command, _ []string) error {
 	debug.Println("Validating inputs...")
 	// --- Input Validation ---
 	if chartPath == "" || targetRegistry == "" || len(sourceRegistries) == 0 {
-		return &ExitCodeError{Code: ExitInputConfigurationError, Err: errors.New("missing required flags: --chart-path, --target-registry, --source-registries must be provided")}
+		return &ExitCodeError{
+			Code: ExitInputConfigurationError,
+			Err:  errors.New("missing required flags: --chart-path, --target-registry, --source-registries must be provided"),
+		}
 	}
 
 	// Validate target registry format
@@ -248,21 +272,20 @@ func runOverride(_ *cobra.Command, _ []string) error {
 		}
 	}
 
-	// Load registry mappings if provided
+	// Load registry mappings if file is provided
 	var mappings *registry.Mappings
-	var loadMappingsErr error
 	if registryFile != "" {
-		debug.Printf("Loading registry mappings from: %s", registryFile)
+		var loadMappingsErr error
 		mappings, loadMappingsErr = registry.LoadMappings(registryFile)
 		if loadMappingsErr != nil {
-			// Wrap the error for exit code handling
-			return wrapExitCodeError(ExitInputConfigurationError, fmt.Sprintf("failed to load registry mappings from %s", registryFile), loadMappingsErr)
+			return wrapExitCodeError(ExitInputConfigurationError,
+				fmt.Sprintf("failed to load registry mappings from %s", registryFile),
+				loadMappingsErr)
 		}
-		debug.Printf("[DEBUG root.go] Loaded registry mappings: %+v (is nil: %t)", mappings, mappings == nil)
 	}
 
-	// --- Get Path Strategy --- // Moved validation earlier, now just get strategy
-	selectedStrategy, strategyErr := strategy.GetStrategy(pathStrategy, mappings) // Pass mappings
+	// Select Strategy
+	selectedStrategy, strategyErr := strategy.GetStrategy(pathStrategy, mappings)
 	if strategyErr != nil {
 		return &ExitCodeError{Code: ExitCodeInvalidStrategy, Err: strategyErr}
 	}
@@ -275,10 +298,14 @@ func runOverride(_ *cobra.Command, _ []string) error {
 	debug.Printf("Exclude Registries: %v", excludeRegistries)
 	debug.Printf("Registry File: %s", registryFile)
 
-	// --- Instantiate Generator ---
-	generator := currentGeneratorFactory(chartPath, targetRegistry, sourceRegistries, excludeRegistries, selectedStrategy, mappings, strictMode, pathDepth, nil)
+	// Create generator using the factory
+	generator := currentGeneratorFactory(
+		chartPath, targetRegistry,
+		sourceRegistries, excludeRegistries,
+		selectedStrategy, mappings, strictMode, pathDepth, nil, // Pass nil loader to use default
+	)
 
-	// --- Generate Overrides ---
+	// --- Generation ---
 	debug.Println("Generating overrides...")
 	overrideFile, err := generator.Generate()
 	if err != nil {

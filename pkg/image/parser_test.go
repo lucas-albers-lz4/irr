@@ -126,7 +126,11 @@ func TestParseImageReference(t *testing.T) {
 					if ref != nil {
 						ref.Path = nil
 					}
-					assert.True(t, reflect.DeepEqual(tt.expected, ref), "Mismatch between expected and actual ImageReference.\nExpected: %+v\nActual:   %+v", tt.expected, ref)
+					assert.True(t, reflect.DeepEqual(tt.expected, ref),
+						"Mismatch between expected and actual ImageReference.\n"+
+							"Expected: %+v\n"+
+							"Actual:   %+v",
+						tt.expected, ref)
 				}
 			}
 		})

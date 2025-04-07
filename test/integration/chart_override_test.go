@@ -15,7 +15,13 @@ import (
 )
 
 // Helper function to validate a single image override structure
-func validateImageOverride(t *testing.T, overrides map[string]interface{}, keyPath []string, expectedTargetRegistry, expectedRepoSubstring string) {
+func validateImageOverride(
+	t *testing.T,
+	overrides map[string]interface{},
+	keyPath []string,
+	expectedTargetRegistry,
+	expectedRepoSubstring string,
+) {
 	t.Helper()
 	value, err := override.GetValueAtPath(overrides, keyPath)
 	require.NoError(t, err, fmt.Sprintf("Failed to get value at path %v", keyPath))

@@ -114,11 +114,18 @@ func TestSetValueAtPath(t *testing.T) {
 			expectedError: false,
 		},
 		{
-			name:          "create_nested_path",
-			values:        map[string]interface{}{"existing": "data"},
-			path:          []string{"new", "nested", "key"},
-			value:         "value",
-			expected:      map[string]interface{}{"existing": "data", "new": map[string]interface{}{"nested": map[string]interface{}{"key": "value"}}},
+			name:   "create_nested_path",
+			values: map[string]interface{}{"existing": "data"},
+			path:   []string{"new", "nested", "key"},
+			value:  "value",
+			expected: map[string]interface{}{
+				"existing": "data",
+				"new": map[string]interface{}{
+					"nested": map[string]interface{}{
+						"key": "value",
+					},
+				},
+			},
 			expectedError: false,
 		},
 		{

@@ -22,7 +22,12 @@ type Generator struct {
 }
 
 // NewGenerator creates a new Generator instance.
-func NewGenerator(mappings *registry.Mappings, pathStrategy strategy.PathStrategy, sourceRegistries, excludeRegistries []string, strictMode, templateMode bool) *Generator {
+func NewGenerator(
+	mappings *registry.Mappings,
+	pathStrategy strategy.PathStrategy,
+	sourceRegistries, excludeRegistries []string,
+	strictMode, templateMode bool,
+) *Generator {
 	return &Generator{
 		Mappings:          mappings,
 		PathStrategy:      pathStrategy,

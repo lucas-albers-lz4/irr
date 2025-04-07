@@ -71,12 +71,17 @@ func TestNoDuplicateErrorDefinitions(t *testing.T) {
 	for errName, locations := range errorDefs {
 		if len(locations) > 1 {
 			foundDuplicates = true
-			t.Errorf("Duplicate package-level error definition found for '%s':\n\tDefined at: %s\n\tRecommendation: Consolidate all package errors into errors.go and remove duplicates.",
+			t.Errorf("Duplicate package-level error definition found for '%s':\n"+
+				"\tDefined at: %s\n"+
+				"\tRecommendation: Consolidate all package errors into errors.go and remove duplicates.",
 				errName, strings.Join(locations, "\n\t            "))
 		}
 	}
 
 	if foundDuplicates {
-		t.Log("------\nTip: Ensure all package-level errors (variables starting with 'Err') are defined only once, preferably in 'errors.go'.\n------")
+		t.Log("------\n" +
+			"Tip: Ensure all package-level errors (variables starting with 'Err') " +
+			"are defined only once, preferably in 'errors.go'.\n" +
+			"------")
 	}
 }

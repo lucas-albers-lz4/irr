@@ -444,7 +444,17 @@ func TestAnalyzeValues(t *testing.T) {
 			},
 			prefix: "",
 			expectedImages: []ImagePattern{
-				{Path: "img", Type: PatternTypeMap, Value: "docker.io/test/img:1", Structure: map[string]interface{}{"registry": "docker.io", "repository": "test/img", "tag": "1"}, Count: 1},
+				{
+					Path:  "img",
+					Type:  PatternTypeMap,
+					Value: "docker.io/test/img:1",
+					Structure: map[string]interface{}{
+						"registry":   "docker.io",
+						"repository": "test/img",
+						"tag":        "1",
+					},
+					Count: 1,
+				},
 			},
 		},
 		{
@@ -466,7 +476,17 @@ func TestAnalyzeValues(t *testing.T) {
 			},
 			prefix: "",
 			expectedImages: []ImagePattern{
-				{Path: "app.server.img", Type: PatternTypeMap, Value: "docker.io/nested/server:2", Structure: map[string]interface{}{"registry": "docker.io", "repository": "nested/server", "tag": "2"}, Count: 1},
+				{
+					Path:  "app.server.img",
+					Type:  PatternTypeMap,
+					Value: "docker.io/nested/server:2",
+					Structure: map[string]interface{}{
+						"registry":   "docker.io",
+						"repository": "nested/server",
+						"tag":        "2",
+					},
+					Count: 1,
+				},
 			},
 		},
 		{
@@ -481,7 +501,17 @@ func TestAnalyzeValues(t *testing.T) {
 			prefix: "root", // Test with prefix
 			expectedImages: []ImagePattern{
 				{Path: "root.mainImage", Type: PatternTypeString, Value: "main/app:final", Count: 1},
-				{Path: "root.workers.image", Type: PatternTypeMap, Value: "docker.io/worker/job:batch", Structure: map[string]interface{}{"registry": "docker.io", "repository": "worker/job", "tag": "batch"}, Count: 1},
+				{
+					Path:  "root.workers.image",
+					Type:  PatternTypeMap,
+					Value: "docker.io/worker/job:batch",
+					Structure: map[string]interface{}{
+						"registry":   "docker.io",
+						"repository": "worker/job",
+						"tag":        "batch",
+					},
+					Count: 1,
+				},
 			},
 		},
 		// Add cases for arrays if analyzeValues handles them directly, or rely on TestAnalyzeArray
@@ -524,8 +554,28 @@ func TestAnalyzeArray(t *testing.T) {
 			},
 			pathPrefix: "containers",
 			expectedImages: []ImagePattern{
-				{Path: "containers[0]", Type: PatternTypeMap, Value: "docker.io/library/img1:a", Structure: map[string]interface{}{"registry": "docker.io", "repository": "library/img1", "tag": "a"}, Count: 1},
-				{Path: "containers[1]", Type: PatternTypeMap, Value: "docker.io/reg/img2:b", Structure: map[string]interface{}{"registry": "docker.io/reg", "repository": "img2", "tag": "b"}, Count: 1},
+				{
+					Path:  "containers[0]",
+					Type:  PatternTypeMap,
+					Value: "docker.io/library/img1:a",
+					Structure: map[string]interface{}{
+						"registry":   "docker.io",
+						"repository": "library/img1",
+						"tag":        "a",
+					},
+					Count: 1,
+				},
+				{
+					Path:  "containers[1]",
+					Type:  PatternTypeMap,
+					Value: "docker.io/reg/img2:b",
+					Structure: map[string]interface{}{
+						"registry":   "docker.io/reg",
+						"repository": "img2",
+						"tag":        "b",
+					},
+					Count: 1,
+				},
 			},
 		},
 		{
@@ -566,7 +616,17 @@ func TestAnalyzeArray(t *testing.T) {
 			expectedImages: []ImagePattern{
 				{Path: "sidecars[0].image", Type: PatternTypeString, Value: "jobs/worker:prod", Count: 1},
 				// {Path: "sidecars[1]", Type: PatternTypeString, Value: "config-image:util", Count: 1}, // Removing expectation for bare string
-				{Path: "sidecars[4].service.image", Type: PatternTypeMap, Value: "docker.io/svc/monitor:3", Structure: map[string]interface{}{"registry": "docker.io", "repository": "svc/monitor", "tag": "3"}, Count: 1},
+				{
+					Path:  "sidecars[4].service.image",
+					Type:  PatternTypeMap,
+					Value: "docker.io/svc/monitor:3",
+					Structure: map[string]interface{}{
+						"registry":   "docker.io",
+						"repository": "svc/monitor",
+						"tag":        "3",
+					},
+					Count: 1,
+				},
 			},
 		},
 		// TODO: Add nested array cases if needed

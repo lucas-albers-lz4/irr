@@ -90,8 +90,10 @@ func init() {
 
 	// Define flags for analyze command
 	analyzeCmd.Flags().StringVar(&analyzeChartPath, "chart-path", "", "Path to the Helm chart directory or .tgz file (required)")
-	analyzeCmd.Flags().StringSliceVar(&analyzeSourceRegistries, "source-registries", []string{}, "Comma-separated list of source registries to analyze (required)")
-	analyzeCmd.Flags().StringSliceVar(&analyzeExcludeRegistries, "exclude-registries", []string{}, "Comma-separated list of registries to exclude from analysis")
+	analyzeCmd.Flags().StringSliceVar(&analyzeSourceRegistries, "source-registries", []string{},
+		"Comma-separated list of source registries to analyze (required)")
+	analyzeCmd.Flags().StringSliceVar(&analyzeExcludeRegistries, "exclude-registries", []string{},
+		"Comma-separated list of registries to exclude from analysis")
 	analyzeCmd.Flags().StringVar(&analyzeMappingsFile, "registry-mappings", "", "Path to a YAML file for registry mappings (optional)")
 	analyzeCmd.Flags().BoolVar(&analyzeStrict, "strict", false, "Fail analysis if any unsupported image structures are found")
 	analyzeCmd.Flags().BoolVarP(&analyzeVerbose, "verbose", "v", false, "Enable verbose debug logging")

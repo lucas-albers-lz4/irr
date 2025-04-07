@@ -110,30 +110,36 @@ func TestDeepCopy(t *testing.T) {
 			srcMap, srcIsMap := tt.src.(map[string]interface{})
 			resultMap, resultIsMap := result.(map[string]interface{})
 
-			if srcIsMap && resultIsMap {
-				for k, srcVal := range srcMap {
-					srcArr, srcIsArr := srcVal.([]interface{})
-					if !srcIsArr {
-						continue // Skip if source value is not an array
-					}
+			// Use guard clauses to reduce nesting when checking array instances
+			if !srcIsMap || !resultIsMap {
+				return // Skip if either source or result is not a map
+			}
 
-					resultVal, ok := resultMap[k]
-					if !ok {
-						t.Errorf("DeepCopy() result missing key %s", k)
-						continue
-					}
+			for k, srcVal := range srcMap {
+				srcArr, srcIsArr := srcVal.([]interface{})
+				if !srcIsArr {
+					continue // Skip if source value is not an array
+				}
 
-					resultArr, ok := resultVal.([]interface{})
-					if !ok {
-						t.Errorf("DeepCopy() value at key %s is not []interface{}", k)
-						continue
-					}
+				resultVal, resultHasKey := resultMap[k]
+				if !resultHasKey {
+					t.Errorf("DeepCopy() result missing key %s", k)
+					continue
+				}
 
-					if len(srcArr) > 0 && len(resultArr) > 0 {
-						if reflect.ValueOf(srcArr).Pointer() == reflect.ValueOf(resultArr).Pointer() {
-							t.Error("DeepCopy() returned same array instance for key %s", k)
-						}
-					}
+				resultArr, resultIsArr := resultVal.([]interface{})
+				if !resultIsArr {
+					t.Errorf("DeepCopy() value at key %s is not []interface{}", k)
+					continue
+				}
+
+				// Check for same instance only if both arrays are non-empty
+				if len(srcArr) == 0 || len(resultArr) == 0 {
+					continue
+				}
+
+				if reflect.ValueOf(srcArr).Pointer() == reflect.ValueOf(resultArr).Pointer() {
+					t.Errorf("DeepCopy() returned same array instance for key %s", k)
 				}
 			}
 		})

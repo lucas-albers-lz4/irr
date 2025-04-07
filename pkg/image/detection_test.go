@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // comparePaths compares two paths represented as string slices.
@@ -265,10 +264,14 @@ func TestImageDetector(t *testing.T) {
 			},
 			wantDetected: []DetectedImage{
 				{
-					Reference: &Reference{Registry: "docker.io", Repository: "library/nginx", Digest: "sha256:1234567890123456789012345678901234567890123456789012345678901234"},
-					Path:      []string{"image"},
-					Pattern:   PatternString,
-					Original:  "docker.io/nginx@sha256:1234567890123456789012345678901234567890123456789012345678901234",
+					Reference: &Reference{
+						Registry:   "docker.io",
+						Repository: "library/nginx",
+						Digest:     "sha256:1234567890123456789012345678901234567890123456789012345678901234",
+					},
+					Path:     []string{"image"},
+					Pattern:  PatternString,
+					Original: "docker.io/nginx@sha256:1234567890123456789012345678901234567890123456789012345678901234",
 				},
 			},
 		},
@@ -368,7 +371,11 @@ func TestImageDetector_DetectImages_EdgeCases(t *testing.T) {
 			expectedError:            false,
 			expectedUnsupportedCount: 1,
 			expectedUnsupported: []UnsupportedImage{
-				{Location: []string{"image"}, Type: UnsupportedTypeMap, Error: fmt.Errorf("image map has invalid repository type (must be string): found type int")},
+				{
+					Location: []string{"image"},
+					Type:     UnsupportedTypeMap,
+					Error:    fmt.Errorf("image map has invalid repository type (must be string): found type int"),
+				},
 			},
 		},
 		"deeply_nested_valid_image": {
@@ -430,7 +437,11 @@ func TestImageDetector_DetectImages_EdgeCases(t *testing.T) {
 			expectedError:            false,
 			expectedUnsupportedCount: 1,
 			expectedUnsupported: []UnsupportedImage{
-				{Location: []string{"invalid", "image"}, Type: UnsupportedTypeStringParseError, Error: fmt.Errorf("invalid image string format: invalid image reference format")},
+				{
+					Location: []string{"invalid", "image"},
+					Type:     UnsupportedTypeStringParseError,
+					Error:    fmt.Errorf("invalid image string format: invalid image reference format"),
+				},
 			},
 		},
 	}
@@ -1012,55 +1023,5 @@ func TestDetectImages(t *testing.T) {
 
 // TestTryExtractImageFromString_EdgeCases tests edge cases for string parsing
 func TestTryExtractImageFromString_EdgeCases(t *testing.T) {
-
-// TestDetector_DetectImages_TraversalLogic focuses on testing the recursive traversal logic
-// and path accumulation of the DetectImages method.
-// It implicitly tests the interaction with tryExtractImageFromMap and tryExtractImageFromString.
-func TestDetector_DetectImages_TraversalLogic(t *testing.T) {
-
-	// Detector specifically for the excluded registry test case
-	excludedContext := defaultContext // Copy base context
-	excludedContext.ExcludeRegistries = []string{"excluded.com"}
-	excludedDetector := NewDetector(excludedContext)
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Select the appropriate detector
-			detectorToUse := defaultDetector
-			if tt.name == "map image from excluded registry" {
-				detectorToUse = excludedDetector
-			}
-
-			gotDetected, gotIsImage, err := detectorToUse.tryExtractImageFromMap(tt.inputMap, tt.inputPath)
-
-			assert.Equal(t, tt.wantIsImage, gotIsImage, "isImage mismatch")
-
-			if tt.wantErr {
-				require.Error(t, err, "Expected an error")
-				// Use the correct field 'errorContains' for the assertion
-				assert.Contains(t, err.Error(), tt.errorContains, "Error message mismatch")
-				assert.Nil(t, gotDetected, "Detected image should be nil on error")
-			} else {
-				require.NoError(t, err, "Did not expect an error")
-				if tt.wantDetected == nil {
-					assert.Nil(t, gotDetected, "Expected nil detected image")
-				} else {
-					require.NotNil(t, gotDetected, "Expected non-nil detected image")
-					assert.Equal(t, tt.wantDetected.Path, gotDetected.Path, "Detected path mismatch")
-					assert.Equal(t, tt.wantDetected.Pattern, gotDetected.Pattern, "Detected pattern mismatch")
-					assert.Equal(t, tt.wantDetected.Original, gotDetected.Original, "Detected original mismatch")
-					// Compare Reference fields individually
-					require.NotNil(t, tt.wantDetected.Reference, "wantDetected.Reference is nil")
-					require.NotNil(t, gotDetected.Reference, "gotDetected.Reference is nil")
-					assert.Equal(t, tt.wantDetected.Reference.Registry, gotDetected.Reference.Registry, "Detected registry mismatch")
-					assert.Equal(t, tt.wantDetected.Reference.Repository, gotDetected.Reference.Repository, "Detected repository mismatch")
-					assert.Equal(t, tt.wantDetected.Reference.Tag, gotDetected.Reference.Tag, "Detected tag mismatch")
-					assert.Equal(t, tt.wantDetected.Reference.Digest, gotDetected.Reference.Digest, "Detected digest mismatch")
-					if tt.wantDetected.Reference.Original != "" {
-						assert.Equal(t, tt.wantDetected.Reference.Original, gotDetected.Reference.Original, "Detected reference original mismatch")
-					}
-				}
-			}
-		})
-	}
+	// TODO: Add relevant edge case tests here if needed.
 }

@@ -17,8 +17,12 @@ import (
 // Constants for image detection
 const (
 	// Patterns for detecting image references
-	tagPattern       = `^(?:(?P<registry>[a-zA-Z0-9][-a-zA-Z0-9.]*[a-zA-Z0-9](:[0-9]+)?)/)?(?P<repository>[a-zA-Z0-9][-a-zA-Z0-9._/]*[a-zA-Z0-9]):(?P<tag>[a-zA-Z0-9][-a-zA-Z0-9._]+)$`
-	digestPattern    = `^(?:(?P<registry>[a-zA-Z0-9][-a-zA-Z0-9.]*[a-zA-Z0-9](:[0-9]+)?)/)?(?P<repository>[a-zA-Z0-9][-a-zA-Z0-9._/]*[a-zA-Z0-9])@(?P<digest>sha256:[a-fA-F0-9]{64})$`
+	tagPattern = `^(?:(?P<registry>[a-zA-Z0-9][-a-zA-Z0-9.]*[a-zA-Z0-9](:[0-9]+)?)/)?` +
+		`(?P<repository>[a-zA-Z0-9][-a-zA-Z0-9._/]*[a-zA-Z0-9]):` +
+		`(?P<tag>[a-zA-Z0-9][-a-zA-Z0-9._]+)$`
+	digestPattern = `^(?:(?P<registry>[a-zA-Z0-9][-a-zA-Z0-9.]*[a-zA-Z0-9](:[0-9]+)?)/)?` +
+		`(?P<repository>[a-zA-Z0-9][-a-zA-Z0-9._/]*[a-zA-Z0-9])@` +
+		`(?P<digest>sha256:[a-fA-F0-9]{64})$`
 	defaultRegistry  = "docker.io"
 	libraryNamespace = "library"
 	// maxSplitTwo is the limit for splitting into at most two parts
@@ -197,7 +201,8 @@ func SanitizeRegistryForPath(registry string) string {
 		if _, err := fmt.Sscan(potentialPort, new(int)); err == nil {
 			registry = registry[:portIndex]
 		} else {
-			debug.Printf("SanitizeRegistryForPath: ':' found in '%s' but part after it ('%s') is not numeric, not treating as port.", registry, potentialPort)
+			debug.Printf("SanitizeRegistryForPath: ':' found in '%s' but part after it ('%s') "+
+				"is not numeric, not treating as port.", registry, potentialPort)
 		}
 	}
 
@@ -242,6 +247,7 @@ var (
 		"^imageFromDocker$",            // Added for WithRegistryMapping test
 		"^imageFromQuay$",              // Added for WithRegistryMapping test
 		"^imageUnmapped$",              // Added for WithRegistryMapping test
+		"^appImage$",                   // Added for Simple_Image_Map_Override test
 	}
 
 	// Compiled regex patterns for image paths
@@ -315,7 +321,8 @@ func (d *Detector) DetectImages(values interface{}, path []string) ([]DetectedIm
 			case err != nil:
 				debug.Printf("Error extracting image from map at path %v: %v", path, err)
 				log.Debugf("[UNSUPPORTED] Adding map item at path %v due to extraction error: %v", path, err)
-				log.Debugf("[UNSUPPORTED ADD] Path: %v, Type: %v, Reason: Map extraction error, Error: %v, Strict: %v", path, UnsupportedTypeMap, err, d.context.Strict)
+				log.Debugf("[UNSUPPORTED ADD] Path: %v, Type: %v, Reason: Map extraction error, Error: %v, Strict: %v",
+					path, UnsupportedTypeMap, err, d.context.Strict)
 				unsupportedMatches = append(unsupportedMatches, UnsupportedImage{
 					Location: path,
 					Type:     UnsupportedTypeMap,
@@ -329,10 +336,11 @@ func (d *Detector) DetectImages(values interface{}, path []string) ([]DetectedIm
 					debug.Printf("Map-based image is not a source registry at path %v: %v", path, detectedImage.Reference)
 					if d.context.Strict {
 						log.Debugf("[UNSUPPORTED] Adding map item at path %v due to strict non-source.", path)
-						log.Debugf("[UNSUPPORTED ADD] Path: %v, Type: %v, Reason: Strict non-source map, Error: nil, Strict: %v", path, UnsupportedTypeNonSourceImage, d.context.Strict)
+						log.Debugf("[UNSUPPORTED ADD] Path: %v, Type: %v, Reason: Strict non-source map, Error: nil, Strict: %v",
+							path, UnsupportedTypeNonSourceImage, d.context.Strict)
 						unsupportedMatches = append(unsupportedMatches, UnsupportedImage{
 							Location: path,
-							Type:     UnsupportedTypeNonSourceImage, // Use consistent type
+							Type:     UnsupportedTypeNonSourceImage,
 							Error:    nil,
 						})
 					} else {

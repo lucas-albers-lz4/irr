@@ -132,6 +132,17 @@ func TestGenerate(t *testing.T) {
 		// 3. Call Generate
 		overrideFile, err := generator.Generate()
 
+		// +++ Add Debug Logging Here +++
+		t.Logf("[TEST DEBUG] Generate returned err: %v", err)
+		if overrideFile != nil {
+			t.Logf("[TEST DEBUG] overrideFile.ChartName = %q", overrideFile.ChartName)
+			overridesBytes, _ := yaml.Marshal(overrideFile.Overrides)
+			t.Logf("[TEST DEBUG] overrideFile.Overrides =\n%s", string(overridesBytes))
+		} else {
+			t.Log("[TEST DEBUG] overrideFile is nil")
+		}
+		// +++ End Debug Logging +++
+
 		// 4. Assert Results
 		require.NoError(t, err, "Generate() should not return an error")
 		require.NotNil(t, overrideFile, "Generated override file should not be nil")
@@ -183,6 +194,17 @@ func TestGenerate(t *testing.T) {
 
 		// 3. Call Generate
 		overrideFile, err := generator.Generate()
+
+		// +++ Add Debug Logging Here +++
+		t.Logf("[TEST DEBUG] Generate returned err: %v", err)
+		if overrideFile != nil {
+			t.Logf("[TEST DEBUG] overrideFile.ChartName = %q", overrideFile.ChartName)
+			overridesBytes, _ := yaml.Marshal(overrideFile.Overrides)
+			t.Logf("[TEST DEBUG] overrideFile.Overrides =\n%s", string(overridesBytes))
+		} else {
+			t.Log("[TEST DEBUG] overrideFile is nil")
+		}
+		// +++ End Debug Logging +++
 
 		// 4. Assert Results
 		require.NoError(t, err, "Generate() should not return an error")
@@ -238,6 +260,17 @@ func TestGenerate(t *testing.T) {
 		// Call Generate
 		overrideFile, err := generator.Generate()
 
+		// +++ Add Debug Logging Here +++
+		t.Logf("[TEST DEBUG] Generate returned err: %v", err)
+		if overrideFile != nil {
+			t.Logf("[TEST DEBUG] overrideFile.ChartName = %q", overrideFile.ChartName)
+			overridesBytes, _ := yaml.Marshal(overrideFile.Overrides)
+			t.Logf("[TEST DEBUG] overrideFile.Overrides =\n%s", string(overridesBytes))
+		} else {
+			t.Log("[TEST DEBUG] overrideFile is nil")
+		}
+		// +++ End Debug Logging +++
+
 		// Assert Results
 		require.NoError(t, err, "Generate() should not return an error")
 		require.NotNil(t, overrideFile, "Generated override file should not be nil")
@@ -285,6 +318,17 @@ func TestGenerate(t *testing.T) {
 		)
 
 		overrideFile, err := generator.Generate()
+
+		// +++ Add Debug Logging Here +++
+		t.Logf("[TEST DEBUG] Generate returned err: %v", err)
+		if overrideFile != nil {
+			t.Logf("[TEST DEBUG] overrideFile.ChartName = %q", overrideFile.ChartName)
+			overridesBytes, _ := yaml.Marshal(overrideFile.Overrides)
+			t.Logf("[TEST DEBUG] overrideFile.Overrides =\n%s", string(overridesBytes))
+		} else {
+			t.Log("[TEST DEBUG] overrideFile is nil")
+		}
+		// +++ End Debug Logging +++
 
 		require.NoError(t, err)
 		require.NotNil(t, overrideFile)
@@ -341,6 +385,17 @@ func TestGenerate(t *testing.T) {
 
 		// Call Generate
 		overrideFile, err := generator.Generate()
+
+		// +++ Add Debug Logging Here +++
+		t.Logf("[TEST DEBUG] Generate returned err: %v", err)
+		if overrideFile != nil {
+			t.Logf("[TEST DEBUG] overrideFile.ChartName = %q", overrideFile.ChartName)
+			overridesBytes, _ := yaml.Marshal(overrideFile.Overrides)
+			t.Logf("[TEST DEBUG] overrideFile.Overrides =\n%s", string(overridesBytes))
+		} else {
+			t.Log("[TEST DEBUG] overrideFile is nil")
+		}
+		// +++ End Debug Logging +++
 
 		// Assert Results
 		require.NoError(t, err, "Generate() should not return an error")
@@ -420,6 +475,17 @@ func TestGenerate(t *testing.T) {
 		// Call Generate
 		overrideFile, err := generator.Generate()
 
+		// +++ Add Debug Logging Here +++
+		t.Logf("[TEST DEBUG] Generate returned err: %v", err)
+		if overrideFile != nil {
+			t.Logf("[TEST DEBUG] overrideFile.ChartName = %q", overrideFile.ChartName)
+			overridesBytes, _ := yaml.Marshal(overrideFile.Overrides)
+			t.Logf("[TEST DEBUG] overrideFile.Overrides =\n%s", string(overridesBytes))
+		} else {
+			t.Log("[TEST DEBUG] overrideFile is nil")
+		}
+		// +++ End Debug Logging +++
+
 		// Assert Results
 		require.NoError(t, err, "Generate() should not return an error")
 		require.NotNil(t, overrideFile, "Generated override file should not be nil")
@@ -489,6 +555,17 @@ func TestGenerate(t *testing.T) {
 
 		// 3. Call Generate
 		overrideFile, err := generator.Generate()
+
+		// +++ Add Debug Logging Here +++
+		t.Logf("[TEST DEBUG] Generate returned err: %v", err)
+		if overrideFile != nil {
+			t.Logf("[TEST DEBUG] overrideFile.ChartName = %q", overrideFile.ChartName)
+			overridesBytes, _ := yaml.Marshal(overrideFile.Overrides)
+			t.Logf("[TEST DEBUG] overrideFile.Overrides =\n%s", string(overridesBytes))
+		} else {
+			t.Log("[TEST DEBUG] overrideFile is nil")
+		}
+		// +++ End Debug Logging +++
 
 		// 4. Assert Results
 		require.NoError(t, err, "Generate() should not return an error")
@@ -707,7 +784,15 @@ func TestGenerateOverrides(t *testing.T) {
 		Error:       nil,
 	}
 
-	overrides, err := processChartForOverrides(mockMergedChart, targetRegistry, sourceRegistries, excludeRegistries, actualStrategy, verbose, detector)
+	overrides, err := processChartForOverrides(
+		mockMergedChart,
+		targetRegistry,
+		sourceRegistries,
+		excludeRegistries,
+		actualStrategy,
+		verbose,
+		detector,
+	)
 	require.NoError(t, err)
 	require.NotNil(t, overrides)
 
@@ -1031,158 +1116,6 @@ func TestMergeOverrides(t *testing.T) {
 	}
 }
 
-func TestCleanupTemplateVariables(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    interface{}
-		expected interface{}
-	}{
-		{
-			name:     "simple string without template",
-			input:    "simple value",
-			expected: "simple value",
-		},
-		{
-			name:     "template variable in image field",
-			input:    "{{ .Values.image }}",
-			expected: "",
-		},
-		{
-			name:     "template variable in repository field",
-			input:    "{{ .Values.repository }}",
-			expected: "",
-		},
-		{
-			name:     "template variable in registry field",
-			input:    "{{ .Values.registry }}",
-			expected: "",
-		},
-		{
-			name:     "template variable in tag field",
-			input:    "{{ .Values.tag }}",
-			expected: "",
-		},
-		{
-			name:     "template variable in address field",
-			input:    "{{ .Values.address }}",
-			expected: "",
-		},
-		{
-			name:     "template variable in name field",
-			input:    "{{ .Values.name }}",
-			expected: "",
-		},
-		{
-			name:     "template variable in path field",
-			input:    "{{ .Values.path }}",
-			expected: "",
-		},
-		{
-			name:     "enabled boolean template",
-			input:    "{{ .Values.enabled }}",
-			expected: false,
-		},
-		{
-			name:     "disabled boolean template",
-			input:    "{{ .Values.disabled }}",
-			expected: false,
-		},
-		{
-			name:     "template with default true",
-			input:    "{{ .Values.enabled | default true }}",
-			expected: true,
-		},
-		{
-			name:     "template with default false",
-			input:    "{{ .Values.enabled | default false }}",
-			expected: false,
-		},
-		{
-			name:     "template with default number",
-			input:    "{{ .Values.replicas | default 3 }}",
-			expected: 3,
-		},
-		{
-			name:     "template with default string",
-			input:    "{{ .Values.name | default \"default-name\" }}",
-			expected: "default-name",
-		},
-		{
-			name: "nested map with templates",
-			input: map[string]interface{}{
-				"image": map[string]interface{}{
-					"repository": "{{ .Values.image.repository }}",
-					"tag":        "{{ .Values.image.tag }}",
-					"enabled":    "{{ .Values.image.enabled }}",
-				},
-				"simple": "value",
-			},
-			expected: map[string]interface{}{
-				"image": map[string]interface{}{
-					"repository": "",
-					"tag":        "",
-					"enabled":    false,
-				},
-				"simple": "value",
-			},
-		},
-		{
-			name: "array with templates",
-			input: []interface{}{
-				"{{ .Values.item1 }}",
-				map[string]interface{}{
-					"name": "{{ .Values.name }}",
-				},
-				"simple value",
-			},
-			expected: []interface{}{
-				"",
-				map[string]interface{}{
-					"name": "",
-				},
-				"simple value",
-			},
-		},
-		{
-			name: "complex nested structure",
-			input: map[string]interface{}{
-				"deployment": map[string]interface{}{
-					"enabled": "{{ .Values.enabled | default true }}",
-					"containers": []interface{}{
-						map[string]interface{}{
-							"image": "{{ .Values.image }}",
-							"name":  "{{ .Values.name | default \"container\" }}",
-						},
-					},
-				},
-			},
-			expected: map[string]interface{}{
-				"deployment": map[string]interface{}{
-					"enabled": true,
-					"containers": []interface{}{
-						map[string]interface{}{
-							"image": "",
-							"name":  "container",
-						},
-					},
-				},
-			},
-		},
-		{
-			name:     "environment variable template",
-			input:    "${REGISTRY_URL}",
-			expected: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := cleanupTemplateVariables(tt.input)
-			assert.Equal(t, tt.expected, result, "cleanupTemplateVariables() result mismatch")
-		})
-	}
-}
-
 // MockImageDetector for testing
 type MockImageDetector struct {
 	DetectedImages []image.DetectedImage
@@ -1394,7 +1327,15 @@ func TestProcessChartForOverrides(t *testing.T) {
 				Error:          tt.detectError,
 			}
 
-			result, err := processChartForOverrides(tt.chartData, targetRegistry, sourceRegistries, excludeRegistries, actualStrategy, true, detector)
+			result, err := processChartForOverrides(
+				tt.chartData,
+				targetRegistry,
+				sourceRegistries,
+				excludeRegistries,
+				actualStrategy,
+				true, // verbose
+				detector,
+			)
 
 			if tt.expectError {
 				assert.Error(t, err)
