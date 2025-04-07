@@ -117,13 +117,27 @@ func (g *Generator) Generate() (*override.File, error) {
 		// Return specific ParsingError (Corrected type)
 		return nil, &ParsingError{FilePath: g.chartPath, Err: err}
 	}
+	// +++ LOGGING AFTER Load +++
+	fmt.Println("[STDLOG GENERATE] Successfully loaded chart:", chartData.Name())
+	debug.Printf("[GENERATE] Successfully loaded chart: %s", chartData.Name())
+	debug.DumpValue("[GENERATE] Loaded Chart Values (Before Copy)", chartData.Values)
 
 	baseValuesCopy := override.DeepCopy(chartData.Values)
+	// +++ LOGGING AFTER DeepCopy +++
+	fmt.Println("[STDLOG GENERATE] After DeepCopy")
+	debug.DumpValue("[GENERATE] After DeepCopy", baseValuesCopy)
+
 	baseValues, ok := baseValuesCopy.(map[string]interface{})
 	if !ok {
 		// This indicates a fundamental issue with the chart's values structure
+		// +++ LOGGING TYPE ASSERTION FAILURE +++
+		fmt.Println("[STDLOG GENERATE] ERROR: Type assertion failed!")
+		debug.Printf("[GENERATE] ERROR: Type assertion failed! baseValuesCopy is type %T, not map[string]interface{}", baseValuesCopy)
 		return nil, &ParsingError{FilePath: g.chartPath, Err: errors.New("chart values are not a map[string]interface{}")} // Corrected type
 	}
+	// +++ LOGGING AFTER Type Assertion +++
+	fmt.Println("[STDLOG GENERATE] Type assertion successful. Proceeding.")
+	debug.Printf("[GENERATE] Type assertion successful. Proceeding with detection.")
 	debug.DumpValue("Base values for type checking", baseValues)
 
 	// --- Extract Global Registry ---
@@ -145,7 +159,12 @@ func (g *Generator) Generate() (*override.File, error) {
 	}
 	detector := image.NewDetector(*detectionContext)
 
-	// --- ADD DEBUG LOG BEFORE DetectImages ---
+	// +++ LOGGING BEFORE DetectImages +++
+	fmt.Println("[STDLOG GENERATE] Before DetectImages call")
+	debug.Printf("[GENERATE] Before DetectImages - Chart Path: %s", g.chartPath)
+	debug.DumpValue("[GENERATE] Values passed to DetectImages", chartData.Values)
+	debug.DumpValue("[GENERATE] DetectionContext", detectionContext)
+	// --- ADD DEBUG LOG BEFORE DetectImages --- // <<< KEEP OLD LOG TOO >>>
 	if chartData.Values == nil {
 		fmt.Println("[DEBUG irr GEN] >>> WARNING: chartData.Values is nil before calling DetectImages!")
 	} else {
@@ -154,27 +173,53 @@ func (g *Generator) Generate() (*override.File, error) {
 	// --- END DEBUG LOG ---
 
 	images, unsupportedMatches, err := detector.DetectImages(chartData.Values, []string{}) // Pass empty path for root
+
+	// +++ LOGGING AFTER DetectImages +++
+	fmt.Printf("[STDLOG GENERATE] After DetectImages call. Error: %v, Detected: %d, Unsupported: %d\n", err, len(images), len(unsupportedMatches))
+	debug.Printf("[GENERATE] After DetectImages - Error: %v", err)
+	debug.Printf("[GENERATE] After DetectImages - Detected Images Count: %d", len(images))
+	debug.DumpValue("[GENERATE] After DetectImages - Detected Images", images)
+	debug.Printf("[GENERATE] After DetectImages - Unsupported Matches Count: %d", len(unsupportedMatches))
+	debug.DumpValue("[GENERATE] After DetectImages - Unsupported Matches", unsupportedMatches)
+
 	if err != nil {
 		// Wrap detection error as ImageProcessingError (though could be ChartParsingError if structure is bad)
 		// For simplicity, using ImageProcessingError as it relates to finding images.
 		return nil, &ImageProcessingError{Err: fmt.Errorf("image detection failed: %w", err)}
 	}
-	debug.DumpValue("Found images", images)
-	debug.DumpValue("Unsupported structures", unsupportedMatches)
+	debug.DumpValue("Found images", images)                       // <<< KEEP OLD LOG TOO >>>
+	debug.DumpValue("Unsupported structures", unsupportedMatches) // <<< KEEP OLD LOG TOO >>>
+
+	// +++ START TEMP DEBUG LOGGING for WithRegistryMapping +++
+	if g.mappings != nil { // Only log when mappings are present (like in the failing test)
+		fmt.Printf("[DEBUG irr GEN MAP TEST] Detected %d images BEFORE filtering:\n", len(images))
+		for i, img := range images {
+			if img.Reference != nil {
+				fmt.Printf("[DEBUG irr GEN MAP TEST]   [%d] Path: %v, Ref: %s\n", i, img.Path, img.Reference.String())
+			} else {
+				fmt.Printf("[DEBUG irr GEN MAP TEST]   [%d] Path: %v, Ref: <nil>\n", i, img.Path)
+			}
+		}
+	}
+	// +++ END TEMP DEBUG LOGGING +++
 
 	// --- START: Strict Mode Check ---
 	if g.strict && len(unsupportedMatches) > 0 {
 		// Combine details of unsupported structures into the error message
 		var details []string
 		for _, match := range unsupportedMatches {
+			// Keep the detailed logging format
+			debug.Printf("[STRICT VIOLATION DETAIL] Path: %v, Type: %v, Error: %v", match.Location, match.Type, match.Error)
 			details = append(details, fmt.Sprintf("path=%v type=%d error='%v'", match.Location, match.Type, match.Error))
 		}
+		// Construct a detailed message for logging/debugging, but return the specific sentinel error.
 		errMsg := fmt.Sprintf("strict mode enabled: unsupported structures found (%d): [%s]",
 			len(unsupportedMatches), strings.Join(details, "; "))
 		debug.Println(errMsg)
-		// Return a generic error indicating the failure due to strict mode.
-		// The command layer will interpret this and set the correct exit code (5).
-		return nil, errors.New(errMsg)
+
+		// Return the specific sentinel error, optionally wrapping the detailed message.
+		// Wrapping keeps details accessible via errors.Unwrap if needed, while allowing errors.Is check.
+		return nil, fmt.Errorf("%w: %s", ErrStrictValidationFailed, errMsg) // Wrap sentinel error
 	}
 	// --- END: Strict Mode Check ---
 
@@ -204,7 +249,10 @@ func (g *Generator) Generate() (*override.File, error) {
 		eligibleImages = append(eligibleImages, img)
 	}
 	eligibleImagesCount := len(eligibleImages)
-	debug.Printf("Eligible images for processing: %d", eligibleImagesCount)
+	// +++ LOGGING AFTER Filtering +++
+	fmt.Printf("[STDLOG GENERATE] After Filtering. Eligible Count: %d\n", eligibleImagesCount)
+	debug.Printf("[GENERATE] After Filtering - Eligible Images Count: %d", eligibleImagesCount)
+	debug.DumpValue("[GENERATE] After Filtering - Eligible Images", eligibleImages)
 
 	var unsupported []override.UnsupportedStructure
 	for _, match := range unsupportedMatches {
@@ -264,7 +312,21 @@ func (g *Generator) Generate() (*override.File, error) {
 		// --- Construct the target value MAP ---
 		// Always override with the map structure, regardless of original type (string or map)
 		valueToSet := map[string]interface{}{}
-		valueToSet["registry"] = g.targetRegistry
+
+		// +++ Determine Correct Target Registry (Apply Mappings) +++
+		currentTargetRegistry := g.targetRegistry // Default
+		if g.mappings != nil {
+			mappedTarget := g.mappings.GetTargetRegistry(img.Reference.Registry)
+			found := mappedTarget != ""
+			if found {
+				debug.Printf("Applying registry mapping for source '%s': '%s' -> '%s'", img.Reference.Registry, img.Reference.Registry, mappedTarget)
+				currentTargetRegistry = mappedTarget
+			} else {
+				debug.Printf("No specific mapping found for source '%s', using default target: %s", img.Reference.Registry, g.targetRegistry)
+			}
+		}
+		// --- Use the determined target registry ---
+		valueToSet["registry"] = currentTargetRegistry
 		valueToSet["repository"] = transformedRepoPath
 		// Preserve original tag or digest
 		if img.Reference.Digest != "" {
@@ -299,6 +361,9 @@ func (g *Generator) Generate() (*override.File, error) {
 		}
 	} // End loop over images
 
+	// +++ LOGGING BEFORE THRESHOLD CHECK +++
+	fmt.Printf("[STDLOG GENERATE] Before threshold check. Processed: %d, Eligible: %d\n", imagesSuccessfullyProcessed, eligibleImagesCount)
+
 	// Check if processing threshold was met
 	if eligibleImagesCount > 0 {
 		successRate := float64(imagesSuccessfullyProcessed) / float64(eligibleImagesCount) * percentageMultiplier
@@ -316,6 +381,9 @@ func (g *Generator) Generate() (*override.File, error) {
 			return nil, thresholdErr
 		}
 	}
+
+	// +++ LOGGING BEFORE RETURN +++
+	fmt.Printf("[STDLOG GENERATE] Returning Override File. Overrides Count: %d\n", len(finalOverrides))
 
 	// Return the generated override file
 	debug.DumpValue("Final generated overrides", finalOverrides)
@@ -679,99 +747,13 @@ func validateYAML(yamlData []byte) error {
 	return nil // No error means valid YAML
 }
 
-// validateCommonIssues checks for specific problematic patterns in parsed YAML.
-// Note: This function is complex to implement correctly without false positives.
-// Keeping it simple or removing might be better initially.
-// func validateCommonIssues(obj map[string]interface{}) error { ... }
-
-// cleanupTemplateVariables removes or simplifies Helm template variables
-// It prioritizes extracting default values if specified.
-// nolint:unused // Kept for potential future uses
-func cleanupTemplateVariables(value interface{}) interface{} {
-	switch v := value.(type) {
-	case string:
-		// Check if it looks like a template variable
-		if strings.Contains(v, "{{") || strings.Contains(v, "${") {
-			// First, try to extract default value if present
-			if strings.Contains(v, "| default") {
-				parts := strings.SplitN(v, "| default", maxSplitTwo)
-				if len(parts) > 1 {
-					defaultValStr := strings.TrimSpace(parts[1])
-					// More robustly remove trailing template characters like '}}', ' }', etc.
-					closingMarkers := []string{"}}", "}"}
-					for _, marker := range closingMarkers {
-						if strings.HasSuffix(defaultValStr, marker) {
-							defaultValStr = strings.TrimSpace(strings.TrimSuffix(defaultValStr, marker))
-							break // Stop after removing the first found marker from the end
-						}
-					}
-
-					// Try to convert to appropriate type
-					if defaultValStr == "true" {
-						return true
-					}
-					if defaultValStr == "false" {
-						return false
-					}
-					if i, err := strconv.Atoi(defaultValStr); err == nil {
-						return i
-					}
-					// Unquote string values
-					if unquoted, err := strconv.Unquote(defaultValStr); err == nil {
-						return unquoted
-					}
-					// Return the trimmed default string if it wasn't quoted or convertible
-					return defaultValStr
-				}
+// cleanupTemplateVariables recursively removes template braces `{{` and `}}` from string values.
+// It is used as a defensive measure before YAML marshaling, as PyYAML can
+// ... existing code ...
 			}
-
-			// If no default value, apply heuristics
-			vLower := strings.ToLower(v)
-			// Check for boolean flags FIRST
-			if strings.Contains(vLower, "enabled") || strings.Contains(vLower, "disabled") {
-				return false // Default to false for boolean flags without explicit defaults
-			}
-			// Then check for image-related fields
-			if strings.Contains(vLower, "image") ||
-				strings.Contains(vLower, "repository") ||
-				strings.Contains(vLower, "registry") ||
-				strings.Contains(vLower, "tag") {
-				return "" // Empty string for image fields without defaults
-			}
-			// Generic fallback for other templates without defaults
-			return "" // Or potentially nil, depending on desired behavior
 		}
-		// Not a template string, return as is
-		return v
-	case map[string]interface{}:
-		result := make(map[string]interface{})
-		for key, val := range v {
-			if val == nil {
-				continue // Skip nil values
-			}
-			result[key] = cleanupTemplateVariables(val)
-		}
-		return result
-	case []interface{}:
-		result := make([]interface{}, 0, len(v))
-		for _, item := range v {
-			if item == nil {
-				continue // Skip nil values
-			}
-			result = append(result, cleanupTemplateVariables(item))
-		}
-		return result
-	case float64:
-		// Convert float64 to int if it's a whole number
-		if float64(int(v)) == v {
-			return int(v)
-		}
-		return v
-	case nil:
-		return nil
-	default:
-		return v
 	}
+	return nil
 }
 
 // OverridesToYAML converts a map of overrides to YAML format
