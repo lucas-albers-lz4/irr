@@ -11,6 +11,35 @@ run:
 #    - integration
 
 linters:
+  enable:
+    # Defaults (optional to list)
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+
+    # Tier 1 additions
+    - gosec
+    - errorlint
+    - wrapcheck
+    - bodyclose
+    - noctx
+    - nilerr      # Consider enabling nilerr, nilnil, nilnesserr together
+    - nilnil
+    - nilnesserr
+    - copyloopvar
+
+    # Tier 2 additions (add incrementally)
+    - revive
+    - gocritic
+    - misspell
+    - goconst
+    - predeclared
+    - lll
+    - mnd
+    - dupl
+
   disable:
     - gomoddirectives
     - godot
@@ -53,19 +82,56 @@ linters:
         - opinionated
         - performance
         - style
+      # Example: Disable specific checks after reviewing their output
+      # disabled-checks:
+      #   - hugeParam
+      #   - rangeValCopy
+      #   - exitAfterDefer
     lll:
       line-length: 140
     nolintlint:
       allow-unused: false
       require-explanation: true
       require-specific: true
-  # Moving exclude rules under linters as a possibility
-  # (Documentation unclear, but 'issues' didn't work)
-  # exclude-rules: # This might belong here? Check schema/docs if fails.
-    # - path: _test\\.go
-    #   linters:
-    #     - revive
-    #   text: "stutters"
+    mnd:
+      # Comma-separated list of checks to enable
+      # Recommended: argument, assign, case, condition, return, operation
+      checks: argument,assign,case,condition,return,operation
+      # Comma-separated list of numbers to ignore
+      ignored-numbers: 0,1,-1,80,443 # Add other common non-magic numbers relevant to your project
+      # You can also ignore specific types or functions if needed
+      # ignored-functions: ...
+      # ignored-types: ...
+    goconst:
+      # Minimum length of string literals to consider
+      min-len: 3 # Default is 3, adjust if needed
+      # Minimum occurrences of a string literal to report
+      min-occurrences: 3 # Default is 3, adjust if needed
+      # ignore-tests: true # Optionally ignore strings in test files
+    dupl:
+      # Threshold for code duplication token sequence length
+      threshold: 100 # Default is 100, adjust based on findings (lower finds more duplicates)
+    revive:
+      # Example: Adjust confidence level (0.0 to 1.0)
+      # confidence: 0.8
+      # Example: Ignore generated files (often default, but good practice)
+      # ignore-generated-header: true
+      # Example: Configure specific rules if needed
+      # rule:
+      #   exported:
+      #     severity: warning # Default is error
+    wrapcheck:
+      # Comma-separated list of regexps for function/method signatures to ignore.
+      # Example: ignore signatures returning standard library errors directly
+      ignoreSigs:
+        - \.Errorf\( # Don't require wrapping fmt.Errorf itself
+        - os\.ReadFile\( # Example standard lib function
+        - io\.Copy\( # Example standard lib function
+      # You might add patterns for specific internal functions/methods too
+    misspell:
+      locale: US # Default is US. Use 'UK' for British English.
+      # ignore-words: # Add list of custom words to ignore if needed
+      #   - mycustomword
 
 issues:
   max-issues-per-linter: 0
