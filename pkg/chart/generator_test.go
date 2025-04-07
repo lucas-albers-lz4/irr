@@ -9,21 +9,20 @@ import (
 	"helm.sh/helm/v3/pkg/chart"
 
 	"github.com/lalbers/irr/pkg/image"
-	"github.com/lalbers/irr/pkg/registry"
+	"github.com/lalbers/irr/pkg/registrymapping"
 	"github.com/lalbers/irr/pkg/strategy"
 )
 
 // MockPathStrategy for testing
 type MockPathStrategy struct {
-	GeneratePathFunc func(ref *image.ImageReference, targetRegistry string, mappings *registry.RegistryMappings) (string, error)
+	GeneratePathFunc func(originalRef *image.ImageReference, targetRegistry string, mappings *registrymapping.RegistryMappings) (string, error)
 }
 
-func (m *MockPathStrategy) GeneratePath(ref *image.ImageReference, targetRegistry string, mappings *registry.RegistryMappings) (string, error) {
+func (m *MockPathStrategy) GeneratePath(originalRef *image.ImageReference, targetRegistry string, mappings *registrymapping.RegistryMappings) (string, error) {
 	if m.GeneratePathFunc != nil {
-		return m.GeneratePathFunc(ref, targetRegistry, mappings)
+		return m.GeneratePathFunc(originalRef, targetRegistry, mappings)
 	}
-	// Default mock behavior: just combine parts simply
-	return targetRegistry + "/" + ref.Repository + ":" + ref.Tag, nil
+	return "mockpath/" + originalRef.Repository, nil
 }
 
 func TestNewGenerator(t *testing.T) {
@@ -31,7 +30,7 @@ func TestNewGenerator(t *testing.T) {
 	targetRegistry := "my.registry.com"
 	sourceRegistries := []string{"docker.io"}
 	excludeRegistries := []string{"internal.com"}
-	var mockMappings *registry.RegistryMappings // Can be nil for this test
+	var mockMappings *registrymapping.RegistryMappings // Updated type here
 	mockStrategy := &MockPathStrategy{}
 	strict := false
 	threshold := 90
@@ -84,8 +83,8 @@ func TestGenerate(t *testing.T) {
 	targetRegistry := "harbor.local"
 	sourceRegistries := []string{"docker.io"}
 	var excludeRegistries []string
-	var mockMappings *registry.RegistryMappings
-	mockStrategy := &MockPathStrategy{} // Use simple default mock strategy
+	var mockMappings *registrymapping.RegistryMappings // Updated type here
+	mockStrategy := &MockPathStrategy{}                // Use simple default mock strategy
 	strict := false
 	threshold := 100
 	dummyChartPath := "./test-chart"
@@ -150,7 +149,7 @@ func TestGenerate(t *testing.T) {
 			originalTag, okTag := originalAppImage["tag"].(string)
 			require.True(t, okTag, "Original tag should be a string")
 
-			expectedRepo := targetRegistry + "/" + originalRepo + ":" + originalTag
+			expectedRepo := "mockpath/" + originalRepo
 			assert.Equal(t, expectedRepo, appImageMap["repository"], "Repository in override mismatch")
 			assert.Equal(t, originalTag, appImageMap["tag"], "Tag in override mismatch")
 		} else {
@@ -195,7 +194,7 @@ func TestGenerate(t *testing.T) {
 			// Need to parse original string to get repo/tag for mock
 			originalRef, err := image.ParseImageReference(imageStringValue)
 			require.NoError(t, err, "Parsing original image string should not fail")
-			expectedRepo := targetRegistry + "/" + originalRef.Repository + ":" + originalRef.Tag
+			expectedRepo := "mockpath/" + originalRef.Repository
 			assert.Equal(t, expectedRepo, workerImage["repository"], "Repository mismatch")
 			assert.Equal(t, originalRef.Tag, workerImage["tag"], "Tag mismatch")
 		} else {
@@ -241,7 +240,7 @@ func TestGenerate(t *testing.T) {
 			// Repository should be transformed path (MOCK strategy needs library)
 			originalRef, err := image.ParseImageReference("docker.io/library/alpine:latest")
 			require.NoError(t, err, "Parsing original image string should not fail")
-			expectedRepo := targetRegistry + "/" + originalRef.Repository + ":" + originalRef.Tag
+			expectedRepo := "mockpath/" + originalRef.Repository
 			assert.Equal(t, expectedRepo, publicImage["repository"])
 			assert.Equal(t, originalRef.Tag, publicImage["tag"])
 		} else {
@@ -286,7 +285,7 @@ func TestGenerate(t *testing.T) {
 			// Repository should be transformed path (MOCK strategy needs library)
 			originalRef, err := image.ParseImageReference("docker.io/library/redis:alpine")
 			require.NoError(t, err, "Parsing original image string should not fail")
-			expectedRepo := targetRegistry + "/" + originalRef.Repository + ":" + originalRef.Tag
+			expectedRepo := "mockpath/" + originalRef.Repository
 			assert.Equal(t, expectedRepo, dockerImage["repository"])
 			assert.Equal(t, originalRef.Tag, dockerImage["tag"])
 		} else {
@@ -598,7 +597,7 @@ func TestGenerateOverrides(t *testing.T) {
 	targetRegistry := "harbor.local"
 	sourceRegistries := []string{"docker.io"}
 	var excludeRegistries []string
-	var mockMappings *registry.RegistryMappings
+	var mockMappings *registrymapping.RegistryMappings
 	prefixStrategy := strategy.NewPrefixSourceRegistryStrategy(nil)
 	verbose := false // Keep test output clean
 
@@ -1151,11 +1150,11 @@ func TestProcessChartForOverrides(t *testing.T) {
 	sourceRegistries := []string{"docker.io", "quay.io"}
 	excludeRegistries := []string{"internal.registry"}
 	mockStrategy := &MockPathStrategy{
-		GeneratePathFunc: func(ref *image.ImageReference, targetRegistry string, mappings *registry.RegistryMappings) (string, error) {
+		GeneratePathFunc: func(ref *image.ImageReference, tr string, m *registrymapping.RegistryMappings) (string, error) {
 			return targetRegistry + "/" + ref.Repository, nil
 		},
 	}
-	var mockMappings *registry.RegistryMappings
+	var mockMappings *registrymapping.RegistryMappings
 
 	tests := []struct {
 		name           string
@@ -1361,4 +1360,10 @@ func TestProcessChartForOverrides(t *testing.T) {
 			assert.Equal(t, tt.expected, result, "processChartForOverrides() result mismatch")
 		})
 	}
+}
+
+func TestGenerateOverrides_Integration(t *testing.T) {
+	// ... existing code ...
+	// Removed unused mockStrategy declaration that was here
+	// ... rest of TestGenerateOverrides_Integration ...
 }

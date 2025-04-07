@@ -8,15 +8,14 @@ import (
 
 	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/image"
-	"github.com/lalbers/irr/pkg/registry"
+	"github.com/lalbers/irr/pkg/registrymapping"
 )
 
 // PathStrategy defines the interface for different path generation strategies.
 type PathStrategy interface {
 	// GeneratePath creates the target image reference string based on the strategy.
-	// It takes the original parsed reference, the overall target registry,
-	// and any configured registry mappings.
-	GeneratePath(originalRef *image.ImageReference, targetRegistry string, mappings *registry.RegistryMappings) (string, error)
+	// It takes the original parsed reference and the overall target registry.
+	GeneratePath(originalRef *image.ImageReference, targetRegistry string) (string, error)
 }
 
 // nolint:unused // Kept for potential future uses
@@ -25,7 +24,7 @@ var strategyRegistry = map[string]PathStrategy{
 }
 
 // GetStrategy returns a path strategy based on the name
-func GetStrategy(name string, mappings *registry.RegistryMappings) (PathStrategy, error) {
+func GetStrategy(name string, mappings *registrymapping.RegistryMappings) (PathStrategy, error) {
 	debug.Printf("GetStrategy: Getting strategy for name: %s", name)
 
 	switch name {
@@ -40,11 +39,11 @@ func GetStrategy(name string, mappings *registry.RegistryMappings) (PathStrategy
 
 // PrefixSourceRegistryStrategy prefixes the source registry name to the repository path
 type PrefixSourceRegistryStrategy struct {
-	Mappings *registry.RegistryMappings
+	Mappings *registrymapping.RegistryMappings
 }
 
 // NewPrefixSourceRegistryStrategy creates a new PrefixSourceRegistryStrategy
-func NewPrefixSourceRegistryStrategy(mappings *registry.RegistryMappings) *PrefixSourceRegistryStrategy {
+func NewPrefixSourceRegistryStrategy(mappings *registrymapping.RegistryMappings) *PrefixSourceRegistryStrategy {
 	return &PrefixSourceRegistryStrategy{Mappings: mappings}
 }
 
@@ -52,21 +51,21 @@ func NewPrefixSourceRegistryStrategy(mappings *registry.RegistryMappings) *Prefi
 // Example: docker.io/library/nginx -> target.com/dockerio/library/nginx
 // This function ONLY returns the repository path part (e.g., "dockerio/library/nginx").
 // The caller (generator) prepends the target registry and appends the tag/digest.
-func (s *PrefixSourceRegistryStrategy) GeneratePath(originalRef *image.ImageReference, targetRegistry string, mappings *registry.RegistryMappings) (string, error) {
+func (s *PrefixSourceRegistryStrategy) GeneratePath(originalRef *image.ImageReference, targetRegistry string) (string, error) {
 	debug.Printf("PrefixSourceRegistryStrategy: Generating path for original reference: %+v", originalRef)
 	debug.Printf("PrefixSourceRegistryStrategy: Target registry: %s", targetRegistry)
 
-	// Determine the correct prefix: custom mapped target or sanitized source registry
 	var pathPrefix string
 	var mappedPrefix string // Store the custom mapping target prefix if it exists
-	if mappings != nil {
-		mappedPrefix = mappings.GetTargetRegistry(originalRef.Registry)
+
+	if s.Mappings != nil {
+		mappedPrefix = s.Mappings.GetTargetRegistry(originalRef.Registry)
 	}
 
 	if mappedPrefix != "" {
-		// Use the custom mapping target prefix directly
-		pathPrefix = mappedPrefix
-		debug.Printf("PrefixSourceRegistryStrategy: Using custom mapping prefix '%s'", pathPrefix)
+		// Use the custom mapping target prefix directly, BUT sanitize it first
+		pathPrefix = image.SanitizeRegistryForPath(mappedPrefix)
+		debug.Printf("PrefixSourceRegistryStrategy: Using sanitized custom mapping target '%s' as prefix (original mapping target: '%s')", pathPrefix, mappedPrefix)
 	} else {
 		// No custom mapping, use the sanitized source registry name
 		pathPrefix = image.SanitizeRegistryForPath(originalRef.Registry)
@@ -112,7 +111,7 @@ func NewFlatStrategy() *FlatStrategy {
 }
 
 // GeneratePath constructs the target image path using the flat strategy.
-func (s *FlatStrategy) GeneratePath(originalRef *image.ImageReference, targetRegistry string, mappings *registry.RegistryMappings) (string, error) {
+func (s *FlatStrategy) GeneratePath(originalRef *image.ImageReference, targetRegistry string) (string, error) {
 	debug.Printf("FlatStrategy: Generating path for original reference: %+v", originalRef)
 	debug.Printf("FlatStrategy: Target registry: %s", targetRegistry)
 

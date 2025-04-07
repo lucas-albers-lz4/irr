@@ -13,7 +13,7 @@ import (
 	// Need analysis types for mocking generator return value
 	"github.com/lalbers/irr/pkg/chart"
 	"github.com/lalbers/irr/pkg/override"
-	"github.com/lalbers/irr/pkg/registry"
+	registrymapping "github.com/lalbers/irr/pkg/registrymapping"
 	"github.com/lalbers/irr/pkg/strategy"
 	// Import necessary packages (bytes, os, strings might be needed later)
 	// "bytes"
@@ -189,6 +189,21 @@ func TestOverrideCmdExecution(t *testing.T) {
 				assert.Contains(t, string(content), "repository: mock-target.com/dockerio/nginx")
 			},
 		},
+		{
+			name: "success_with_registry_mappings",
+			args: defaultArgs, // Base args, mapping file added in test body
+			mockGeneratorFunc: func() (*override.OverrideFile, error) {
+				// Expect the output to use the mapped prefix 'dckrio' instead of 'dockerio'
+				return &override.OverrideFile{
+					Overrides: map[string]interface{}{"image": map[string]interface{}{"repository": "mock-target.com/dckrio/nginx"}},
+				}, nil
+			},
+			expectErr:      false,
+			stdOutContains: "repository: mock-target.com/dckrio/nginx", // Verify mapped output
+			stdErrContains: "",
+			setupEnv:       map[string]string{"IRR_SKIP_HELM_VALIDATION": "true"},
+			postCheck:      nil, // No specific file check needed here, stdout check covers it
+		},
 	}
 
 	for _, tt := range tests {
@@ -197,7 +212,7 @@ func TestOverrideCmdExecution(t *testing.T) {
 
 			// Setup Generator Mock
 			if tt.mockGeneratorFunc != nil {
-				currentGeneratorFactory = func(chartPath, targetRegistry string, sourceRegistries, excludeRegistries []string, pathStrategy strategy.PathStrategy, mappings *registry.RegistryMappings, strict bool, threshold int, loader chart.Loader) GeneratorInterface {
+				currentGeneratorFactory = func(chartPath, targetRegistry string, sourceRegistries, excludeRegistries []string, pathStrategy strategy.PathStrategy, mappings *registrymapping.RegistryMappings, strict bool, threshold int, loader chart.Loader) GeneratorInterface {
 					return &mockGenerator{GenerateFunc: tt.mockGeneratorFunc}
 				}
 			} else {
@@ -229,6 +244,31 @@ func TestOverrideCmdExecution(t *testing.T) {
 				outputPath = filepath.Join(testDir, "output.yaml")
 				args = append(args, "--output-file", outputPath, "--verbose")
 			}
+			// ---- START Add logic for registry mapping test ----
+			if tt.name == "success_with_registry_mappings" {
+				// Create a temporary mapping file in the current directory
+				mappingContent := []byte(`
+mappings:
+  - source: docker.io
+    target: dckr.io
+  - source: quay.io
+    target: quaycustom
+`)
+				// Use a predictable name within the CWD for the test
+				tempMappingFilename := "./temp-test-mappings.yaml"
+				// #nosec G304 -- Writing to a predictable path in CWD is acceptable for tests
+				err := os.WriteFile(tempMappingFilename, mappingContent, 0600)
+				if err != nil {
+					t.Fatalf("Failed to create temp mapping file in CWD: %v", err)
+				}
+
+				// Add the flag to args (using the relative path)
+				args = append(args, "--registry-mappings", tempMappingFilename)
+
+				// Ensure cleanup
+				defer os.Remove(tempMappingFilename)
+			}
+			// ---- END Add logic for registry mapping test ----
 
 			// Get a fresh command instance
 			rootCmd := newRootCmd()

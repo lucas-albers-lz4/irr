@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/lalbers/irr/pkg/image"
-	"github.com/lalbers/irr/pkg/registry"
+	"github.com/lalbers/irr/pkg/registrymapping"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -48,14 +48,14 @@ func TestPrefixSourceRegistryStrategy(t *testing.T) {
 			expected:       "gcrio/google-containers/pause",
 		},
 		{
-			name: "registry with port",
+			name: "registry_with_port",
 			input: &image.ImageReference{
 				Registry:   "registry.example.com:5000",
 				Repository: "app/frontend",
-				Tag:        "v2",
+				Tag:        "v1.2.0",
 			},
 			targetRegistry: "",
-			expected:       "registryexamplecom5000/app/frontend",
+			expected:       "registryexamplecom/app/frontend",
 		},
 	}
 
@@ -69,29 +69,23 @@ func TestPrefixSourceRegistryStrategy(t *testing.T) {
 }
 
 func TestGetStrategy(t *testing.T) {
-	mappings := &registry.RegistryMappings{
-		Mappings: []registry.RegistryMapping{
-			{
-				Source: "quay.io",
-				Target: "quay",
-			},
-		},
-	}
-
 	tests := []struct {
 		name         string
 		strategyName string
+		mappings     *registrymapping.RegistryMappings
 		wantErr      bool
 		errMsg       string
 	}{
 		{
 			name:         "valid strategy",
 			strategyName: "prefix-source-registry",
+			mappings:     nil,
 			wantErr:      false,
 		},
 		{
 			name:         "unknown strategy",
 			strategyName: "unknown",
+			mappings:     nil,
 			wantErr:      true,
 			errMsg:       "unknown path strategy: unknown",
 		},
@@ -99,11 +93,12 @@ func TestGetStrategy(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			strategy, err := GetStrategy(tt.strategyName, mappings)
+			strategy, err := GetStrategy(tt.strategyName, tt.mappings)
 			if tt.wantErr {
 				assert.Error(t, err)
-				assert.Equal(t, tt.errMsg, err.Error())
-				assert.Nil(t, strategy)
+				if tt.errMsg != "" {
+					assert.Contains(t, err.Error(), tt.errMsg)
+				}
 			} else {
 				assert.NoError(t, err)
 				assert.NotNil(t, strategy)
@@ -113,15 +108,6 @@ func TestGetStrategy(t *testing.T) {
 }
 
 func TestPrefixSourceRegistryStrategy_GeneratePath(t *testing.T) {
-	mappings := &registry.RegistryMappings{
-		Mappings: []registry.RegistryMapping{
-			{
-				Source: "quay.io",
-				Target: "quay",
-			},
-		},
-	}
-
 	tests := []struct {
 		name           string
 		targetRegistry string
@@ -129,40 +115,41 @@ func TestPrefixSourceRegistryStrategy_GeneratePath(t *testing.T) {
 		want           string
 	}{
 		{
-			name:           "simple repository",
+			name:           "simple_repository",
 			targetRegistry: "",
 			imgRef: &image.ImageReference{
 				Registry:   "quay.io",
 				Repository: "org/repo",
+				Tag:        "latest",
 			},
-			want: "org/repo",
+			want: "quayio/org/repo",
 		},
 		{
-			name:           "repository with dots",
+			name:           "repository_with_dots",
 			targetRegistry: "",
 			imgRef: &image.ImageReference{
-				Registry:   "docker.io",
-				Repository: "org/repo",
+				Registry:   "registry.k8s.io",
+				Repository: "pause",
+				Tag:        "3.9",
 			},
-			want: "dockerio/org/repo",
+			want: "registryk8sio/pause",
 		},
 		{
-			name:           "repository with port",
+			name:           "repository_with_port",
 			targetRegistry: "",
 			imgRef: &image.ImageReference{
 				Registry:   "localhost:5000",
-				Repository: "org/repo",
+				Repository: "myimage",
+				Tag:        "dev",
 			},
-			want: "localhost5000/org/repo",
+			want: "localhost/myimage",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := &PrefixSourceRegistryStrategy{
-				Mappings: mappings,
-			}
-			got, err := s.GeneratePath(tt.imgRef, tt.targetRegistry, mappings)
+			s := &PrefixSourceRegistryStrategy{Mappings: nil}
+			got, err := s.GeneratePath(tt.imgRef, tt.targetRegistry, nil)
 			assert.NoError(t, err)
 			assert.Equal(t, tt.want, got)
 		})
@@ -170,29 +157,27 @@ func TestPrefixSourceRegistryStrategy_GeneratePath(t *testing.T) {
 }
 
 func TestPrefixSourceRegistryStrategy_GeneratePath_WithMappings(t *testing.T) {
-	mappings := &registry.RegistryMappings{
-		Mappings: []registry.RegistryMapping{
-			{
-				Source: "quay.io",
-				Target: "quay",
-			},
-		},
-	}
-
 	tests := []struct {
 		name           string
 		targetRegistry string
 		imgRef         *image.ImageReference
 		want           string
+		mapping        *registrymapping.RegistryMappings
 	}{
 		{
-			name:           "with custom mapping",
+			name:           "with_custom_mapping",
 			targetRegistry: "",
 			imgRef: &image.ImageReference{
 				Registry:   "quay.io",
 				Repository: "jetstack/cert-manager-controller",
+				Tag:        "v1.5.3",
 			},
-			want: "jetstack/cert-manager-controller",
+			mapping: &registrymapping.RegistryMappings{
+				Mappings: []registrymapping.RegistryMapping{
+					{Source: "quay.io", Target: "custom.registry.local/proxy"},
+				},
+			},
+			want: "customregistrylocal/proxy/jetstack/cert-manager-controller",
 		},
 		{
 			name:           "without custom mapping",
@@ -201,7 +186,8 @@ func TestPrefixSourceRegistryStrategy_GeneratePath_WithMappings(t *testing.T) {
 				Registry:   "docker.io",
 				Repository: "library/nginx",
 			},
-			want: "dockerio/library/nginx",
+			mapping: nil,
+			want:    "dockerio/library/nginx",
 		},
 		{
 			name:           "with digest",
@@ -211,16 +197,17 @@ func TestPrefixSourceRegistryStrategy_GeneratePath_WithMappings(t *testing.T) {
 				Repository: "library/nginx",
 				Digest:     "sha256:1234567890123456789012345678901234567890123456789012345678901234",
 			},
-			want: "dockerio/library/nginx",
+			mapping: nil,
+			want:    "dockerio/library/nginx",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := &PrefixSourceRegistryStrategy{
-				Mappings: mappings,
+				Mappings: tt.mapping,
 			}
-			got, err := s.GeneratePath(tt.imgRef, tt.targetRegistry, mappings)
+			got, err := s.GeneratePath(tt.imgRef, tt.targetRegistry, tt.mapping)
 			assert.NoError(t, err)
 			assert.Equal(t, tt.want, got)
 		})

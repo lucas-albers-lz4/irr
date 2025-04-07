@@ -13,7 +13,7 @@ import (
 	"github.com/lalbers/irr/pkg/chart"
 	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/override"
-	"github.com/lalbers/irr/pkg/registry"
+	"github.com/lalbers/irr/pkg/registrymapping"
 	"github.com/lalbers/irr/pkg/strategy"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
@@ -99,10 +99,10 @@ type GeneratorInterface interface {
 }
 
 // Allows overriding for testing
-type generatorFactoryFunc func(chartPath, targetRegistry string, sourceRegistries, excludeRegistries []string, pathStrategy strategy.PathStrategy, mappings *registry.RegistryMappings, strict bool, threshold int, loader chart.Loader) GeneratorInterface
+type generatorFactoryFunc func(chartPath, targetRegistry string, sourceRegistries, excludeRegistries []string, pathStrategy strategy.PathStrategy, mappings *registrymapping.RegistryMappings, strict bool, threshold int, loader chart.Loader) GeneratorInterface
 
 // Default factory creates the real generator
-var defaultGeneratorFactory generatorFactoryFunc = func(chartPath, targetRegistry string, sourceRegistries, excludeRegistries []string, pathStrategy strategy.PathStrategy, mappings *registry.RegistryMappings, strict bool, threshold int, loader chart.Loader) GeneratorInterface {
+var defaultGeneratorFactory generatorFactoryFunc = func(chartPath, targetRegistry string, sourceRegistries, excludeRegistries []string, pathStrategy strategy.PathStrategy, mappings *registrymapping.RegistryMappings, strict bool, threshold int, loader chart.Loader) GeneratorInterface {
 	return chart.NewGenerator(chartPath, targetRegistry, sourceRegistries, excludeRegistries, pathStrategy, mappings, strict, threshold, loader)
 }
 
@@ -251,13 +251,17 @@ func runDefault(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("unsupported path strategy: %s", pathStrategy)
 	}
 
-	var registryMappings *registry.RegistryMappings
+	var registryMappings *registrymapping.RegistryMappings
 	if registryMappingsFile != "" {
 		var mapErr error
 		// TODO: Mock registry.LoadMappings in tests
-		registryMappings, mapErr = registry.LoadMappings(registryMappingsFile)
+		registryMappings, mapErr = registrymapping.LoadMappings(registryMappingsFile)
 		if mapErr != nil {
 			return wrapExitCodeError(ExitInputConfigurationError, "error loading registry mappings", mapErr)
+		}
+		debug.Printf("[DEBUG root.go] Loaded registryMappings: %+v (is nil: %t)", registryMappings, registryMappings == nil)
+		if registryMappings != nil {
+			debug.Printf("[DEBUG root.go] Loaded Mappings list: %+v", registryMappings.Mappings)
 		}
 		if verbose {
 			fmt.Printf("Loaded registry mappings from: %s\n", registryMappingsFile)

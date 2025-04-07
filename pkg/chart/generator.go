@@ -17,7 +17,7 @@ import (
 	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/image"
 	"github.com/lalbers/irr/pkg/override"
-	"github.com/lalbers/irr/pkg/registry"
+	"github.com/lalbers/irr/pkg/registrymapping"
 	"github.com/lalbers/irr/pkg/strategy"
 )
 
@@ -55,14 +55,14 @@ type Generator struct {
 	sourceRegistries  []string
 	excludeRegistries []string
 	pathStrategy      strategy.PathStrategy
-	mappings          *registry.RegistryMappings
+	mappings          *registrymapping.RegistryMappings
 	strict            bool
 	threshold         int
 	loader            Loader
 }
 
 // NewGenerator creates a new Generator
-func NewGenerator(chartPath, targetRegistry string, sourceRegistries, excludeRegistries []string, pathStrategy strategy.PathStrategy, mappings *registry.RegistryMappings, strict bool, threshold int, loader Loader) *Generator {
+func NewGenerator(chartPath, targetRegistry string, sourceRegistries, excludeRegistries []string, pathStrategy strategy.PathStrategy, mappings *registrymapping.RegistryMappings, strict bool, threshold int, loader Loader) *Generator {
 	if loader == nil {
 		loader = NewLoader()
 	}
@@ -245,7 +245,7 @@ func (g *Generator) Generate() (*override.OverrideFile, error) {
 		}
 
 		// Get the transformed repository path from the strategy
-		transformedRepoPath, pathErr := g.pathStrategy.GeneratePath(img.Reference, g.targetRegistry, g.mappings)
+		transformedRepoPath, pathErr := g.pathStrategy.GeneratePath(img.Reference, g.targetRegistry)
 		if pathErr != nil {
 			debug.Printf("Error generating path: %v", pathErr)
 			// Store error for later threshold check
@@ -465,7 +465,7 @@ func (g *Generator) isSourceRegistry(registry string) bool {
 // @returns: map[string]interface{} containing the override structure
 // @returns: error if processing fails
 // @llm-helper This is the main entry point for generating overrides
-func GenerateOverrides(chartData *chart.Chart, targetRegistry string, sourceRegistries []string, excludeRegistries []string, pathStrategy strategy.PathStrategy, mappings *registry.RegistryMappings, verbose bool) (map[string]interface{}, error) {
+func GenerateOverrides(chartData *chart.Chart, targetRegistry string, sourceRegistries []string, excludeRegistries []string, pathStrategy strategy.PathStrategy, mappings *registrymapping.RegistryMappings, verbose bool) (map[string]interface{}, error) {
 	debug.FunctionEnter("GenerateOverrides")
 	defer debug.FunctionExit("GenerateOverrides")
 
@@ -498,7 +498,7 @@ type ImageDetector interface {
 }
 
 // processChartForOverrides processes a single chart and its values.
-func processChartForOverrides(chartData *chart.Chart, targetRegistry string, sourceRegistries []string, excludeRegistries []string, pathStrategy strategy.PathStrategy, mappings *registry.RegistryMappings, verbose bool, detector ImageDetector) (map[string]interface{}, error) {
+func processChartForOverrides(chartData *chart.Chart, targetRegistry string, sourceRegistries []string, excludeRegistries []string, pathStrategy strategy.PathStrategy, mappings *registrymapping.RegistryMappings, verbose bool, detector ImageDetector) (map[string]interface{}, error) {
 	debug.FunctionEnter("processChartForOverrides")
 	defer debug.FunctionExit("processChartForOverrides")
 
@@ -537,7 +537,7 @@ func processChartForOverrides(chartData *chart.Chart, targetRegistry string, sou
 
 		// Transform the image reference using the path strategy
 		var transformedRepoPath string
-		transformedRepoPath, err = pathStrategy.GeneratePath(img.Reference, targetRegistry, mappings)
+		transformedRepoPath, err = pathStrategy.GeneratePath(img.Reference, targetRegistry)
 		if err != nil {
 			debug.Printf("Error transforming image reference: %v", err)
 			continue // Skip this image if transformation fails
