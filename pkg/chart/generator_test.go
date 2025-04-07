@@ -450,7 +450,77 @@ func TestGenerate(t *testing.T) {
 		assert.Equal(t, "child-tag", childImage["tag"], "Tag mismatch for child image")
 	})
 
-	// TODO: Test Generate with mappings
+	t.Run("WithRegistryMapping", func(t *testing.T) {
+		// 1. Setup Mocks
+		mockChart := &chart.Chart{
+			Metadata: &chart.Metadata{Name: "mappingchart"},
+			Values: map[string]interface{}{
+				"imageFromDocker": "docker.io/library/nginx:stable",        // Should map to 'mapped-docker' target
+				"imageFromQuay":   "quay.io/prometheus/alertmanager:v0.25", // Should map to 'mapped-quay' target
+				"imageUnmapped":   "gcr.io/google-containers/pause:3.2",    // Should use default target 'harbor.local'
+			},
+		}
+		mockLoader := &MockChartLoader{LoadFunc: func(_ string) (*chart.Chart, error) {
+			return mockChart, nil
+		}}
+		mockMappings := &registry.Mappings{
+			Entries: []registry.Mapping{
+				{Source: "docker.io", Target: "mapped-docker.local"},
+				{Source: "quay.io", Target: "mapped-quay.local"},
+			},
+		}
+
+		// Use Prefix strategy which respects mappings
+		prefixStrategy := strategy.NewPrefixSourceRegistryStrategy()
+		sourceRegistries := []string{"docker.io", "quay.io", "gcr.io"} // Include all sources
+
+		// 2. Create Generator
+		generator := NewGenerator(
+			dummyChartPath,
+			targetRegistry, // Default target, should be overridden by mappings
+			sourceRegistries,
+			[]string{}, // No excludes
+			prefixStrategy,
+			mockMappings, // Provide the mappings
+			strict,
+			threshold,
+			mockLoader,
+		)
+
+		// 3. Call Generate
+		overrideFile, err := generator.Generate()
+
+		// 4. Assert Results
+		require.NoError(t, err, "Generate() should not return an error")
+		require.NotNil(t, overrideFile, "Generated override file should not be nil")
+		assert.Empty(t, overrideFile.Unsupported, "Should be no unsupported structures")
+		require.Len(t, overrideFile.Overrides, 3, "Should have overrides for all 3 images")
+
+		// Check imageFromDocker (mapped)
+		require.Contains(t, overrideFile.Overrides, "imageFromDocker")
+		imgDocker, ok := overrideFile.Overrides["imageFromDocker"].(map[string]interface{})
+		require.True(t, ok)
+		assert.Equal(t, "mapped-docker.local", imgDocker["registry"]) // Mapped target registry
+		assert.Equal(t, "dockerio/library/nginx", imgDocker["repository"])
+		assert.Equal(t, "stable", imgDocker["tag"])
+
+		// Check imageFromQuay (mapped)
+		require.Contains(t, overrideFile.Overrides, "imageFromQuay")
+		imgQuay, ok := overrideFile.Overrides["imageFromQuay"].(map[string]interface{})
+		require.True(t, ok)
+		assert.Equal(t, "mapped-quay.local", imgQuay["registry"]) // Mapped target registry
+		assert.Equal(t, "quayio/prometheus/alertmanager", imgQuay["repository"])
+		assert.Equal(t, "v0.25", imgQuay["tag"])
+
+		// Check imageUnmapped (uses default target)
+		require.Contains(t, overrideFile.Overrides, "imageUnmapped")
+		imgUnmapped, ok := overrideFile.Overrides["imageUnmapped"].(map[string]interface{})
+		require.True(t, ok)
+		assert.Equal(t, targetRegistry, imgUnmapped["registry"]) // Default target registry
+		assert.Equal(t, "gcrio/google-containers/pause", imgUnmapped["repository"])
+		assert.Equal(t, "3.2", imgUnmapped["tag"])
+	})
+
 	// TODO: Test Generate with strict mode + unsupported
 	// TODO: Test Generate with threshold failure
 }
@@ -535,7 +605,10 @@ func TestValidateHelmTemplate(t *testing.T) {
 	dummyOverrides := []byte("someKey: someValue\n")
 
 	t.Run("Valid Template Output", func(t *testing.T) {
-		validYAML := `---\n# Source: chart/templates/service.yaml\napiVersion: v1\n`
+		validYAML := `--- 
+# Source: chart/templates/service.yaml
+apiVersion: v1
+`
 		mockRunner := &MockCommandRunner{
 			RunFunc: func(_ string, _ ...string) ([]byte, error) {
 				return []byte(validYAML), nil
@@ -575,8 +648,8 @@ func TestGenerateOverrides(t *testing.T) {
 	targetRegistry := defaultTargetRegistry // Use constant
 	sourceRegistries := []string{"docker.io"}
 	var excludeRegistries []string
-	prefixStrategy := strategy.NewPrefixSourceRegistryStrategy()
-	verbose := false // Keep test output clean
+	actualStrategy := strategy.NewPrefixSourceRegistryStrategy() // Use the actual strategy
+	verbose := false                                             // Keep test output clean
 
 	// 1. Define the EXPECTED MERGED values structure Helm would create
 	mergedValues := map[string]interface{}{
@@ -634,7 +707,7 @@ func TestGenerateOverrides(t *testing.T) {
 		Error:       nil,
 	}
 
-	overrides, err := processChartForOverrides(mockMergedChart, targetRegistry, sourceRegistries, excludeRegistries, prefixStrategy, verbose, detector)
+	overrides, err := processChartForOverrides(mockMergedChart, targetRegistry, sourceRegistries, excludeRegistries, actualStrategy, verbose, detector)
 	require.NoError(t, err)
 	require.NotNil(t, overrides)
 
@@ -1126,11 +1199,7 @@ func TestProcessChartForOverrides(t *testing.T) {
 	targetRegistry := "harbor.local"
 	sourceRegistries := []string{"docker.io", "quay.io"}
 	excludeRegistries := []string{"internal.registry"}
-	mockStrategy := &MockPathStrategy{
-		GeneratePathFunc: func(ref *image.Reference, _ string) (string, error) {
-			return targetRegistry + "/" + ref.Repository, nil
-		},
-	}
+	actualStrategy := strategy.NewPrefixSourceRegistryStrategy()
 
 	tests := []struct {
 		name           string
@@ -1166,7 +1235,7 @@ func TestProcessChartForOverrides(t *testing.T) {
 			expected: map[string]interface{}{
 				"image": map[string]interface{}{
 					"registry":   targetRegistry,
-					"repository": targetRegistry + "/nginx",
+					"repository": "dockerio/library/nginx",
 					"tag":        "latest",
 				},
 			},
@@ -1262,14 +1331,14 @@ func TestProcessChartForOverrides(t *testing.T) {
 				"app": map[string]interface{}{
 					"image": map[string]interface{}{
 						"registry":   targetRegistry,
-						"repository": targetRegistry + "/app",
+						"repository": "dockerio/library/app",
 						"tag":        "v1",
 					},
 				},
 				"sidecar": map[string]interface{}{
 					"image": map[string]interface{}{
 						"registry":   targetRegistry,
-						"repository": targetRegistry + "/helper",
+						"repository": "quayio/helper",
 						"tag":        "latest",
 					},
 				},
@@ -1309,7 +1378,7 @@ func TestProcessChartForOverrides(t *testing.T) {
 			expected: map[string]interface{}{
 				"image": map[string]interface{}{
 					"registry":   targetRegistry,
-					"repository": targetRegistry + "/app",
+					"repository": "dockerio/library/app",
 					"digest":     "sha256:1234567890",
 				},
 			},
@@ -1325,7 +1394,7 @@ func TestProcessChartForOverrides(t *testing.T) {
 				Error:          tt.detectError,
 			}
 
-			result, err := processChartForOverrides(tt.chartData, targetRegistry, sourceRegistries, excludeRegistries, mockStrategy, true, detector)
+			result, err := processChartForOverrides(tt.chartData, targetRegistry, sourceRegistries, excludeRegistries, actualStrategy, true, detector)
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -1343,7 +1412,7 @@ func TestGenerateOverrides_Integration(_ *testing.T) {
 	targetRegistry := defaultTargetRegistry // Use constant
 	sourceRegistries := []string{"docker.io"}
 	excludeRegistries := []string{}
-	mockStrategy := &MockPathStrategy{}
+	actualStrategy := strategy.NewPrefixSourceRegistryStrategy() // Use the actual strategy
 	strict := true
 	threshold := 100
 	chartPath := testChartPath // Use constant
@@ -1375,7 +1444,7 @@ func TestGenerateOverrides_Integration(_ *testing.T) {
 		targetRegistry,
 		sourceRegistries,
 		excludeRegistries,
-		mockStrategy,
+		actualStrategy, // Pass the actual strategy
 		nil,
 		strict,
 		threshold,
@@ -1410,7 +1479,7 @@ func TestGenerateOverrides_Integration(_ *testing.T) {
 		if imageOverride["registry"] != targetRegistry {
 			panic("image registry mismatch")
 		}
-		if imageOverride["repository"] != "harbor.local/myapp" {
+		if imageOverride["repository"] != "dockerio/library/myapp" {
 			panic("image repository mismatch")
 		}
 		if imageOverride["tag"] != "v1" {
@@ -1426,7 +1495,7 @@ func TestGenerateOverrides_Integration(_ *testing.T) {
 			if sidecarImage["registry"] != targetRegistry {
 				panic("sidecar registry mismatch")
 			}
-			if sidecarImage["repository"] != "harbor.local/helper" {
+			if sidecarImage["repository"] != "dockerio/library/helper" {
 				panic("sidecar repository mismatch")
 			}
 			if sidecarImage["tag"] != "latest" {
