@@ -15,6 +15,10 @@
 pkg/image       88.2%  - Strong coverage, focus on edge cases
 pkg/analysis    86.8%  - Good coverage, minor improvements needed
 cmd/irr         76.7%  - Acceptable coverage, room for improvement
+pkg/generator   57.1%  - Generates override file structure
+pkg/override    58.3%  - Override file generation logic
+pkg/registry    75.0%  - Registry mapping loading/lookup
+pkg/strategy    58.3%  - Path generation strategies
 ```
 
 #### Packages Needing Attention
@@ -29,7 +33,6 @@ pkg/strategy      58.3%  - Path strategy logic needs more tests
 ```
 pkg/debug          0.0%  [no tests] - Utility package
 pkg/log            5.9%  [no tests] - Logging infrastructure
-pkg/registrymapping 0.0% [no tests] - Registry functionality
 ```
 
 ### Integration Test Issues
@@ -124,12 +127,15 @@ Current blocking issues in integration tests:
    * ~~Unchecked `os.Setenv/Unsetenv` in test files~~ (`test/integration/harness.go`)
    * ~~Unchecked type assertions~~ in `pkg/chart/generator_test.go`
    * ~~Unchecked `image.ParseImageReference`~~ in `pkg/chart/generator_test.go`
+   * Unchecked `os.Remove` in `cmd/irr/override_test.go` - REMAINS
 
 2. **Code Efficiency (ineffassign, staticcheck)** - PARTIALLY RESOLVED (v0.x.y)
    * ~~Ineffectual assignments to `result`~~ in `pkg/chart/generator.go`
    * Empty if branch in detection tests (`pkg/image/detection_test.go`) - REMAINS
    * Unnecessary separate variable declaration - REMAINS (Needs specific location)
    * ~~Duplicate error definitions in pkg/image/detection.go~~ (RESOLVED)
+   * `S1005`: Unnecessary assignment before return in `pkg/override/path_utils.go` - REMAINS
+   * `U1000`: Unused `digestRegexCompiled` in `pkg/image/reference.go` - REMAINS
 
 3. **Dead Code (unused)** - RESOLVED (v0.x.y)
    * ~~Unused functions in image detection package (`pkg/image/detection.go`)~~:
@@ -157,9 +163,10 @@ Current blocking issues in integration tests:
 1. **Immediate Actions**
    * Add error checking for environment variable operations in tests
    * Fix ineffectual assignments in override package
-   * ~~Remove or utilize unused functions in image detection~~ (Done)
+   * Remove or utilize unused functions in image detection
    * Clean up empty branches and merge variable declarations
-   * ~~Remove duplicate error definitions in pkg/image/detection.go~~ (Done)
+   * Check `os.Remove` error in `cmd/irr/override_test.go`.
+   * Address `S1005` and `U1000` staticcheck warnings.
 
 2. **Error Handling Strategy**
    * Continue package-by-package error centralization
@@ -186,6 +193,6 @@ This plan outlines the steps to address the findings from `golangci-lint run`. I
     *   **G306 (File Permissions):** Review `os.WriteFile` calls using `0644` permissions. Change to `0600` for temporary/intermediate files. Evaluate if `0644` is appropriate for user-specified output files or test files.
         *   `cmd/irr/main.go:263`: `os.WriteFile(outputFile, ...)` - User output, review (leave `0644` likely okay).
         *   `cmd/irr/main.go:297`: `os.WriteFile(tmpFile.Name(), ...)` - Temp file, change to `0600`.
-        *   `pkg/chart/generator.go:686`: `os.WriteFile(tmpFile.Name(), ...)` - Temp file, change to `0600`.
-        *   `pkg/registry/mappings_test.go:22`: `os.WriteFile(tmpFile, ...)` - Test temp file, change to `0600`.
-        *   `test/integration/integration_test.go:281`, `287`, `300`, `306`: `
+        *   `pkg/chart/generator.go:XXX` (Line number changed): `os.WriteFile(tmpFile.Name(), ...)` - Temp file, change to `0600`.
+        *   `pkg/registry/mappings_test.go:XXX` (Line number changed): `os.WriteFile(tmpFile, ...)` - Test temp file, change to `0600`.
+        *   `test/integration/integration_test.go:XXX`: Check permissions on temp file writes.

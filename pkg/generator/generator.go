@@ -9,13 +9,13 @@ import (
 	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/image"
 	"github.com/lalbers/irr/pkg/override"
-	"github.com/lalbers/irr/pkg/registrymapping"
+	"github.com/lalbers/irr/pkg/registry"
 	"github.com/lalbers/irr/pkg/strategy"
 )
 
 // Generator handles the generation of override files.
 type Generator struct {
-	Mappings          *registrymapping.RegistryMappings
+	Mappings          *registry.Mappings
 	PathStrategy      strategy.PathStrategy
 	SourceRegistries  []string
 	ExcludeRegistries []string
@@ -24,7 +24,7 @@ type Generator struct {
 }
 
 // NewGenerator creates a new Generator instance.
-func NewGenerator(mappings *registrymapping.RegistryMappings, pathStrategy strategy.PathStrategy, sourceRegistries, excludeRegistries []string, strictMode, templateMode bool) *Generator {
+func NewGenerator(mappings *registry.Mappings, pathStrategy strategy.PathStrategy, sourceRegistries, excludeRegistries []string, strictMode, templateMode bool) *Generator {
 	return &Generator{
 		Mappings:          mappings,
 		PathStrategy:      pathStrategy,

@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/lalbers/irr/pkg/registrymapping"
+	"github.com/lalbers/irr/pkg/registry"
 	"github.com/lalbers/irr/pkg/strategy"
 	"github.com/stretchr/testify/require"
 )
@@ -17,7 +17,7 @@ func TestGenerate(t *testing.T) {
 	}
 	strategy := strategy.NewPrefixSourceRegistryStrategy()
 	// Provide minimal non-nil mappings struct
-	mappings := &registrymapping.RegistryMappings{}
+	mappings := &registry.Mappings{}
 
 	generator := NewGenerator(
 		mappings,
@@ -76,8 +76,8 @@ func TestGenerate_WithMappings(t *testing.T) {
 		},
 	}
 	strategy := strategy.NewPrefixSourceRegistryStrategy()
-	mappings := &registrymapping.RegistryMappings{
-		Mappings: []registrymapping.RegistryMapping{
+	mappings := &registry.Mappings{
+		Mappings: []registry.Mapping{
 			{Source: "old-registry.com", Target: "mapped-registry.com/oldreg"},
 			// No mapping for other-registry.com
 		},

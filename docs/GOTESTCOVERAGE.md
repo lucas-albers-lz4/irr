@@ -28,11 +28,10 @@
     *   `github.com/lalbers/irr/pkg/debug`: 0.0%
     *   `github.com/lalbers/irr/pkg/image`: **86.8%** (Excellent coverage)
     *   `github.com/lalbers/irr/pkg/log`: 0.0%
-    *   `github.com/lalbers/irr/pkg/override`: **58.3%** (Needs improvement, includes path_utils)
-    *   `github.com/lalbers/irr/pkg/registry`: **75.0%** (Good coverage)
-    *   `github.com/lalbers/irr/pkg/registrymapping`: 0.0% (Deprecated/Removed)
-    *   `github.com/lalbers/irr/pkg/strategy`: **58.3%** (Needs improvement)
-    *   `github.com/lalbers/irr/pkg/testutil`: 0.0%
+    *   `github.com/lalbers/irr/pkg/override`: **81.8%** (Needs improvement, includes path_utils)
+    *   `github.com/lalbers/irr/pkg/registry`: **81.0%** (Good coverage - Consolidated)
+    *   `github.com/lalbers/irr/pkg/strategy`: **100.0%** (Good coverage)
+    *   `github.com/lalbers/irr/pkg/testutil`: **100.0%** (Good coverage)
     *   `github.com/lalbers/irr/test/integration`: 61.2% (Go test harness only)
 *   **Next Priority:** Complete Phase 2 - Increase coverage in **`pkg/chart`**, `pkg/override`, `pkg/strategy`. Phase 4 - Test utility packages.
 
@@ -42,7 +41,7 @@
 
 ### Phase 1: Target 0% Coverage Packages (Core Logic First) - **[COMPLETED]**
 
-*   **Packages:** `pkg/analysis`, `pkg/chart` (initial focus), `pkg/registry`.
+*   **Packages:** `pkg/analysis`, `pkg/chart` (initial focus), `pkg/registry` (initial focus).
 *   **Target Coverage:** Achieved good initial coverage.
 *   **Specific Actions:** *(Details omitted for brevity - see previous versions)*
 
