@@ -2,6 +2,7 @@
 package chart
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -63,11 +64,10 @@ func (e *ImageProcessingError) Unwrap() error {
 	return e.Err
 }
 
-// ThresholdError indicates processing failed because the success threshold wasn't met
-// type ThresholdError struct {
-// 	Message string
-// }
+// ThresholdError represents an error when the processing threshold is not met.
 
-// func (e *ThresholdError) Error() string {
-// 	return e.Message
-// }
+// --- Sentinel Errors ---
+
+// ErrStrictValidationFailed indicates that unsupported structures were found
+// during generation while strict mode was enabled.
+var ErrStrictValidationFailed = errors.New("strict mode validation failed: unsupported structures found")
