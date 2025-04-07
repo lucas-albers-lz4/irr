@@ -89,6 +89,10 @@ const (
 	UnsupportedTypeNonSourceImage
 	// UnsupportedTypeExcludedImage indicates an image from an explicitly excluded registry.
 	UnsupportedTypeExcludedImage
+	// UnsupportedTypeList indicates an unsupported list/array structure where an image was expected.
+	UnsupportedTypeList
+	// UnsupportedTypeMapValue indicates an unsupported value type within a map where an image was expected.
+	UnsupportedTypeMapValue
 )
 
 // Detector provides methods for finding image references within complex data structures.
@@ -112,7 +116,7 @@ func (r *Reference) String() string {
 }
 
 // IsSourceRegistry checks if the image reference's registry matches any of the source registries
-func IsSourceRegistry(ref *Reference, sourceRegistries []string, excludeRegistries []string) bool {
+func IsSourceRegistry(ref *Reference, sourceRegistries, excludeRegistries []string) bool {
 	debug.FunctionEnter("IsSourceRegistry")
 	defer debug.FunctionExit("IsSourceRegistry")
 
@@ -162,19 +166,9 @@ func NormalizeRegistry(registry string) string {
 	// Convert to lowercase for consistent comparison
 	registry = strings.ToLower(registry)
 
-	// Handle Docker Hub implicit registry
-	// Check against both common names for Docker Hub.
+	// Handle docker.io special cases
 	if registry == defaultRegistry || registry == "index.docker.io" {
-		result.Registry = defaultRegistry // Normalize to 'docker.io'
-		// If the original registry was just the image name (e.g., "nginx"),
-		// assume 'library' namespace.
-		if !strings.Contains(result.Repository, "/") {
-			result.Repository = libraryNamespace + "/" + result.Repository
-			debug.Printf("Normalized Docker Library image (implicit docker registry): %s -> %s", originalRepo, result.Repository)
-		}
-	} else if registry != "" {
-		// Keep the provided registry if it's not Docker Hub
-		result.Registry = registry
+		return defaultRegistry
 	}
 
 	// Strip port number if present
@@ -192,7 +186,7 @@ func NormalizeRegistry(registry string) string {
 // It primarily removes dots and ports.
 func SanitizeRegistryForPath(registry string) string {
 	// Normalize docker.io variants first
-	if registry == "docker.io" || registry == "index.docker.io" || registry == "" {
+	if registry == defaultRegistry || registry == "index.docker.io" || registry == "" {
 		return "dockerio"
 	}
 
@@ -897,7 +891,7 @@ func ParseImageReference(imgStr string) (*Reference, error) {
 // isValidTag checks if a tag is valid (basic check)
 func isValidTag(tag string) bool {
 	// Basic length check
-	return len(tag) > 0 && len(tag) <= 128
+	return tag != "" && len(tag) <= 128
 }
 
 // Relaxed digest format check for parsing: algorithm:hash
@@ -920,7 +914,7 @@ func isValidRegistryName(registry string) bool {
 
 // isValidRepositoryName checks if a repository name is plausible
 func isValidRepositoryName(repo string) bool {
-	if repo == "" {
+	if repo == "" { // Check for empty string
 		return false
 	}
 
@@ -935,8 +929,8 @@ func isValidRepositoryName(repo string) bool {
 	allowedChars := `^[a-z0-9]+(?:[._-][a-z0-9]+)*$`
 	allowedCharsRegex := regexp.MustCompile(allowedChars)
 
-	// Check overall length
-	if len(repo) == 0 || len(repo) > 255 {
+	// Check overall length (empty check is redundant due to the check at the start)
+	if len(repo) > 255 {
 		debug.Printf("[DEBUG isValidRepositoryName] Repository name '%s' has invalid length %d.", repo, len(repo))
 		return false
 	}
@@ -950,7 +944,7 @@ func isValidRepositoryName(repo string) bool {
 		}
 	}
 
-	// Check for invalid consecutive slashes or colons (already done above, keep for safety)
+	// Check for invalid consecutive slashes or colons
 	if strings.Contains(repo, "//") || strings.Contains(repo, "::") || strings.Contains(repo, ":/") || strings.Contains(repo, "/:") {
 		debug.Printf("[DEBUG isValidRepositoryName] Repository name '%s' contains invalid consecutive separators.", repo)
 		return false
@@ -962,22 +956,21 @@ func isValidRepositoryName(repo string) bool {
 		return false
 	}
 
-	// Check for uppercase letters (redundant with regex, but keep for clarity for now)
+	// Check for uppercase letters
 	if repo != strings.ToLower(repo) {
 		debug.Printf("[DEBUG isValidRepositoryName] Repository '%s' contains uppercase letters. Returning false.", repo)
 		return false
 	}
 
-	// Simplified basic checks (redundant with regex, but keep for safety)
+	// Basic structural checks
 	isValid := !strings.HasPrefix(repo, "/") && !strings.HasSuffix(repo, "/") && !strings.Contains(repo, " ")
 	if !isValid {
 		debug.Printf("[DEBUG isValidRepositoryName] Repository '%s' failed basic checks (starts/ends with /, contains space). Returning false.", repo)
-		return false // Return false if basic checks fail
+		return false
 	}
 
-	// If all checks pass
 	debug.Printf("[DEBUG isValidRepositoryName] Repository '%s' passed all checks. Returning true.", repo)
-	return true // Return true only if all checks pass
+	return true
 }
 
 // NormalizeImageReference ensures registry and potentially repository are set correctly,
@@ -1055,7 +1048,7 @@ var (
 
 // DetectImages is a helper function for backwards compatibility or simpler calls.
 // It creates a default detector context and calls the DetectImages method.
-func DetectImages(values interface{}, path []string, _ []string, _ []string, strict bool) ([]DetectedImage, []UnsupportedImage, error) {
+func DetectImages(values interface{}, path, _, _ []string, strict bool) ([]DetectedImage, []UnsupportedImage, error) {
 	// Create a default context (you might want to make this configurable)
 	context := DetectionContext{
 		GlobalRegistry: "", // Or some default if applicable

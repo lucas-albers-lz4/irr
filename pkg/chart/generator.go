@@ -436,17 +436,8 @@ func (g *Generator) isSourceRegistry(registry string) bool {
 	return false
 }
 
-// GenerateOverrides generates a map of Helm overrides for image references.
-// @param chartData: The loaded Helm chart containing values and dependencies
-// @param targetRegistry: The target registry where images should be pushed
-// @param sourceRegistries: List of source registries to process
-// @param excludeRegistries: List of registries to skip
-// @param pathStrategy: Strategy for transforming image paths
-// @param verbose: Enable verbose logging
-// @returns: map[string]interface{} containing the override structure
-// @returns: error if processing fails
-// @llm-helper This is the main entry point for generating overrides
-func GenerateOverrides(chartData *chart.Chart, targetRegistry string, sourceRegistries []string, excludeRegistries []string, pathStrategy strategy.PathStrategy, verbose bool) (map[string]interface{}, error) {
+// GenerateOverrides generates the final override structure based on detected images and strategy.
+func GenerateOverrides(chartData *chart.Chart, targetRegistry string, sourceRegistries, excludeRegistries []string, pathStrategy strategy.PathStrategy, verbose bool) (map[string]interface{}, error) {
 	debug.FunctionEnter("GenerateOverrides")
 	defer debug.FunctionExit("GenerateOverrides")
 
@@ -479,8 +470,8 @@ type ImageDetector interface {
 	DetectImages(values interface{}, path []string) ([]image.DetectedImage, []image.UnsupportedImage, error)
 }
 
-// processChartForOverrides processes a single chart and its values.
-func processChartForOverrides(chartData *chart.Chart, targetRegistry string, sourceRegistries []string, excludeRegistries []string, pathStrategy strategy.PathStrategy, _ bool, detector ImageDetector) (map[string]interface{}, error) {
+// processChartForOverrides processes a single chart's values to generate partial overrides.
+func processChartForOverrides(chartData *chart.Chart, targetRegistry string, sourceRegistries, excludeRegistries []string, pathStrategy strategy.PathStrategy, _ bool, detector ImageDetector) (map[string]interface{}, error) {
 	debug.FunctionEnter("processChartForOverrides")
 	defer debug.FunctionExit("processChartForOverrides")
 
