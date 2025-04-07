@@ -27,8 +27,6 @@ const (
 	defaultFilePerm fs.FileMode = 0o600
 	// percentageMultiplier is used for calculating percentages
 	percentageMultiplier = 100
-	// maxSplitTwo is the limit for splitting into at most two parts
-	maxSplitTwo = 2
 )
 
 // Package chart provides functionality for loading charts, detecting images, and generating override files.
@@ -728,23 +726,11 @@ func ValidateHelmTemplate(runner CommandRunner, chartPath string, overrides []by
 		return fmt.Errorf("helm template command failed: %w. Output: %s", err, string(output))
 	}
 	debug.Printf("Helm template command successful. Output length: %d", len(output))
-	// debug.DumpValue("Helm Template Output", string(output)) // Optional: dump full output
 
 	// Basic validation of the template output
 	if err := validateYAML(output); err != nil {
 		return fmt.Errorf("failed to parse helm template output: %w", err)
 	}
-
-	// Simplified check for common issues on the raw bytes for now
-	// A more robust check for lists as map keys would be implemented here
-	// This placeholder code is intentionally not implementing the check yet
-	/*
-		if bytes.Contains(output, []byte("\n  - ")) && bytes.Contains(output, []byte(":\n")) { // Very crude check
-			// Placeholder: A more robust check for lists as map keys needed here.
-			// Example: Check lines starting with "  -" immediately after a line ending with ":"
-			// return fmt.Errorf("common issue detected: map key might be a list (heuristic check)")
-		}
-	*/
 
 	debug.Println("Helm template output validated successfully.")
 	return nil

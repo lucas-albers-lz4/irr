@@ -429,7 +429,6 @@ func TestAnalyzeValues(t *testing.T) {
 		values         map[string]interface{}
 		prefix         string
 		expectedImages []ImagePattern
-		// Add expectedGlobals if needed later
 	}{
 		{
 			name:           "Empty Values",
@@ -524,7 +523,6 @@ func TestAnalyzeValues(t *testing.T) {
 
 			assert.NoError(t, err, "analyzeValues should not return an error for valid structures")
 			assert.ElementsMatch(t, tt.expectedImages, analysis.ImagePatterns, "Found image patterns do not match expected")
-			// assert.ElementsMatch(t, tt.expectedGlobals, analysis.GlobalPatterns, "Found global patterns do not match expected")
 		})
 	}
 }

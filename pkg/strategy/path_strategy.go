@@ -71,11 +71,13 @@ func (s *PrefixSourceRegistryStrategy) GeneratePath(originalRef *image.Reference
 	// Ensure we only use the repository path part, excluding any original registry prefix
 	baseRepoPath := originalRef.Repository
 	if len(repoPathParts) > 1 {
-		// Heuristic: Check if the first part looks like a domain (contains '.')
-		// Handle cases like 'docker.io/bitnami/nginx' or 'quay.io/prometheus/node-exporter'
-		if strings.Contains(repoPathParts[0], ".") {
+		if len(repoPathParts) > 1 && (strings.Contains(repoPathParts[0], ".") || strings.Contains(repoPathParts[0], ":") || repoPathParts[0] == "localhost") {
+			// Heuristic: First part looks like a registry (contains '.' or ':'), so strip it.
+			// This handles cases like "quay.io/prometheus/node-exporter"
 			debug.Printf("PrefixSourceRegistryStrategy: Stripping potential registry prefix '%s' from repository path '%s'", repoPathParts[0], originalRef.Repository)
-			baseRepoPath = repoPathParts[1]
+			baseRepoPath = strings.Join(repoPathParts[1:], "/")
+		} else {
+			// Assume no registry prefix in repository path
 		}
 	}
 	debug.Printf("PrefixSourceRegistryStrategy: Using base repository path: %s", baseRepoPath)

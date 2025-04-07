@@ -60,8 +60,7 @@ func TestGenerate(t *testing.T) {
 	// Compare the unmarshaled maps using cmp
 	if !cmp.Equal(actualMap, expectedMap) {
 		diff := cmp.Diff(expectedMap, actualMap)
-		// Use the original JSON strings and the diff in the error message
-		t.Errorf("Generate() override map mismatch (-want +got):\n%s\nActual JSON: %s\nExpected JSON: %s", diff, string(actualJSON), string(expectedJSON))
+		t.Errorf("Generate() override map mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -132,7 +131,6 @@ func TestGenerate_WithMappings(t *testing.T) {
 	// Compare the unmarshaled maps using cmp
 	if !cmp.Equal(actualMap, expectedMap) {
 		diff := cmp.Diff(expectedMap, actualMap)
-		// Use the original JSON strings and the diff in the error message
-		t.Errorf("Generate() override map mismatch (-want +got):\n%s\nActual JSON: %s\nExpected JSON: %s", diff, string(actualJSON), string(expectedJSON))
+		t.Errorf("Generate() override map mismatch (-want +got):\n%s", diff)
 	}
 }

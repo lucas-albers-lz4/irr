@@ -126,7 +126,7 @@ func SetValueAtPath(data map[string]interface{}, path []string, value interface{
 
 	// --- START SetValueAtPath DEBUG ---
 	fmt.Printf("[DEBUG irr SPATH] Target Map (m) before setting key '%s': %#v\n", key, m)
-	fmt.Printf("[DEBUG irr SPATH] Path: %v, LastPart: %s, Key: %s, IsArray: %v, ArrayIndex: %d\n", path, lastPart, key, isArrayAccess, arrayIndex)
+	fmt.Printf("[DEBUG irr SPATH] Path: %v, Key: %s, IsArray: %v, ArrayIndex: %d\n", path, key, isArrayAccess, arrayIndex)
 	fmt.Printf("[DEBUG irr SPATH] Value to set: %#v\n", value)
 	// --- END SetValueAtPath DEBUG ---
 
