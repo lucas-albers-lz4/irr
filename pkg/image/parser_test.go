@@ -19,6 +19,7 @@ func TestParseImageReference(t *testing.T) {
 			name:  "standard image with registry",
 			input: "docker.io/library/nginx:1.21.0",
 			expected: &Reference{
+				Original:   "docker.io/library/nginx:1.21.0",
 				Registry:   "docker.io",
 				Repository: "library/nginx",
 				Tag:        "1.21.0",
@@ -28,6 +29,7 @@ func TestParseImageReference(t *testing.T) {
 			name:  "image with nested path",
 			input: "quay.io/org/app/component:v1",
 			expected: &Reference{
+				Original:   "quay.io/org/app/component:v1",
 				Registry:   "quay.io",
 				Repository: "org/app/component",
 				Tag:        "v1",
@@ -37,6 +39,7 @@ func TestParseImageReference(t *testing.T) {
 			name:  "image with implicit docker.io registry",
 			input: "nginx:1.21.0",
 			expected: &Reference{
+				Original:   "nginx:1.21.0",
 				Registry:   "docker.io",
 				Repository: "library/nginx",
 				Tag:        "1.21.0",
@@ -46,6 +49,7 @@ func TestParseImageReference(t *testing.T) {
 			name:  "image with digest",
 			input: "gcr.io/project/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			expected: &Reference{
+				Original:   "gcr.io/project/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 				Registry:   "gcr.io",
 				Repository: "project/image",
 				Digest:     "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -55,6 +59,7 @@ func TestParseImageReference(t *testing.T) {
 			name:  "image with port in registry",
 			input: "localhost:5000/myimage:latest",
 			expected: &Reference{
+				Original:   "localhost:5000/myimage:latest",
 				Registry:   "localhost:5000",
 				Repository: "myimage",
 				Tag:        "latest",
@@ -83,6 +88,7 @@ func TestParseImageReference(t *testing.T) {
 			name:  "standard image with registry, tag, and nested path",
 			input: "docker.io/library/nested/nginx:1.21.0",
 			expected: &Reference{
+				Original:   "docker.io/library/nested/nginx:1.21.0",
 				Registry:   "docker.io",
 				Repository: "library/nested/nginx",
 				Tag:        "1.21.0",
@@ -98,7 +104,7 @@ func TestParseImageReference(t *testing.T) {
 			name:          "invalid tag format",
 			input:         "gcr.io/project/image:invalid/tag",
 			wantErr:       true,
-			errorContains: "invalid image reference format",
+			errorContains: "invalid tag format",
 		},
 	}
 
