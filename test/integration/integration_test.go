@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -579,42 +580,51 @@ func TestReadOverridesFromStdout(t *testing.T) {
 	h.SetupChart(testutil.GetChartPath("minimal-test"))
 	h.SetRegistries("test.registry.io", []string{"docker.io"})
 
-	// Run irr override without --output-file
-	// Ensure --chart-path uses the correct variable h.chartPath
-	stdout, irrErr := h.ExecuteIRR("override", "--chart-path", h.chartPath, "--target-registry", h.targetReg, "--source-registries", strings.Join(h.sourceRegs, ","))
+	// Use a temporary file for output instead of stdout
+	tempOutputFile := filepath.Join(h.tempDir, "stdout-test-override.yaml")
+
+	// Run irr override, directing output to the temp file
+	stdout, irrErr := h.ExecuteIRR("override",
+		"--chart-path", h.chartPath,
+		"--target-registry", h.targetReg,
+		"--source-registries", strings.Join(h.sourceRegs, ","),
+		"--output-file", tempOutputFile, // Write to file
+	)
 	require.NoError(t, irrErr, "irr override command failed")
-	require.NotEmpty(t, stdout, "stdout should contain the override YAML")
+	// Stdout might contain confirmation message or debug info, but we read the file
+	t.Logf("IRR command stdout/stderr (not used for parsing):\n%s", stdout)
 
-	// Parse the overrides from stdout - strip any debug logging that might prefix the YAML
-	lines := strings.Split(stdout, "\n")
-	yamlLines := []string{}
-	for _, line := range lines {
-		trimmedLine := strings.TrimSpace(line)
-		// Skip empty lines and known debug/info prefixes/content
-		if trimmedLine == "" || strings.Contains(trimmedLine, "[DEBUG") || strings.HasPrefix(trimmedLine, "--- IRR BINARY VERSION:") {
-			continue
-		}
-		// Append lines that are not debug/info or empty
-		yamlLines = append(yamlLines, line)
-	}
+	// Read the content of the temporary output file
+	overrideBytes, err := os.ReadFile(tempOutputFile)
+	require.NoError(t, err, "Failed to read temporary override output file")
+	require.NotEmpty(t, overrideBytes, "Temporary override output file should not be empty")
+	cleanYaml := string(overrideBytes) // Use content directly from file
 
-	if len(yamlLines) == 0 {
-		t.Fatalf("Could not find any YAML content in stdout output after filtering debug lines:\n%s", stdout)
-	}
+	// --- BEGIN DEBUG LOGGING ---
+	t.Logf("Variable cleanYaml FROM FILE Before Unmarshal:\n---\n%s\n---", cleanYaml)
+	t.Logf("Variable cleanYaml BYTES FROM FILE Before Unmarshal:\n---\n%x\n---", []byte(cleanYaml))
+	// --- END DEBUG LOGGING ---
 
-	// Join the collected lines and trim any leading/trailing whitespace from the whole block
-	cleanYaml := strings.TrimSpace(strings.Join(yamlLines, "\n"))
-	t.Logf("Clean YAML to parse:\n---\n%s\n---", cleanYaml) // Add logging
-
-	// Parse the overrides
+	// Parse the overrides from the file content
 	var overrides map[string]interface{}
-	err := yaml.Unmarshal([]byte(cleanYaml), &overrides)
-	require.NoError(t, err, "Failed to parse overrides from stdout")
+	err = yaml.Unmarshal([]byte(cleanYaml), &overrides)
+	require.NoError(t, err, "Failed to parse overrides from temp file content")
+
+	// --- BEGIN DEBUG LOGGING ---
+	overridesJSON, _ := json.MarshalIndent(overrides, "", "  ")
+	t.Logf("Parsed overrides map:\n%s", string(overridesJSON))
+	// --- END DEBUG LOGGING ---
 
 	// Basic validation
 	require.Contains(t, overrides, "image", "Overrides should contain the 'image' key")
 	imageMap, ok := overrides["image"].(map[string]interface{})
 	require.True(t, ok, "'image' key should be a map")
+
+	// --- BEGIN DEBUG LOGGING ---
+	imageMapJSON, _ := json.MarshalIndent(imageMap, "", "  ")
+	t.Logf("Extracted imageMap:\n%s", string(imageMapJSON))
+	// --- END DEBUG LOGGING ---
+
 	assert.Equal(t, "test.registry.io", imageMap["registry"], "Registry mismatch")
 	assert.Equal(t, "dockerio/library/nginx", imageMap["repository"], "Repository mismatch")
 	assert.Equal(t, "latest", imageMap["tag"], "Tag mismatch")
