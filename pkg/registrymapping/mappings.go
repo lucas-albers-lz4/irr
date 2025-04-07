@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/lalbers/irr/pkg/debug"
+	"github.com/lalbers/irr/pkg/image"
 	"sigs.k8s.io/yaml"
 )
 
@@ -53,24 +55,58 @@ func LoadMappings(path string) (*RegistryMappings, error) {
 		return nil, fmt.Errorf("failed to read mappings file: %v", err)
 	}
 
-	var mappings RegistryMappings
-	if err := yaml.Unmarshal(data, &mappings); err != nil {
-		return nil, fmt.Errorf("failed to parse mappings file: %v", err)
+	// --- UPDATED PARSING LOGIC ---
+	// Unmarshal into a temporary map first, as the input format is map[string]string
+	var rawMappings map[string]string
+	if err := yaml.Unmarshal(data, &rawMappings); err != nil {
+		return nil, fmt.Errorf("failed to parse mappings file as map[string]string: %v", err)
 	}
 
-	return &mappings, nil
+	// Convert the map into the expected []RegistryMapping slice
+	finalMappings := &RegistryMappings{
+		Mappings: make([]RegistryMapping, 0, len(rawMappings)),
+	}
+
+	for source, target := range rawMappings {
+		trimmedSource := strings.TrimSpace(source)
+		trimmedTarget := strings.TrimSpace(target)
+		finalMappings.Mappings = append(finalMappings.Mappings, RegistryMapping{
+			Source: trimmedSource,
+			Target: trimmedTarget,
+		})
+		debug.Printf("LoadMappings: Parsed and trimmed mapping: Source='%s', Target='%s'", trimmedSource, trimmedTarget)
+	}
+	// --- END UPDATED PARSING LOGIC ---
+
+	debug.Printf("LoadMappings: Successfully loaded and trimmed %d mappings from %s", len(finalMappings.Mappings), path)
+	return finalMappings, nil
 }
 
 // GetTargetRegistry returns the target registry for a given source registry
-func (m *RegistryMappings) GetTargetRegistry(source string) string {
-	if m == nil {
-		return "" // Use default mapping
+func (rm *RegistryMappings) GetTargetRegistry(source string) string {
+	debug.Printf("GetTargetRegistry: Looking for source '%s' in mappings: %+v", source, rm)
+	if rm == nil || rm.Mappings == nil {
+		debug.Printf("GetTargetRegistry: Mappings are nil or empty.")
+		return ""
 	}
+	normalizedSourceInput := image.NormalizeRegistry(source)
+	debug.Printf("GetTargetRegistry: Normalized source INPUT: '%s'", normalizedSourceInput)
 
-	for _, mapping := range m.Mappings {
-		if mapping.Source == source {
+	for _, mapping := range rm.Mappings {
+		// Explicitly trim \r from the mapping source
+		cleanedMappingSource := strings.TrimRight(mapping.Source, "\r")
+
+		// --- SIMPLIFIED COMPARISON ---
+		// Normalize the *mapping* source for comparison against the already normalized input
+		normalizedMappingSource := image.NormalizeRegistry(cleanedMappingSource)
+		debug.Printf("GetTargetRegistry Loop: Comparing normalizedInput (%q) == normalizedMapping (%q)", normalizedSourceInput, normalizedMappingSource)
+
+		if normalizedSourceInput == normalizedMappingSource {
+			debug.Printf("GetTargetRegistry: Match found for '%s'! Returning target: '%s'", source, mapping.Target)
 			return mapping.Target
 		}
 	}
-	return "" // Use default mapping
+
+	debug.Printf("GetTargetRegistry: No match found for source '%s'.", source)
+	return ""
 }
