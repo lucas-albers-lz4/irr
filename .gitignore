@@ -117,3 +117,4 @@ tools/temp/
 # Registry mappings (if these should be user-specific)
 registry-mappings.yaml *.tgz
 test/overrides/*.yaml
+test/pull-logs
