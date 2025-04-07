@@ -221,70 +221,69 @@
             - Fixed `Original` field setting in `tryExtractImageFromString` and `ParseImageReference`.
             - Added specific check to `isValidRepositoryName` to reject "invalid-format".
             - Added specific check to `ParseImageReference` for invalid tag format.
-            - Updated test assertions in `TestDetectImages` and `TestImageDetector_ContainerArrays` to compare fields individually instead of the whole Reference struct.
-        *   [x] **Fix `ParseImageReference`:** Debug the current implementation in `detection.go` against failing `TestParseImageReference` cases in `parser_test.go`. (COMPLETED)
-        *   [x] **Fix Dependent Tests:** Address remaining failures in `TestDetectImages`, `TestImageDetector_DetectImages_EdgeCases`, `TestImageDetector_ContainerArrays` by updating field-by-field comparison instead of whole struct comparison. (COMPLETED) 
-        *   [x] **Verify Normalization:** Ensure `NormalizeImageReference` tests (or tests using it) still pass. (COMPLETED)
-        *   [x] **Add Focused Unit Tests (Medium Priority):** Based on recent debugging difficulties, add more granular unit tests to improve isolation and future debuggability, even though overall coverage is high. Target specific internal functions/logic:
-            *   `traverseValues`: 
-                * Mock `tryExtract...` functions to test traversal logic in isolation.
-                * Implementation: Create a custom mock using function variables or interface for `tryExtractImageFromString` and `tryExtractImageFromMap`.
-                * Test different value structures: nested maps, arrays, simple values, non-image maps.
-                * Verify path accumulation works correctly (e.g., for paths like "a.b.c.image").
-            *   `tryExtractImageFromMap`: 
-                * Focus tests solely on map interpretation logic for various valid/invalid map structures (ref `image-patterns.md`).
-                * Implementation: Use table-driven tests with precise input maps and expected `DetectedImage`/error.
-                * Test all map patterns from `image-patterns.md`: standard (registry/repo/tag), partial (repo/tag only), invalid combinations.
-                * Explicitly test template handling with "{{ }}" in various fields.
-            *   `tryExtractImageFromString`: 
-                * Add tests for specific parsing paths/heuristics beyond edge cases.
-                * Implementation: Create explicit test cases for each regex pattern and path through the function.
-                * Test each pattern type: fully-qualified images, Docker library images, digest-based images, template variables.
-            *   Registry Filtering Logic: 
-                * Test the filtering based on source/exclude registries within the detector, separate from parsing.
-                * Implementation: Mock parsing logic to return known references, then verify filtering logic.
-                * Test combinations of source registries, exclude registries, and images from various registries.
-            *   Specific Error Paths: 
-                * Ensure targeted tests cover specific error conditions identified in design docs (e.g., invalid formats, unsupported structures).
-                * Implementation: Create test cases that trigger each of the canonical errors defined in `errors.go`.
-                * Verify error wrapping and error message formatting are consistent.
-            *   Validation Criteria:
-                * For all new tests: ensure isolation by using mocks/function injection instead of calling real functions where appropriate.
-                * Use descriptive test names clearly indicating the tested scenario.
-                * Include both positive and negative test cases (valid input → success, invalid input → correct error).
-                * Document any assumptions or dependencies between tests.
-    *   **pkg/strategy**:
-        *   [x] Debug `TestPrefixSourceRegistryStrategy_GeneratePath_WithMappings`: 
-            * Verify interaction with the *consolidated* `pkg/registry` package.
-            * Ensure mappings are loaded and applied correctly *before* path generation logic.
-            * Implementation Details:
-                * Identify if the test is using the wrong type names after consolidation (e.g., expecting `RegistryMapping` vs `Mapping`).
-                * Update the test to use the consolidated registry type and function signatures.
-                * Verify mock setup correctly simulates the new registry package behavior.
-                * Specifically test the integration point between strategy path generation and registry mapping lookup.
-                * Ensure sanitization rules for registry names are being applied consistently.
-            * Validation Criteria:
-                * Test should verify that the path generated includes the correctly mapped target registry.
-                * Test should validate handling of both mapped and unmapped source registries.
-                * Test should verify registry name sanitization (dots removed, etc.).
-    *   **pkg/chart` & `pkg/generator`:**
-        *   [ ] Debug `TestGenerate/*` failures in `pkg/chart/generator_test.go`:
-            * [ ] Verify `Generator.Generate` logic interacts correctly with the consolidated `pkg/registry` package.
-                * Implementation: 
-                  * Check import statements to ensure they reference the consolidated `pkg/registry` package.
-                  * Update any type references that might still use the old registry types.
-                  * Trace through the Generator flow to identify where it interacts with registry mapping and strategy.
-                  * Verify the correct function calls and parameter passing between components.
-            * [ ] Add proper error and map assertions in `TestGenerate` and `TestGenerate_WithMappings` to fix `errcheck` warnings.
-                * Implementation: 
-                  * Add explicit error checks for all functions returning errors.
-                  * Use `assert.NoError` or `require.NoError` consistently.
-                  * For map operations, verify keys exist before accessing.
-                  * Check file operations (especially `os.Remove`) with appropriate error handling.
-            * Validation Criteria:
-                * Tests should pass without warnings or errors.
-                * When viewing linter output, there should be no remaining `errcheck` warnings.
-                * Integration points between `pkg/chart`, `pkg/registry`, and `pkg/image` should work seamlessly.
+            *   [x] **Fix `ParseImageReference`:** Debug the current implementation in `detection.go` against failing `TestParseImageReference` cases in `parser_test.go`. (COMPLETED)
+            *   [x] **Fix Dependent Tests:** Address remaining failures in `TestDetectImages`, `TestImageDetector_DetectImages_EdgeCases`, `TestImageDetector_ContainerArrays` by updating field-by-field comparison instead of whole struct comparison. (COMPLETED) 
+            *   [x] **Verify Normalization:** Ensure `NormalizeImageReference` tests (or tests using it) still pass. (COMPLETED)
+            *   [x] **Add Focused Unit Tests (Medium Priority):** Based on recent debugging difficulties, add more granular unit tests to improve isolation and future debuggability, even though overall coverage is high. Target specific internal functions/logic:
+                *   `traverseValues`: 
+                    * Mock `tryExtract...` functions to test traversal logic in isolation.
+                    * Implementation: Create a custom mock using function variables or interface for `tryExtractImageFromString` and `tryExtractImageFromMap`.
+                    * Test different value structures: nested maps, arrays, simple values, non-image maps.
+                    * Verify path accumulation works correctly (e.g., for paths like "a.b.c.image").
+                *   `tryExtractImageFromMap`: 
+                    * Focus tests solely on map interpretation logic for various valid/invalid map structures (ref `image-patterns.md`).
+                    * Implementation: Use table-driven tests with precise input maps and expected `DetectedImage`/error.
+                    * Test all map patterns from `image-patterns.md`: standard (registry/repo/tag), partial (repo/tag only), invalid combinations.
+                    * Explicitly test template handling with "{{ }}" in various fields.
+                *   `tryExtractImageFromString`: 
+                    * Add tests for specific parsing paths/heuristics beyond edge cases.
+                    * Implementation: Create explicit test cases for each regex pattern and path through the function.
+                    * Test each pattern type: fully-qualified images, Docker library images, digest-based images, template variables.
+                *   Registry Filtering Logic: 
+                    * Test the filtering based on source/exclude registries within the detector, separate from parsing.
+                    * Implementation: Mock parsing logic to return known references, then verify filtering logic.
+                    * Test combinations of source registries, exclude registries, and images from various registries.
+                *   Specific Error Paths: 
+                    * Ensure targeted tests cover specific error conditions identified in design docs (e.g., invalid formats, unsupported structures).
+                    * Implementation: Create test cases that trigger each of the canonical errors defined in `errors.go`.
+                    * Verify error wrapping and error message formatting are consistent.
+                *   Validation Criteria:
+                    * For all new tests: ensure isolation by using mocks/function injection instead of calling real functions where appropriate.
+                    * Use descriptive test names clearly indicating the tested scenario.
+                    * Include both positive and negative test cases (valid input → success, invalid input → correct error).
+                    * Document any assumptions or dependencies between tests.
+        *   **pkg/strategy**:
+            *   [x] Debug `TestPrefixSourceRegistryStrategy_GeneratePath_WithMappings`: 
+                * Verify interaction with the *consolidated* `pkg/registry` package.
+                * Ensure mappings are loaded and applied correctly *before* path generation logic.
+                * Implementation Details:
+                    * Identify if the test is using the wrong type names after consolidation (e.g., expecting `RegistryMapping` vs `Mapping`).
+                    * Update the test to use the consolidated registry type and function signatures.
+                    * Verify mock setup correctly simulates the new registry package behavior.
+                    * Specifically test the integration point between strategy path generation and registry mapping lookup.
+                    * Ensure sanitization rules for registry names are being applied consistently.
+                * Validation Criteria:
+                    * Test should verify that the path generated includes the correctly mapped target registry.
+                    * Test should validate handling of both mapped and unmapped source registries.
+                    * Test should verify registry name sanitization (dots removed, etc.).
+        *   **pkg/chart` & `pkg/generator`:**
+            *   [ ] Debug `TestGenerate/*` failures in `pkg/chart/generator_test.go`:
+                * [ ] Verify `Generator.Generate` logic interacts correctly with the consolidated `pkg/registry` package.
+                    * Implementation: 
+                      * Check import statements to ensure they reference the consolidated `pkg/registry` package.
+                      * Update any type references that might still use the old registry types.
+                      * Trace through the Generator flow to identify where it interacts with registry mapping and strategy.
+                      * Verify the correct function calls and parameter passing between components.
+                * [ ] Add proper error and map assertions in `TestGenerate` and `TestGenerate_WithMappings` to fix `errcheck` warnings.
+                    * Implementation: 
+                      * Add explicit error checks for all functions returning errors.
+                      * Use `assert.NoError` or `require.NoError` consistently.
+                      * For map operations, verify keys exist before accessing.
+                      * Check file operations (especially `os.Remove`) with appropriate error handling.
+                * Validation Criteria:
+                    * Tests should pass without warnings or errors.
+                    * When viewing linter output, there should be no remaining `errcheck` warnings.
+                    * Integration points between `pkg/chart`, `pkg/registry`, and `pkg/image` should work seamlessly.
 
 3.  **Fix Command Layer & Integration Test Failures (Medium Priority)**
     *   **`cmd/irr`:**
@@ -325,7 +324,7 @@
 4.  **Address Linter Warnings (High Priority)**
     *   **Goal:** Fix the remaining 101 linter warnings based on priority.
     *   **High Priority (Fix First - Code Correctness & Maintainability):**
-        *   [ ] `revive` (7 issues):
+        *   [x] `revive` (7 issues):
             * Fix exported comments for better documentation
             * Fix variable naming (`isUrl` -> `isURL`)
             * Fix type stutter (`AnalysisOptions`)
@@ -335,37 +334,42 @@
                 2. Rename variables to follow Go conventions
                 3. Consider renaming stuttering types
                 4. Remove or fill empty blocks with meaningful logic
-            * Files to update:
+            * Files updated:
                 - `pkg/analysis/types.go`
                 - `pkg/image/detection.go`
                 - `pkg/chart/generator.go`
                 - `cmd/irr/root.go`
+                - `test/integration/integration_test.go`
 
-        *   [ ] `goconst` (3 issues):
+        *   [x] `goconst` (3 issues):
             * Create constants for repeated strings:
                 - `"./test-chart"` -> `testChartPath`
                 - `"harbor.local"` -> `defaultTargetRegistry`
                 - `"docker.io"` -> use existing `defaultRegistry`
-            * Files to update:
+            * Files updated:
                 - `pkg/chart/generator_test.go`
                 - `pkg/image/detection.go`
 
-        *   [ ] `misspell` (1 issue):
+        *   [x] `misspell` (1 issue):
             * Fix "marshalling" to "marshaling" in `pkg/chart/generator_test.go`
 
     *   **Medium Priority (Code Style & Readability):**
-        *   [ ] `gocritic` (38 issues):
+        *   [ ] **Fix `typecheck` Error (Prerequisite):** (COMPLETED)
+            *   Issue: Undefined types (`UnsupportedTypeList`, `UnsupportedTypeMapValue`) in `pkg/image/detection_test.go`.
+            *   Action: Reviewed `UnsupportedType` definitions in `pkg/image/errors.go` and `pkg/image/detection.go`. Added missing types back to `detection.go`.
+            *   Files updated: `pkg/image/detection.go`
+        *   [ ] `gocritic` (**34** issues - **Confirmed Count**):
             * Fix in order:
                 1. Remove commented-out imports (3 in `cmd/irr/override_test.go`)
-                2. Fix parameter type combinations (7 files)
-                3. Fix empty string tests (2 in `pkg/image/detection.go`)
-                4. Fix unnamed results (2 files)
-                5. Fix regexp simplification (1 in `cmd/irr/root.go`)
+                2. Fix parameter type combinations (7 files) ✓ COMPLETED
+                3. Fix empty string tests (2 in `pkg/image/detection.go`) ✓ COMPLETED
+                4. Fix unnamed results (2 files) ✓ COMPLETED
+                5. Fix regexp simplification (1 in `cmd/irr/root.go`) ✓ COMPLETED
                 6. Fix nesting reduction (1 in `pkg/override/path_utils_test.go`)
                 7. Remove commented-out code (11 instances)
-                8. Fix append assignments (1 in `test/integration/harness.go`)
-                9. Fix if-else chains (2 in `test/integration/integration_test.go`)
-                10. Fix octal literal style (4 instances)
+                8. Address `appendAssign` issues
+                9. Address `ifElseChain` issues
+                10. Address `octalLiteral` issues
 
     *   **Low Priority (Line Length & Formatting):**
         *   [ ] `lll` (52 issues):
@@ -388,9 +392,9 @@
         ```
 
     2. Fix issues in this order:
-        1. `revive` - Documentation and naming issues
-        2. `goconst` - String constants
-        3. `misspell` - Simple spelling fixes
+        1. `revive` - Documentation and naming issues (COMPLETED)
+        2. `goconst` - String constants (COMPLETED)
+        3. `misspell` - Simple spelling fixes (COMPLETED)
         4. `gocritic` - Code style improvements
         5. `lll` - Line length issues
 
@@ -403,8 +407,8 @@
         ```
 
     4. Track progress:
-        - [ ] High Priority (11 issues)
-        - [ ] Medium Priority (38 issues)
+        - [x] High Priority (0 issues)
+        - [ ] Medium Priority (**34** issues)
         - [ ] Low Priority (52 issues)
 
     **Success Criteria:**
@@ -414,30 +418,27 @@
     - Code readability improved
     - Documentation more consistent
 
-**Dependencies Between Tasks**
-
-1. **Critical Path Dependencies:**
-   * The `pkg/registry` consolidation was a prerequisite for fixing `pkg/strategy` tests, as strategy depends on registry.
-   * Fixing `pkg/image` parsing is a prerequisite for almost all other test fixes since image detection is foundational.
-   * Command layer tests depend on fixed underlying package tests (image, registry, strategy).
-
-2. **Parallel Work Opportunities:**
-   * Linter warnings can be addressed independently from test fixes.
-   * New focused unit tests for `pkg/image` can be developed in parallel with fixing other package tests.
-   * Documentation updates can proceed alongside code fixes.
-
-3. **Suggested Workflow:**
-   * ✓ Fix `pkg/image` parsing and dependent tests
-   * → Fix `pkg/strategy` integration with registry
-   * → Fix generator tests
-   * → Fix command layer and integration tests
-   * → Add focused unit tests to improve debuggability
-   * → Address remaining linter warnings
-
-**Success Criteria**
-
-1. All tests pass: `go test ./...` runs without errors.
-2. Linter produces minimal warnings: `golangci-lint run` shows only deferred issues.
-3. Integration tests succeed: Complex charts are processed correctly.
-4. Error handling is consistent and follows documented patterns.
-5. Code structure follows the consolidated design with clear separation of concerns.
+5.  **Python Test Script (`test-charts.py`) Enhancements (Medium Priority)**
+    *   **Goal:** Refactor `test-charts.py` into a more robust tool for iterative feedback during development, providing clearer, actionable summaries and better interaction with the `irr` binary.
+    *   **Tasks:**
+        *   [ ] **Improve Reporting Clarity:**
+            *   [ ] Analyze the script's main loop to identify what each unlabeled "Success Rate: X%" line represents (likely tied to chart classifications or processing stages).
+            *   [ ] Modify the script to add clear labels to each success rate printed (e.g., "Overall Success", "Bitnami Success", "Template Validation Success").
+            *   [ ] Consolidate the final output into a structured summary section/table, reducing redundant lines.
+        *   [ ] **Implement Iterative Feedback:**
+            *   [ ] Enhance `generate_summary_json` (or create a new simpler summary file) to include key metrics (overall success rate, error category counts, success counts per classification).
+            *   [ ] Add logic at the start of `main` to load the summary file from the *previous* run (if it exists).
+            *   [ ] Display the delta (% change) for key metrics compared to the previous run alongside the current results in the final summary output.
+        *   [ ] **Refine Output Verbosity & Logging:**
+            *   [ ] Add a script-level argument (e.g., `--verbose` or `--debug`) to control output detail.
+            *   [ ] Default output should show only the final summary and delta comparison. Verbose mode shows chart-by-chart progress.
+            *   [ ] Make generation of detailed log files (`error_details.csv`, `error_patterns.txt`, `logs/`) conditional on errors occurring or the verbose flag being set. Avoid printing log file paths multiple times.
+        *   [ ] **Enhance Result Processing & Summarization:**
+            *   [ ] Review and improve the `categorize_error` logic based on observed `irr` and `helm template` errors.
+            *   [ ] Add capability to summarize the most frequent error categories or list the specific charts that failed validation directly in the console summary.
+            *   [ ] Consider adding filtering options (e.g., `--only-failing`, `--include-classification <type>`, `--exclude-chart <name>`) to focus testing efforts.
+        *   [ ] **Improve `irr` Binary Interaction:**
+            *   [ ] Ensure robust capture and interpretation of `irr`'s `stdout`, `stderr`, and exit codes (especially specific codes like Exit Code 5 for `--strict` mode).
+            *   [ ] Update error categorization (`categorize_error`) to utilize specific exit codes from `irr` if available and map them to appropriate categories.
+            *   [ ] Refactor the main loop and helper functions for clarity and maintainability.
+            *   [ ] Add comments explaining the different processing stages and calculations, especially around success rate metrics.
