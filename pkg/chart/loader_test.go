@@ -14,7 +14,7 @@ import (
 )
 
 // Helper to create a temporary chart directory for testing HelmLoader
-func createTempChartDir(t *testing.T, name string, chartYaml string, valuesYaml string) string {
+func createTempChartDir(t *testing.T, name, chartYaml, valuesYaml string) string {
 	t.Helper()
 	tempDir := t.TempDir()
 

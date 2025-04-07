@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/lalbers/irr/pkg/debug"
+	"github.com/lalbers/irr/pkg/image"
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
 )
@@ -75,16 +77,17 @@ func (a *Analyzer) Analyze() (*ChartAnalysis, error) {
 }
 
 // normalizeImageValues extracts and normalizes image map values
-func (a *Analyzer) normalizeImageValues(val map[string]interface{}) (string, string, string) {
+func (a *Analyzer) normalizeImageValues(val map[string]interface{}) (registry, repository, tag string) {
 	// Extract values, handling potential nil cases
-	registry, hasRegistry := val["registry"].(string)
-	repository, hasRepository := val["repository"].(string)
+	registryVal, hasRegistry := val["registry"].(string)
+	repositoryVal, hasRepository := val["repository"].(string)
 	if !hasRepository {
 		repository = ""
+	} else {
+		repository = repositoryVal
 	}
 
 	// Handle tag with type assertion and conversion
-	var tag string
 	switch t := val["tag"].(type) {
 	case string:
 		tag = t
@@ -100,11 +103,14 @@ func (a *Analyzer) normalizeImageValues(val map[string]interface{}) (string, str
 
 	// Default to docker.io if registry is missing or empty
 	isDockerRegistry := false
-	if !hasRegistry || registry == "" {
+	if !hasRegistry || registryVal == "" {
 		registry = "docker.io"
 		isDockerRegistry = true
-	} else if registry == "docker.io" {
+	} else if registryVal == "docker.io" {
+		registry = registryVal
 		isDockerRegistry = true
+	} else {
+		registry = registryVal
 	}
 
 	// Add library/ prefix ONLY if registry is docker.io and repo is simple (no /)
@@ -116,16 +122,11 @@ func (a *Analyzer) normalizeImageValues(val map[string]interface{}) (string, str
 	registry = strings.TrimSuffix(registry, "/")
 
 	// Handle registries specified without a TLD (e.g., "myregistry")
-	// This should happen AFTER defaulting to docker.io if needed
 	if !isDockerRegistry && !strings.Contains(registry, ".") && !strings.Contains(registry, ":") {
-		// It's not docker.io, and looks like a hostname without TLD or port.
-		// Assume it's meant to be on docker hub under that name? This is ambiguous.
-		// Let's revert to the previous logic for this specific case for now.
-		// Consider if this case needs clearer definition or should be disallowed.
 		registry = "docker.io/" + registry
 	}
 
-	return registry, repository, tag
+	return // Named return values are assigned implicitly
 }
 
 // analyzeValues recursively analyzes values to find image patterns
@@ -196,17 +197,28 @@ func (a *Analyzer) analyzeMapValue(val map[string]interface{}, path string, anal
 	return nil
 }
 
-// analyzeStringValue handles analysis when the value is a string.
-func (a *Analyzer) analyzeStringValue(key string, val string, path string, analysis *ChartAnalysis) error {
-	if a.isImageString(key, val) {
-		pattern := ImagePattern{
-			Path:  path,
-			Type:  PatternTypeString,
-			Value: val,
-			Count: 1,
-		}
-		analysis.ImagePatterns = append(analysis.ImagePatterns, pattern)
+// analyzeStringValue checks a string value for potential image references
+func (a *Analyzer) analyzeStringValue(key, val, path string, analysis *ChartAnalysis) error {
+	// Use image package's parser logic to check validity
+	_, err := image.ParseImageReference(val)
+	if err != nil {
+		// If it doesn't parse, it's likely not an image string
+		debug.Printf("String at path '%s' did not parse as image: %v", path, err)
+		return nil // Not considered an error for analysis
 	}
+
+	// If it parsed, add it to found patterns
+	analysis.ImagePatterns = append(analysis.ImagePatterns, ImagePattern{
+		Path:  path,
+		Type:  PatternTypeString,
+		Value: val,
+		Count: 1, // Count is always 1 for string patterns initially
+	})
+
+	// We don't need to explicitly track sources here, as they are implicitly
+	// part of the ImagePatterns recorded.
+	// image.NormalizeImageReference(imgRef) // Normalization might still be useful for debugging/logging if needed
+
 	return nil
 }
 

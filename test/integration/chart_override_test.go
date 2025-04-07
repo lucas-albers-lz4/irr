@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lalbers/irr/pkg/override"
 	"github.com/lalbers/irr/pkg/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -14,11 +15,13 @@ import (
 )
 
 // Helper function to validate a single image override structure
-func validateImageOverride(t *testing.T, overrides map[string]interface{}, keyPath []string, expectedTargetRegistry string, expectedRepoSubstring string) {
+func validateImageOverride(t *testing.T, overrides map[string]interface{}, keyPath []string, expectedTargetRegistry, expectedRepoSubstring string) {
 	t.Helper()
+	value, err := override.GetValueAtPath(overrides, keyPath)
+	require.NoError(t, err, fmt.Sprintf("Failed to get value at path %v", keyPath))
 
 	// Navigate to the image map
-	current := overrides
+	current := value.(map[string]interface{})
 	var imageMap map[string]interface{}
 	var ok bool
 	for i, key := range keyPath {

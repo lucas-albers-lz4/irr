@@ -157,55 +157,74 @@ func TestPrefixSourceRegistryStrategy_GeneratePath(t *testing.T) {
 	}
 }
 
-func TestPrefixSourceRegistryStrategy_GeneratePath_WithMappings(t *testing.T) {
+// TestPrefixSourceRegistryStrategy_GeneratePath_InputVariations tests the GeneratePath method
+// with various image reference inputs, focusing on how the source registry and repository
+// are combined and sanitized into the resulting path part.
+// Note: This test does not involve registry mappings, as GeneratePath itself doesn't handle them.
+func TestPrefixSourceRegistryStrategy_GeneratePath_InputVariations(t *testing.T) {
 	tests := []struct {
 		name           string
-		targetRegistry string
+		targetRegistry string // Kept for signature, but not used by this strategy's path logic
 		imgRef         *image.Reference
 		want           string
-		mapping        *registry.Mappings
+		// mapping field removed as it's not used by GeneratePath
 	}{
 		{
-			name:           "with_custom_mapping",
-			targetRegistry: "",
+			name:           "quay_repo",
+			targetRegistry: "", // Example target registry (unused in path calculation)
 			imgRef: &image.Reference{
 				Registry:   "quay.io",
 				Repository: "jetstack/cert-manager-controller",
 				Tag:        "v1.5.3",
 			},
-			mapping: &registry.Mappings{
-				Entries: []registry.Mapping{
-					{Source: "quay.io", Target: "custom.registry.local/proxy"},
-				},
-			},
-			want: "quayio/jetstack/cert-manager-controller",
+			want: "quayio/jetstack/cert-manager-controller", // Sanitized source registry prefix
 		},
 		{
-			name:           "without custom mapping",
+			name:           "dockerhub_library_repo",
 			targetRegistry: "",
 			imgRef: &image.Reference{
 				Registry:   "docker.io",
 				Repository: "library/nginx",
+				Tag:        "latest",
 			},
-			mapping: nil,
-			want:    "dockerio/library/nginx",
+			want: "dockerio/library/nginx",
 		},
 		{
-			name:           "with digest",
+			name:           "dockerhub_official_repo_no_library_prefix",
+			targetRegistry: "",
+			imgRef: &image.Reference{
+				Registry:   "docker.io",
+				Repository: "nginx", // Implicitly library/nginx
+				Tag:        "stable",
+			},
+			want: "dockerio/library/nginx", // Expect library/ to be added
+		},
+		{
+			name:           "repo_with_digest",
 			targetRegistry: "",
 			imgRef: &image.Reference{
 				Registry:   "docker.io",
 				Repository: "library/nginx",
-				Digest:     "sha256:1234567890123456789012345678901234567890123456789012345678901234",
+				Digest:     "sha256:abcdef123456",
 			},
-			mapping: nil,
-			want:    "dockerio/library/nginx",
+			want: "dockerio/library/nginx",
+		},
+		{
+			name:           "registry_with_port_and_dots",
+			targetRegistry: "",
+			imgRef: &image.Reference{
+				Registry:   "private.registry.example.com:5000",
+				Repository: "my-app/backend",
+				Tag:        "1.2.3",
+			},
+			want: "privateregistryexamplecom/my-app/backend", // Port removed, dots removed
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := &PrefixSourceRegistryStrategy{}
+			// Pass targetRegistry, even though it's not used by this strategy for path generation
 			got, err := s.GeneratePath(tt.imgRef, tt.targetRegistry)
 			assert.NoError(t, err)
 			assert.Equal(t, tt.want, got)

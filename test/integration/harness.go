@@ -175,7 +175,7 @@ func (h *TestHarness) GenerateOverrides(extraArgs ...string) error {
 		"--target-registry", h.targetReg,
 		"--source-registries", strings.Join(h.sourceRegs, ","),
 		"--output-file", h.overridePath,
-		"--registry-mappings", h.mappingsPath, // Use default mapping file
+		"--registry-file", h.mappingsPath, // Use default mapping file
 	}
 	args = append(args, extraArgs...)
 

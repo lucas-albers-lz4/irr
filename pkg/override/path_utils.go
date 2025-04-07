@@ -208,32 +208,32 @@ func mergeMaps(dst, src map[string]interface{}) map[string]interface{} {
 	return dst
 }
 
-// parsePathPart parses a path part which may include array access.
-// Returns the key name, array index (if applicable), and whether it's an array access.
-func parsePathPart(part string) (string, int, bool, error) {
-	// Check for array access pattern: "key[index]"
-	openBracket := strings.Index(part, "[")
-	closeBracket := strings.Index(part, "]")
-
-	// If we have an opening bracket, we expect a valid array index
-	if openBracket >= 0 {
-		if closeBracket <= openBracket {
-			return part, 0, false, WrapMalformedArrayIndex(part)
+// parsePathPart parses a single path component, detecting array access.
+func parsePathPart(part string) (key string, index int, isArray bool, err error) {
+	if strings.HasSuffix(part, "]") {
+		leftBracket := strings.LastIndex(part, "[")
+		if leftBracket == -1 {
+			err = fmt.Errorf("invalid array access format: missing '[' in %s", part)
+			return
 		}
-		key := part[:openBracket]
-		indexStr := part[openBracket+1 : closeBracket]
-		index, err := strconv.Atoi(indexStr)
+		key = part[:leftBracket]
+		indexStr := part[leftBracket+1 : len(part)-1]
+		index, err = strconv.Atoi(indexStr)
 		if err != nil {
-			return part, 0, false, WrapInvalidArrayIndex(indexStr, part)
+			err = fmt.Errorf("invalid array index '%s' in %s: %w", indexStr, part, ErrInvalidArrayIndex)
+			return
 		}
 		if index < 0 {
-			return part, 0, false, WrapNegativeArrayIndex(index)
+			err = fmt.Errorf("negative array index %d in %s: %w", index, part, ErrInvalidArrayIndex)
+			return
 		}
-		return key, index, true, nil
+		isArray = true
+	} else {
+		key = part
+		isArray = false
+		index = -1 // Convention for non-array parts
 	}
-
-	// No opening bracket, treat as regular key
-	return part, 0, false, nil
+	return
 }
 
 // GetValueAtPath retrieves a value from a nested map structure at a given path.
