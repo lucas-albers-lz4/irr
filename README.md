@@ -254,7 +254,7 @@ irr \
   --chart-path ./my-chart \
   --target-registry my-registry.example.com \
   --source-registries docker.io,quay.io \
-  --registry-mappings ./registry-mappings.yaml \
+  --registry-file ./registry-mappings.yaml \
   --output-file overrides.yaml
 ```
 

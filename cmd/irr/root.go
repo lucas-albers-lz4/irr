@@ -134,9 +134,8 @@ var defaultGeneratorFactory generatorFactoryFunc = func(chartPath, targetRegistr
 // Keep track of the current factory (can be replaced in tests)
 var currentGeneratorFactory = defaultGeneratorFactory
 
-// Regex for basic registry validation (hostname/IP + optional port)
-// Allows letters, numbers, hyphens, dots in hostname part.
-var registryRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9](:[0-9]+)?$`)
+// Regular expression for validating registry names (simplified based on common usage)
+var registryRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9](:\d+)?$`)
 
 // newRootCmd creates the base command when called without any subcommands
 func newRootCmd() *cobra.Command {
@@ -281,40 +280,37 @@ func runOverride(_ *cobra.Command, _ []string) error {
 
 	// --- Generate Overrides ---
 	debug.Println("Generating overrides...")
-	overrideData, genErr := generator.Generate()
-	if genErr != nil {
-		debug.Printf("Error during override generation: %v", genErr)
+	overrideFile, err := generator.Generate()
+	if err != nil {
+		debug.Printf("Error during override generation: %v", err)
 
-		errMsg := fmt.Sprintf("error generating overrides: %s", genErr.Error())
-		debug.Printf(errMsg) // Log the detailed error
+		// Default exit code and error message
+		exitCode := ExitImageProcessingError
+		errMsg := fmt.Sprintf("error generating overrides: %v", err)
 
-		// Check errors in a reasonable order, using correct types from pkg/chart
-		var parsingErr *chart.ParsingError
-		var unsupportedErr *chart.UnsupportedStructureError
-		var thresholdErr *chart.ThresholdNotMetError
-
-		switch {
-		case errors.As(genErr, &parsingErr):
-			// Handle specific parsing failure (using the chart package's definition)
-			return wrapExitCodeError(ExitChartParsingError, errMsg, genErr) // Use ExitChartParsingError
-		case errors.As(genErr, &unsupportedErr):
-			// Handle unsupported structure error (if strict mode is enabled)
-			return wrapExitCodeError(ExitUnsupportedStructure, errMsg, genErr) // Use ExitUnsupportedStructure
-		case errors.As(genErr, &thresholdErr):
-			// Handle low threshold error
-			return wrapExitCodeError(ExitProcessingThresholdNotMet, errMsg, genErr) // Use ExitProcessingThresholdNotMet
-		default:
-			// Handle generic generation error
-			// Wrap the original error for context
-			return fmt.Errorf("failed to generate overrides: %w", genErr)
+		// Check for strict mode violation
+		if strictMode {
+			// A more robust check might involve creating and checking for a specific error type
+			// from the generator package (e.g., chart.ErrStrictValidationFailed).
+			// For now, rely on the error message content based on logs.
+			if strings.Contains(err.Error(), "unsupported structures found") {
+				debug.Println("Strict mode violation detected, returning exit code 5.")
+				exitCode = ExitUnsupportedStructure // Use specific exit code 5
+				// Optionally adjust the message for clarity
+				errMsg = fmt.Sprintf("strict mode violation: %v", err)
+			}
 		}
+
+		return &ExitCodeError{Code: exitCode, Err: errors.New(errMsg)}
 	}
-	debug.Println("Override generation complete.")
+
+	// Log the count of unsupported structures found
+	debug.Printf("Successfully generated override data. Unsupported structures found: %d", len(overrideFile.Unsupported))
 
 	// --- Handle Output ---
 	if dryRun {
 		fmt.Println("--- Dry Run: Generated Overrides ---")
-		outputBytes, err := overrideData.ToYAML()
+		outputBytes, err := overrideFile.ToYAML()
 		if err != nil {
 			return wrapExitCodeError(ExitGeneralRuntimeError, "failed to marshal overrides to YAML for dry run", err)
 		}
@@ -330,7 +326,7 @@ func runOverride(_ *cobra.Command, _ []string) error {
 		}
 
 		debug.Printf("Writing overrides to file: %s", outputFilePath)
-		yamlBytes, err := overrideData.ToYAML()
+		yamlBytes, err := overrideFile.ToYAML()
 		if err != nil {
 			return wrapExitCodeError(ExitGeneralRuntimeError, "failed to marshal overrides to YAML for writing", err)
 		}

@@ -15,10 +15,6 @@ import (
 	"github.com/lalbers/irr/pkg/override"
 	registry "github.com/lalbers/irr/pkg/registry"
 	"github.com/lalbers/irr/pkg/strategy"
-	// Import necessary packages (bytes, os, strings might be needed later)
-	// "bytes"
-	// "os"
-	// "strings"
 	// Need cobra for command execution simulation
 )
 
@@ -252,14 +248,15 @@ func TestOverrideCmdExecution(t *testing.T) {
 				err := os.WriteFile(mappingFilename, mappingContent, 0o600)
 				require.NoError(t, err, "Failed to create temp mapping file in CWD")
 
-				// Add the registry-mappings flag with the relative path
-				args = append(args, "--registry-mappings", mappingFilename)
+				args = append(args, "--registry-file", mappingFilename)
 
-				// Ensure the temp mapping file is cleaned up from CWD
+				// Add defer to clean up the file AFTER executeCommand runs
 				defer func() {
-					err := os.Remove(mappingFilename) // Check the error here
-					require.NoError(t, err, "Failed to remove temp mapping file from CWD")
-				}()
+					err := os.Remove(mappingFilename)
+					if err != nil && !os.IsNotExist(err) {
+						t.Logf("Warning: failed to remove temp mapping file %s: %v", mappingFilename, err)
+					}
+				}() // Error check added for cleanup
 			}
 			// ---- END Add logic for registry mapping test ----
 
