@@ -669,13 +669,13 @@ func TestValidateHelmTemplate(t *testing.T) {
 
 	// Create a dummy chart structure within the temp directory
 	dummyChartPath := filepath.Join(tmpDir, "test-chart")
-	err = os.MkdirAll(filepath.Join(dummyChartPath, "templates"), 0755)
+	err = os.MkdirAll(filepath.Join(dummyChartPath, "templates"), 0750)
 	require.NoError(t, err, "Failed to create dummy chart directories")
-	err = os.WriteFile(filepath.Join(dummyChartPath, "Chart.yaml"), []byte("apiVersion: v2\nname: test-chart\nversion: 0.1.0"), 0644)
+	err = os.WriteFile(filepath.Join(dummyChartPath, "Chart.yaml"), []byte("apiVersion: v2\nname: test-chart\nversion: 0.1.0"), 0600)
 	require.NoError(t, err, "Failed to write dummy Chart.yaml")
-	err = os.WriteFile(filepath.Join(dummyChartPath, "values.yaml"), []byte("replicaCount: 1"), 0644)
+	err = os.WriteFile(filepath.Join(dummyChartPath, "values.yaml"), []byte("replicaCount: 1"), 0600)
 	require.NoError(t, err, "Failed to write dummy values.yaml")
-	err = os.WriteFile(filepath.Join(dummyChartPath, "templates", "deployment.yaml"), []byte("apiVersion: apps/v1\nkind: Deployment"), 0644)
+	err = os.WriteFile(filepath.Join(dummyChartPath, "templates", "deployment.yaml"), []byte("apiVersion: apps/v1\nkind: Deployment"), 0600)
 	require.NoError(t, err, "Failed to write dummy template")
 
 	// Create dummy override content

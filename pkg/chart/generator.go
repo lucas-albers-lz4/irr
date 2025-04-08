@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/image"
+	stdLog "github.com/lalbers/irr/pkg/log"
 	"github.com/lalbers/irr/pkg/override"
 	"github.com/lalbers/irr/pkg/registry"
 	"github.com/lalbers/irr/pkg/strategy"
@@ -178,6 +180,8 @@ func (g *Generator) Generate() (*override.File, error) {
 	}
 	// --- END DEBUG LOG ---
 
+	// +++ ADD LOGGING BEFORE DetectImages Call (using stdLog) +++
+	stdLog.Debugf("[STDLOG GENERATE PASSED VALUE] Value: %#v", chartData.Values)
 	images, unsupportedMatches, err := detector.DetectImages(chartData.Values, []string{}) // Pass empty path for root
 
 	// +++ LOGGING AFTER DetectImages +++
@@ -327,29 +331,49 @@ func (g *Generator) Generate() (*override.File, error) {
 		}
 		debug.Printf("Transformed repository path: %s", transformedRepoPath)
 
-		// --- Construct the target value MAP ---
-		// Always override with the map structure, regardless of original type (string or map)
-		valueToSet := map[string]interface{}{}
+		// --- Construct the target value based on original format ---
+		var valueToSet interface{}
 
-		// --- Use the determined target registry ---
-		valueToSet["registry"] = imageTargetRegistry
-		valueToSet["repository"] = transformedRepoPath
-		// Preserve original tag or digest
-		if img.Reference.Digest != "" {
-			valueToSet["digest"] = img.Reference.Digest
+		// +++ Add Debugging (using fmt.Printf) +++
+		fmt.Printf("[GENERATOR DEBUG VIA FMT] Checking Image Path: %v, OriginalFormat: '%s'\n", img.Path, img.OriginalFormat)
+
+		if img.OriginalFormat == "string" {
+			// Original was a string, format the override as a string
+			var tagOrDigestSuffix string
+			if img.Reference.Digest != "" {
+				tagOrDigestSuffix = "@" + img.Reference.Digest
+			} else if img.Reference.Tag != "" {
+				tagOrDigestSuffix = ":" + img.Reference.Tag
+			} else {
+				tagOrDigestSuffix = ":latest" // Default if somehow both are empty after parsing
+			}
+			valueToSet = fmt.Sprintf("%s/%s%s", imageTargetRegistry, transformedRepoPath, tagOrDigestSuffix)
+			debug.Printf("Original format was string, setting override as string: %s", valueToSet)
 		} else {
-			// Ensure tag is included even if it was empty in the original
-			// (avoids Helm potentially complaining about missing tag if repo/registry change)
-			valueToSet["tag"] = img.Reference.Tag
+			// Original was likely a map (or format unknown/default), override with map structure
+			mapValue := map[string]interface{}{}
+			mapValue["registry"] = imageTargetRegistry
+			mapValue["repository"] = transformedRepoPath
+			if img.Reference.Digest != "" {
+				mapValue["digest"] = img.Reference.Digest
+			} else {
+				mapValue["tag"] = img.Reference.Tag
+			}
+			valueToSet = mapValue
+			debug.DumpValue("Original format was map, setting override as map", valueToSet)
 		}
-		// --- End Construct the target value MAP ---
+		// --- End Construct the target value ---
+
+		// +++ Add Debugging +++
+		debug.Printf("[GENERATOR DEBUG] Type of valueToSet: %T", valueToSet)
+		debug.DumpValue("[GENERATOR DEBUG] Value being passed to SetValueAtPath", valueToSet)
 
 		debug.Printf("[DEBUG irr GEN] Processing Eligible Image: Path=%v, OriginalRef=%s, Type=%s", img.Path, img.Reference.String(), img.Pattern)
-		debug.DumpValue("[DEBUG irr GEN] Value to set", valueToSet)
+		debug.DumpValue("[DEBUG irr GEN] Value to set (final)", valueToSet)
 
-		// Set the new value (map) in the NEW override structure
+		// Set the new value (map or string) in the NEW override structure
 		debug.Printf("[DEBUG irr GEN] Calling SetValueAtPath with Path: %v", img.Path)
-		err = override.SetValueAtPath(finalOverrides, img.Path, valueToSet) // Use finalOverrides map
+		err = override.SetValueAtPath(finalOverrides, img.Path, valueToSet, false) // Pass false for debug
 		if err != nil {
 			debug.Printf("Error setting value at path %v: %v", img.Path, err)
 			processingFailed = true
@@ -618,9 +642,10 @@ func processChartForOverrides(
 		}
 
 		// Set the value at the correct path IN THE NEW OVERRIDES MAP
-		err = override.SetValueAtPath(overrides, img.Path, imageConfig)
+		err = override.SetValueAtPath(overrides, img.Path, imageConfig, false) // Pass false for debug
 		if err != nil {
-			debug.Printf("Error setting value in override map at path %v: %v", img.Path, err)
+			// Log and continue if setting value fails
+			log.Printf("Error setting override path %v: %v", img.Path, err)
 			continue // Skip if we cannot set the override
 		}
 	}
