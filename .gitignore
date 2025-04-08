@@ -118,4 +118,4 @@ tools/temp/
 registry-mappings.yaml *.tgz
 test/overrides/*.yaml
 test/pull-logs
-.irr.code-workspace
+irr.code-workspace
