@@ -337,7 +337,7 @@ The file handled multiple responsibilities: core detection orchestration, refere
 
 3.  **Create New Test Files & Move Tests (Iteratively):**
     *   **Action (Repeat for each target file - `parser_test.go`, `normalization_test.go`, etc.):**
-        *   Create the target `_test.go` file (e.g., `parser_test.go`).
+        *   Create the target `_test.go` file.
         *   Identify and move the relevant group of `Test...` functions from `detection_test.go` to the target file.
         *   Update moved tests to import necessary packages and use helpers from `image_test_helpers.go`.
     *   **Files Modified:** `detection_test.go` (Remove tests), `parser_test.go` (New/Add tests), `normalization_test.go` (New/Add tests), `validation_test.go` (New/Add tests), `detector_test.go` (New/Add tests).
@@ -566,3 +566,129 @@ If automated edits (`edit_file`) fail consistently on large files, consider thes
 4.  **Manual Intervention Prompt:** If automated edits fail after retries (`reapply`), generate the required diff/patch in the chat and prompt the user to apply it manually.
 
 **Recommendation:** Start with the primary splitting approach. If edits fail, try Incremental Edits or Targeted Read+Edit. Use Delete and Recreate only when moving the bulk of code. Fall back to Manual Intervention if automation proves unreliable for a specific step.
+
+25. **Fix Test and Lint Errors (In Progress - High Priority Fixes)**
+
+    **Goal:** Achieve a fully passing test suite (`go test ./...`) and a clean lint report (`golangci-lint run ./...`) by addressing all remaining functional and test-related bugs.
+
+    **Analysis & Current Status (Post-Refactor & Initial Fixes):**
+    *   Refactoring of `pkg/image` and `pkg/chart` implementation and tests is largely complete structurally, but introduced regressions and highlighted existing bugs.
+    *   Significant progress made in fixing `pkg/image` test failures related to template handling and strict mode validation.
+    *   **Linting:** `golangci-lint run` still reports numerous issues (status unchanged from previous summary).
+    *   **Testing:** `go test ./...` reveals the following key failures:
+        *   `cmd/irr`: Panic due to flag redefinition (`TestAnalyzeCmd/no_arguments`).
+        *   `pkg/analysis`: Incorrect image pattern count (`TestAnalyze/SimpleNesting`).
+        *   `pkg/image`: 
+            *   `TestImageDetector_DetectImages_EdgeCases/mixed_valid_and_invalid_images`: Error string mismatch (likely trailing newline).
+            *   `TestDetectImages/Strict_mode`: Mismatched detected (expected 1, got 0) and unsupported (expected 4, got 2) counts.
+        *   `pkg/override`: Array path parsing errors (`TestParseArrayPath`).
+        *   `pkg/registry`: Failures in loading empty files, path validation, and registry normalization/lookup (`TestLoadMappings`, `TestGetTargetRegistry`).
+        *   **Note:** `TestStrictModeExitCode5` and `TestImageDetector_TemplateVariables` are **passing**.
+
+    **Component Dependencies & Fix Order:**
+    ```
+    Command Layer (Flags) (BLOCKER - Test Panic)
+            │
+            │
+    Image Detection (CORE) ──┐          ┌──> Registry Mapping (BLOCKER - Tests)
+            │                │          │
+            ▼                ▼          ▼
+    Image Parsing      Path Parsing/Overrides (BLOCKER - Tests) Analysis (BLOCKER - Tests)
+            │                │              │
+            └───────┬────────┘              │
+                    │                       │
+                    ▼                       ▼
+           Integration Tests (Passing)
+    ```
+
+    **Validation Strategy:**
+    *   **Unit Level:** Run component-specific tests after each fix (`go test ./pkg/{component}/...`)
+    *   **Integration Level:** Run integration tests after major component fixes (`go test ./test/integration/...`)
+    *   **Linting:** Run linter on modified files after each change (`golangci-lint run {files}`)
+    *   **Focused Testing:** Use pattern matching to test specific functions (`go test ./pkg/... -run TestFunctionName`)
+    *   **Debug Mode:** Enable debug output for failing tests (`LOG_LEVEL=DEBUG go test -v ./path/to/package -run TestName`)
+    *   **End-to-End:** Use Python test script on key chart examples after all fixes (`python test/tools/test-charts.py`)
+
+    **Prioritized Fix Plan:**
+
+    1.  **Critical Priority (Blockers - Must Fix First):**
+        *   [ ] **`cmd/irr`:** Fix `TestAnalyzeCmd` panic (flag redefinition).
+            *   **Details:** The `-o` shorthand is conflicting between the persistent `outputFile` flag and the `analyze` command's `outputFormat` flag. 
+            *   **Approach:** Investigate flag definitions in `cmd/irr/root.go` and `cmd/irr/analyze_test.go`, remove the shorthand from one of them.
+            *   **Test:** `go test ./cmd/irr/... -run TestAnalyzeCmd`
+
+    2.  **High Priority (Core Functionality / Security):**
+        *   [x] **`pkg/image` / `test/integration`:** Fix template variable detection & strict mode error handling.
+            *   **Status:** COMPLETED - Logic corrected in `DetectImages`, `tryExtractImageFromMap`; tests `TestImageDetector_TemplateVariables` & `TestStrictModeExitCode5` pass.
+        *   [ ] **`pkg/image`:** Fix remaining test failures.
+            *   [ ] `TestImageDetector_DetectImages_EdgeCases/mixed_valid_and_invalid_images`: Adjust expected error string (likely newline issue).
+            *   [ ] `TestDetectImages/Strict_mode`: Diagnose and fix count mismatches (Detected: 0 vs 1, Unsupported: 2 vs 4).
+            *   **Test:** `go test ./pkg/image/... -run "TestImageDetector_DetectImages_EdgeCases|TestDetectImages/Strict_mode"`
+        *   [ ] **`pkg/image`:** Fix `dupl` lint error in `parser.go` by refactoring duplicated code.
+            *   **Details:** Create a private helper function for registry/repository parsing logic.
+            *   **Command:** `golangci-lint run --enable-only=dupl ./pkg/image/parser.go`
+        *   [ ] **`gosec`:** Address security linter warnings.
+            *   **Priority Issues:** `G204` (subprocess with variable) in integration tests, `G304` (file inclusion) in tests.
+            *   **Command:** `golangci-lint run --enable-only=gosec ./...`
+        *   [ ] **`pkg/registry`:** Fix `TestLoadMappings`, `TestGetTargetRegistry` failures.
+            *   **Likely Issues:** Empty file handling, path validation, registry normalization.
+            *   **Command:** `go test ./pkg/registry/... -run "TestLoadMappings|TestGetTargetRegistry"`
+
+    3.  **Medium Priority (Functionality / Maintainability):**
+        *   [ ] **`pkg/override`:** Fix `TestParseArrayPath` failures.
+            *   **Command:** `go test ./pkg/override/... -run TestParseArrayPath`
+        *   [ ] **`pkg/analysis`:** Fix `TestAnalyze/SimpleNesting` failure.
+            *   **Command:** `go test ./pkg/analysis/... -run "TestAnalyze/SimpleNesting"`
+        *   [ ] **`errcheck`:** Fix ignored errors in implementation code.
+            *   **Target Files:** `pkg/image/detector.go`, `pkg/image/validation.go`
+            *   **Command:** `golangci-lint run --enable-only=errcheck ./pkg/image/...`
+        *   [ ] **`funlen` (Implementation Files):** Start refactoring the most critical long functions.
+            *   **Highest Priority Functions:**
+                *   [ ] `pkg/chart/generator.go: Generate` (132 statements)
+                *   [ ] `pkg/image/detector.go: DetectImages` (81 statements) 
+                *   [ ] `pkg/image/detector.go: tryExtractImageFromMap` (73 statements)
+            *   **Command:** `golangci-lint run --enable-only=funlen ./pkg/...`
+
+    4.  **Low Priority (Style / Non-Critical Linting):**
+        *   [ ] **`gocritic:appendAssign`:** Correct `append` usage in `test/integration/harness.go:385`.
+        *   [ ] **`errorlint`:** Fix type assertion style in `harness.go`.
+        *   [ ] **`unused`:** Remove unused constants in `parser.go`.
+        *   [ ] **`gocritic`:** Address `ifElseChain` warnings where readability improves.
+        *   [ ] Fix remaining `errcheck` errors (mostly in test files).
+        *   [ ] Fix `goconst` (`localhost`).
+        *   [ ] Fix remaining `gocritic` errors (`octalLiteral`, `commentedOutCode`, `nestingReduce`).
+        *   [ ] Fix `lll` errors (long lines - potentially defer further).
+        *   [ ] Fix `misspell` (`marshalling`).
+        *   [ ] Fix `mnd` (magic number 128).
+        *   [ ] Fix `revive` errors (unused params, comment format, empty block).
+        *   [ ] **`funlen` (Test Files):** Address long test functions after implementation files:
+            *   **Target Test Files:** See full list in Section 4 of previous prioritization.
+
+    **Refactoring Long Functions (`funlen`) - Details:**
+    
+    Focus on extracting clear, reusable helper functions rather than just splitting for the sake of length reduction:
+    
+    1. **Extraction Strategy for Key Functions:**
+        *   **`pkg/chart/generator.go: Generate` (132 statements):**
+            *   Extract separate functions for validation, initialization, detection, override generation, and output creation phases.
+            *   Consider creating a `generationContext` struct to reduce parameter passing between extracted functions.
+        *   **`pkg/image/detector.go: DetectImages` (81 statements):**
+            *   Extract separate functions for different data structure traversal (maps vs arrays).
+            *   Create dedicated error handling/aggregation functions.
+        *   **`pkg/image/detector.go: tryExtractImageFromMap` (73 statements):**
+            *   Extract validation logic into separate functions.
+            *   Split map field handling into dedicated functions per field type.
+
+    2. **Implementation Approach:**
+        *   Start with the most critical functions that impact maintainability.
+        *   Refactor one function at a time, with comprehensive testing after each change.
+        *   Use consistent naming patterns for extracted functions.
+        *   Add documentation to clarify the purpose of each extracted function.
+
+    **Next Immediate Steps:**
+    
+    1. Fix the critical `cmd/irr` flag panic to unblock test suite.
+    2. Address the remaining `pkg/image` test failures.
+    3. Address the `dupl` issue in `parser.go` and security issues from `gosec`.
+    4. Fix `pkg/registry` test failures to complete core functionality repairs.
+    5. Begin planned refactoring of the longest functions in implementation files.
