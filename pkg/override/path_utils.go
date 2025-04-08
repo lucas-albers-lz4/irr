@@ -40,7 +40,8 @@ func DeepCopy(src interface{}) interface{} {
 // SetValueAtPath sets a value at a given path in a nested map structure.
 // The path is specified as a slice of strings, where each element represents
 // a key in the nested structure.
-func SetValueAtPath(data map[string]interface{}, path []string, value interface{}) error {
+// The 'debug' parameter controls verbose logging.
+func SetValueAtPath(data map[string]interface{}, path []string, value interface{}, debug bool) error {
 	if data == nil {
 		return ErrNilDataMap
 	}
@@ -124,11 +125,12 @@ func SetValueAtPath(data map[string]interface{}, path []string, value interface{
 		return WrapPathParsing(lastPart, err)
 	}
 
-	// --- START SetValueAtPath DEBUG ---
-	fmt.Printf("[DEBUG irr SPATH] Target Map (m) before setting key '%s': %#v\n", key, m)
-	fmt.Printf("[DEBUG irr SPATH] Path: %v, Key: %s, IsArray: %v, ArrayIndex: %d\n", path, key, isArrayAccess, arrayIndex)
-	fmt.Printf("[DEBUG irr SPATH] Value to set: %#v\n", value)
-	// --- END SetValueAtPath DEBUG ---
+	// Debugging output controlled by flag
+	if debug {
+		fmt.Printf("[DEBUG irr SPATH] Target Map (m) before setting key '%s': %#v\n", key, m)
+		fmt.Printf("[DEBUG irr SPATH] Path: %v, Key: %s, IsArray: %v, ArrayIndex: %d\n", path, key, isArrayAccess, arrayIndex)
+		fmt.Printf("[DEBUG irr SPATH] Value to set: %#v\n", value)
+	}
 
 	if isArrayAccess {
 		// First get or create the array
@@ -174,13 +176,15 @@ func SetValueAtPath(data map[string]interface{}, path []string, value interface{
 		}
 	}
 
-	// --- START SetValueAtPath DEBUG ---
-	fmt.Printf("[DEBUG irr SPATH] Target Map (m) AFTER setting key '%s': %#v\n", key, m)
-	// --- END SetValueAtPath DEBUG ---
+	// Debugging output controlled by flag
+	if debug {
+		fmt.Printf("[DEBUG irr SPATH] Target Map (m) AFTER setting key '%s': %#v\n", key, m)
+	}
 
-	// --- ADD FINAL DEBUG LOG BEFORE RETURN ---
-	fmt.Printf("[DEBUG irr SPATH] FINAL Target Map (m) state for key '%s': %#v\n", key, m)
-	// --- END FINAL DEBUG LOG ---
+	// Debugging output controlled by flag
+	if debug {
+		fmt.Printf("[DEBUG irr SPATH] FINAL Target Map (m) state for key '%s': %#v\n", key, m)
+	}
 
 	return nil
 }
@@ -209,15 +213,22 @@ func mergeMaps(dst, src map[string]interface{}) map[string]interface{} {
 }
 
 // parsePathPart parses a single path component, detecting array access.
+// It expects array access in the format "key[index]".
 func parsePathPart(part string) (key string, index int, isArray bool, err error) {
-	if strings.HasSuffix(part, "]") {
-		leftBracket := strings.LastIndex(part, "[")
-		if leftBracket == -1 {
-			err = fmt.Errorf("invalid array access format: missing '[' in %s", part)
+	hasLeftBracket := strings.Contains(part, "[")
+	hasRightBracket := strings.HasSuffix(part, "]")
+
+	if hasLeftBracket && hasRightBracket {
+		// Potential array access, validate structure
+		leftBracketPos := strings.LastIndex(part, "[")
+		// Ensure brackets are ordered correctly and not adjacent
+		if leftBracketPos == -1 || leftBracketPos >= len(part)-2 { // Need at least one char for index
+			err = fmt.Errorf("invalid array access format in %s: malformed brackets", part)
 			return
 		}
-		key = part[:leftBracket]
-		indexStr := part[leftBracket+1 : len(part)-1]
+
+		key = part[:leftBracketPos]
+		indexStr := part[leftBracketPos+1 : len(part)-1]
 		index, err = strconv.Atoi(indexStr)
 		if err != nil {
 			err = fmt.Errorf("invalid array index '%s' in %s: %w", indexStr, part, ErrInvalidArrayIndex)
@@ -228,12 +239,20 @@ func parsePathPart(part string) (key string, index int, isArray bool, err error)
 			return
 		}
 		isArray = true
-	} else {
+	} else if !hasLeftBracket && !hasRightBracket {
+		// Simple key, no brackets
 		key = part
 		isArray = false
 		index = -1 // Convention for non-array parts
+	} else {
+		// Mismatched brackets (e.g., "key[" or "key]") - treat as error
+		err = fmt.Errorf("invalid array access format in %s: mismatched brackets", part)
+		// Explicitly set return values for clarity, though error is primary
+		key = ""
+		index = -1
+		isArray = false
 	}
-	return
+	return // Returns key, index, isArray, err
 }
 
 // GetValueAtPath retrieves a value from a nested map structure at a given path.

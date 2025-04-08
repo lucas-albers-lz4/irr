@@ -132,7 +132,7 @@ func GenerateOverrides(ref *image.Reference, path []string) (map[string]interfac
 	}
 
 	// Set the value at the specified path in the overrides map
-	err := SetValueAtPath(overrides, path, valueToSet)
+	err := SetValueAtPath(overrides, path, valueToSet, false)
 	if err != nil {
 		return nil, fmt.Errorf("failed to set value at path: %w", err)
 	}
@@ -324,37 +324,3 @@ func flattenValue(prefix string, value interface{}, sets *[]string) error {
 }
 
 // SetValueAtPath is defined in path_utils.go
-/*
-func SetValueAtPath(data map[string]interface{}, path []string, value interface{}) error {
-	debug.FunctionEnterf("SetValueAtPath - Path: %v", path)
-	defer debug.FunctionExit("SetValueAtPath")
-
-	if len(path) == 0 {
-		return ErrEmptyPath
-	}
-
-	current := data
-	for i, key := range path {
-		if i == len(path)-1 {
-			current[key] = value
-			return nil
-		}
-
-		next, exists := current[key]
-		if !exists {
-			next = make(map[string]interface{})
-			current[key] = next
-		}
-
-		nextMap, ok := next.(map[string]interface{})
-		if !ok {
-			// Attempt to convert if it's a map[string]string or similar simple types?
-			// For now, assume structure error if not map[string]interface{}
-			return fmt.Errorf("non-map value encountered at path segment '%s'", key)
-		}
-		current = nextMap
-	}
-	// Should not be reached due to early return in loop
-	return fmt.Errorf("internal error: loop did not terminate correctly")
-}
-*/

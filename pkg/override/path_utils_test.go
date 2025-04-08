@@ -303,13 +303,13 @@ func TestSetValueAtPath(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := SetValueAtPath(tt.data, tt.path, tt.value)
+			err := SetValueAtPath(tt.data, tt.path, tt.value, false) // Pass false for debug
 
 			if tt.wantError {
 				if err == nil {
 					t.Error("SetValueAtPath() expected error, got nil")
 				}
-				return
+				return // Expect error, so don't check data
 			}
 
 			if err != nil {
@@ -396,12 +396,12 @@ func TestParseArrayPath(t *testing.T) {
 			wantErr:      true,
 		},
 		{
-			name:         "malformed array index - no opening bracket",
+			name:         "malformed_array_index_-_no_opening_bracket",
 			part:         "containers0]",
 			wantKey:      "containers0]",
 			wantIndex:    0,
 			wantHasIndex: false,
-			wantErr:      false,
+			wantErr:      true,
 		},
 		{
 			name:         "non-integer array index",
