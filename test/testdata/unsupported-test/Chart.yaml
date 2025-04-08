@@ -1,0 +1,4 @@
+apiVersion: v2
+name: unsupported-test
+version: 0.1.0
+description: A Helm chart specifically for testing unsupported structures in strict mode. 
