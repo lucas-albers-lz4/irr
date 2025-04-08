@@ -27,9 +27,10 @@ func validateImageOverride(
 	require.NoError(t, err, fmt.Sprintf("Failed to get value at path %v", keyPath))
 
 	// Navigate to the image map
-	current := value.(map[string]interface{})
+	current, ok := value.(map[string]interface{})
+	require.True(t, ok, fmt.Sprintf("Expected value at path %v to be a map[string]interface{}, but got %T", keyPath, value))
+
 	var imageMap map[string]interface{}
-	var ok bool
 	for i, key := range keyPath {
 		if i == len(keyPath)-1 { // Last element is the image map itself
 			imageMap, ok = current[key].(map[string]interface{})

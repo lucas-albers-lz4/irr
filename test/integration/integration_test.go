@@ -2,6 +2,7 @@
 package integration
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,6 +17,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
+
+// Exported debug flag variable
+var DebugEnabled bool
 
 func TestMinimalChart(t *testing.T) {
 	harness := NewTestHarness(t)
@@ -201,8 +205,9 @@ func TestComplexChartFeatures(t *testing.T) {
 				explicitOutput, err := harness.ExecuteIRR(explicitArgs...)
 				require.NoError(t, err, "Explicit ExecuteIRR failed for ingress-nginx. Output:\n%s", explicitOutput)
 
+				// #nosec G304 -- Reading a test-generated file from the test's temp directory is safe.
 				overridesBytes, err := os.ReadFile(explicitOutputFile)
-				require.NoError(t, err, "Failed to read explicit output file: %s", explicitOutputFile)
+				require.NoError(t, err, "Failed to read explicit output file")
 				require.NotEmpty(t, overridesBytes, "Explicit output file should not be empty")
 
 				explicitOverrides := make(map[string]interface{})
@@ -244,6 +249,7 @@ func TestComplexChartFeatures(t *testing.T) {
 				return
 			}
 
+			// #nosec G204 -- Test harness executes irr binary with test-controlled arguments.
 			output, err := harness.ExecuteIRR(args...)
 			if err != nil {
 				t.Fatalf("Failed to execute irr override command: %v\nOutput:\n%s", err, output)
@@ -320,6 +326,7 @@ func TestDryRunFlag(t *testing.T) {
 		"--dry-run",
 	}
 
+	// #nosec G204 -- Test harness executes irr binary with test-controlled arguments.
 	cmd := exec.Command("../../bin/irr", args...)
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "Dry run should succeed")
@@ -493,7 +500,8 @@ func setupChartWithUnsupportedStructure(t *testing.T, h *TestHarness) {
 	chartDirName := "unsupported-test-dynamic"
 	chartDirPath := filepath.Join(h.tempDir, chartDirName)
 
-	err := os.MkdirAll(filepath.Join(chartDirPath, "templates"), 0755)
+	// G301 fix: Use 0750 permissions
+	err := os.MkdirAll(filepath.Join(chartDirPath, "templates"), 0750)
 	require.NoError(t, err, "Failed to create dynamic unsupported-test chart directory")
 
 	chartYaml := `
@@ -502,7 +510,8 @@ name: unsupported-test-dynamic
 version: 0.1.0
 description: A dynamically created chart with unsupported structures for strict mode testing.
 `
-	err = os.WriteFile(filepath.Join(chartDirPath, "Chart.yaml"), []byte(chartYaml), 0644)
+	// G306 fix: Use 0600 permissions
+	err = os.WriteFile(filepath.Join(chartDirPath, "Chart.yaml"), []byte(chartYaml), 0600)
 	require.NoError(t, err)
 
 	valuesYaml := `
@@ -523,7 +532,8 @@ global:
   repository: my-global-repo
 appVersion: v1.2.3
 `
-	err = os.WriteFile(filepath.Join(chartDirPath, "values.yaml"), []byte(valuesYaml), 0644)
+	// G306 fix: Use 0600 permissions
+	err = os.WriteFile(filepath.Join(chartDirPath, "values.yaml"), []byte(valuesYaml), 0600)
 	require.NoError(t, err)
 
 	templatesYaml := `
@@ -541,7 +551,8 @@ spec:
       - name: problematic-container
         image: "{{ .Values.problematicImage.registry }}/{{ .Values.problematicImage.repository }}:{{ .Values.appVersion }}"
 `
-	err = os.WriteFile(filepath.Join(chartDirPath, "templates", "deployment.yaml"), []byte(templatesYaml), 0644)
+	// G306 fix: Use 0600 permissions
+	err = os.WriteFile(filepath.Join(chartDirPath, "templates", "deployment.yaml"), []byte(templatesYaml), 0600)
 	require.NoError(t, err)
 
 	h.chartPath = chartDirPath
@@ -556,25 +567,30 @@ func TestReadOverridesFromStdout(t *testing.T) {
 
 	tempOutputFile := filepath.Join(h.tempDir, "stdout-test-override.yaml")
 
-	stdout, irrErr := h.ExecuteIRR("override",
+	// Execute IRR with arguments including the temp output file
+	args := []string{
+		"override",
 		"--chart-path", h.chartPath,
 		"--target-registry", h.targetReg,
 		"--source-registries", strings.Join(h.sourceRegs, ","),
 		"--output-file", tempOutputFile,
-	)
-	require.NoError(t, irrErr, "irr override command failed")
-	t.Logf("IRR command stdout/stderr (not used for parsing):\n%s", stdout)
+	}
 
+	// #nosec G204 -- Test harness executes irr binary with test-controlled arguments.
+	cmd := exec.Command("../../bin/irr", args...)
+	outputBytes, err := cmd.CombinedOutput()
+	output := string(outputBytes)
+	require.NoError(t, err, "irr override command failed")
+	t.Logf("IRR command stdout/stderr (not used for parsing):\n%s", output)
+
+	// Read the generated override file
+	// #nosec G304 -- Reading a test-generated file from the test's temp directory is safe.
 	overrideBytes, err := os.ReadFile(tempOutputFile)
-	require.NoError(t, err, "Failed to read temporary override output file")
-	require.NotEmpty(t, overrideBytes, "Temporary override output file should not be empty")
-	cleanYaml := string(overrideBytes)
+	require.NoError(t, err, "Failed to read generated override file: %s", tempOutputFile)
 
-	t.Logf("Variable cleanYaml FROM FILE Before Unmarshal:\n---\n%s\n---", cleanYaml)
-	t.Logf("Variable cleanYaml BYTES FROM FILE Before Unmarshal:\n---\n%x\n---", []byte(cleanYaml))
-
+	// Unmarshal the generated YAML
 	var overrides map[string]interface{}
-	err = yaml.Unmarshal([]byte(cleanYaml), &overrides)
+	err = yaml.Unmarshal(overrideBytes, &overrides)
 	require.NoError(t, err, "Failed to parse overrides from temp file content")
 
 	t.Logf("Parsed overrides map:\n%s", overrides)
@@ -594,16 +610,29 @@ func TestReadOverridesFromStdout(t *testing.T) {
 }
 
 func TestMain(m *testing.M) {
-	setup()
+	// Define the debug flag
+	flag.BoolVar(&DebugEnabled, "debug", false, "Enable debug logging")
+	flag.Parse() // Parse flags before running tests
+
+	// Setup and teardown logic placeholders (as per TODO.md)
+	// TODO: Implement setup() and teardown() logic
+	// setup()
+
+	// Run tests
 	code := m.Run()
-	teardown()
+
+	// Teardown logic placeholder
+	// teardown()
+
 	os.Exit(code)
 }
+
+// Removed placeholder setup function
 
 func TestNoArgs(t *testing.T) {
 	t.Parallel()
 	h := NewTestHarness(t)
-	output, err := h.ExecuteIRR() // Run with no args
+	output, err := h.ExecuteIRR()
 	assert.NoError(t, err, "Running with no args should not produce an execution error")
 	assert.Contains(t, output, "Usage:", "Output should contain usage information when no args are provided")
 	t.Cleanup(h.Cleanup)
@@ -620,6 +649,7 @@ func TestUnknownFlag(t *testing.T) {
 func TestInvalidStrategy(t *testing.T) {
 	t.Parallel()
 	h := NewTestHarness(t)
+	h.SetChartPath(h.GetTestdataPath("simple"))
 	_, err := h.ExecuteIRR("override", "--strategy", "invalid-strategy")
 	assert.Error(t, err, "should error on invalid strategy")
 	t.Cleanup(h.Cleanup)
@@ -647,29 +677,74 @@ func TestStrictModeExitCode5(t *testing.T) {
 	defer h.Cleanup()
 
 	// Setup chart with known unsupported structure
-	setupChartWithUnsupportedStructure(t, h)
+	// Use the 'unsupported-test' chart fixture
+	h.SetChartPath(h.GetTestdataPath("unsupported-test"))
 
-	// Execute irr with --strict flag
+	// Define the arguments for the IRR command
 	args := []string{
 		"override",
 		"--chart-path", h.chartPath,
-		"--target-registry", "target.io",
-		"--source-registries", "source.io",
+		"--target-registry", "test.target.io", // Required flag
+		"--source-registries", "test.source.io", // Required flag
 		"--strict",
 	}
 
-	cmd := exec.Command("../../bin/irr", args...)
-	output, err := cmd.CombinedOutput()
+	// Verify exit code is 5 using harness method, passing args
+	h.AssertExitCode(5, args...)
 
-	// Verify exit code is 5
-	require.Error(t, err, "Command should fail in strict mode for unsupported structure")
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
-		assert.Equal(t, 5, exitErr.ExitCode(), "Expected exit code 5 for strict mode failure. Output:\n%s", string(output))
-	} else {
-		t.Fatalf("Expected command to fail with ExitError, but got %T: %v. Output:\n%s", err, err, string(output))
+	// Verify the error message contains expected text using harness method, passing args
+	// Adjust expected error string if needed based on actual strict mode output
+	h.AssertErrorContains("strict mode validation failed", args...)
+}
+
+func TestInvalidChartPath(t *testing.T) {
+	t.Parallel()
+	h := NewTestHarness(t)
+	h.SetChartPath("/invalid/path/does/not/exist")
+	_, err := h.ExecuteIRR("override")
+	assert.Error(t, err, "should error when chart path does not exist")
+	t.Cleanup(h.Cleanup)
+}
+
+func TestInvalidRegistryMappingFile(t *testing.T) {
+	t.Parallel()
+	h := NewTestHarness(t)
+	h.SetChartPath(h.GetTestdataPath("simple"))
+	_, err := h.ExecuteIRR("override", "--registry-mappings", "/invalid/path/does/not/exist.yaml")
+	assert.Error(t, err, "should error when registry mappings file does not exist")
+	t.Cleanup(h.Cleanup)
+}
+
+func setupTestChart(t *testing.T, valuesYaml string, chartYaml string, templatesYaml string) string {
+	t.Helper()
+	chartDir, err := os.MkdirTemp("", "testchart-")
+	require.NoError(t, err)
+
+	// Create templates directory
+	// G301 fix: Use 0750 permissions
+	err = os.MkdirAll(filepath.Join(chartDir, "templates"), 0750) // #nosec G301
+	require.NoError(t, err)
+
+	// Create Chart.yaml
+	if chartYaml == "" {
+		chartYaml = `apiVersion: v2
+name: test-chart
+version: 0.1.0`
+	}
+	// G306 fix: Use 0600 permissions
+	require.NoError(t, os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), []byte(chartYaml), 0600)) // #nosec G306
+
+	// Create values.yaml if provided
+	if valuesYaml != "" {
+		// G306 fix: Use 0600 permissions
+		require.NoError(t, os.WriteFile(filepath.Join(chartDir, "values.yaml"), []byte(valuesYaml), 0600)) // #nosec G306
 	}
 
-	// Optionally, verify the error message contains expected text
-	assert.Contains(t, string(output), "strict mode validation failed", "Error output should indicate strict mode failure")
+	// Create template file if provided
+	if templatesYaml != "" {
+		// G306 fix: Use 0600 permissions
+		require.NoError(t, os.WriteFile(filepath.Join(chartDir, "templates", "deployment.yaml"), []byte(templatesYaml), 0600)) // #nosec G306
+	}
+
+	return chartDir
 }

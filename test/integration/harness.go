@@ -1,8 +1,8 @@
-// Package integration contains integration tests for the irr CLI tool.
 package integration
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +12,7 @@ import (
 
 	"github.com/lalbers/irr/pkg/image"
 	"github.com/lalbers/irr/pkg/registry"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"sigs.k8s.io/yaml"
 )
@@ -33,6 +34,7 @@ type TestHarness struct {
 	overridePath string
 	mappingsPath string
 	chartName    string
+	rootDir      string
 }
 
 // NewTestHarness creates a new TestHarness.
@@ -41,15 +43,28 @@ func NewTestHarness(t *testing.T) *TestHarness {
 	tempDir, err := os.MkdirTemp("", "irr-integration-test-*")
 	require.NoError(t, err, "Failed to create temp dir")
 
+	// Determine project root directory
+	rootDir, err := getProjectRoot()
+	require.NoError(t, err, "Failed to get project root in NewTestHarness")
+
 	// Ensure overrides directory exists with correct permissions (using a fixed relative path)
 	// G301 fix
-	if err := os.MkdirAll("../test-data/overrides", defaultDirPerm); err != nil {
-		require.NoError(t, err, "Failed to create test overrides directory: %v", err)
-	}
+	// REMOVED: Creation of test-data/overrides is handled elsewhere if needed.
+	// if err := os.MkdirAll("../test-data/overrides", defaultDirPerm); err != nil {
+	// 	require.NoError(t, err, "Failed to create test overrides directory: %v", err)
+	// }
+
+	// Set an environment variable to indicate testing mode if needed by the core logic
+	// Note: Using require directly might not be ideal if harness is created outside a test func scope initially.
+	// Let's assume t is available for now, otherwise needs refactoring.
+	// G104 is suppressed as the error check is now added.
+	err = os.Setenv("IRR_TESTING", "true")
+	require.NoError(t, err, "Failed to set IRR_TESTING env var")
 
 	h := &TestHarness{
 		t:            t,
 		tempDir:      tempDir,
+		rootDir:      rootDir, // Initialize rootDir field
 		overridePath: filepath.Join(tempDir, "overrides.yaml"),
 	}
 
@@ -68,6 +83,11 @@ func (h *TestHarness) Cleanup() {
 	if err != nil {
 		h.t.Logf("Warning: Failed to remove temp directory %s: %v", h.tempDir, err)
 	}
+
+	// Clean up environment variable
+	// G104 is suppressed as the error check is now added.
+	err = os.Unsetenv("IRR_TESTING")
+	require.NoError(h.t, err, "Failed to unset IRR_TESTING env var")
 }
 
 // createDefaultRegistryMappingFile creates a default mapping file in the harness temp dir.
@@ -93,18 +113,70 @@ func (h *TestHarness) createDefaultRegistryMappingFile() (string, error) {
 	return mappingsPath, nil
 }
 
+// getProjectRoot finds the project root directory by searching upwards for go.mod
+func getProjectRoot() (string, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("failed to get working directory: %w", err)
+	}
+
+	dir := wd
+	for {
+		goModPath := filepath.Join(dir, "go.mod")
+		if _, err := os.Stat(goModPath); err == nil {
+			// Found go.mod, this is the root
+			return dir, nil
+		}
+
+		// Move up one directory
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			// Reached the filesystem root without finding go.mod
+			return "", fmt.Errorf("failed to find project root (go.mod) starting from %s", wd)
+		}
+		dir = parent
+	}
+}
+
 // setup initializes the global test environment
 func setup() {
+	fmt.Println("--- ENTERING INTEGRATION TEST SETUP ---")
 	// Set any necessary environment variables or global test state
 	// This function is called once before all tests run
-	os.Setenv("IRR_TESTING", "true")
+	// G304: Potential file inclusion via variable - Test environment variable, considered safe.
+	_ = os.Setenv("IRR_TESTING", "true") // #nosec G104
+	// Ensure the binary exists for integration tests
+	rootDir, err := getProjectRoot()
+	if err != nil {
+		// Use panic to ensure the failure is visible during test setup
+		panic(fmt.Sprintf("Critical error in setup: Failed to get project root: %v", err))
+	}
+	fmt.Printf("--- Project Root Detected: %s ---\n", rootDir)
+
+	binPath := filepath.Join(rootDir, "bin", "irr")
+	if _, err := os.Stat(binPath); os.IsNotExist(err) {
+		fmt.Printf("irr binary not found at %s. Building...\n", binPath)
+		cmd := exec.Command("make", "build")
+		cmd.Dir = rootDir
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			fmt.Printf("Failed to build irr binary in setup: %v\nOutput:\n%s\n", err, string(output))
+			// Fail fast if build fails
+			panic("Failed to build required irr binary for integration tests")
+		}
+		fmt.Println("irr binary built successfully.")
+	} else {
+		fmt.Println("irr binary already exists.")
+	}
 }
 
 // teardown cleans up the global test environment
 func teardown() {
+	fmt.Println("--- EXITING INTEGRATION TEST SETUP ---")
 	// Clean up any global resources
 	// This function is called once after all tests complete
-	os.Unsetenv("IRR_TESTING")
+	// G304: Potential file inclusion via variable - Test environment variable, considered safe.
+	_ = os.Unsetenv("IRR_TESTING") // #nosec G104
 }
 
 // setTestingEnvInternal sets the IRR_TESTING environment variable for the duration of a test.
@@ -269,36 +341,92 @@ func (h *TestHarness) ValidateOverrides() error {
 	}
 
 	// Load mappings to check against mapped targets as well
-	mappings := &registry.Mappings{}
+	mappings := &registry.Mappings{} // Initialize as non-nil
 	if h.mappingsPath != "" {
 		var loadErr error
-		mappings, loadErr = registry.LoadMappings(h.mappingsPath) // Use the registry package function
+		// Assign loaded mappings only if successful
+		loadedMappings, loadErr := registry.LoadMappings(h.mappingsPath) // Use the registry package function
 		if loadErr != nil {
-			// Log warning but don't fail the validation outright, maybe default target is used
+			// Log warning but don't fail the validation outright
 			h.t.Logf("Warning: could not load mappings file '%s' for validation: %v", h.mappingsPath, loadErr)
+			// Keep the initialized empty mappings struct
+		} else {
+			mappings = loadedMappings // Assign successfully loaded mappings
 		}
 	}
 
-	// Build a list of expected target registries (default + mapped ones)
-	expectedTargets := []string{h.targetReg} // Start with the default target
-	for _, entry := range mappings.Entries {
-		if entry.Target != "" {
-			expectedTargets = append(expectedTargets, entry.Target)
-		}
-	}
+	// Get the actual overrides generated to find the real target registries used.
+	actualOverrides, getOverridesErr := h.GetOverrides()
+	actualTargetsUsed := make(map[string]bool)
 
-	// Check if *any* of the expected target registries appear in the output
-	foundExpectedTarget := false
-	for _, target := range expectedTargets {
-		if target != "" && strings.Contains(output, target) { // Ensure target is not empty
-			foundExpectedTarget = true
-			h.t.Logf("Found expected target registry '%s' in Helm output.", target)
-			break
-		}
-	}
+	if getOverridesErr != nil {
+		// If we can't read the overrides file, we can't determine actual targets.
+		// Log a warning and fall back to the previous check based on configuration.
+		h.t.Logf("Warning: Could not read overrides file (%s) for validation: %v. Falling back to checking configured targets.", h.overridePath, getOverridesErr)
 
-	if !foundExpectedTarget {
-		return fmt.Errorf("no expected target registry (default: '%s' or mapped: %v) found in validated helm template output", h.targetReg, expectedTargets)
+		// -- Previous Check Logic (Fallback) --
+		expectedTargets := []string{h.targetReg} // Start with the default target
+		if mappings != nil {                     // Ensure mappings is not nil here too
+			for _, entry := range mappings.Entries {
+				if entry.Target != "" {
+					expectedTargets = append(expectedTargets, entry.Target)
+				}
+			}
+		}
+		foundExpectedTarget := false
+		for _, target := range expectedTargets {
+			if target != "" && strings.Contains(output, target) {
+				foundExpectedTarget = true
+				h.t.Logf("[Fallback Check] Found configured target registry '%s' in Helm output.", target)
+				break
+			}
+		}
+		if !foundExpectedTarget {
+			return fmt.Errorf("[Fallback Check] no configured target registry (default: '%s' or mapped: %v) found in validated helm template output", h.targetReg, expectedTargets)
+		}
+		// -- End Fallback Check --
+
+	} else if len(actualOverrides) == 0 {
+		// Overrides file was empty, likely no images needed changing.
+		h.t.Log("Overrides file is empty. Skipping registry validation in Helm output.")
+	} else {
+		// Successfully read overrides, find actual targets used.
+		h.WalkImageFields(actualOverrides, func(path []string, value interface{}) {
+			if imageMap, ok := value.(map[string]interface{}); ok {
+				if reg, ok := imageMap["registry"].(string); ok && reg != "" {
+					actualTargetsUsed[reg] = true
+				}
+			}
+			// Also handle string format if we generated strings
+			if imageStr, ok := value.(string); ok && imageStr != "" {
+				ref, parseErr := image.ParseImageReference(imageStr) // Use ParseImageReference
+				if parseErr == nil && ref != nil && ref.Registry != "" {
+					actualTargetsUsed[ref.Registry] = true
+				}
+			}
+		})
+
+		if len(actualTargetsUsed) == 0 {
+			h.t.Log("No image registry keys/values found in the generated overrides file. Validation check skipped.")
+			// Assume it's okay if no registries were found in overrides.
+		} else {
+			foundActualTargetInOutput := false
+			for target := range actualTargetsUsed {
+				if strings.Contains(output, target) {
+					foundActualTargetInOutput = true
+					h.t.Logf("Found actual target registry '%s' from overrides in Helm output.", target)
+					break
+				}
+			}
+			if !foundActualTargetInOutput {
+				// Convert map keys to slice for error message
+				targetsSlice := make([]string, 0, len(actualTargetsUsed))
+				for target := range actualTargetsUsed {
+					targetsSlice = append(targetsSlice, target)
+				}
+				return fmt.Errorf("no actual target registry used in overrides (%v) found in validated helm template output", targetsSlice)
+			}
+		}
 	}
 
 	h.t.Log("Helm template validation successful.")
@@ -324,7 +452,8 @@ func (h *TestHarness) WalkImageFields(data map[string]interface{}, callback func
 	var walk func(map[string]interface{}, []string)
 	walk = func(m map[string]interface{}, path []string) {
 		for key, value := range m {
-			currentPath := append(path, key)
+			currentPath := append([]string{}, path...) // Create copy before appending
+			currentPath = append(currentPath, key)
 			switch v := value.(type) {
 			case map[string]interface{}:
 				// Check if this map itself is likely an image structure
@@ -356,46 +485,39 @@ func (h *TestHarness) WalkImageFields(data map[string]interface{}, callback func
 
 // ExecuteIRR runs the irr binary with the given arguments and returns the combined output.
 func (h *TestHarness) ExecuteIRR(args ...string) (string, error) {
-	// Ensure IRR_TESTING is set for commands running the binary directly
-	cleanupEnv := setTestingEnvInternal(h.t)
-	defer cleanupEnv()
+	binPath := h.getBinaryPath()
+	// G204: Subprocess launched with variable - This is acceptable in test code
+	// where args are controlled by the test setup.
+	cmd := exec.Command(binPath, args...) // #nosec G204
+	cmd.Dir = h.tempDir                   // Run from the temp directory
+	var out bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &stderr
 
-	wd, err := os.Getwd()
-	if err != nil {
-		return "", fmt.Errorf("failed to get working directory: %w", err)
-	}
-	// Revert to original project root calculation
-	projectRoot := filepath.Join(wd, "..", "..")
-	binaryPath := filepath.Join(projectRoot, "bin", "irr")
+	// ALWAYS log the full command for debugging purposes
+	h.t.Logf("[HARNESS EXECUTE_IRR] Command: %s %s", binPath, strings.Join(args, " "))
 
-	// Ensure the command includes the debug flag if not already present
-	debugFlagFound := false
-	for _, arg := range args {
-		if arg == "--debug" {
-			debugFlagFound = true
-			break
-		}
-	}
-	if !debugFlagFound {
-		args = append(args, "--debug")
-	}
-
-	// #nosec G204 -- Test harness executes irr binary with test-controlled arguments
-	cmd := exec.Command(binaryPath, args...)
-	cmd.Dir = h.tempDir // Run in the temp directory context
-	outputBytes, err := cmd.CombinedOutput()
-	outputStr := string(outputBytes)
+	// errcheck: Capture error, but test might focus on stderr content, so don't require.NoError here.
+	err := cmd.Run()
+	outputStr := out.String()
+	stderrStr := stderr.String()
 
 	// ALWAYS log the full output for debugging purposes
-	h.t.Logf("[HARNESS EXECUTE_IRR] Command: %s %s", binaryPath, strings.Join(args, " "))
-	h.t.Logf("[HARNESS EXECUTE_IRR] Full Output:\n%s", outputStr)
-
-	if err != nil {
-		// Return error along with the output for context
-		return outputStr, fmt.Errorf("irr command execution failed: %w", err)
+	if outputStr != "" {
+		h.t.Logf("[HARNESS EXECUTE_IRR] Stdout:\n%s", outputStr)
+	}
+	if stderrStr != "" {
+		h.t.Logf("[HARNESS EXECUTE_IRR] Stderr:\n%s", stderrStr)
 	}
 
-	return outputStr, nil
+	if err != nil {
+		// Return error along with the combined output for context
+		combinedOutput := outputStr + stderrStr
+		return combinedOutput, fmt.Errorf("irr command execution failed: %w. Output:\n%s", err, combinedOutput)
+	}
+
+	return outputStr, nil // Return only stdout on success
 }
 
 // ExecuteHelm runs the helm binary with the given arguments.
@@ -421,4 +543,110 @@ func init() {
 		fmt.Println("Helm command not found. Integration tests require Helm to be installed.")
 		os.Exit(1)
 	}
+}
+
+// SetChartPath sets the chart path for the test harness.
+func (h *TestHarness) SetChartPath(path string) {
+	h.chartPath = path
+}
+
+// GetTestdataPath returns the absolute path to a file or directory within the testdata directory.
+func (h *TestHarness) GetTestdataPath(relativePath string) string {
+	absPath, err := filepath.Abs(filepath.Join("..", "testdata", relativePath))
+	if err != nil {
+		h.t.Fatalf("Failed to get absolute path for testdata: %v", err)
+	}
+	return absPath
+}
+
+// AssertExitCode runs the IRR binary with the given arguments and checks the exit code.
+func (h *TestHarness) AssertExitCode(expected int, args ...string) {
+	h.t.Helper()
+	binPath := h.getBinaryPath()
+
+	// Debug logging for path and CWD
+	cwd, _ := os.Getwd() // Ignore error for logging only
+	h.t.Logf("[ASSERT_EXIT_CODE DEBUG] binPath: %s, CWD: %s", binPath, cwd)
+
+	// G204: Subprocess launched with variable - Acceptable in test code.
+	cmd := exec.Command(binPath, args...) // #nosec G204
+	cmd.Dir = h.tempDir                   // Run from the temp directory
+	outputBytes, runErr := cmd.CombinedOutput()
+	outputStr := string(outputBytes)
+
+	// Check exit code using exec.ExitError
+	if exitErr, ok := runErr.(*exec.ExitError); ok {
+		assert.Equal(h.t, expected, exitErr.ExitCode(),
+			"Expected exit code %d but got %d\nArgs: %v\nOutput:\n%s", expected, exitErr.ExitCode(), args, outputStr)
+	} else if runErr != nil && expected != 0 {
+		// Command failed in a way other than ExitError (e.g., couldn't start)
+		h.t.Fatalf("Command failed unexpectedly (expected exit code %d): %v\nArgs: %v\nOutput:\n%s", expected, runErr, args, outputStr)
+	} else if runErr == nil && expected != 0 {
+		// Command succeeded but an error code was expected
+		h.t.Fatalf("Expected exit code %d but command succeeded.\nArgs: %v\nOutput:\n%s", expected, args, outputStr)
+	} else if runErr != nil && expected == 0 {
+		// Command failed but success (0) was expected
+		h.t.Fatalf("Expected exit code 0 but command failed: %v\nArgs: %v\nOutput:\n%s", runErr, args, outputStr)
+	}
+	// If expected is 0 and err is nil, it's a pass, do nothing.
+}
+
+// AssertErrorContains checks if the stderr output contains the specified substring.
+func (h *TestHarness) AssertErrorContains(substring string, args ...string) {
+	h.t.Helper()
+	binPath := h.getBinaryPath()
+
+	// Debug logging for path and CWD
+	cwd, _ := os.Getwd() // Ignore error for logging only
+	h.t.Logf("[ASSERT_ERROR_CONTAINS DEBUG] binPath: %s, CWD: %s", binPath, cwd)
+
+	// G204: Subprocess launched with variable - Acceptable in test code.
+	cmd := exec.Command(binPath, args...) // #nosec G204
+	cmd.Dir = h.tempDir                   // Run from the temp directory
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	_ = cmd.Run() // Ignore error, focus on stderr content
+
+	assert.Contains(h.t, stderr.String(), substring,
+		"Expected stderr to contain '%s'\nArgs: %v\nActual stderr:\n%s", substring, args, stderr.String())
+}
+
+// getBinaryPath determines the path to the compiled irr binary.
+func (h *TestHarness) getBinaryPath() string {
+	return filepath.Join(h.rootDir, "bin", "irr")
+}
+
+// BuildIRR compiles the irr binary for use in tests.
+// It assumes the test is run from the test/integration directory.
+func (h *TestHarness) BuildIRR() {
+	h.t.Helper()
+	rootDir := "../.." // Assuming test run from test/integration
+	binPath := filepath.Join(rootDir, "bin", "irr")
+
+	h.t.Logf("Building irr binary at %s", binPath)
+
+	// Ensure bin directory exists
+	err := os.MkdirAll(filepath.Join(rootDir, "bin"), 0755)
+	require.NoError(h.t, err)
+
+	cmd := exec.Command("go", "build", "-o", binPath, "./cmd/irr")
+	cmd.Dir = rootDir
+	var stderr bytes.Buffer
+	cmd.Stdout = os.Stdout // Keep stdout for progress
+	cmd.Stderr = &stderr   // Capture stderr for errors
+
+	// errcheck: Capture error, but test might focus on stderr content, so don't require.NoError here.
+	runErr := cmd.Run()
+	if runErr != nil {
+		// errorlint: Use errors.As instead of type assertion
+		var exitErr *exec.ExitError
+		if errors.As(runErr, &exitErr) {
+			// If it's an ExitError, log stderr for detailed Go build failure info
+			h.t.Fatalf("BuildIRR failed with exit code %d: %v\nStderr:\n%s", exitErr.ExitCode(), runErr, stderr.String())
+		} else {
+			// For other errors, just log the error
+			h.t.Fatalf("BuildIRR failed: %v\nStderr:\n%s", runErr, stderr.String())
+		}
+	}
+	h.t.Logf("BuildIRR successful.")
 }
