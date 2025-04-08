@@ -442,7 +442,7 @@ func newAnalyzeCmd() *cobra.Command {
 	}
 
 	// Add flags specific to the analyze command
-	cmd.Flags().StringVarP(&outputFormat, "output", "o", "text", "Output format (text or json)")
+	cmd.Flags().StringVar(&outputFormat, "output", "text", "Output format (text or json)")
 	cmd.Flags().StringVarP(&analyzeOutputFile, "file", "f", "", "Output file (defaults to stdout)")
 	// Note: Using different variable `analyzeOutputFile` for the flag binding
 
