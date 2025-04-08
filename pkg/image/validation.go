@@ -94,3 +94,39 @@ func isImagePath(path []string) bool {
 	debug.Printf("Path '%s' did not match any known image or non-image patterns, returning false.", pathStr)
 	return false
 }
+
+// IsValidRepository checks if the repository name conforms to allowed patterns.
+func IsValidRepository(repo string) bool {
+	// Pattern for valid repository names (based on Docker distribution spec)
+	// Allows lowercase alphanumeric characters and separators (., _, -, /)
+	const pattern = `^[a-z0-9]+([._-][a-z0-9]+)*(/[a-z0-9]+([._-][a-z0-9]+)*)*$`
+	// errcheck: regexp.MatchString error is always nil, safe to ignore.
+	matched, _ := regexp.MatchString(pattern, repo)
+	return matched
+}
+
+// IsValidTag checks if the image tag conforms to allowed patterns.
+// Tags are limited to 128 characters and can contain alphanumeric characters,
+// underscores, periods, and hyphens.
+func IsValidTag(tag string) bool {
+	if tag == "" {
+		return false // Tag cannot be empty
+	}
+	if len(tag) > 128 {
+		return false // Tag length exceeds limit
+	}
+	// Pattern for valid tags: word characters (alphanumeric + underscore) plus period and hyphen.
+	// Must start with a word character or number.
+	const pattern = `^[a-zA-Z0-9][\w.-]*$`
+	// errcheck: regexp.MatchString error is always nil, safe to ignore.
+	matched, _ := regexp.MatchString(pattern, tag)
+	return matched
+}
+
+// IsValidDigest checks if the string is a valid image digest (e.g., sha256:...).
+func IsValidDigest(digest string) bool {
+	const pattern = `^[a-zA-Z0-9_-]+:[a-fA-F0-9]+$`
+	// errcheck: regexp.MatchString error is always nil, safe to ignore.
+	matched, _ := regexp.MatchString(pattern, digest)
+	return matched
+}

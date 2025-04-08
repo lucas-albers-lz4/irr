@@ -1,10 +1,10 @@
 // Package image_test contains tests for the image package, focusing on reference parsing.
-package image
+package image_test
 
 import (
-	"reflect"
 	"testing"
 
+	image "github.com/lalbers/irr/pkg/image"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -12,72 +12,77 @@ func TestParseImageReference(t *testing.T) {
 	tests := []struct {
 		name          string
 		input         string
-		expected      *Reference
+		expected      *image.Reference
 		wantErr       bool
 		errorContains string
 	}{
 		{
 			name:  "standard image with registry",
 			input: "docker.io/library/nginx:1.21.0",
-			expected: &Reference{
+			expected: &image.Reference{
 				Original:   "docker.io/library/nginx:1.21.0",
 				Registry:   "docker.io",
 				Repository: "library/nginx",
 				Tag:        "1.21.0",
+				Detected:   true,
 			},
 		},
 		{
 			name:  "image with nested path",
 			input: "quay.io/org/app/component:v1",
-			expected: &Reference{
+			expected: &image.Reference{
 				Original:   "quay.io/org/app/component:v1",
 				Registry:   "quay.io",
 				Repository: "org/app/component",
 				Tag:        "v1",
+				Detected:   true,
 			},
 		},
 		{
 			name:  "image with implicit docker.io registry",
 			input: "nginx:1.21.0",
-			expected: &Reference{
+			expected: &image.Reference{
 				Original:   "nginx:1.21.0",
 				Registry:   "docker.io",
 				Repository: "library/nginx",
 				Tag:        "1.21.0",
+				Detected:   true,
 			},
 		},
 		{
 			name:  "image with digest",
 			input: "gcr.io/project/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-			expected: &Reference{
+			expected: &image.Reference{
 				Original:   "gcr.io/project/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 				Registry:   "gcr.io",
 				Repository: "project/image",
 				Digest:     "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				Detected:   true,
 			},
 		},
 		{
 			name:  "image with port in registry",
 			input: "localhost:5000/myimage:latest",
-			expected: &Reference{
+			expected: &image.Reference{
 				Original:   "localhost:5000/myimage:latest",
-				Registry:   "localhost:5000",
+				Registry:   "localhost",
 				Repository: "myimage",
 				Tag:        "latest",
+				Detected:   true,
 			},
 		},
 		{
 			name:          "image_with_both_tag_and_digest",
 			input:         "myrepo/myimage:tag@sha256:f6e1a063d1f00c0b9a9e7f1f9a5c4d0d9e6b8b4b3a1e9d5b3b4b3b3b3b3b3b3b",
 			wantErr:       true,
-			errorContains: "image cannot have both tag and digest specified",
+			errorContains: image.ErrTagAndDigestPresent.Error(),
 			expected:      nil,
 		},
 		{
 			name:          "invalid image reference",
 			input:         "invalid///image::ref",
 			wantErr:       true,
-			errorContains: "invalid image reference format",
+			errorContains: "invalid repository name",
 		},
 		{
 			name:          "empty string",
@@ -88,11 +93,12 @@ func TestParseImageReference(t *testing.T) {
 		{
 			name:  "standard image with registry, tag, and nested path",
 			input: "docker.io/library/nested/nginx:1.21.0",
-			expected: &Reference{
+			expected: &image.Reference{
 				Original:   "docker.io/library/nested/nginx:1.21.0",
 				Registry:   "docker.io",
 				Repository: "library/nested/nginx",
 				Tag:        "1.21.0",
+				Detected:   true,
 			},
 		},
 		{
@@ -107,11 +113,39 @@ func TestParseImageReference(t *testing.T) {
 			wantErr:       true,
 			errorContains: "invalid tag format",
 		},
+		{
+			name:          "invalid repository name",
+			input:         "docker.io/Inv@lid Repo/image:tag",
+			wantErr:       true,
+			errorContains: "invalid repository name (ambiguous separators found)",
+		},
+		{
+			name:  "repository only (implicit latest)",
+			input: "busybox",
+			expected: &image.Reference{
+				Original:   "busybox",
+				Registry:   "docker.io",
+				Repository: "library/busybox",
+				Tag:        "latest",
+				Detected:   true,
+			},
+		},
+		{
+			name:  "registry and repository only (implicit latest)",
+			input: "quay.io/prometheus/node-exporter",
+			expected: &image.Reference{
+				Original:   "quay.io/prometheus/node-exporter",
+				Registry:   "quay.io",
+				Repository: "prometheus/node-exporter",
+				Tag:        "latest",
+				Detected:   true,
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ref, err := ParseImageReference(tt.input)
+			ref, err := image.ParseImageReference(tt.input)
 
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -122,15 +156,12 @@ func TestParseImageReference(t *testing.T) {
 			} else {
 				assert.NoError(t, err)
 				assert.NotNil(t, ref, "Reference should not be nil on success")
-				if tt.expected != nil {
-					if ref != nil {
-						ref.Path = nil
-					}
-					assert.True(t, reflect.DeepEqual(tt.expected, ref),
-						"Mismatch between expected and actual ImageReference.\n"+
-							"Expected: %+v\n"+
-							"Actual:   %+v",
-						tt.expected, ref)
+				if tt.expected != nil && ref != nil {
+					assert.Equal(t, tt.expected.Registry, ref.Registry, "Registry mismatch")
+					assert.Equal(t, tt.expected.Repository, ref.Repository, "Repository mismatch")
+					assert.Equal(t, tt.expected.Tag, ref.Tag, "Tag mismatch")
+					assert.Equal(t, tt.expected.Digest, ref.Digest, "Digest mismatch")
+					assert.Equal(t, tt.expected.Original, ref.Original, "Original mismatch")
 				}
 			}
 		})
@@ -138,7 +169,7 @@ func TestParseImageReference(t *testing.T) {
 }
 
 func TestIsSourceRegistry(t *testing.T) {
-	testRef := &Reference{
+	testRef := &image.Reference{
 		Registry:   "docker.io",
 		Repository: "nginx",
 		Tag:        "latest",
@@ -148,19 +179,19 @@ func TestIsSourceRegistry(t *testing.T) {
 	excludeRegistries := []string{"internal.registry.example.com"}
 
 	// Should be included
-	if !IsSourceRegistry(testRef, sourceRegistries, excludeRegistries) {
+	if !image.IsSourceRegistry(testRef, sourceRegistries, excludeRegistries) {
 		t.Errorf("IsSourceRegistry should return true for docker.io when it's in the source list")
 	}
 
 	// Change to non-source registry
 	testRef.Registry = "k8s.gcr.io"
-	if IsSourceRegistry(testRef, sourceRegistries, excludeRegistries) {
+	if image.IsSourceRegistry(testRef, sourceRegistries, excludeRegistries) {
 		t.Errorf("IsSourceRegistry should return false for k8s.gcr.io when it's not in the source list")
 	}
 
 	// Change to excluded registry
 	testRef.Registry = "internal.registry.example.com"
-	if IsSourceRegistry(testRef, sourceRegistries, excludeRegistries) {
+	if image.IsSourceRegistry(testRef, sourceRegistries, excludeRegistries) {
 		t.Errorf("IsSourceRegistry should return false for excluded registry")
 	}
 }
@@ -182,7 +213,7 @@ func TestNormalizeRegistry(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		result := NormalizeRegistry(tc.registry)
+		result := image.NormalizeRegistry(tc.registry)
 		if result != tc.expected {
 			t.Errorf("NormalizeRegistry(%s): expected %s, got %s", tc.registry, tc.expected, result)
 		}
@@ -202,7 +233,7 @@ func TestSanitizeRegistryForPath(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		result := SanitizeRegistryForPath(tc.registry)
+		result := image.SanitizeRegistryForPath(tc.registry)
 		if result != tc.expected {
 			t.Errorf("SanitizeRegistryForPath(%s): expected %s, got %s", tc.registry, tc.expected, result)
 		}

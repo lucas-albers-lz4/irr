@@ -53,10 +53,11 @@ type DetectionContext struct {
 
 // DetectedImage represents an image found during detection
 type DetectedImage struct {
-	Reference *Reference
-	Path      []string
-	Pattern   string      // "map", "string", "global"
-	Original  interface{} // Original value (for template preservation)
+	Reference      *Reference
+	Path           []string
+	Pattern        string      // "map", "string", "global"
+	Original       interface{} // Original value (for template preservation)
+	OriginalFormat string      // "string" or "map"
 }
 
 // UnsupportedImage represents an unsupported image found during detection
@@ -86,6 +87,18 @@ const (
 	UnsupportedTypeList
 	// UnsupportedTypeMapValue indicates an unsupported value type within a map where an image was expected.
 	UnsupportedTypeMapValue
+	// UnsupportedTypeTemplateString indicates a Go template was detected in a string value.
+	UnsupportedTypeTemplateString
+	// UnsupportedTypeTemplateMap indicates a Go template was detected within a map structure identified as an image.
+	UnsupportedTypeTemplateMap
+	// UnsupportedTypeMapParseError indicates a general validation/parsing error within a map structure identified as an image.
+	UnsupportedTypeMapParseError
+	// UnsupportedTypeNonStringOrMap indicates a value at a known image path was neither a string nor a map.
+	UnsupportedTypeNonStringOrMap
+	// UnsupportedTypeMapError indicates a general error with the map structure.
+	UnsupportedTypeMapError
+	// UnsupportedTypeMapTagAndDigest indicates both tag and digest present in map.
+	UnsupportedTypeMapTagAndDigest
 )
 
 // Basic error type for unsupported image structures

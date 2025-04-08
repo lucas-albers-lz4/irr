@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // comparePaths compares two paths represented as string slices.
@@ -194,23 +195,6 @@ func TestImageDetector(t *testing.T) {
 			},
 		},
 		{
-			name: "image_with_template_variables",
-			values: map[string]interface{}{
-				"image": map[string]interface{}{
-					"repository": "nginx",
-					"tag":        "{{ .Chart.AppVersion }}",
-				},
-			},
-			wantDetected: []DetectedImage{
-				{
-					Reference: &Reference{Registry: "docker.io", Repository: "library/nginx", Tag: "{{ .Chart.AppVersion }}"},
-					Path:      []string{"image"},
-					Pattern:   PatternMap,
-					Original:  map[string]interface{}{"repository": "nginx", "tag": "{{ .Chart.AppVersion }}"},
-				},
-			},
-		},
-		{
 			name: "non-image_boolean_values",
 			values: map[string]interface{}{
 				"enabled": true,
@@ -373,7 +357,7 @@ func TestImageDetector_DetectImages_EdgeCases(t *testing.T) {
 			expectedUnsupported: []UnsupportedImage{
 				{
 					Location: []string{"image"},
-					Type:     UnsupportedTypeMap,
+					Type:     UnsupportedTypeMapError,
 					Error:    fmt.Errorf("image map has invalid repository type (must be string): found type int"),
 				},
 			},
@@ -438,9 +422,9 @@ func TestImageDetector_DetectImages_EdgeCases(t *testing.T) {
 			expectedUnsupportedCount: 1,
 			expectedUnsupported: []UnsupportedImage{
 				{
-					Location: []string{"invalid", "image"},
-					Type:     UnsupportedTypeStringParseError,
-					Error:    fmt.Errorf("invalid image string format: invalid image reference format"),
+					Location: []string{"invalid", "image"},                                                                                                                                                             // Correct path for the invalid string
+					Type:     UnsupportedTypeStringParseError,                                                                                                                                                          // String failed to parse
+					Error:    fmt.Errorf("strict mode: string at known image path [invalid image] failed to parse: invalid image string format: parsing image reference 'not:a:valid:image': invalid repository name"), // Updated expected error
 				},
 			},
 		},
@@ -601,82 +585,76 @@ func TestImageDetector_GlobalRegistry(t *testing.T) {
 }
 
 func TestImageDetector_TemplateVariables(t *testing.T) {
-	testCases := []struct {
-		name            string
-		values          interface{}
-		strict          bool // Add strict mode testing if needed
-		wantDetected    []DetectedImage
-		wantUnsupported []UnsupportedImage
+	tests := []struct {
+		name                     string
+		values                   map[string]interface{}
+		context                  DetectionContext
+		expectedCount            int                                                // Expected DETECTED count
+		expectedUnsupportedCount int                                                // Expected UNSUPPORTED count
+		checkError               func(t *testing.T, unsupported []UnsupportedImage) // Function to check unsupported details
 	}{
 		{
-			name: "template_variable_in_tag",
+			name: "template variable in tag",
 			values: map[string]interface{}{
 				"image": map[string]interface{}{
 					"repository": "nginx",
 					"tag":        "{{ .Chart.AppVersion }}",
 				},
 			},
-			wantDetected: []DetectedImage{
-				{
-					Reference: &Reference{
-						Registry:   "docker.io",
-						Repository: "library/nginx",
-						Tag:        "{{ .Chart.AppVersion }}",
-						Path:       []string{"image"},
-					},
-					Path:     []string{"image"},
-					Pattern:  PatternMap,
-					Original: map[string]interface{}{"repository": "nginx", "tag": "{{ .Chart.AppVersion }}"},
-				},
+			context: DetectionContext{
+				SourceRegistries: []string{"docker.io"}, // Assume docker.io for nginx
+				Strict:           true,                  // Enable strict mode
 			},
-			wantUnsupported: []UnsupportedImage{}, // Empty slice instead of nil
+			expectedCount:            0, // Should NOT be detected in strict mode
+			expectedUnsupportedCount: 1, // Should be marked as unsupported
+			checkError: func(t *testing.T, unsupported []UnsupportedImage) {
+				require.Len(t, unsupported, 1)
+				assert.ErrorIs(t, unsupported[0].Error, ErrTemplateVariableDetected, "Error should be ErrTemplateVariableDetected")
+				assert.Equal(t, []string{"image"}, unsupported[0].Location, "Unsupported location path mismatch")
+				assert.Equal(t, UnsupportedTypeTemplateMap, unsupported[0].Type, "Unsupported type mismatch")
+			},
 		},
 		{
-			name: "template_variable_in_repository",
+			name: "template variable in repository",
 			values: map[string]interface{}{
 				"image": map[string]interface{}{
 					"repository": "{{ .Values.global.repository }}/nginx",
 					"tag":        "1.23",
 				},
 			},
-			wantDetected: []DetectedImage{
-				{
-					Reference: &Reference{
-						Registry:   "docker.io",
-						Repository: "{{ .Values.global.repository }}/nginx",
-						Tag:        "1.23",
-						Path:       []string{"image"},
-					},
-					Path:     []string{"image"},
-					Pattern:  PatternMap,
-					Original: map[string]interface{}{"repository": "{{ .Values.global.repository }}/nginx", "tag": "1.23"},
-				},
+			context: DetectionContext{
+				SourceRegistries: []string{"docker.io"}, // Assume docker.io
+				Strict:           true,                  // Enable strict mode
 			},
-			wantUnsupported: []UnsupportedImage{}, // Empty slice instead of nil
+			expectedCount:            0, // Should NOT be detected in strict mode
+			expectedUnsupportedCount: 1, // Should be marked as unsupported
+			checkError: func(t *testing.T, unsupported []UnsupportedImage) {
+				require.Len(t, unsupported, 1)
+				assert.ErrorIs(t, unsupported[0].Error, ErrTemplateVariableDetected, "Error should be ErrTemplateVariableDetected")
+				assert.Equal(t, []string{"image"}, unsupported[0].Location, "Unsupported location path mismatch")
+				assert.Equal(t, UnsupportedTypeTemplateMap, unsupported[0].Type, "Unsupported type mismatch")
+			},
 		},
-		// Add more test cases, e.g., template in registry, strict mode behavior
+		// Add more test cases for templates in strings, different strictness levels etc.
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			ctx := &DetectionContext{
-				SourceRegistries: []string{defaultRegistry},
-				TemplateMode:     true, // Enable template mode for this test
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			detector := NewDetector(tt.context)
+			detected, unsupported, err := detector.DetectImages(tt.values, nil) // Start path is nil
+
+			require.NoError(t, err, "DetectImages should not return a top-level error")
+
+			assert.Len(t, detected, tt.expectedCount, "Detected image count mismatch")
+			// Use helper assertions if needed
+			// assertDetectedImagesMatch(t, tt.expectedDetected, detected, "Detected images mismatch (fallback diff)")
+
+			assert.Len(t, unsupported, tt.expectedUnsupportedCount, "Unsupported image count mismatch")
+			if tt.checkError != nil {
+				tt.checkError(t, unsupported)
 			}
-			detector := NewDetector(*ctx)
-			gotDetected, gotUnsupported, err := detector.DetectImages(tc.values, []string{})
-			assert.NoError(t, err) // Assuming template vars themselves don't cause errors
-
-			SortDetectedImages(gotDetected)
-			SortDetectedImages(tc.wantDetected)
-			SortUnsupportedImages(gotUnsupported)
-			SortUnsupportedImages(tc.wantUnsupported)
-
-			// Compare Detected Images using helper (checking Original field)
-			assertDetectedImages(t, tc.wantDetected, gotDetected, true)
-
-			// Compare Unsupported Images using helper
-			assertUnsupportedImages(t, tc.wantUnsupported, gotUnsupported)
+			// Use helper assertions if needed
+			// assertUnsupportedMatches(t, tt.expectedUnsupported, unsupported, "Unsupported images mismatch (fallback diff)")
 		})
 	}
 }
@@ -878,39 +856,51 @@ func TestDetectImages(t *testing.T) {
 		{
 			name: "Strict_mode",
 			values: map[string]interface{}{
-				"app.image":                 "docker.io/library/nginx:latest",  // Should be detected (known path ends with .image)
-				"invalid.image":             "docker.io/library/nginx::badtag", // Should be unsupported (known path, parse error)
-				"validImageUnknownPath":     "quay.io/org/tool:v1",             // Should be skipped (path not known)
-				"nonSource.image":           "private.registry/app:1.0",        // Should be unsupported (known path, non-source)
-				"notAnImageStringKnownPath": "not_a_valid_image:tag",           // Should be skipped (path not known)
-				"definitelyNotAnImage":      "value",                           // Should be skipped
+				"knownPathValid":     "docker.io/library/nginx:1.23",
+				"knownPathBadTag":    "docker.io/library/nginx::badtag",
+				"unknownPath":        "other/app:v1",
+				"knownPathNonSource": "quay.io/other/image:v2",
+				"knownPathExcluded":  "ignored.com/whatever:latest",
+				"templateValue":      "{{ .Values.something }}",
+				"mapWithTemplate":    map[string]interface{}{"repository": "repo", "tag": "{{ .X }}"},
 			},
-			startingPath:     []string{},
-			strict:           true,
-			sourceRegistries: []string{"docker.io", "quay.io"},
+			startingPath:      []string{}, // Test uses hardcoded paths in map keys
+			sourceRegistries:  []string{"docker.io"},
+			excludeRegistries: []string{"ignored.com"},
+			strict:            true,
 			wantDetected: []DetectedImage{
 				{
-					Reference: &Reference{
-						Registry:   "docker.io",
-						Repository: "library/nginx",
-						Tag:        "latest",
-						Path:       []string{"app.image"},
-					},
-					Path:     []string{"app.image"},
-					Pattern:  PatternString,
-					Original: "docker.io/library/nginx:latest",
+					Reference: &Reference{Registry: "docker.io", Repository: "library/nginx", Tag: "1.23", Original: "docker.io/library/nginx:1.23", Path: []string{"knownPathValid"}},
+					Path:      []string{"knownPathValid"},
+					Pattern:   PatternString,
+					Original:  "docker.io/library/nginx:1.23",
 				},
 			},
 			wantUnsupported: []UnsupportedImage{
 				{
-					Location: []string{"invalid.image"},
+					Location: []string{"knownPathBadTag"},
 					Type:     UnsupportedTypeStringParseError,
-					Error:    fmt.Errorf("invalid image string format: invalid image reference format"),
+					Error:    fmt.Errorf("strict mode: string at known image path [knownPathBadTag] failed to parse: invalid image string format: parsing image reference 'docker.io/library/nginx::badtag': invalid repository name"),
 				},
 				{
-					Location: []string{"nonSource.image"},
+					Location: []string{"knownPathNonSource"},
 					Type:     UnsupportedTypeNonSourceImage,
-					Error:    nil,
+					Error:    fmt.Errorf("strict mode: image at known path [knownPathNonSource] is not from a configured source registry"),
+				},
+				{
+					Location: []string{"knownPathExcluded"},
+					Type:     UnsupportedTypeExcludedImage,
+					Error:    fmt.Errorf("strict mode: image at known path [knownPathExcluded] is from an excluded registry"),
+				},
+				{
+					Location: []string{"templateValue"},
+					Type:     UnsupportedTypeTemplateString,
+					Error:    fmt.Errorf("strict mode: template variable detected in string at path [templateValue]"),
+				},
+				{
+					Location: []string{"mapWithTemplate"},
+					Type:     UnsupportedTypeTemplateMap,
+					Error:    ErrTemplateVariableDetected,
 				},
 			},
 		},

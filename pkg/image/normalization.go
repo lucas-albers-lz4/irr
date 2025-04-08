@@ -28,7 +28,14 @@ func NormalizeRegistry(registry string) string {
 
 	// Strip port number if present
 	if portIndex := strings.LastIndex(registry, ":"); portIndex != -1 {
-		registry = registry[:portIndex]
+		// Basic validation: ensure the part after ':' is numeric
+		potentialPort := registry[portIndex+1:]
+		if _, err := fmt.Sscan(potentialPort, new(int)); err == nil {
+			registry = registry[:portIndex]
+			debug.Printf("NormalizeRegistry: Stripped port from '%s', result: '%s'", registry+potentialPort, registry)
+		} else {
+			debug.Printf("NormalizeRegistry: ':' found in '%s' but part after it ('%s') is not numeric, not stripping.", registry, potentialPort)
+		}
 	}
 
 	// Remove trailing slashes
@@ -68,17 +75,19 @@ func SanitizeRegistryForPath(registry string) string {
 
 // IsSourceRegistry checks if the image reference's registry matches any of the source registries
 func IsSourceRegistry(ref *Reference, sourceRegistries, excludeRegistries []string) bool {
+	// Check for nil ref immediately to prevent panic in deferred debug calls.
+	if ref == nil {
+		debug.Println("IsSourceRegistry called with nil Reference, returning false")
+		return false
+	}
+
+	// Now ref is known non-nil, proceed with debug setup.
 	debug.FunctionEnter("IsSourceRegistry")
 	defer debug.FunctionExit("IsSourceRegistry")
 
 	debug.DumpValue("Input Reference", ref)
 	debug.DumpValue("Source Registries", sourceRegistries)
 	debug.DumpValue("Exclude Registries", excludeRegistries)
-
-	if ref == nil {
-		debug.Println("Reference is nil, returning false")
-		return false
-	}
 
 	// Normalize registry names for comparison
 	registry := NormalizeRegistry(ref.Registry)

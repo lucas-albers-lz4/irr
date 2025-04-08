@@ -2,6 +2,7 @@ package image
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/lalbers/irr/pkg/debug"
@@ -32,121 +33,127 @@ func ParseImageReference(imgStr string) (*Reference, error) {
 		return nil, ErrEmptyImageReference // Use canonical error
 	}
 
-	// Check for invalid tag + digest combination first
-	digestIndexCheck := strings.Index(imgStr, "@sha256:")
-	if digestIndexCheck > 0 {
-		tagIndexCheck := strings.LastIndex(imgStr[:digestIndexCheck], ":")
-		slashIndexCheck := strings.Index(imgStr, "/")
-		if tagIndexCheck > 0 && (slashIndexCheck == -1 || tagIndexCheck > slashIndexCheck) {
-			debug.Printf("Error: Found both tag separator ':' and digest separator '@' in '%s'", imgStr)
-			return nil, ErrTagAndDigestPresent
-		}
-	}
-
 	var ref Reference
 	ref.Original = imgStr // Set the Original field to input string
 
-	// --- Prioritize Digest Parsing ---
-	if strings.Contains(imgStr, "@") {
-		parts := strings.SplitN(imgStr, "@", maxSplitTwo)
-		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-			debug.Printf("Invalid format for digest reference: '%s'", imgStr)
-			return nil, ErrInvalidImageRefFormat
+	// --- Determine structure and check for immediate invalid patterns ---
+	lastAt := strings.LastIndex(imgStr, "@")
+	lastColon := strings.LastIndex(imgStr, ":")
+	firstSlash := strings.Index(imgStr, "/")
+
+	hasPotentialDigestSeparator := lastAt > 0 // Check if '@' exists
+	hasPotentialTagSeparator := lastColon > 0 // Check if ':' exists
+
+	// Initial check for invalid tag:digest pattern like "image:tag@sha256:..."
+	// This specific pattern is always invalid.
+	if hasPotentialDigestSeparator && hasPotentialTagSeparator && lastColon < lastAt {
+		// Ensure the colon is after the first slash if a slash exists (to avoid matching ports)
+		if firstSlash == -1 || lastColon > firstSlash {
+			// And ensure the part after @ looks like a digest
+			if strings.HasPrefix(imgStr[lastAt+1:], "sha256:") {
+				debug.Printf("Error: Found tag separator ':' before digest separator '@sha256:' in '%s'", imgStr)
+				return nil, ErrTagAndDigestPresent
+			}
 		}
+	}
+
+	isLikelyDigest := false
+	isLikelyTag := false
+
+	if hasPotentialDigestSeparator {
+		if strings.HasPrefix(imgStr[lastAt+1:], "sha256:") {
+			isLikelyDigest = true // It looks like a valid digest structure
+		} else {
+			// Contains '@' but not starting "sha256:".
+			// This is ambiguous. If a non-port colon also exists, it's likely an invalid repo name.
+			// Otherwise, it's an invalid digest format.
+			if hasPotentialTagSeparator && (firstSlash == -1 || lastColon > firstSlash) {
+				debug.Printf("Error: Ambiguous format with both '@' and ':' separators, and '@' does not start a sha256 digest: '%s'", imgStr)
+				return nil, fmt.Errorf("parsing image reference '%s': %w (ambiguous separators found)", imgStr, ErrInvalidRepoName)
+			} else {
+				// Contains '@' but not sha256:, and NO non-port tag separator. Treat as invalid digest format.
+				debug.Printf("Invalid digest format (does not start with sha256:): '%s'", imgStr[lastAt+1:])
+				return nil, ErrInvalidDigestFormat
+			}
+		}
+	} else if hasPotentialTagSeparator && (firstSlash == -1 || lastColon > firstSlash) {
+		// Only consider it a tag if the colon is not part of a port
+		isLikelyTag = true
+	}
+
+	// --- Parse Based on Determined Structure ---
+
+	if isLikelyDigest {
+		// --- Digest Parsing ---
+		parts := strings.SplitN(imgStr, "@", maxSplitTwo)
 		namePart := parts[0]
-		digestPart := parts[1]
+		digestPart := parts[1] // Contains the full digest string, e.g., "sha256:..."
 
 		// Validate digest part strictly
 		if !isValidDigest(digestPart) {
 			debug.Printf("Invalid digest format in '%s'", digestPart)
-			return nil, ErrInvalidDigestFormat
+			return nil, ErrInvalidDigestFormat // Should be caught earlier, but re-check
 		}
-		ref.Digest = digestPart // Store the valid digest
+		ref.Digest = digestPart
+
+		// --> ADDED CHECK <--
+		// Check if the name part *also* contains a tag separator (invalid)
+		lastColonName := strings.LastIndex(namePart, ":")
+		firstSlashName := strings.Index(namePart, "/")
+		if lastColonName > 0 && (firstSlashName == -1 || lastColonName > firstSlashName) {
+			debug.Printf("Error: Found tag separator ':' in name part before digest: '%s'", namePart)
+			return nil, ErrTagAndDigestPresent
+		}
+		// --> END ADDED CHECK <--
 
 		// Parse the name part (registry/repository)
-		slashIndex := strings.Index(namePart, "/")
-		if slashIndex == -1 {
-			// Assumed to be repository only (e.g., "myimage@sha256:...")
-			if !isValidRepositoryName(namePart) {
-				debug.Printf("Invalid repository name in digest reference: '%s'", namePart)
-				return nil, ErrInvalidRepoName
+		var err error
+		ref.Registry, ref.Repository, err = parseRegistryRepo(namePart, imgStr)
+		if err != nil {
+			return nil, err // Error already contains context
+		}
+
+		// Check for tag presence before digest - should be invalid
+		if strings.Contains(namePart, ":") {
+			// Scan for a colon that is NOT part of a port number in the registry part
+			colonIdx := strings.LastIndexByte(namePart, ':')
+			if colonIdx > strings.LastIndexByte(namePart, '/') { // Colon is likely a tag separator
+				// Check if it looks like a port number
+				if _, errConv := strconv.Atoi(namePart[colonIdx+1:]); errConv != nil {
+					// It's not a port number, likely a tag - error!
+					debug.Printf("Found tag ':' before digest '@' in '%s'", imgStr)
+					return nil, fmt.Errorf("%w: cannot have tag and digest: %s", ErrTagAndDigestPresent, imgStr)
+				}
 			}
-			ref.Repository = namePart
-			// Registry will be defaulted by NormalizeImageReference
+		}
+
+	} else if isLikelyTag {
+		// --- Tag Parsing ---
+		if firstSlash != -1 && lastColon < firstSlash {
+			// Colon is part of port: registry:port/repo
+			potentialRegistry := imgStr[:firstSlash]
+			potentialRepo := imgStr[firstSlash+1:]
+			if potentialRegistry == "" || potentialRepo == "" {
+				debug.Printf("Error: Missing registry or repository in image reference: '%s'", imgStr)
+				return nil, fmt.Errorf("parsing image reference '%s': %w (missing registry or repository)", imgStr, ErrInvalidRepoName)
+			}
+			if !isValidRegistryName(potentialRegistry) {
+				debug.Printf("Invalid registry name inferred: '%s'", potentialRegistry)
+				return nil, fmt.Errorf("parsing image reference '%s': invalid registry name detected: %s", imgStr, potentialRegistry)
+			}
+			if !isValidRepositoryName(potentialRepo) {
+				debug.Printf("Invalid repository name after registry split: '%s'", potentialRepo)
+				return nil, fmt.Errorf("parsing image reference '%s': %w", imgStr, ErrInvalidRepoName)
+			}
+			ref.Registry = potentialRegistry
+			ref.Repository = potentialRepo
+			// Tag defaulted later
 		} else {
-			// Potential registry/repository split
-			potentialRegistry := namePart[:slashIndex]
-			potentialRepo := namePart[slashIndex+1:]
+			// Contains ':' but no '@', assume tag format
+			lastColon := strings.LastIndexByte(imgStr, ':')
+			namePart := imgStr[:lastColon]
+			tagPart := imgStr[lastColon+1:]
 
-			// Basic check: if first part contains '.' or ':', assume it's a registry
-			if strings.ContainsAny(potentialRegistry, ".:") || potentialRegistry == "localhost" {
-				if !isValidRegistryName(potentialRegistry) { // Optional stricter check?
-					debug.Printf("Invalid registry name inferred: '%s'", potentialRegistry)
-					// Treat as error or proceed assuming it's part of the repo? Let's be strict for now.
-					// return nil, ErrInvalidRegistryName // Need this error defined
-					return nil, fmt.Errorf("invalid registry name detected: %s", potentialRegistry)
-				}
-				if !isValidRepositoryName(potentialRepo) {
-					debug.Printf("Invalid repository name after registry split: '%s'", potentialRepo)
-					return nil, ErrInvalidRepoName
-				}
-				ref.Registry = potentialRegistry
-				ref.Repository = potentialRepo
-			} else {
-				// Assume the whole namepart is the repository
-				if !isValidRepositoryName(namePart) {
-					debug.Printf("Invalid repository name (treated as whole): '%s'", namePart)
-					return nil, ErrInvalidRepoName
-				}
-				ref.Repository = namePart
-				// Registry will be defaulted by NormalizeImageReference
-			}
-		}
-
-		// Make sure repository is not empty after parsing name part
-		if ref.Repository == "" {
-			debug.Println("Error: Missing repository in digest reference after parsing name.")
-			return nil, ErrInvalidRepoName
-		}
-
-		NormalizeImageReference(&ref) // Normalize AFTER validation and parsing
-		debug.Printf("Parsed digest ref: Registry='%s', Repo='%s', Digest='%s'", ref.Registry, ref.Repository, ref.Digest)
-		return &ref, nil
-	}
-
-	// --- Tag-Based Parsing ---
-	tagIndex := strings.LastIndex(imgStr, ":")
-	slashIndex := strings.Index(imgStr, "/") // First slash
-
-	if tagIndex == -1 {
-		// No colon: Assume it's just a repository name (tag defaults to 'latest')
-		if !isValidRepositoryName(imgStr) {
-			debug.Printf("Invalid repository name (no tag/digest): '%s'", imgStr)
-			return nil, ErrInvalidRepoName
-		}
-		ref.Repository = imgStr
-		// ref.Tag = "latest" // Let Normalize handle default tag
-	} else {
-		// Colon found
-		// Check if colon is part of a port number in the registry part
-		if slashIndex != -1 && tagIndex < slashIndex {
-			// Colon appears before the first slash, likely part of a port number
-			// e.g., "myregistry.com:5000/myrepo" (no tag specified)
-			if !isValidRepositoryName(imgStr) { // Validate the whole string as repo part
-				debug.Printf("Invalid repository name (colon before slash): '%s'", imgStr)
-				return nil, ErrInvalidRepoName
-			}
-			ref.Repository = imgStr
-			// ref.Tag = "latest" // Let Normalize handle default tag
-		} else {
-			// Colon appears after the first slash or no slash exists, assume it separates repo/tag
-			namePart := imgStr[:tagIndex]
-			tagPart := imgStr[tagIndex+1:]
-
-			if namePart == "" || tagPart == "" {
-				debug.Printf("Invalid format near tag separator: '%s'", imgStr)
-				return nil, ErrInvalidImageRefFormat // Missing repo or tag
-			}
 			if !isValidTag(tagPart) {
 				debug.Printf("Invalid tag format: '%s'", tagPart)
 				return nil, ErrInvalidTagFormat
@@ -154,79 +161,160 @@ func ParseImageReference(imgStr string) (*Reference, error) {
 			ref.Tag = tagPart
 
 			// Parse the name part (registry/repository)
-			slashIndexName := strings.Index(namePart, "/")
-			if slashIndexName == -1 {
-				// Assumed to be repository only (e.g., "myimage:tag")
-				if !isValidRepositoryName(namePart) {
-					debug.Printf("Invalid repository name (tag present): '%s'", namePart)
-					return nil, ErrInvalidRepoName
-				}
-				ref.Repository = namePart
-			} else {
-				// Potential registry/repository split
-				potentialRegistry := namePart[:slashIndexName]
-				potentialRepo := namePart[slashIndexName+1:]
-
-				if strings.ContainsAny(potentialRegistry, ".:") || potentialRegistry == "localhost" {
-					if !isValidRegistryName(potentialRegistry) { // Optional stricter check?
-						debug.Printf("Invalid registry name inferred (tag): '%s'", potentialRegistry)
-						// return nil, ErrInvalidRegistryName
-						return nil, fmt.Errorf("invalid registry name detected: %s", potentialRegistry)
-
-					}
-					if !isValidRepositoryName(potentialRepo) {
-						debug.Printf("Invalid repository name after registry split (tag): '%s'", potentialRepo)
-						return nil, ErrInvalidRepoName
-					}
-					ref.Registry = potentialRegistry
-					ref.Repository = potentialRepo
-				} else {
-					// Assume the whole namepart is the repository
-					if !isValidRepositoryName(namePart) {
-						debug.Printf("Invalid repository name (treated as whole, tag): '%s'", namePart)
-						return nil, ErrInvalidRepoName
-					}
-					ref.Repository = namePart
-				}
+			var err error
+			ref.Registry, ref.Repository, err = parseRegistryRepo(namePart, imgStr)
+			if err != nil {
+				return nil, err // Error already contains context
 			}
-			// Make sure repository is not empty after parsing name part
-			if ref.Repository == "" {
-				debug.Println("Error: Missing repository in tag reference after parsing name.")
-				return nil, ErrInvalidRepoName
+
+			// Now, double-check there's no '@' digest hiding in the name part
+			if strings.Contains(namePart, "@") {
+				return nil, fmt.Errorf("parsing image reference '%s': found '@' in name part when tag ':' is present", imgStr)
 			}
 		}
+
+	} else {
+		// --- Repository/Registry Only Parsing ---
+		if firstSlash != -1 {
+			// Slash found: Split registry/repo
+			potentialRegistry := imgStr[:firstSlash]
+			potentialRepo := imgStr[firstSlash+1:]
+			if potentialRegistry == "" || potentialRepo == "" {
+				debug.Printf("Error: Missing registry or repository in image reference: '%s'", imgStr)
+				return nil, fmt.Errorf("parsing image reference '%s': %w (missing registry or repository)", imgStr, ErrInvalidRepoName)
+			}
+			if strings.ContainsAny(potentialRegistry, ".:") || potentialRegistry == "localhost" {
+				if !isValidRegistryName(potentialRegistry) {
+					debug.Printf("Invalid registry name inferred: '%s'", potentialRegistry)
+					return nil, fmt.Errorf("parsing image reference '%s': invalid registry name detected: %s", imgStr, potentialRegistry)
+				}
+				if !isValidRepositoryName(potentialRepo) {
+					debug.Printf("Invalid repository name after registry split: '%s'", potentialRepo)
+					return nil, fmt.Errorf("parsing image reference '%s': %w", imgStr, ErrInvalidRepoName)
+				}
+				ref.Registry = potentialRegistry
+				ref.Repository = potentialRepo
+			} else {
+				if !isValidRepositoryName(imgStr) {
+					debug.Printf("Invalid repository name (treated as whole): '%s'", imgStr)
+					return nil, fmt.Errorf("parsing image reference '%s': %w", imgStr, ErrInvalidRepoName)
+				}
+				ref.Repository = imgStr // Registry defaulted later
+			}
+		} else {
+			// No slash: Just repository name
+			if !isValidRepositoryName(imgStr) {
+				debug.Printf("Invalid repository name (treated as whole): '%s'", imgStr)
+				return nil, fmt.Errorf("parsing image reference '%s': %w", imgStr, ErrInvalidRepoName)
+			}
+			ref.Repository = imgStr // Registry defaulted later
+		}
+		// Tag defaulted later
 	}
 
-	// If tag is missing, default to latest. This might be overridden by normalization later if digest is found.
-	if ref.Tag == "" && ref.Digest == "" {
-		// ref.Tag = "latest" // Let Normalize handle default tag
+	NormalizeImageReference(&ref) // Normalize AFTER parsing
+	// Final validation after normalization
+	if !IsValidImageReference(&ref) {
+		// Include the normalized state in the error message for better debugging
+		return nil, fmt.Errorf("parsing image reference '%s': invalid structure after parsing and normalization: %+v", imgStr, ref)
 	}
-
-	NormalizeImageReference(&ref) // Normalize AFTER validation and parsing
-	debug.Printf("Successfully parsed tag-based reference: %+v", ref)
-	ref.Detected = true
+	debug.Printf("Successfully parsed reference: %+v", ref)
+	ref.Detected = true // Mark as detected by the parser itself
 	return &ref, nil
+}
+
+// parseRegistryRepo extracts the registry and repository from the name part of an image string.
+// It returns the registry (or empty string if defaulted), repository, and an error if parsing fails.
+func parseRegistryRepo(namePart, imgStr string) (registry string, repository string, err error) {
+	if namePart == "" {
+		// This case should ideally be caught earlier, but handle defensively.
+		return "", "", fmt.Errorf("parsing image reference '%s': empty name part provided to parseRegistryRepo", imgStr)
+	}
+
+	slashIdx := strings.IndexByte(namePart, '/')
+	if slashIdx == -1 {
+		// Assumed to be repository only (registry defaulted later in normalization)
+		if !isValidRepositoryName(namePart) {
+			debug.Printf("Invalid repository name: '%s'", namePart)
+			return "", "", fmt.Errorf("parsing image reference '%s': %w", imgStr, ErrInvalidRepoName)
+		}
+		return "", namePart, nil
+	} else {
+		potentialRegistry := namePart[:slashIdx]
+		potentialRepo := namePart[slashIdx+1:]
+
+		// Treat as registry only if it contains '.', ':', or is 'localhost'
+		if strings.ContainsAny(potentialRegistry, ".:") || potentialRegistry == "localhost" {
+			if !isValidRegistryName(potentialRegistry) {
+				debug.Printf("Invalid registry name inferred: '%s'", potentialRegistry)
+				return "", "", fmt.Errorf("parsing image reference '%s': invalid registry name detected: %s", imgStr, potentialRegistry)
+			}
+			if potentialRepo == "" {
+				// Allow registry without repo (e.g., docker.io/ -> docker.io/library)
+				debug.Printf("Registry found ('%s') but repository part is empty. Will be normalized.", potentialRegistry)
+			} else if !isValidRepositoryName(potentialRepo) {
+				debug.Printf("Invalid repository name after registry split: '%s'", potentialRepo)
+				return "", "", fmt.Errorf("parsing image reference '%s': %w", imgStr, ErrInvalidRepoName)
+			}
+			return potentialRegistry, potentialRepo, nil
+		} else {
+			// No '.', ':' means the whole thing is the repository (e.g., myrepo/myapp)
+			if !isValidRepositoryName(namePart) {
+				debug.Printf("Invalid repository name (treated as whole): '%s'", namePart)
+				return "", "", fmt.Errorf("parsing image reference '%s': %w", imgStr, ErrInvalidRepoName)
+			}
+			return "", namePart, nil
+		}
+	}
 }
 
 // IsValidImageReference performs basic validation on a parsed ImageReference
 // Note: This checks structure, not necessarily registry reachability etc.
 func IsValidImageReference(ref *Reference) bool {
-	if ref == nil {
+	debug.FunctionEnter("IsValidImageReference")
+	defer debug.FunctionExit("IsValidImageReference")
+	debug.DumpValue("Validating Reference", ref)
+
+	// Validate Registry (if present)
+	if ref.Registry != "" && !isValidRegistryName(ref.Registry) {
+		debug.Printf("Validation Fail: Invalid Registry Name: %s", ref.Registry)
 		return false
 	}
-	if ref.Repository == "" {
+
+	// Validate Repository (must be present and valid)
+	if ref.Repository == "" || !isValidRepositoryName(ref.Repository) {
+		debug.Printf("Validation Fail: Invalid Repository Name: %s", ref.Repository)
 		return false
 	}
-	if ref.Tag == "" && ref.Digest == "" {
-		// Allow if it might be a template tag
-		// How to reliably detect this without full template engine?
-		// For now, allow empty tag/digest if potentially templated.
-		// A stricter validation might happen later.
-		return true // Looser check, assume templates are possible
+
+	// Must have either a Tag or a Digest, but not both.
+	hasTag := ref.Tag != ""
+	hasDigest := ref.Digest != ""
+
+	if hasTag && hasDigest {
+		debug.Println("Validation Fail: Cannot have both Tag and Digest")
+		return false // Cannot have both tag and digest
 	}
-	if ref.Tag != "" && ref.Digest != "" {
-		return false // Cannot have both
+	if !hasTag && !hasDigest {
+		// This case should ideally be handled by normalization setting a default tag,
+		// but we double-check here. An image ref must have one or the other.
+		debug.Println("Validation Fail: Must have either Tag or Digest")
+		return false
 	}
+
+	// Validate Tag if present
+	if hasTag && !isValidTag(ref.Tag) {
+		debug.Printf("Validation Fail: Invalid Tag: %s", ref.Tag)
+		return false
+	}
+
+	// Validate Digest if present
+	if hasDigest && !isValidDigest(ref.Digest) {
+		debug.Printf("Validation Fail: Invalid Digest: %s", ref.Digest)
+		return false
+	}
+
+	debug.Println("Validation Success")
 	return true
 }
 

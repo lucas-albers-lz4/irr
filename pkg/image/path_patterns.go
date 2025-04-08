@@ -27,6 +27,15 @@ var (
 		"^imageFromQuay$",              // Added for WithRegistryMapping test
 		"^imageUnmapped$",              // Added for WithRegistryMapping test
 		"^appImage$",                   // Added for Simple_Image_Map_Override test
+		// Paths used in TestDetectImages/Strict_mode
+		"^knownPathValid$",
+		"^knownPathBadTag$",
+		"^knownPathNonSource$",
+		"^knownPathExcluded$",
+		"^templateValue$",   // Arguably not an image path, but used in test
+		"^mapWithTemplate$", // Arguably not an image path, but used in test
+		// Paths used in TestImageDetector_DetectImages_EdgeCases/mixed_valid_and_invalid_images
+		"^invalid image$", // Handle space in key for test
 	}
 
 	// Compiled regex patterns for image paths

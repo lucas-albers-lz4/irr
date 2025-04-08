@@ -65,6 +65,12 @@ var (
 
 	// String parsing errors
 	ErrAmbiguousStringPath = errors.New("string found at path not typically used for images, but resembles an image reference")
+
+	// ErrTemplateVariableDetected indicates a Go template variable was found in an image string or map field.
+	ErrTemplateVariableDetected = errors.New("detected template variable")
+
+	// ErrSkippedTemplateDetection indicates a template was found but skipped in non-strict mode.
+	ErrSkippedTemplateDetection = errors.New("skipped template detection in non-strict mode")
 )
 
 // Sentinel errors related to path manipulation (originally in path_utils.go).
