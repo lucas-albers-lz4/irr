@@ -177,6 +177,14 @@ Helm value overrides that redirect image references to a new registry.`,
 		SilenceUsage: true,
 		// Disable automatic printing of errors
 		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// If no arguments (subcommand) are provided, return an error.
+			if len(args) == 0 {
+				return errors.New("a subcommand is required. Use 'irr help' for available commands")
+			}
+			// Otherwise, let Cobra handle the subcommand or help text.
+			return nil
+		},
 	}
 
 	// Add persistent flags available to all commands

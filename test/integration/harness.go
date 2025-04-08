@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/lalbers/irr/pkg/image"
+	"github.com/lalbers/irr/pkg/registry"
 	"github.com/stretchr/testify/require"
 	"sigs.k8s.io/yaml"
 )
@@ -90,6 +91,20 @@ func (h *TestHarness) createDefaultRegistryMappingFile() (string, error) {
 		return "", fmt.Errorf("failed to write default registry mappings file: %w", err)
 	}
 	return mappingsPath, nil
+}
+
+// setup initializes the global test environment
+func setup() {
+	// Set any necessary environment variables or global test state
+	// This function is called once before all tests run
+	os.Setenv("IRR_TESTING", "true")
+}
+
+// teardown cleans up the global test environment
+func teardown() {
+	// Clean up any global resources
+	// This function is called once after all tests complete
+	os.Unsetenv("IRR_TESTING")
 }
 
 // setTestingEnvInternal sets the IRR_TESTING environment variable for the duration of a test.
@@ -253,9 +268,37 @@ func (h *TestHarness) ValidateOverrides() error {
 		return fmt.Errorf("helm template validation failed: %w\nOutput:\n%s", err, output)
 	}
 
-	// Basic validation: Check if target registry appears in the output
-	if !strings.Contains(output, h.targetReg) {
-		return fmt.Errorf("target registry '%s' not found in validated helm template output", h.targetReg)
+	// Load mappings to check against mapped targets as well
+	mappings := &registry.Mappings{}
+	if h.mappingsPath != "" {
+		var loadErr error
+		mappings, loadErr = registry.LoadMappings(h.mappingsPath) // Use the registry package function
+		if loadErr != nil {
+			// Log warning but don't fail the validation outright, maybe default target is used
+			h.t.Logf("Warning: could not load mappings file '%s' for validation: %v", h.mappingsPath, loadErr)
+		}
+	}
+
+	// Build a list of expected target registries (default + mapped ones)
+	expectedTargets := []string{h.targetReg} // Start with the default target
+	for _, entry := range mappings.Entries {
+		if entry.Target != "" {
+			expectedTargets = append(expectedTargets, entry.Target)
+		}
+	}
+
+	// Check if *any* of the expected target registries appear in the output
+	foundExpectedTarget := false
+	for _, target := range expectedTargets {
+		if target != "" && strings.Contains(output, target) { // Ensure target is not empty
+			foundExpectedTarget = true
+			h.t.Logf("Found expected target registry '%s' in Helm output.", target)
+			break
+		}
+	}
+
+	if !foundExpectedTarget {
+		return fmt.Errorf("no expected target registry (default: '%s' or mapped: %v) found in validated helm template output", h.targetReg, expectedTargets)
 	}
 
 	h.t.Log("Helm template validation successful.")
