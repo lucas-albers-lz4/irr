@@ -117,16 +117,19 @@ func runAnalyzeTestCase(t *testing.T, tt *struct {
 	}
 }
 
-func TestAnalyzeCmd(t *testing.T) {
-	// Backup and restore original factory, FS, and command outputs
-	originalFactory := currentAnalyzerFactory
-	originalFs := AppFs
-	defer func() {
-		currentAnalyzerFactory = originalFactory
-		AppFs = originalFs
-	}()
-
-	tests := []struct {
+// defineAnalyzeTestCases creates and returns test cases for the analyze command tests
+func defineAnalyzeTestCases() []struct {
+	name              string
+	args              []string
+	mockAnalyzeFunc   func() (*analysis.ChartAnalysis, error)
+	expectErr         bool
+	expectErrArgs     bool
+	stdOutContains    string
+	stdErrContains    string
+	expectFile        string
+	expectFileContent string
+} {
+	return []struct {
 		name              string
 		args              []string
 		mockAnalyzeFunc   func() (*analysis.ChartAnalysis, error)
@@ -210,6 +213,19 @@ func TestAnalyzeCmd(t *testing.T) {
 			stdErrContains: "mock analyze error: chart not found",
 		},
 	}
+}
+
+func TestAnalyzeCmd(t *testing.T) {
+	// Backup and restore original factory, FS, and command outputs
+	originalFactory := currentAnalyzerFactory
+	originalFs := AppFs
+	defer func() {
+		currentAnalyzerFactory = originalFactory
+		AppFs = originalFs
+	}()
+
+	// Get predefined test cases
+	tests := defineAnalyzeTestCases()
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

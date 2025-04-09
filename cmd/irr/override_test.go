@@ -306,10 +306,17 @@ func setupOverrideTestEnvironment(t *testing.T, tt struct {
 	return testDir, currentArgs, cleanup
 }
 
-func TestOverrideCmdExecution(t *testing.T) {
-	// originalGeneratorFactory := currentGeneratorFactory // Managed by setup helper t.Cleanup
-	// defer func() { currentGeneratorFactory = originalGeneratorFactory }() // Managed by setup helper t.Cleanup
-
+// defineOverrideCmdExecutionTests returns test cases for TestOverrideCmdExecution
+func defineOverrideCmdExecutionTests() []struct {
+	name              string
+	args              []string
+	mockGeneratorFunc func() (*override.File, error)
+	expectErr         bool
+	stdOutContains    string
+	stdErrContains    string
+	setupEnv          map[string]string
+	postCheck         func(t *testing.T, testDir string)
+} {
 	defaultArgs := []string{
 		"override",
 		"--chart-path", "./fake/chart",
@@ -317,7 +324,7 @@ func TestOverrideCmdExecution(t *testing.T) {
 		"--source-registries", "docker.io",
 	}
 
-	tests := []struct {
+	return []struct {
 		name              string
 		args              []string
 		mockGeneratorFunc func() (*override.File, error)
@@ -386,6 +393,11 @@ func TestOverrideCmdExecution(t *testing.T) {
 			},
 		},
 	}
+}
+
+func TestOverrideCmdExecution(t *testing.T) {
+	// Get test cases from the helper function
+	tests := defineOverrideCmdExecutionTests()
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -531,21 +543,15 @@ func TestOverrideCommand_Success(t *testing.T) {
 	assert.Contains(t, string(content), "registry: target.io", "Output file missing expected content")
 }
 
-func TestOverrideCommand_DryRun(t *testing.T) {
-	// Print test identifier to help debug
-	fmt.Println("=== Starting TestOverrideCommand_DryRun ===")
-
-	// Debug: Print environment variables
-	fmt.Println("DEBUG environment:", os.Getenv("DEBUG"))
-
+// setupDryRunTest prepares the test environment for dry run testing
+func setupDryRunTest(t *testing.T) (afero.Fs, string, func(), *override.File) {
 	// Set up memory filesystem with proper cleanup
 	fs, chartDir, cleanup := setupMemoryFSContext(t)
-	defer cleanup() // Ensure we clean up even if the test fails
 
 	// Create the test chart
 	require.NoError(t, createDummyChart(fs, chartDir))
 
-	mockGen := &mockGenerator{}
+	// Create override file for testing
 	overrideFile := &override.File{
 		ChartPath: chartDir,
 		Overrides: map[string]interface{}{
@@ -566,6 +572,13 @@ func TestOverrideCommand_DryRun(t *testing.T) {
 			},
 		},
 	}
+
+	return fs, chartDir, cleanup, overrideFile
+}
+
+// setupMockGenerator sets up the mock generator and returns a cleanup function
+func setupMockGenerator(t *testing.T, overrideFile *override.File) func() {
+	mockGen := &mockGenerator{}
 	mockGen.On("Generate").Return(overrideFile, nil)
 
 	originalFactory := currentGeneratorFactory
@@ -577,8 +590,36 @@ func TestOverrideCommand_DryRun(t *testing.T) {
 	) GeneratorInterface {
 		return mockGen
 	}
-	defer func() { currentGeneratorFactory = originalFactory }()
 
+	return func() { currentGeneratorFactory = originalFactory }
+}
+
+// assertDryRunOutput verifies the output of a dry run command contains expected content
+func assertDryRunOutput(t *testing.T, output string) {
+	assert.Contains(t, output, "--- Dry Run: Generated Overrides ---", "missing dry run header")
+	assert.Contains(t, output, "registry: target.io", "missing registry override")
+	assert.Contains(t, output, "repository: library/nginx", "missing repository override")
+	assert.Contains(t, output, "tag: latest", "missing tag override")
+	assert.Contains(t, output, "--- End Dry Run ---", "missing dry run footer")
+}
+
+// assertNoOutputFile verifies that no output file was created in dry run mode
+func assertNoOutputFile(t *testing.T, fs afero.Fs, outputFile string) {
+	exists, err := afero.Exists(fs, outputFile)
+	require.NoError(t, err, "Failed to check if output file exists")
+	assert.False(t, exists, "Output file should not be created in dry run mode")
+}
+
+func TestOverrideCommand_DryRun(t *testing.T) {
+	// Set up test environment
+	fs, chartDir, cleanup, overrideFile := setupDryRunTest(t)
+	defer cleanup() // Ensure we clean up even if the test fails
+
+	// Set up mock generator
+	generatorCleanup := setupMockGenerator(t, overrideFile)
+	defer generatorCleanup()
+
+	// Test with output file
 	outputFile := filepath.Join(chartDir, "test-dryrun.yaml")
 	args := []string{
 		"override",
@@ -589,24 +630,14 @@ func TestOverrideCommand_DryRun(t *testing.T) {
 		"--dry-run",
 		"--registry-file", "", // Explicitly set registry-file to empty string
 	}
-	fmt.Printf("DEBUG dry-run command args: %v\n", args)
-	fmt.Printf("DEBUG dry-run output file: %s\n", outputFile)
 
 	cmd := getRootCmd()
 	output, err := executeCommand(cmd, args...)
-	require.NoError(t, err, "Dry run command failed. Output:\n%s", output)
+	require.NoError(t, err, "Dry run command failed")
 
-	// Assert dry run output structure
-	assert.Contains(t, output, "--- Dry Run: Generated Overrides ---", "missing dry run header")
-	assert.Contains(t, output, "registry: target.io", "missing registry override")
-	assert.Contains(t, output, "repository: library/nginx", "missing repository override")
-	assert.Contains(t, output, "tag: latest", "missing tag override")
-	assert.Contains(t, output, "--- End Dry Run ---", "missing dry run footer")
-
-	// Assert file was NOT created
-	exists, err := afero.Exists(fs, outputFile)
-	require.NoError(t, err, "Failed to check if output file exists")
-	assert.False(t, exists, "Output file should not be created in dry run mode")
+	// Assert dry run output and no file creation
+	assertDryRunOutput(t, output)
+	assertNoOutputFile(t, fs, outputFile)
 
 	// Test without output file
 	args = []string{
@@ -619,9 +650,9 @@ func TestOverrideCommand_DryRun(t *testing.T) {
 	}
 
 	output, err = executeCommand(cmd, args...)
-	require.NoError(t, err, "Dry run command without output file failed. Output:\n%s", output)
+	require.NoError(t, err, "Dry run command without output file failed")
 
-	// Assert dry run output is still correct without output file
+	// Assert basic dry run output is still correct
 	assert.Contains(t, output, "--- Dry Run: Generated Overrides ---", "missing dry run header")
 	assert.Contains(t, output, "registry: target.io", "missing registry override")
 	assert.Contains(t, output, "--- End Dry Run ---", "missing dry run footer")

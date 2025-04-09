@@ -718,8 +718,14 @@ func TestCertManagerComponents(t *testing.T) {
 			harness.SetRegistries("harbor.home.arpa", tc.sourceRegs)
 
 			// Add --debug to the IRR_DEBUG env var
-			os.Setenv("IRR_DEBUG", "true")
-			defer os.Unsetenv("IRR_DEBUG")
+			if err := os.Setenv("IRR_DEBUG", "true"); err != nil {
+				t.Logf("WARNING: Failed to set IRR_DEBUG env var: %v", err)
+			}
+			defer func() {
+				if err := os.Unsetenv("IRR_DEBUG"); err != nil {
+					t.Logf("WARNING: Failed to unset IRR_DEBUG env var: %v", err)
+				}
+			}()
 
 			args := []string{
 				"override",
