@@ -357,7 +357,6 @@ func (g *Generator) Generate() (*override.File, error) {
 
 	detectedImages := analysisResults.ImagePatterns
 	debug.Printf("Analysis complete. Found %d image patterns.", len(detectedImages))
-	debug.DumpValue("[GENERATE] Detected Image Patterns", detectedImages)
 
 	// Find unsupported patterns and handle strict mode
 	unsupportedPatterns := g.findUnsupportedPatterns(detectedImages)
@@ -376,7 +375,6 @@ func (g *Generator) Generate() (*override.File, error) {
 	// Filter and process detected images
 	eligibleImages := g.filterEligibleImages(detectedImages)
 	debug.Printf("[GENERATE] Found %d eligible images after filtering.", len(eligibleImages))
-	debug.DumpValue("[GENERATE] Eligible Image Patterns", eligibleImages)
 
 	// Generate overrides
 	overrides := make(map[string]interface{})
@@ -400,12 +398,7 @@ func (g *Generator) Generate() (*override.File, error) {
 		if g.mappings != nil {
 			if mappedTarget := g.mappings.GetTargetRegistry(imgRef.Registry); mappedTarget != "" {
 				targetReg = mappedTarget // Use mapped target if found
-				debug.Printf("[GENERATE LOOP] Using mapped target registry for source '%s': %s", imgRef.Registry, targetReg)
-			} else {
-				debug.Printf("[GENERATE LOOP] No mapping found for source '%s', using default target: %s", imgRef.Registry, targetReg)
 			}
-		} else {
-			debug.Printf("[GENERATE LOOP] No mappings provided, using default target: %s", targetReg)
 		}
 
 		// Generate the new repository path using the strategy
@@ -421,7 +414,6 @@ func (g *Generator) Generate() (*override.File, error) {
 		debug.Printf("[GENERATE LOOP] Generated new path '%s' for original '%s'", newPath, imgRef.Original)
 		// Create the override value (string or map)
 		overrideValue := g.createOverride(pattern, imgRef, targetReg, newPath)
-		debug.Printf("[GENERATE LOOP DEBUG] Path: %s, SourceRegistry: %s, TargetRegistry: %s, NewRepoPath: %s, OverrideValue: %+v", pattern.Path, imgRef.Registry, targetReg, newPath, overrideValue)
 
 		// Set the override in the result map
 		if err := g.setOverridePath(overrides, pattern, overrideValue); err != nil {

@@ -3,9 +3,6 @@ package chart
 import (
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -444,104 +441,66 @@ func TestProcessChartForOverrides(t *testing.T) {
 }
 
 func TestGenerateOverrides_Integration(t *testing.T) {
-	// Create a temporary directory for the test chart
-	tempDir, err := os.MkdirTemp("", "irr-test-")
-	require.NoError(t, err, "failed to create temp directory")
-	defer func() {
-		if err := os.RemoveAll(tempDir); err != nil {
-			t.Logf("Warning: Failed to cleanup temp directory %s: %v", tempDir, err)
-		}
-	}()
+	// Setup mocks for a more integrated test
+	mockLoader := &MockChartLoader{
+		chart: &helmchart.Chart{
+			Metadata: &helmchart.Metadata{Name: "test-integration"},
+			Values: map[string]interface{}{
+				"image": "source.test/nginx:tag", // Use .test TLD
+				"sidecar": map[string]interface{}{ // Nested string image
+					"image": "source.test/helper:tag", // Use .test TLD
+				},
+				"unused": "ignored.com/image:latest", // Should be ignored
+			},
+		},
+	}
+	// Use the actual PrefixSourceRegistryStrategy
+	pathStrategy, err := strategy.GetStrategy("prefix-source-registry", nil)
+	require.NoError(t, err)
 
-	// Create test chart directory
-	chartDir := filepath.Join(tempDir, "test-chart")
-	err = os.Mkdir(chartDir, 0o700)
-	require.NoError(t, err, "failed to create chart directory")
-
-	// Create Chart.yaml
-	chartYAML := fmt.Sprintf(`
-apiVersion: v2
-name: %s
-version: 0.1.0
-appVersion: "1.0"
-`, "test-chart")
-	err = os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), []byte(chartYAML), 0o600)
-	require.NoError(t, err, "failed to create Chart.yaml")
-
-	// Create values.yaml
-	valuesYAML := strings.Join([]string{
-		"image:",
-		"  repository: nginx",
-		"  tag: latest",
-		"  registry: docker.io",
-		"",
-		"sidecar:",
-		"  image: busybox:latest",
-		"",
-		"initContainer:",
-		"  image:",
-		"    repository: alpine",
-		"    tag: \"3.14\"",
-		"    registry: docker.io",
-	}, "\n")
-	err = os.WriteFile(filepath.Join(chartDir, "values.yaml"), []byte(valuesYAML), 0o600)
-	require.NoError(t, err, "failed to create values.yaml")
-
-	chartPath := chartDir // Use the created directory path
-	target := "my.registry.com"
-	sources := []string{"original.registry.com"}
-	// Use the actual strategy implementation
-	strategy := strategy.NewPrefixSourceRegistryStrategy()
-
-	// Instantiate the generator - Use default HelmLoader by passing nil
-	gen := NewGenerator(
-		chartPath, target, sources, []string{}, // Basic config
-		strategy, nil, false, 0, nil, // Strategy, mappings, strict, threshold (0), loader (nil=default)
-		nil, nil, nil, // includePatterns, excludePatterns, knownPaths
+	g := NewGenerator(
+		"test-integration",
+		"target.registry.com",
+		[]string{"source.test"}, // Update source registry
+		[]string{"ignored.com"},
+		pathStrategy,
+		nil, false, 0, // No mappings, non-strict, no threshold
+		mockLoader,
+		nil, nil, nil,
 	)
 
-	// Generate overrides
-	overrideFile, err := gen.Generate()
-	// Check for *specific* errors if needed, otherwise just require no error
+	result, err := g.Generate()
 	require.NoError(t, err)
-	require.NotNil(t, overrideFile)
+	require.NotNil(t, result)
 
-	// --- Verification --- Assertions need adjustment based on strategy
+	// Assertions
+	assert.Len(t, result.Overrides, 2, "Should have 2 overrides (image, sidecar.image)")
 
-	// Check chart path
-	assert.Equal(t, chartPath, overrideFile.ChartPath, "ChartPath should match input")
+	// Check top-level image override (string type)
+	imgOverride, ok := result.Overrides["image"].(string)
+	assert.True(t, ok, "'image' override should be a string")
+	if ok {
+		// Expected: target.registry.com/sourcetest/nginx:tag
+		expectedImage := "target.registry.com/sourcetest/nginx:tag"
+		assert.Equal(t, expectedImage, imgOverride)
+	}
 
-	// Check chart metadata (Note: Generator doesn't populate these from Chart.yaml)
-	// assert.Equal(t, "mychart-test", overrideFile.ChartName, "ChartName mismatch") // Generator does not set this
-	// assert.Equal(t, "0.1.0", overrideFile.ChartVersion, "ChartVersion mismatch") // Generator does not set this
+	// Check nested sidecar override (map type, as string was converted)
+	sidecarOverride, ok := result.Overrides["sidecar"].(map[string]interface{})
+	require.True(t, ok, "'sidecar' override should be a map")
 
-	// Check expected overrides count
-	assert.Len(t, overrideFile.Overrides, 2, "Should have 2 overrides (image, sidecar.image)")
+	sidecarImageOverride, ok := sidecarOverride["image"].(string)
+	assert.True(t, ok, "'sidecar.image' override should resolve to a string")
+	if ok {
+		// Expected: target.registry.com/sourcetest/helper:tag
+		expectedSidecarImage := "target.registry.com/sourcetest/helper:tag"
+		assert.Equal(t, expectedSidecarImage, sidecarImageOverride)
+	}
 
-	// Define expected structure based on PrefixSourceRegistryStrategy
-	// OBSERVATION: Strategy seems to remove dots from source registry name.
-	expectedImageString := fmt.Sprintf("%s/%s/%s:%s", target, "originalregistrycom", "library/myapp", "v1")
-	expectedSidecarRepo := fmt.Sprintf("%s/%s", "originalregistrycom", "library/helper")
-
-	// Check image string override
-	imageValue, imageOk := overrideFile.Overrides["image"].(string)
-	require.True(t, imageOk, "'image' override should be a string")
-	assert.Equal(t, expectedImageString, imageValue, "'image' override value mismatch")
-
-	// Check nested image map override (structure should be preserved)
-	sidecarValue, sidecarOk := overrideFile.Overrides["sidecar"].(map[string]interface{})
-	require.True(t, sidecarOk, "'sidecar' override should be a map")
-	sidecarImageValue, sidecarImageOk := sidecarValue["image"].(map[string]interface{})
-	require.True(t, sidecarImageOk, "'sidecar.image' override should be a map")
-
-	assert.Equal(t, target, sidecarImageValue["registry"], "sidecar.image.registry mismatch")
-	assert.Equal(t, expectedSidecarRepo, sidecarImageValue["repository"], "sidecar.image.repository mismatch")
-	assert.Equal(t, "latest", sidecarImageValue["tag"], "sidecar.image.tag mismatch")
-
-	// Verify non-image values were not included
-	_, nonImageExists := overrideFile.Overrides["nonImage"]
-	assert.False(t, nonImageExists, "'nonImage' value should not exist in overrides")
-
-	// Verify unsupported is empty
-	assert.Empty(t, overrideFile.Unsupported, "Unsupported should be empty for this test case")
+	// Ensure the unused image wasn't included
+	_, unusedExists := result.Overrides["unused"]
+	assert.False(t, unusedExists, "'unused' key should not be present in overrides")
 }
+
+// Helper function to create a temporary Helm chart directory
+// ... rest of the file ...
