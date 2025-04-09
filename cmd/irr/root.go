@@ -233,7 +233,15 @@ It also supports linting image references for potential issues.`,
 		}
 
 		if registryFile != "" {
-			AppFs = afero.NewOsFs() // Ensure filesystem is initialized
+			// Only reset the filesystem if it's not already an in-memory filesystem
+			// This preserves the filesystem set up by tests
+			_, isMemMapFs := AppFs.(*afero.MemMapFs)
+			if !isMemMapFs {
+				AppFs = afero.NewOsFs() // Ensure filesystem is initialized only if not in a test with MemMapFs
+				debug.Printf("Using OS filesystem for registry mappings")
+			} else {
+				debug.Printf("Preserving in-memory filesystem for testing")
+			}
 			debug.Printf("Root command: Attempting to load mappings from %s", registryFile)
 			// Only load to check for errors, don't need the result here.
 			_, err := registry.LoadMappings(AppFs, registryFile, false) // Pass false for skipCWDRestriction

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"testing"
 
 	"github.com/spf13/afero"
@@ -36,6 +37,34 @@ version: 0.1.0`
 		return fmt.Errorf("failed to write dummy values.yaml: %w", err)
 	}
 	return nil
+}
+
+// setupMemoryFSContext sets up a memory filesystem for a test and returns
+// a cleanup function that restores the original filesystem state.
+// It also ensures DEBUG=1 is set to enable detailed logging.
+func setupMemoryFSContext(t *testing.T) (afero.Fs, string, func()) {
+	// Save original state
+	originalFS := AppFs
+	originalDebug := os.Getenv("DEBUG")
+
+	// Set up test environment
+	os.Setenv("DEBUG", "1")
+	fs := afero.NewMemMapFs()
+	chartDir := "/test/chart"
+	err := fs.MkdirAll(chartDir, 0o755)
+	require.NoError(t, err, "Failed to create test chart directory")
+
+	// Replace global AppFs
+	AppFs = fs
+
+	// Create cleanup function
+	cleanup := func() {
+		// Restore original state
+		AppFs = originalFS
+		os.Setenv("DEBUG", originalDebug)
+	}
+
+	return fs, chartDir, cleanup
 }
 
 // End of file

@@ -37,26 +37,19 @@
 **Goal:** Systematically eliminate lint errors while ensuring all tests pass.
 
 **Current Status & Blocking Issues:**
-*   **Test Failures:** `make test` and `go test ./pkg/image/...` are failing.
-    *   **Parser Failures (`pkg/image/parser_test.go`):** [RESOLVED] ~~The `ParseImageReference` function, relying on `distribution/reference.ParseNamed`, is failing tests because it lacks necessary pre-normalization (e.g., adding `docker.io/library/`, `latest` tag) and post-processing (e.g., stripping ports from registry). Errors like "repository name must be canonical" indicate stricter requirements from the underlying library. Specific expected errors (like tag/digest conflict) are also not being returned correctly.~~
-    *   **Detector Failures (`pkg/image/detection_test.go`):** [RESOLVED] ~~Many tests fail because they expect detected images but receive `nil`. This is largely a downstream effect of the parser failures. `tryExtractImageFromMap` correctly identifies map structures but calls `createImageReference`, which in turn calls the faulty `ParseImageReference`. The parser's failure to return a valid `Reference` object leads to `nil` being passed down, causing the detector tests to fail (e.g., "Internal inconsistency... detectedImage=nil").~~
-    *   **Integration Test Failures (`test/integration/*`):** Failures previously attributed to strict mode handling of templates are likely compounded or caused by the underlying parser issues. Exit code 11 ("unsupported structure found") might still occur in strict mode for templates, but the parser issues need to be resolved first.
-    *   **[RESOLVED]** ~~Helm validation failures (`Invalid type for path image.repository`) were caused by incorrect parsing of `mappings.yaml` in `test/integration/harness.go:ValidateOverrides`. Mappings are now loaded correctly at the start of the function.~~
-    *   **[RESOLVED]** ~~`pkg/registry` failures (`TestLoadMappings/invalid_path_traversal`) were caused by incorrect test setup disabling the path traversal check.~~
-    *   **[RESOLVED]** ~~`pkg/chart` failures (`TestGenerator_Generate_Mappings`, `TestGenerateOverrides_Integration`) were caused by test data using registry names not considered valid by `distribution/reference` and incorrect test assertions.~~
+*   **Test Failures:** Two failing tests in `cmd/irr`:
+    *   **`TestOverrideCmdArgs/valid_flags_with_dry_run`:** Fails because the test attempts to use an in-memory filesystem with `setupTestFS` for chart creation, but the actual command execution can't access this filesystem when trying to load the chart.
+    *   **`TestOverrideCommand_Success`:** Similar issue where output file isn't being created in the in-memory filesystem.
     *   **Resolution:**
-        1.  **[DONE]** ~~Fix `ParseImageReference` (`pkg/image/parser.go`): Implement pre-normalization (add defaults) and post-processing (strip ports), ensuring correct error propagation based on `distribution/reference` behavior. This is the top priority.~~
-        2.  **[DONE]** ~~Run `pkg/image` tests: Execute `go test ./pkg/image/... -v` to verify parser and detector fixes.~~
-        3.  **[DONE]** ~~Address Remaining Detector Issues: If detector tests still fail after the parser fix, revisit `tryExtractImageFromMap` and `createImageReference` in `pkg/image/detector.go`.~~
-        4.  **[DONE]** ~~Fix `pkg/registry` and `pkg/chart` tests.~~
-        5.  **[In Progress]** Fix Integration Tests: Once `pkg/image`, `pkg/registry`, and `pkg/chart` tests pass, re-run `make test`. Address any remaining integration test failures, potentially related to strict mode template handling or other issues revealed after fixing the parser.
-        6.  **[Pending]** Fix `cmd/irr` tests.
-    *   **Priority:** **[BLOCKER RESOLVED]** ~~Parser and detector test failures must be resolved before proceeding with further linting or feature development.~~ Remaining `cmd/irr` and integration tests are the current priority.
+        1.  **[In Progress]** Fix `cmd/irr` filesystem handling by ensuring proper setup and teardown of the in-memory filesystem (`afero.Fs`) and making it accessible to the command execution code.
+        2.  **[Pending]** Fix Integration Tests: Once `cmd/irr` tests pass, re-run `make test`. Address any remaining integration test failures.
+    *   **Priority:** Fixing the filesystem handling in cmd/irr tests is the current priority.
 *   **Lint Errors:** `make lint` reports numerous issues across various categories.
 
 **Completed Linting Steps (Condensed):**
 *   [✓] **Critical Error Handling:** `errcheck` (suppressed intentionally), `errorlint` (1 fixed), `wrapcheck` (3 fixed), `nilerr` (1 fixed).
 *   [✓] **Type Checking:** `typecheck` errors related to `ParseImageReference` arguments and `distribution/reference` usage resolved.
+*   [✓] **Parser, Detector, Registry and Chart package tests:** All now passing after resolving various issues.
 
 **Remaining Linting Steps (Order TBD - Post Test Fixes):**
 
