@@ -86,7 +86,6 @@ func ParseImageReference(imageStr string) (*Reference, error) {
 	}
 
 	// Explicitly add ':latest' tag if neither tag nor digest was found after parsing.
-	// (Double-checking as ParseNamed's implicit latest might not always apply)
 	if !hasTag && !hasDigest {
 		debug.Printf("Neither tag nor digest found for parsed '%s', explicitly setting tag to 'latest'", parsed.String())
 		ref.Tag = "latest"

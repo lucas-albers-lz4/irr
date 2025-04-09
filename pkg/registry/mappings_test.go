@@ -132,7 +132,7 @@ docker.io: my-registry.example.com/docker-mirror`
 			}
 
 			// Call the consolidated LoadMappings function with the test filesystem
-			got, err := LoadMappings(fs, tt.path)
+			got, err := LoadMappings(fs, tt.path, true)
 			if tt.wantErr {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tt.errorContains)

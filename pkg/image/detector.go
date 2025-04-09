@@ -89,7 +89,7 @@ func (d *Detector) processMapValue(v map[string]interface{}, path []string) ([]D
 	// First, try to detect an image map at the current level
 	detectedImage, isImage, err := d.tryExtractImageFromMap(v, path)
 	if isImage {
-		return d.handleImageMap(detectedImage, err, path)
+		return d.handleImageMap(detectedImage, isImage, err, path)
 	}
 
 	// If not an image map, recurse into values
@@ -114,52 +114,52 @@ func (d *Detector) processMapValue(v map[string]interface{}, path []string) ([]D
 }
 
 // handleImageMap processes the result of tryExtractImageFromMap.
-func (d *Detector) handleImageMap(detectedImage *DetectedImage, err error, path []string) ([]DetectedImage, []UnsupportedImage, error) {
+func (d *Detector) handleImageMap(detectedImage *DetectedImage, isPotentialMap bool, err error, path []string) ([]DetectedImage, []UnsupportedImage, error) {
 	var detectedImages []DetectedImage
 	var unsupportedMatches []UnsupportedImage
 
-	switch {
-	case err != nil:
-		// An error occurred during map validation or reference creation.
-		log.Debugf("[UNSUPPORTED ADD - Map Error] Path: %v, Error: %v\n", path, err)
-		typeCode := d.determineUnsupportedTypeCode(err)
+	if err != nil {
+		debug.Printf("Handling error from map processing at path %v: %v", path, err)
+		// Determine the type of unsupported image based on the error
+		var unsupportedType UnsupportedType
+		if errors.Is(err, ErrTemplateVariableDetected) {
+			unsupportedType = UnsupportedTypeTemplateMap // Use specific code for map templates
+		} else if errors.Is(err, ErrTagAndDigestPresent) {
+			unsupportedType = UnsupportedTypeMapTagAndDigest
+		} else {
+			unsupportedType = UnsupportedTypeMapError // General map error
+		}
+
 		unsupportedMatches = append(unsupportedMatches, UnsupportedImage{
 			Location: path,
-			Type:     typeCode,
-			Error:    err,
+			Type:     unsupportedType,
+			Error:    err, // Pass the original error (already context-rich)
 		})
-	case detectedImage != nil:
-		// Successfully created a potential image reference from the map.
-		debug.Printf("Detected map-based image at path %v: %v\n", path, detectedImage.Reference)
-		// In non-strict mode, always add the detected image. Filtering happens later.
-		if !d.context.Strict {
-			detectedImages = append(detectedImages, *detectedImage)
-		} else {
-			// In strict mode, check if it belongs to a source registry.
+		return detectedImages, unsupportedMatches, nil
+	}
+
+	// If no error, but it looked like a map, handle valid detection or skipped map
+	if isPotentialMap {
+		if detectedImage != nil {
+			// Valid image map detected
+			NormalizeImageReference(detectedImage.Reference)
 			if IsSourceRegistry(detectedImage.Reference, d.context.SourceRegistries, d.context.ExcludeRegistries) {
 				detectedImages = append(detectedImages, *detectedImage)
 			} else {
-				debug.Printf("Strict mode: Map-based image is not a source registry at path %v: %v\n", path, detectedImage.Reference)
+				// Valid map, but not a source registry
 				unsupportedMatches = append(unsupportedMatches, UnsupportedImage{
 					Location: path,
 					Type:     UnsupportedTypeNonSourceImage,
-					Error:    fmt.Errorf("strict mode: map image at path %v is not from a configured source registry", path),
+					Error:    fmt.Errorf("map at path %v is not from a configured source registry", path),
 				})
 			}
+		} else {
+			// It looked like a map structure, but validation failed without specific error (e.g., empty repo in non-strict)
+			debug.Printf("Map structure at path %v was skipped during validation (e.g., empty repo non-strict)", path)
+			// No unsupported match needed here, it was just skipped.
 		}
-	default: // Handles err == nil AND detectedImage == nil
-		// This case is reached when tryExtractImageFromMap returns (nil, true, nil)
-		// e.g., empty repo in non-strict mode, or parse error in non-strict mode.
-		log.Warnf("Internal inconsistency or non-strict skip: handleImageMap called with isImage=true, err=nil, detectedImage=nil for path %v", path)
-		// Report this as an unsupported map structure, potentially due to parsing issues
-		// that were handled internally without returning an error up the chain.
-		unsupportedMatches = append(unsupportedMatches, UnsupportedImage{
-			Location: path,
-			Type:     UnsupportedTypeMapError, // Use a specific code if distinguishable, otherwise generic map error
-			Error:    fmt.Errorf("map structure at path %v resembled an image but resulted in a nil reference without explicit error", path),
-		})
-		// Do not return an error here, just report the unsupported structure.
-	}
+	} // else: It wasn't even a potential map, nothing to do.
+
 	return detectedImages, unsupportedMatches, nil
 }
 
@@ -236,22 +236,12 @@ func (d *Detector) processStringValueStrict(v string, path []string, isKnownImag
 	var detectedImages []DetectedImage
 	var unsupportedMatches []UnsupportedImage
 
-	// 1. Check for templates first
-	if containsTemplate(v) {
-		unsupportedMatches = append(unsupportedMatches, UnsupportedImage{
-			Location: path,
-			Type:     UnsupportedTypeTemplateString,
-			Error:    fmt.Errorf("strict mode: template variable detected in string at path %v", path),
-		})
-		return detectedImages, unsupportedMatches, nil
-	}
-
-	// 2. Check if path is known
+	// 1. Check if path is known (Templates are checked by tryExtractImageFromString now)
 	if !isKnownImagePath {
 		return detectedImages, unsupportedMatches, nil
 	}
 
-	// 3. Parse and validate
+	// 2. Parse and validate
 	imgRefDetected, err := d.tryExtractImageFromString(v, path)
 	if err != nil {
 		var unsupportedType UnsupportedType
@@ -259,19 +249,18 @@ func (d *Detector) processStringValueStrict(v string, path []string, isKnownImag
 
 		// Check the specific error type returned by tryExtractImageFromString
 		if errors.Is(err, ErrTemplateVariableDetected) {
-			unsupportedType = UnsupportedTypeTemplateString
+			unsupportedType = UnsupportedTypeTemplateString // Correct type for string templates
 			errMsg = fmt.Sprintf("strict mode: template variable detected in string at path %v", path)
 		} else {
 			// Assume other errors are parsing errors
 			unsupportedType = UnsupportedTypeStringParseError
-			errMsg = fmt.Sprintf("strict mode: string at known image path %v failed to parse: %v", path, err)
-			// Note: We wrap the original error (err) in the UnsupportedImage.Error below
+			errMsg = fmt.Sprintf("strict mode: string at known image path %v failed to parse", path)
 		}
 
 		unsupportedMatches = append(unsupportedMatches, UnsupportedImage{
 			Location: path,
 			Type:     unsupportedType,
-			Error:    fmt.Errorf(errMsg+": %w", err), // Wrap original error for context
+			Error:    fmt.Errorf(errMsg+": %w", err), // Wrap original error
 		})
 		return detectedImages, unsupportedMatches, nil
 	}
@@ -353,16 +342,15 @@ func (d *Detector) validateMapStructure(m map[string]interface{}, path []string)
 		var regIsString bool
 		regStr, regIsString = regVal.(string)
 		if !regIsString {
-			// It exists but isn't a string. Convert to string representation.
+			// It exists but isn't a string. Is it a template?
 			regStr = fmt.Sprintf("%v", regVal)
-			debug.Printf("[validateMapStructure] Converted non-string registry value at path %v to string: %q", path, regStr)
-			// Check again if the stringified version looks like a template
+			debug.Printf("[validateMapStructure] Registry value at path %v is not a string: %q", path, regStr)
 			if containsTemplate(regStr) {
 				return "", "", "", "", false, ErrTemplateVariableDetected
 			}
-			// Allow non-string registry values to proceed; validation happens later.
-			// debug.Printf("[DETECTOR DEBUG tryExtractImageFromMap] Registry key exists but value is not a string at path %v", path)
-			// return "", "", "", "", false, nil // REMOVED: Too strict
+			// Not a string and not a template -> invalid structure
+			debug.Printf("[validateMapStructure] Invalid non-string, non-template registry value.")
+			return "", "", "", "", false, nil
 		} else if containsTemplate(regStr) { // Check original string if it was a string
 			return "", "", "", "", false, ErrTemplateVariableDetected // Treat as potential template
 		}
@@ -374,16 +362,15 @@ func (d *Detector) validateMapStructure(m map[string]interface{}, path []string)
 		var tagIsString bool
 		tagStr, tagIsString = tagVal.(string)
 		if !tagIsString {
-			// It exists but isn't a string. Convert to string representation.
+			// It exists but isn't a string. Is it a template?
 			tagStr = fmt.Sprintf("%v", tagVal)
-			debug.Printf("[validateMapStructure] Converted non-string tag value at path %v to string: %q", path, tagStr)
-			// Check again if the stringified version looks like a template
+			debug.Printf("[validateMapStructure] Tag value at path %v is not a string: %q", path, tagStr)
 			if containsTemplate(tagStr) {
 				return "", "", "", "", false, ErrTemplateVariableDetected
 			}
-			// Allow non-string tag values to proceed; validation happens later.
-			// debug.Printf("[DETECTOR DEBUG tryExtractImageFromMap] Tag key exists but value is not a string at path %v", path)
-			// return "", "", "", "", false, nil // REMOVED: Too strict
+			// Not a string and not a template -> invalid structure
+			debug.Printf("[validateMapStructure] Invalid non-string, non-template tag value.")
+			return "", "", "", "", false, nil
 		} else if containsTemplate(tagStr) { // Check original string if it was a string
 			return "", "", "", "", false, ErrTemplateVariableDetected // Treat as potential template
 		}
@@ -395,16 +382,15 @@ func (d *Detector) validateMapStructure(m map[string]interface{}, path []string)
 		var digestIsString bool
 		digestStr, digestIsString = digestVal.(string)
 		if !digestIsString {
-			// It exists but isn't a string. Convert to string representation.
+			// It exists but isn't a string. Is it a template?
 			digestStr = fmt.Sprintf("%v", digestVal)
-			debug.Printf("[validateMapStructure] Converted non-string digest value at path %v to string: %q", path, digestStr)
-			// Check again if the stringified version looks like a template
+			debug.Printf("[validateMapStructure] Digest value at path %v is not a string: %q", path, digestStr)
 			if containsTemplate(digestStr) {
 				return "", "", "", "", false, ErrTemplateVariableDetected
 			}
-			// Allow non-string digest values to proceed; validation happens later.
-			// debug.Printf("[DETECTOR DEBUG tryExtractImageFromMap] Digest key exists but value is not a string at path %v", path)
-			// return "", "", "", "", false, nil // REMOVED: Too strict
+			// Not a string and not a template -> invalid structure
+			debug.Printf("[validateMapStructure] Invalid non-string, non-template digest value.")
+			return "", "", "", "", false, nil
 		} else if containsTemplate(digestStr) { // Check original string if it was a string
 			return "", "", "", "", false, ErrTemplateVariableDetected // Treat as potential template
 		}
@@ -451,40 +437,58 @@ func (d *Detector) createImageReference(repoStr, regStr, tagStr, digestStr strin
 			ErrTagAndDigestPresent, path, tagStr, digestStr)
 	}
 
-	// Construct the most likely image string representation.
-	var candidateStr string
+	// Assemble the image string from parts.
+	builder := strings.Builder{}
+	registryApplied := "none"
 
-	// Check if repoStr itself looks like a full reference (more reliable than assembling parts).
-	// A simple heuristic: contains '/' and ( ':' or '@' ) OR contains '@'
-	likelyFullRef := (strings.Contains(repoStr, "/") && (strings.Contains(repoStr, ":") || strings.Contains(repoStr, "@"))) || strings.Contains(repoStr, "@")
-
-	if likelyFullRef && regStr == "" && tagStr == "" && digestStr == "" {
-		// If repoStr looks like a full reference and no other parts are provided, use it directly.
-		candidateStr = repoStr
-		debug.Printf("Using repoStr ('%s') directly as likely full reference.", repoStr)
+	if regStr != "" {
+		// Explicit registry always wins.
+		builder.WriteString(regStr)
+		builder.WriteByte('/')
+		registryApplied = regStr + " (explicit)"
+		debug.Printf("Using explicit registry: %s", regStr)
 	} else {
-		// Assemble from parts. Apply global registry if no explicit registry is given.
-		builder := strings.Builder{}
-		if regStr != "" {
-			builder.WriteString(regStr)
-			builder.WriteByte('/')
-		} else if d.context.GlobalRegistry != "" {
+		// No explicit registry. Check if repoStr contains a potential registry prefix.
+		hasRegistryPrefix := false
+		if repoParts := strings.SplitN(repoStr, "/", 2); len(repoParts) > 1 {
+			firstPart := repoParts[0]
+			if strings.ContainsAny(firstPart, ".:") || firstPart == "localhost" {
+				hasRegistryPrefix = true
+				debug.Printf("Detected potential registry prefix ('%s') in repoStr ('%s'). Skipping global registry.", firstPart, repoStr)
+				registryApplied = firstPart + " (in repoStr)"
+			}
+		}
+
+		if !hasRegistryPrefix && d.context.GlobalRegistry != "" {
+			// Use global registry only if repoStr doesn't have its own prefix.
 			builder.WriteString(d.context.GlobalRegistry)
 			builder.WriteByte('/')
+			registryApplied = d.context.GlobalRegistry + " (global)"
 			debug.Printf("Applying global registry: %s", d.context.GlobalRegistry)
+		} else if hasRegistryPrefix {
+			// repoStr contains registry, do nothing here for the registry part, it's part of repoStr.
+			debug.Printf("Using registry implicitly included in repoStr: %s", repoStr)
+		} else {
+			// No explicit registry, no global registry, repoStr has no prefix.
+			// The ParseImageReference call later will handle normalization (e.g., adding docker.io/library).
+			debug.Printf("No explicit or global registry provided, and repoStr ('%s') has no prefix.", repoStr)
 		}
-		builder.WriteString(repoStr)
-
-		if tagStr != "" {
-			builder.WriteByte(':')
-			builder.WriteString(tagStr)
-		} else if digestStr != "" {
-			builder.WriteByte('@')
-			builder.WriteString(digestStr)
-		}
-		candidateStr = builder.String()
-		debug.Printf("Assembled candidate string: '%s'", candidateStr)
 	}
+
+	// Add the repository string itself.
+	builder.WriteString(repoStr)
+
+	// Add tag or digest if present.
+	if tagStr != "" {
+		builder.WriteByte(':')
+		builder.WriteString(tagStr)
+	} else if digestStr != "" {
+		builder.WriteByte('@')
+		builder.WriteString(digestStr)
+	}
+
+	candidateStr := builder.String()
+	debug.Printf("Assembled candidate string: '%s' (Registry Applied: %s)", candidateStr, registryApplied)
 
 	// Parse the constructed candidate string using the canonical parser.
 	ref, err := ParseImageReference(candidateStr)
@@ -552,6 +556,8 @@ func (d *Detector) tryExtractImageFromMap(m map[string]interface{}, path []strin
 	detected := &DetectedImage{
 		Reference: imgRef,
 		Path:      path,
+		Pattern:   PatternMap, // Set pattern to map
+		Original:  m,          // Store the original map
 	}
 	debug.Printf("[DEBUG tryExtractImageFromMap] Successfully detected map-based image. Returning: %+v", detected.Reference)
 	debug.FunctionExit("Detector.tryExtractImageFromMap (Returning image)")
@@ -569,12 +575,8 @@ func (d *Detector) tryExtractImageFromString(s string, path []string) (*Detected
 	// Check for template variables first
 	if containsTemplate(s) {
 		debug.Printf("Template variable detected in string: '%s'", s)
-		// In strict mode, this is an error we want to report upstream.
-		// In non-strict mode, we just return nil, nil to skip it.
-		if d.context.Strict {
-			return nil, ErrTemplateVariableDetected
-		}
-		return nil, ErrSkippedTemplateDetection // Return sentinel error instead of nil, nil
+		// Always return the specific error if a template is found.
+		return nil, ErrTemplateVariableDetected
 	}
 
 	// Heuristic: If the string doesn't contain typical image separators, it's unlikely an image ref.
