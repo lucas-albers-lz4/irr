@@ -125,14 +125,22 @@ docker.io: my-registry.example.com/docker-mirror`
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Set up environment for path traversal testing
+			// REMOVED: Environment variable was not used by LoadMappings
+			// if tt.name == "invalid path traversal" {
+			// 	t.Setenv("IRR_ALLOW_PATH_TRAVERSAL", "false")
+			// } else {
+			// 	t.Setenv("IRR_ALLOW_PATH_TRAVERSAL", "true")
+			// }
+
+			// Determine if CWD restriction should be skipped for this test case.
+			// Only the 'invalid path traversal' test needs the check active (skip=false).
+			skipCheck := true
 			if tt.name == "invalid path traversal" {
-				t.Setenv("IRR_ALLOW_PATH_TRAVERSAL", "false")
-			} else {
-				t.Setenv("IRR_ALLOW_PATH_TRAVERSAL", "true")
+				skipCheck = false
 			}
 
 			// Call the consolidated LoadMappings function with the test filesystem
-			got, err := LoadMappings(fs, tt.path, true)
+			got, err := LoadMappings(fs, tt.path, skipCheck)
 			if tt.wantErr {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tt.errorContains)

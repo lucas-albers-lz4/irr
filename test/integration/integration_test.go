@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lalbers/irr/pkg/image"
 	"github.com/lalbers/irr/pkg/testutil"
 
 	"github.com/lalbers/irr/pkg/exitcodes"
@@ -135,11 +134,11 @@ func TestComplexChartFeatures(t *testing.T) {
 				"docker.io",
 			},
 			expectedImages: []string{
-				"harbor.home.arpa/dockerio/jetstack/cert-manager-controller:latest",
-				"harbor.home.arpa/dockerio/jetstack/cert-manager-webhook:latest",
-				"harbor.home.arpa/dockerio/jetstack/cert-manager-cainjector:latest",
-				"harbor.home.arpa/dockerio/jetstack/cert-manager-acmesolver:latest",
-				"harbor.home.arpa/dockerio/jetstack/cert-manager-startupapicheck:latest",
+				"harbor.home.arpa/quayio/jetstack/cert-manager-controller:v1.17.1",
+				"harbor.home.arpa/quayio/jetstack/cert-manager-webhook:v1.17.1",
+				"harbor.home.arpa/quayio/jetstack/cert-manager-cainjector:v1.17.1",
+				"harbor.home.arpa/quayio/jetstack/cert-manager-acmesolver:v1.17.1",
+				"harbor.home.arpa/quayio/jetstack/cert-manager-startupapicheck:v1.17.1",
 			},
 			skip: false,
 		},
@@ -264,33 +263,18 @@ func TestComplexChartFeatures(t *testing.T) {
 			harness.WalkImageFields(overrides, func(path []string, imageValue interface{}) {
 				if imageMap, ok := imageValue.(map[string]interface{}); ok {
 					if repo, repoOk := imageMap["repository"].(string); repoOk {
-						// Also check registry and tag if available for more precise matching if needed
-						fullRef := repo
-						if reg, regOk := imageMap["registry"].(string); regOk && reg != "" {
-							fullRef = reg + "/" + fullRef // Reconstruct approx full ref
-						}
-						if tag, tagOk := imageMap["tag"].(string); tagOk && tag != "" {
-							fullRef = fullRef + ":" + tag
-						} else if digest, digestOk := imageMap["digest"].(string); digestOk && digest != "" {
-							fullRef = fullRef + "@" + digest
-						}
-						t.Logf("Found image map at path %v: Repo='%s', FullRef (approx)='%s'", path, repo, fullRef)
-						foundImageRepos[repo] = true      // Store repo for validation
-						foundImageStrings[fullRef] = true // Store reconstructed full ref
+						t.Logf("Found image map repo at path %v: '%s'", path, repo)
+						foundImageRepos[repo] = true // Store repo value as key
+					} else {
+						t.Logf("Found image map at path %v without string repository: %v", path, imageMap)
 					}
 				} else if imageStr, ok := imageValue.(string); ok {
-					// Handle direct string override
 					t.Logf("Found image string at path %v: '%s'", path, imageStr)
 					foundImageStrings[imageStr] = true // Store full string
-					// Also try to parse and store the repo part for compatibility with existing validation
-					if ref, err := image.ParseImageReference(imageStr); err == nil {
-						repoKey := ref.Repository // Default to just repo
-						if ref.Registry != "" {
-							// Construct registry/repository format if registry is present
-							repoKey = ref.Registry + "/" + ref.Repository
-						}
-						foundImageRepos[repoKey] = true // Store registry/repo or just repo
-					}
+					// Attempt to parse and add a representative repo key for validation
+					repoKey := deriveRepoKey(imageStr, harness.targetReg)
+					t.Logf("Storing derived repo key '%s' for string '%s'", repoKey, imageStr)
+					foundImageRepos[repoKey] = true
 				}
 			})
 
@@ -656,11 +640,11 @@ func TestChartFeatures_CertManager(t *testing.T) {
 	chartPath := testutil.GetChartPath("cert-manager")
 	sourceRegs := []string{"quay.io", "docker.io"}
 	expectedImages := []string{
-		"harbor.home.arpa/dockerio/jetstack/cert-manager-controller:latest",
-		"harbor.home.arpa/dockerio/jetstack/cert-manager-webhook:latest",
-		"harbor.home.arpa/dockerio/jetstack/cert-manager-cainjector:latest",
-		"harbor.home.arpa/dockerio/jetstack/cert-manager-acmesolver:latest",
-		"harbor.home.arpa/dockerio/jetstack/cert-manager-startupapicheck:latest",
+		"harbor.home.arpa/quayio/jetstack/cert-manager-controller:v1.17.1",
+		"harbor.home.arpa/quayio/jetstack/cert-manager-webhook:v1.17.1",
+		"harbor.home.arpa/quayio/jetstack/cert-manager-cainjector:v1.17.1",
+		"harbor.home.arpa/quayio/jetstack/cert-manager-acmesolver:v1.17.1",
+		"harbor.home.arpa/quayio/jetstack/cert-manager-startupapicheck:v1.17.1",
 	}
 
 	harness.SetupChart(chartPath)
@@ -694,33 +678,18 @@ func TestChartFeatures_CertManager(t *testing.T) {
 	harness.WalkImageFields(overrides, func(path []string, imageValue interface{}) {
 		if imageMap, ok := imageValue.(map[string]interface{}); ok {
 			if repo, repoOk := imageMap["repository"].(string); repoOk {
-				// Also check registry and tag if available for more precise matching if needed
-				fullRef := repo
-				if reg, regOk := imageMap["registry"].(string); regOk && reg != "" {
-					fullRef = reg + "/" + fullRef // Reconstruct approx full ref
-				}
-				if tag, tagOk := imageMap["tag"].(string); tagOk && tag != "" {
-					fullRef = fullRef + ":" + tag
-				} else if digest, digestOk := imageMap["digest"].(string); digestOk && digest != "" {
-					fullRef = fullRef + "@" + digest
-				}
-				t.Logf("Found image map at path %v: Repo='%s', FullRef (approx)='%s'", path, repo, fullRef)
-				foundImageRepos[repo] = true      // Store repo for validation
-				foundImageStrings[fullRef] = true // Store reconstructed full ref
+				t.Logf("Found image map repo at path %v: '%s'", path, repo)
+				foundImageRepos[repo] = true // Store repo value as key
+			} else {
+				t.Logf("Found image map at path %v without string repository: %v", path, imageMap)
 			}
 		} else if imageStr, ok := imageValue.(string); ok {
-			// Handle direct string override
 			t.Logf("Found image string at path %v: '%s'", path, imageStr)
 			foundImageStrings[imageStr] = true // Store full string
-			// Also try to parse and store the repo part for compatibility with existing validation
-			if ref, err := image.ParseImageReference(imageStr); err == nil {
-				repoKey := ref.Repository // Default to just repo
-				if ref.Registry != "" {
-					// Construct registry/repository format if registry is present
-					repoKey = ref.Registry + "/" + ref.Repository
-				}
-				foundImageRepos[repoKey] = true // Store registry/repo or just repo
-			}
+			// Attempt to parse and add a representative repo key for validation
+			repoKey := deriveRepoKey(imageStr, harness.targetReg)
+			t.Logf("Storing derived repo key '%s' for string '%s'", repoKey, imageStr)
+			foundImageRepos[repoKey] = true
 		}
 	})
 

@@ -260,7 +260,7 @@ func (d *Detector) processStringValueStrict(v string, path []string, isKnownImag
 		unsupportedMatches = append(unsupportedMatches, UnsupportedImage{
 			Location: path,
 			Type:     unsupportedType,
-			Error:    fmt.Errorf(errMsg+": %w", err), // Wrap original error
+			Error:    fmt.Errorf("%s", errMsg), // Use %s to format the message safely
 		})
 		return detectedImages, unsupportedMatches, nil
 	}
@@ -297,17 +297,6 @@ func (d *Detector) processStringValueStrict(v string, path []string, isKnownImag
 	return detectedImages, unsupportedMatches, nil
 }
 
-// determineUnsupportedTypeCode determines the type code for unsupported images
-func (d *Detector) determineUnsupportedTypeCode(err error) UnsupportedType {
-	if errors.Is(err, ErrTemplateVariableDetected) {
-		return UnsupportedTypeTemplateMap
-	}
-	if errors.Is(err, ErrTagAndDigestPresent) {
-		return UnsupportedTypeMapTagAndDigest
-	}
-	return UnsupportedTypeMapError
-}
-
 // validateMapStructure checks if a map has the required image structure
 func (d *Detector) validateMapStructure(m map[string]interface{}, path []string) (string, string, string, string, bool, error) {
 	// Extract values and validate types
@@ -325,15 +314,13 @@ func (d *Detector) validateMapStructure(m map[string]interface{}, path []string)
 	// Type assertions and handling templates
 	repoStr, repoIsString := repoVal.(string)
 	if !repoIsString {
-		// Allow non-string repo only if it looks like a template
-		if !containsTemplate(fmt.Sprintf("%v", repoVal)) {
-			return "", "", "", "", false, nil
-		}
-		// Treat as template, cannot determine if it's an image map
-		return "", "", "", "", false, ErrTemplateVariableDetected // Treat as potential template
+		// If not a string, it can't be valid unless it's a template detected elsewhere.
+		// We don't check for templates here, as it's not a string.
+		return "", "", "", "", false, nil
 	}
+	// Check if the string repoStr contains a template
 	if containsTemplate(repoStr) {
-		return "", "", "", "", false, ErrTemplateVariableDetected // Treat as potential template
+		return repoStr, "", "", "", true, ErrTemplateVariableDetected // Return extracted repoStr with error
 	}
 
 	// Process Registry (optional)
@@ -342,17 +329,11 @@ func (d *Detector) validateMapStructure(m map[string]interface{}, path []string)
 		var regIsString bool
 		regStr, regIsString = regVal.(string)
 		if !regIsString {
-			// It exists but isn't a string. Is it a template?
-			regStr = fmt.Sprintf("%v", regVal)
-			debug.Printf("[validateMapStructure] Registry value at path %v is not a string: %q", path, regStr)
-			if containsTemplate(regStr) {
-				return "", "", "", "", false, ErrTemplateVariableDetected
-			}
-			// Not a string and not a template -> invalid structure
-			debug.Printf("[validateMapStructure] Invalid non-string, non-template registry value.")
+			// Not a string - invalid structure
+			debug.Printf("[validateMapStructure] Invalid non-string registry value at path %v.", path)
 			return "", "", "", "", false, nil
-		} else if containsTemplate(regStr) { // Check original string if it was a string
-			return "", "", "", "", false, ErrTemplateVariableDetected // Treat as potential template
+		} else if containsTemplate(regStr) { // Check string value for template
+			return repoStr, regStr, "", "", true, ErrTemplateVariableDetected // Return extracted values with error
 		}
 	}
 
@@ -362,17 +343,11 @@ func (d *Detector) validateMapStructure(m map[string]interface{}, path []string)
 		var tagIsString bool
 		tagStr, tagIsString = tagVal.(string)
 		if !tagIsString {
-			// It exists but isn't a string. Is it a template?
-			tagStr = fmt.Sprintf("%v", tagVal)
-			debug.Printf("[validateMapStructure] Tag value at path %v is not a string: %q", path, tagStr)
-			if containsTemplate(tagStr) {
-				return "", "", "", "", false, ErrTemplateVariableDetected
-			}
-			// Not a string and not a template -> invalid structure
-			debug.Printf("[validateMapStructure] Invalid non-string, non-template tag value.")
+			// Not a string - invalid structure
+			debug.Printf("[validateMapStructure] Invalid non-string tag value at path %v.", path)
 			return "", "", "", "", false, nil
-		} else if containsTemplate(tagStr) { // Check original string if it was a string
-			return "", "", "", "", false, ErrTemplateVariableDetected // Treat as potential template
+		} else if containsTemplate(tagStr) { // Check string value for template
+			return repoStr, regStr, tagStr, "", true, ErrTemplateVariableDetected // Return extracted values with error
 		}
 	}
 
@@ -382,42 +357,15 @@ func (d *Detector) validateMapStructure(m map[string]interface{}, path []string)
 		var digestIsString bool
 		digestStr, digestIsString = digestVal.(string)
 		if !digestIsString {
-			// It exists but isn't a string. Is it a template?
-			digestStr = fmt.Sprintf("%v", digestVal)
-			debug.Printf("[validateMapStructure] Digest value at path %v is not a string: %q", path, digestStr)
-			if containsTemplate(digestStr) {
-				return "", "", "", "", false, ErrTemplateVariableDetected
-			}
-			// Not a string and not a template -> invalid structure
-			debug.Printf("[validateMapStructure] Invalid non-string, non-template digest value.")
+			// Not a string - invalid structure
+			debug.Printf("[validateMapStructure] Invalid non-string digest value at path %v.", path)
 			return "", "", "", "", false, nil
-		} else if containsTemplate(digestStr) { // Check original string if it was a string
-			return "", "", "", "", false, ErrTemplateVariableDetected // Treat as potential template
+		} else if containsTemplate(digestStr) { // Check string value for template
+			return repoStr, regStr, tagStr, digestStr, true, ErrTemplateVariableDetected // Return extracted values with error
 		}
 	}
 
 	return repoStr, regStr, tagStr, digestStr, true, nil
-}
-
-// checkForTemplates checks if any map values contain template expressions
-func (d *Detector) checkForTemplates(repoStr, regStr, tagStr, digestStr string) error {
-	if containsTemplate(repoStr) {
-		debug.Printf("Template variable found in map key 'repository': '%s'", repoStr)
-		return ErrTemplateVariableDetected
-	}
-	if regStr != "" && containsTemplate(regStr) {
-		debug.Printf("Template variable found in map key 'registry': '%s'", regStr)
-		return ErrTemplateVariableDetected
-	}
-	if digestStr != "" && containsTemplate(digestStr) {
-		debug.Printf("Template variable found in map key 'digest': '%s'", digestStr)
-		return ErrTemplateVariableDetected
-	}
-	if tagStr != "" && containsTemplate(tagStr) {
-		debug.Printf("Template variable found in map key 'tag': '%s'", tagStr)
-		return ErrTemplateVariableDetected
-	}
-	return nil
 }
 
 // createImageReference attempts to create a valid image Reference object from components extracted from a map.
@@ -514,13 +462,12 @@ func (d *Detector) tryExtractImageFromMap(m map[string]interface{}, path []strin
 
 	// Validate basic structure
 	repoStr, regStr, tagStr, digestStr, isImageMap, err := d.validateMapStructure(m, path)
-	if !isImageMap {
-		return nil, false, err
-	}
 
-	// Check for templates
-	if err := d.checkForTemplates(repoStr, regStr, tagStr, digestStr); err != nil {
-		return nil, true, err
+	// If validation returned an error (like template detected) or it's not an image map structure,
+	// return immediately with the results from validateMapStructure.
+	if err != nil || !isImageMap {
+		debug.Printf("[tryExtractImageFromMap] Validation failed or template detected. isImageMap: %t, err: %v", isImageMap, err)
+		return nil, isImageMap, err
 	}
 
 	// Handle empty repository in strict mode
@@ -662,30 +609,17 @@ func isImagePath(path []string) bool {
 
 	// Check if the last segment ends with "image" (case-insensitive)
 	if strings.HasSuffix(strings.ToLower(lastSegment), "image") {
-		// Existing checks for common preceding elements can remain if needed,
-		// but the primary check is now suffix-based.
+		return true // Simplified: Any key ending in 'image' is considered a potential path
+	}
+
+	// In strict mode, also consider standard map keys as known paths
+	switch lastSegment {
+	case "repository", "registry", "tag", "digest":
+		// We only consider these known if they are part of a potential parent map.
+		// A simple check: is the path length > 1?
 		if len(path) > 1 {
-			// Example: spec.template.spec.containers[0].image
-			// Example: jobTemplate.spec.template.spec.containers[0].image
-			// Heuristics based on array index before the image field
-			if len(path) > 2 {
-				if (path[len(path)-3] == "containers" || path[len(path)-3] == "initContainers") && strings.HasPrefix(path[len(path)-2], "[") && strings.HasSuffix(path[len(path)-2], "]") {
-					return true
-				}
-				if len(path) > 5 && path[len(path)-6] == "jobTemplate" && path[len(path)-3] == "containers" && strings.HasPrefix(path[len(path)-2], "[") && strings.HasSuffix(path[len(path)-2], "]") {
-					return true
-				}
-				if len(path) > 5 && path[len(path)-6] == "jobTemplate" && path[len(path)-3] == "initContainers" && strings.HasPrefix(path[len(path)-2], "[") && strings.HasSuffix(path[len(path)-2], "]") {
-					return true
-				}
-			}
-			// Simpler check: Is the path segment *before* the image key an array index?
-			if strings.HasPrefix(path[len(path)-2], "[") && strings.HasSuffix(path[len(path)-2], "]") {
-				return true
-			}
+			return true
 		}
-		// Allow if the key ending in 'image' is the only element or if preceding element isn't an index.
-		return true
 	}
 
 	// TODO: Add more sophisticated path pattern matching if needed.

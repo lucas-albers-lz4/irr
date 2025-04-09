@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/lalbers/irr/pkg/image"
@@ -21,18 +20,21 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+//nolint:goerr113 // Simple error for testing
+
+// Constants
 const (
-	// defaultDirPerm defines the default directory permissions (rwxr-x---)
-	defaultDirPerm = 0o750
+	// defaultDirPerm = 0o750 // REMOVED UNUSED
+	defaultBinName = "irr"
 	// defaultFilePerm defines the default file permissions (rw-------)
 	defaultFilePerm = 0o600
 	// DefaultTargetRegistry is the registry used in tests when not specified.
 	DefaultTargetRegistry = "test-target.local"
 )
 
-// Global variable to hold the path to the compiled binary
-var buildOnce sync.Once
-var buildErr error
+// Global variables for build optimization
+// var buildOnce sync.Once // REMOVED UNUSED
+// var buildErr error      // REMOVED UNUSED
 
 // TestHarness provides a structure for setting up and running integration tests.
 type TestHarness struct {
@@ -540,22 +542,25 @@ func (h *TestHarness) walkImageFieldsRecursive(data interface{}, currentPath []s
 	}
 }
 
-// ExecuteIRR runs the compiled irr binary (expected at <project_root>/bin/irr)
-// with the given arguments and returns the combined output. This is the primary
-// method used by the test harness to invoke the irr CLI.
+// ExecuteIRR runs the irr command with the given arguments.
+// It returns the combined stdout/stderr and any error.
 func (h *TestHarness) ExecuteIRR(args ...string) (string, error) {
-	binPath := h.getBinaryPath()
-	// G204: Subprocess launched with variable - This is acceptable in test code
-	// where args are controlled by the test setup.
-	cmd := exec.Command(binPath, args...) // #nosec G204
-	cmd.Dir = h.tempDir                   // Run from the temp directory
+	// Ensure --debug is always included for integration tests
+	fullArgs := append([]string{"--debug"}, args...)
+
+	h.logger.Printf("[HARNESS EXECUTE_IRR] Command: %s %v", h.getBinaryPath(), fullArgs)
+
+	cmd := exec.Command(h.getBinaryPath(), fullArgs...)
+	cmd.Dir = h.rootDir // Ensure command runs from project root for consistency
+
+	// Capture combined output
 	var out bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &stderr
 
 	// ALWAYS log the full command for debugging purposes
-	h.logger.Printf("[HARNESS EXECUTE_IRR] Command: %s %s", binPath, strings.Join(args, " "))
+	h.logger.Printf("[HARNESS EXECUTE_IRR] Command: %s %s", h.getBinaryPath(), strings.Join(fullArgs, " "))
 
 	// errcheck: Capture error, but test might focus on stderr content, so don't require.NoError here.
 	err := cmd.Run()
@@ -718,7 +723,7 @@ func (h *TestHarness) BuildIRR() {
 	h.t.Logf("Building irr binary at %s", binPath)
 
 	// Ensure bin directory exists
-	err := os.MkdirAll(filepath.Join(rootDir, "bin"), 0755)
+	err := os.MkdirAll(filepath.Join(rootDir, "bin"), 0755) // #nosec G301 -- Test code creating temp build dir, 0755 is acceptable here.
 	require.NoError(h.t, err)
 
 	// #nosec G204 -- Building the project's own binary is safe.

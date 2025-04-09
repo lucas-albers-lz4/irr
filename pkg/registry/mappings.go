@@ -42,7 +42,7 @@ func LoadMappings(fs afero.Fs, path string, skipCWDRestriction bool) (*Mappings,
 	}
 
 	// Only skip path traversal check if explicitly allowed in test or via parameter
-	if !skipCWDRestriction && os.Getenv("IRR_ALLOW_PATH_TRAVERSAL") != "true" {
+	if !skipCWDRestriction {
 		if !strings.HasPrefix(absPath, wd) {
 			debug.Printf("Path traversal detected. Path: %s, WorkDir: %s", absPath, wd)
 			return nil, WrapMappingPathNotInWD(path)

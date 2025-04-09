@@ -38,8 +38,8 @@ var (
 	// knownPaths      []string
 
 	// Output and mode flags
-	// excludeRegistries []string
-	registryFile string // Registry mappings file
+	excludeRegistries []string
+	registryFile      string
 
 	// Behavior flags
 	verbose    bool
@@ -53,11 +53,11 @@ var (
 	// includePatterns []string
 	// excludePatterns []string
 	// knownPaths      []string
-	targetRegistry string
+	// targetRegistry string
 	// excludeRegistries []string
-	pathStrategy  string
-	printPatterns bool // Flag to enable printing detected patterns only
-	templateMode  bool // Flag to indicate template-aware parsing
+	// pathStrategy  string
+	// printPatterns bool
+	// templateMode  bool
 )
 
 // Helper to panic on required flag errors (indicates programmer error)
@@ -198,28 +198,33 @@ It also supports linting image references for potential issues.`,
 		log.SetLevel(level)
 
 		// Set debug.Enabled based on --debug flag OR IRR_DEBUG env var
-		if cmd.Flags().Changed("debug") {
-			// If --debug flag was explicitly set, use its value
-			debug.Enabled = debugEnabled
-			debug.Printf("Debug logging explicitly set to %v by --debug flag.", debugEnabled)
-		} else {
-			// If --debug flag was not set, check IRR_DEBUG environment variable
+		// Prioritize the command-line flag if set to true.
+		if debugEnabled { // Check the flag first
+			debug.Enabled = true
+			log.SetLevel(log.LevelDebug)                        // Ensure log level is also debug
+			debug.Printf("--debug flag enabled debug logging.") // Use debug.Printf
+		} else { // If flag is not set, check the environment variable
 			debugEnv := os.Getenv("IRR_DEBUG")
 			if debugEnv != "" {
-				envEnabled, err := strconv.ParseBool(debugEnv)
-				if err == nil {
-					debug.Enabled = envEnabled
-					debug.Printf("Debug logging set to %v by IRR_DEBUG environment variable.", envEnabled)
-				} else {
-					// Keep default (false) if env var is invalid, maybe log warning?
+				debugVal, err := strconv.ParseBool(debugEnv)
+				if err != nil {
+					log.Warnf("Warning: Invalid boolean value for IRR_DEBUG: %s. Defaulting to false.", debugEnv)
 					debug.Enabled = false
-					log.Warnf("Invalid boolean value for IRR_DEBUG env var: %s. Debug logging disabled.", debugEnv)
+				} else {
+					debug.Enabled = debugVal
+					if debugVal { // If IRR_DEBUG=true, ensure log level is also debug
+						log.SetLevel(log.LevelDebug)
+						debug.Printf("IRR_DEBUG environment variable enabled debug logging.") // Use debug.Printf
+					}
 				}
 			} else {
 				// Default to false if neither flag nor env var is set
 				debug.Enabled = false
 			}
 		}
+
+		log.Infof("Log level set to %s", level)                  // Use log.Infof for informational messages
+		debug.Printf("Debug package enabled: %t", debug.Enabled) // This should confirm if it's set
 
 		// Integration test mode check
 		if integrationTestMode {
@@ -439,12 +444,15 @@ func executeCommand(root *cobra.Command, args ...string) (output string, err err
 	return buf.String(), err
 }
 
+/* // Unused
 // Function to initialize file system (moved from root execution)
 func initFS() afero.Fs {
 	// Example: Initialize based on a flag or environment variable if needed
 	return afero.NewOsFs()
 }
+*/
 
+/* // Unused
 // Function to load mappings (consider moving to a shared location or helper)
 func loadMappingsIfNeeded(fs afero.Fs, registryFile string) (*registry.Mappings, error) {
 	if registryFile == "" {
@@ -453,3 +461,4 @@ func loadMappingsIfNeeded(fs afero.Fs, registryFile string) (*registry.Mappings,
 	// Pass false for skipCWDRestriction in normal execution path
 	return registry.LoadMappings(fs, registryFile, false)
 }
+*/

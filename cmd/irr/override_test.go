@@ -167,11 +167,89 @@ func TestOverrideCommand_GeneratorError(t *testing.T) {
 	}
 }
 
+// setupOverrideTestEnvironment encapsulates the common setup logic for override command tests.
+// It returns the test directory path, the potentially modified arguments, and a cleanup function.
+func setupOverrideTestEnvironment(t *testing.T, tt struct {
+	name              string
+	args              []string
+	mockGeneratorFunc func() (*override.File, error)
+	expectErr         bool
+	stdOutContains    string
+	stdErrContains    string
+	setupEnv          map[string]string
+	postCheck         func(t *testing.T, testDir string)
+}) (string, []string, func()) {
+	testDir := t.TempDir()
+	AppFs = afero.NewOsFs() // Use real FS for file operations
+	currentArgs := make([]string, len(tt.args))
+	copy(currentArgs, tt.args)
+
+	// If test case has output file, modify args to use testDir
+	if tt.name == "success with output file (flow check)" { // TODO: Make this condition less brittle
+		outputPath := filepath.Join(testDir, "test-output.yaml")
+		currentArgs = append(currentArgs, "-o", outputPath)
+	}
+
+	// Setup mock generator
+	if tt.mockGeneratorFunc != nil {
+		mockGen := &mockGenerator{}
+		result, err := tt.mockGeneratorFunc()
+		// Handle potential error from the mock setup itself
+		mockGen.On("Generate").Return(result, err)
+		originalFactory := currentGeneratorFactory // Store original to restore later
+		currentGeneratorFactory = func(
+			chartPath, targetRegistry string,
+			sourceRegistries, excludeRegistries []string,
+			pathStrategy strategy.PathStrategy,
+			mappings *registry.Mappings,
+			strict bool,
+			threshold int,
+			loader analysis.ChartLoader,
+			includePatterns, excludePatterns, knownPaths []string,
+		) GeneratorInterface {
+			return mockGen
+		}
+		// Ensure factory is restored even if test panics
+		t.Cleanup(func() { currentGeneratorFactory = originalFactory })
+	}
+
+	// Setup environment variables
+	if tt.setupEnv != nil {
+		originalEnv := make(map[string]string)
+		for k, v := range tt.setupEnv {
+			originalEnv[k] = os.Getenv(k) // Store original value
+			err := os.Setenv(k, v)
+			require.NoErrorf(t, err, "failed to set environment variable %s=%s", k, v)
+		}
+		// Ensure env vars are restored even if test panics
+		t.Cleanup(func() {
+			for k, originalValue := range originalEnv {
+				if originalValue == "" {
+					if err := os.Unsetenv(k); err != nil {
+						t.Logf("Warning: Failed to unset environment variable %s: %v", k, err)
+					}
+				} else {
+					if err := os.Setenv(k, originalValue); err != nil {
+						t.Logf("Warning: Failed to restore environment variable %s: %v", k, err)
+					}
+				}
+			}
+		})
+	}
+
+	// Cleanup function for the test directory
+	cleanup := func() {
+		if err := os.RemoveAll(testDir); err != nil {
+			t.Logf("Warning: Failed to cleanup test directory %s: %v", testDir, err)
+		}
+	}
+
+	return testDir, currentArgs, cleanup
+}
+
 func TestOverrideCmdExecution(t *testing.T) {
-	originalGeneratorFactory := currentGeneratorFactory
-	defer func() {
-		currentGeneratorFactory = originalGeneratorFactory
-	}()
+	// originalGeneratorFactory := currentGeneratorFactory // Managed by setup helper t.Cleanup
+	// defer func() { currentGeneratorFactory = originalGeneratorFactory }() // Managed by setup helper t.Cleanup
 
 	defaultArgs := []string{
 		"override",
@@ -258,79 +336,39 @@ func TestOverrideCmdExecution(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Setup test environment
-			testDir := t.TempDir()
-			AppFs = afero.NewOsFs() // Use real FS for file operations
-			defer func() {
-				// Cleanup any test files
-				if err := os.RemoveAll(testDir); err != nil {
-					t.Logf("Warning: Failed to cleanup test directory %s: %v", testDir, err)
-				}
-			}()
-
-			// If test case has output file, modify args to use testDir
-			if tt.name == "success with output file (flow check)" {
-				outputPath := filepath.Join(testDir, "test-output.yaml")
-				tt.args = append(tt.args, "-o", outputPath)
-			}
-
-			// Setup mock generator
-			if tt.mockGeneratorFunc != nil {
-				mockGen := &mockGenerator{}
-				result, err := tt.mockGeneratorFunc()
-				require.NoError(t, err, "mock generator setup failed")
-				mockGen.On("Generate").Return(result, err)
-				currentGeneratorFactory = func(
-					chartPath, targetRegistry string,
-					sourceRegistries, excludeRegistries []string,
-					pathStrategy strategy.PathStrategy,
-					mappings *registry.Mappings,
-					strict bool,
-					threshold int,
-					loader analysis.ChartLoader,
-					includePatterns, excludePatterns, knownPaths []string,
-				) GeneratorInterface {
-					return mockGen
-				}
-			}
-
-			// Setup environment variables with proper error handling
-			if tt.setupEnv != nil {
-				for k, v := range tt.setupEnv {
-					err := os.Setenv(k, v)
-					require.NoErrorf(t, err, "failed to set environment variable %s=%s", k, v)
-				}
-				defer func() {
-					for k := range tt.setupEnv {
-						if err := os.Unsetenv(k); err != nil {
-							t.Errorf("Failed to unset environment variable %s: %v", k, err)
-						}
-					}
-				}()
-			}
+			// Setup test environment using the helper
+			testDir, currentArgs, cleanup := setupOverrideTestEnvironment(t, tt)
+			defer cleanup() // Ensure test directory is cleaned up
 
 			// Execute command
 			rootCmd := getRootCmd()
-			output, err := executeCommand(rootCmd, tt.args...)
+			output, err := executeCommand(rootCmd, currentArgs...)
 
-			// Assertions
-			if tt.expectErr {
-				assert.Error(t, err, "Expected an error")
-				if tt.stdErrContains != "" {
-					assert.Contains(t, err.Error(), tt.stdErrContains, "error message should contain expected text")
-				}
-			} else {
-				assert.NoError(t, err, "Did not expect an error")
-				if tt.stdOutContains != "" {
-					assert.Contains(t, output, tt.stdOutContains, "output should contain expected text")
-				}
-			}
+			// Assertions using the helper function
+			assertOverrideTestOutcome(t, err, output, tt.expectErr, tt.stdOutContains, tt.stdErrContains)
 
 			// Run post-check if defined
 			if tt.postCheck != nil {
 				tt.postCheck(t, testDir)
 			}
 		})
+	}
+}
+
+// assertOverrideTestOutcome contains the common assertion logic for override command tests.
+func assertOverrideTestOutcome(t *testing.T, err error, output string, expectErr bool, stdOutContains, stdErrContains string) {
+	t.Helper() // Mark this as a helper function for better test failure reporting
+
+	if expectErr {
+		assert.Error(t, err, "Expected an error")
+		if stdErrContains != "" {
+			assert.Contains(t, err.Error(), stdErrContains, "error message should contain expected text")
+		}
+	} else {
+		assert.NoError(t, err, "Did not expect an error")
+		if stdOutContains != "" {
+			assert.Contains(t, output, stdOutContains, "output should contain expected text")
+		}
 	}
 }
 

@@ -375,6 +375,8 @@ func (g *Generator) Generate() (*override.File, error) {
 
 	// Filter and process detected images
 	eligibleImages := g.filterEligibleImages(detectedImages)
+	debug.Printf("[GENERATE] Found %d eligible images after filtering.", len(eligibleImages))
+	debug.DumpValue("[GENERATE] Eligible Image Patterns", eligibleImages)
 
 	// Generate overrides
 	overrides := make(map[string]interface{})
@@ -383,37 +385,49 @@ func (g *Generator) Generate() (*override.File, error) {
 	processedCount := 0
 
 	for _, pattern := range eligibleImages {
+		debug.Printf("[GENERATE LOOP] Processing pattern with Path: %s, Type: %s", pattern.Path, pattern.Type)
 		imgRef, err := g.processImagePattern(pattern)
 		if err != nil {
 			// Log the error from processImagePattern
 			log.Warnf("Skipping pattern due to processing error: %v", err)
 			processErrors = append(processErrors, err) // Store the error
+			debug.Printf("[GENERATE LOOP ERROR] Error in processImagePattern for %s: %v", pattern.Path, err)
 			continue
 		}
 
-		// Determine target registry
-		targetReg := g.targetRegistry
+		// Determine the target registry, prioritizing mappings
+		targetReg := g.targetRegistry // Default
 		if g.mappings != nil {
 			if mappedTarget := g.mappings.GetTargetRegistry(imgRef.Registry); mappedTarget != "" {
-				debug.Printf("Found registry mapping: %s -> %s", imgRef.Registry, mappedTarget)
-				targetReg = mappedTarget
+				targetReg = mappedTarget // Use mapped target if found
+				debug.Printf("[GENERATE LOOP] Using mapped target registry for source '%s': %s", imgRef.Registry, targetReg)
+			} else {
+				debug.Printf("[GENERATE LOOP] No mapping found for source '%s', using default target: %s", imgRef.Registry, targetReg)
 			}
+		} else {
+			debug.Printf("[GENERATE LOOP] No mappings provided, using default target: %s", targetReg)
 		}
 
-		// Generate path using strategy
+		// Generate the new repository path using the strategy
 		newPath, err := g.pathStrategy.GeneratePath(imgRef, targetReg)
 		if err != nil {
+			log.Warnf("Path generation failed for '%s': %v", imgRef.Original, err)
 			processErrors = append(processErrors, fmt.Errorf("path generation failed for '%s': %w", imgRef.String(), err))
+			debug.Printf("[GENERATE LOOP ERROR] Error in GeneratePath for %s: %v", pattern.Path, err)
 			continue
 		}
 
 		processedCount++
+		debug.Printf("[GENERATE LOOP] Generated new path '%s' for original '%s'", newPath, imgRef.Original)
+		// Create the override value (string or map)
 		overrideValue := g.createOverride(pattern, imgRef, targetReg, newPath)
-		// Handle error from setOverridePath
+		debug.Printf("[GENERATE LOOP DEBUG] Path: %s, SourceRegistry: %s, TargetRegistry: %s, NewRepoPath: %s, OverrideValue: %+v", pattern.Path, imgRef.Registry, targetReg, newPath, overrideValue)
+
+		// Set the override in the result map
 		if err := g.setOverridePath(overrides, pattern, overrideValue); err != nil {
-			// Log the error and add to processErrors
-			log.Errorf("Failed to set override path: %v", err)
+			log.Warnf("Failed to set override for path '%s': %v", pattern.Path, err)
 			processErrors = append(processErrors, err)
+			debug.Printf("[GENERATE LOOP ERROR] Error in setOverridePath for %s: %v", pattern.Path, err)
 			// Decide if this should prevent further processing or just be logged.
 			// For now, log and continue, but decrement processedCount as it failed.
 			processedCount-- // Decrement as the override wasn't successfully set

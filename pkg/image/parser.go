@@ -1,7 +1,6 @@
 package image
 
 import (
-	"errors"
 	"fmt"
 	"net"     // Need this for port stripping
 	"strings" // Need this for normalization checks
@@ -12,8 +11,14 @@ import (
 
 // Constants
 const (
-	maxSplitTwo = 2
+// maxSplitTwo = 2 // REMOVED UNUSED
 )
+
+// Errors
+// var ( // REMOVED - Defined in errors.go
+// 	ErrEmptyImageReference   = errors.New("image reference string cannot be empty") // REMOVED
+// 	ErrTagAndDigestPresent = errors.New("image reference cannot contain both a tag and a digest") // REMOVED
+// ) // REMOVED
 
 // ParseImageReference attempts to parse a raw image string into a structured Reference.
 // It uses the distribution/reference library for the core parsing logic.
@@ -35,33 +40,41 @@ func ParseImageReference(imageStr string) (*Reference, error) {
 	}
 
 	// --- Parsing using distribution/reference ---
-	// Use ParseNormalizedNamed which handles adding defaults like docker.io/library/
+	// Use ParseNormalizedNamed which handles adding defaults like docker.io/library/ and 'latest' tag implicitly.
 	parsed, err := reference.ParseNormalizedNamed(imageStr)
 	if err != nil {
-		// Remove forced debug prints for error block
 		debug.Printf("ParseNormalizedNamed failed for '%s': %v", imageStr, err)
-		// Error message no longer needs to mention normalization explicitly
-		return nil, fmt.Errorf("failed to parse image reference '%s': %w", imageStr, err)
+		// Check for specific known error types if needed, otherwise return a wrapped generic error.
+		// The library might return ErrReferenceInvalidFormat or other specific errors.
+		// Wrapping provides context while allowing checks via errors.Is or errors.As if necessary downstream.
+		// Using fmt.Errorf with %v preserves the original error message details.
+		return nil, fmt.Errorf("failed to parse image reference '%s' using distribution/reference: %w", imageStr, err)
 	}
-	// If we reach here, parsing was successful.
+	debug.Printf("Successfully parsed '%s' with ParseNormalizedNamed: %s", imageStr, parsed.String())
 
 	// --- Build Reference struct ---
+	// Start with the original string and detected status
 	ref := Reference{
-		Registry:   reference.Domain(parsed),
-		Repository: reference.Path(parsed),
-		Original:   imageStr, // Always store the original input string
-		Detected:   true,     // Mark as detected by the parser
+		Original: imageStr,
+		Detected: true,
 	}
 
-	// --- Post-processing: Strip port from registry ---
+	// Extract components using library functions AFTER successful parsing
+	ref.Registry = reference.Domain(parsed)
+	ref.Repository = reference.Path(parsed)
+	debug.Printf("Extracted Domain: %s, Path: %s", ref.Registry, ref.Repository)
+
+	// --- Post-processing: Strip port from registry (Domain) ---
+	// The Domain() function should return the registry *without* the port.
+	// However, let's double-check and handle potential edge cases or library behavior changes.
 	if strings.Contains(ref.Registry, ":") {
 		registryHost, _, errPort := net.SplitHostPort(ref.Registry)
 		if errPort == nil {
-			debug.Printf("Stripping port from registry: '%s' -> '%s'", ref.Registry, registryHost)
+			debug.Printf("Registry '%s' contains a port. Stripping to '%s'.", ref.Registry, registryHost)
 			ref.Registry = registryHost
 		} else {
-			debug.Printf("Warning: Could not split host/port for registry '%s' after successful parse: %v", ref.Registry, errPort)
-			// Continue without stripping port if SplitHostPort fails unexpectedly
+			// This case should ideally not happen if Domain() works as expected. Log a warning.
+			debug.Printf("Warning: Could not split host/port for registry '%s' after successful parse: %v. Using original domain value.", ref.Registry, errPort)
 		}
 	}
 
@@ -73,36 +86,47 @@ func ParseImageReference(imageStr string) (*Reference, error) {
 		debug.Printf("Extracted Tag: %s", ref.Tag)
 	}
 	if digested, ok := parsed.(reference.Digested); ok {
-		ref.Digest = digested.Digest().String() // Use .String() for consistent format
+		// Important: Digest() returns a digest.Digest object. Use String() for the string representation.
+		ref.Digest = digested.Digest().String()
 		hasDigest = true
 		debug.Printf("Extracted Digest: %s", ref.Digest)
 	}
 
-	// --- Validation ---
-	// Enforce: cannot have both tag and digest. ParseNamed might allow ambiguous refs.
+	// --- Validation: Ensure Tag and Digest are not both present ---
+	// ParseNormalizedNamed might technically allow parsing strings with both,
+	// but semantically, a reference usually shouldn't have both specified this way.
 	if hasTag && hasDigest {
 		debug.Printf("Validation Fail: Both Tag ('%s') and Digest ('%s') are present after parsing '%s'", ref.Tag, ref.Digest, imageStr)
-		return nil, fmt.Errorf("%w: reference '%s' resolved to both tag and digest", ErrTagAndDigestPresent, imageStr)
+		// Return the specific exported error for this condition for clear identification.
+		// Pass the conflicting parts for a more informative error message.
+		return nil, fmt.Errorf("%w: reference '%s' contained both tag (%s) and digest (%s)",
+			ErrTagAndDigestPresent, imageStr, ref.Tag, ref.Digest)
 	}
 
-	// Explicitly add ':latest' tag if neither tag nor digest was found after parsing.
+	// --- Post-processing: Add 'latest' tag if missing ---
+	// reference.ParseNormalizedNamed *should* add 'latest' if no tag/digest is present.
+	// However, let's explicitly ensure ref.Tag is set if neither was found.
 	if !hasTag && !hasDigest {
-		debug.Printf("Neither tag nor digest found for parsed '%s', explicitly setting tag to 'latest'", parsed.String())
+		// This might occur if ParseNormalizedNamed logic changes or for unusual inputs.
+		debug.Printf("Neither tag nor digest was extracted for '%s' (parsed: %s). Ensuring 'latest' tag.", imageStr, parsed.String())
+		ref.Tag = "latest"
+	} else if hasTag && ref.Tag == "" {
+		// Handle case where it's Tagged, but the tag is empty (shouldn't happen with valid refs)
+		debug.Printf("Warning: Parsed reference '%s' was Tagged but has an empty tag. Setting to 'latest'.", parsed.String())
 		ref.Tag = "latest"
 	}
 
 	// Repository name validation is handled by reference.ParseNamed.
 
-	debug.Printf("Successfully parsed reference: %+v", ref)
+	debug.Printf("Successfully parsed and processed reference: %+v", ref)
 	return &ref, nil
 }
 
-// parseImageReferenceCustom is deprecated.
-func parseImageReferenceCustom(imageStr string) (Reference, error) {
-	return Reference{}, errors.New("parseImageReferenceCustom is deprecated and should not be called")
-}
-
-// parseRegistryRepo is deprecated.
-func parseRegistryRepo(namePart, imgStr string) (registry string, repository string, err error) {
-	return "", "", errors.New("parseRegistryRepo is deprecated and should not be called")
-}
+// // parseImageReferenceCustom is deprecated. // REMOVED UNUSED
+// func parseImageReferenceCustom(imageStr string) (Reference, error) { // REMOVED UNUSED
+// 	return Reference{}, errors.New("parseImageReferenceCustom is deprecated and should not be called") // REMOVED UNUSED
+// } // REMOVED UNUSED
+// // parseRegistryRepo is deprecated. // REMOVED UNUSED
+// func parseRegistryRepo(namePart, imgStr string) (registry string, repository string, err error) { // REMOVED UNUSED
+// 	return "", "", errors.New("parseRegistryRepo is deprecated and should not be called") // REMOVED UNUSED
+// } // REMOVED UNUSED
