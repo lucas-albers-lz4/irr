@@ -27,21 +27,51 @@ func isValidRepositoryName(repo string) bool {
 	if repo == "" {
 		return false
 	}
-	// Check for invalid characters
-	pattern := `^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*$`
-	matched, err := regexp.MatchString(pattern, repo)
+
+	// Check overall length first (1-255 chars based on distribution/reference limits)
+	if len(repo) == 0 || len(repo) > 255 {
+		return false
+	}
+
+	// Use the regex patterns directly from distribution/reference
+	const alphaNumericRegexp = `[a-z0-9]+`
+	const separatorRegexp = `(?:[._]|__|[-]+)` // Note: changed from [-]* or simple [._-]
+	// Component must match `alphaNumericRegexp` optionally followed by one or more `separatorRegexp` and `alphaNumericRegexp`.
+	const nameComponentRegexpString = alphaNumericRegexp + `(?:` + separatorRegexp + alphaNumericRegexp + `)*`
+	// Full path is one or more components separated by /
+	const repositoryPathRegexpString = `^` + nameComponentRegexpString + `(?:/` + nameComponentRegexpString + `)*$`
+
+	matched, err := regexp.MatchString(repositoryPathRegexpString, repo)
 	if err != nil {
+		// This should not happen with constant patterns
 		debug.Printf("Error matching repository pattern: %v", err)
 		return false
 	}
 
-	// Check for invalid sequences
-	if strings.Contains(repo, "//") || strings.Contains(repo, "..") || strings.Contains(repo, "__") ||
-		strings.Contains(repo, "--") || strings.Contains(repo, "-_") || strings.Contains(repo, "_-") {
+	if !matched {
+		return false // Regex didn't match, definitely invalid
+	}
+
+	// Regex matched, now perform additional checks for invalid sequences and component boundaries.
+	// Check for disallowed consecutive separators across the whole string.
+	if strings.Contains(repo, "//") || strings.Contains(repo, "..") || strings.Contains(repo, "__") || strings.Contains(repo, "--") {
 		return false
 	}
 
-	return matched
+	// Check individual components.
+	components := strings.Split(repo, "/")
+	for _, component := range components {
+		if len(component) == 0 {
+			return false // Empty component (e.g., from "repo//comp")
+		}
+		// Check if component starts or ends with a separator.
+		if strings.HasPrefix(component, ".") || strings.HasPrefix(component, "_") || strings.HasPrefix(component, "-") ||
+			strings.HasSuffix(component, ".") || strings.HasSuffix(component, "_") || strings.HasSuffix(component, "-") {
+			return false
+		}
+	}
+
+	return true // Passed regex and additional checks
 }
 
 // isValidTag checks if a string is a valid tag format.

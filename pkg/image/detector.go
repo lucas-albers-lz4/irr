@@ -156,17 +156,19 @@ func (d *Detector) processStringValue(v string, path []string) ([]DetectedImage,
 	isKnownImagePath := isImagePath(path)
 
 	if d.context.Strict {
+		// Strict mode still uses isKnownImagePath
 		return d.processStringValueStrict(v, path, isKnownImagePath)
 	}
 
-	// Non-strict mode processing
-	if !isKnownImagePath {
-		return nil, nil, nil
-	}
-
+	// Non-strict mode processing: Attempt to parse any string, ignore isKnownImagePath
 	imgRef, err := d.tryExtractImageFromString(v, path)
 	if err != nil {
-		// Return the error even in non-strict mode so the caller is aware.
+		// If it's a skipped template, don't return error, just no images
+		if errors.Is(err, ErrSkippedTemplateDetection) {
+			return nil, nil, nil
+		}
+		// For other errors (like actual parse errors), return the error.
+		// This could happen if a string looks *like* an image but is invalid.
 		return nil, nil, err
 	}
 	if imgRef != nil && IsSourceRegistry(imgRef.Reference, d.context.SourceRegistries, d.context.ExcludeRegistries) {
@@ -197,20 +199,35 @@ func (d *Detector) processStringValueStrict(v string, path []string, isKnownImag
 	}
 
 	// 3. Parse and validate
-	imgRef, err := d.tryExtractImageFromString(v, path)
+	imgRefDetected, err := d.tryExtractImageFromString(v, path)
 	if err != nil {
+		var unsupportedType UnsupportedType
+		var errMsg string
+
+		// Check the specific error type returned by tryExtractImageFromString
+		if errors.Is(err, ErrTemplateVariableDetected) {
+			unsupportedType = UnsupportedTypeTemplateString
+			errMsg = fmt.Sprintf("strict mode: template variable detected in string at path %v", path)
+		} else {
+			// Assume other errors are parsing errors
+			unsupportedType = UnsupportedTypeStringParseError
+			errMsg = fmt.Sprintf("strict mode: string at known image path %v failed to parse: %v", path, err)
+			// Note: We wrap the original error (err) in the UnsupportedImage.Error below
+		}
+
 		unsupportedMatches = append(unsupportedMatches, UnsupportedImage{
 			Location: path,
-			Type:     UnsupportedTypeStringParseError,
-			Error:    fmt.Errorf("strict mode: string at known image path %v failed to parse: %w", path, err),
+			Type:     unsupportedType,
+			Error:    fmt.Errorf(errMsg+": %w", err), // Wrap original error for context
 		})
 		return detectedImages, unsupportedMatches, nil
 	}
 
-	if imgRef != nil {
-		NormalizeImageReference(imgRef.Reference)
-		if IsSourceRegistry(imgRef.Reference, d.context.SourceRegistries, d.context.ExcludeRegistries) {
-			detectedImages = append(detectedImages, *imgRef)
+	// If err is nil, proceed with source registry check
+	if imgRefDetected != nil {
+		NormalizeImageReference(imgRefDetected.Reference)
+		if IsSourceRegistry(imgRefDetected.Reference, d.context.SourceRegistries, d.context.ExcludeRegistries) {
+			detectedImages = append(detectedImages, *imgRefDetected)
 		} else {
 			unsupportedMatches = append(unsupportedMatches, UnsupportedImage{
 				Location: path,
@@ -255,11 +272,15 @@ func (d *Detector) validateMapStructure(m map[string]interface{}, path []string)
 		return "", "", "", "", false, nil
 	}
 
-	// Convert other values to strings if present
+	// Convert other values to strings if present, ensuring correct type if key exists
 	regValStr := ""
 	if regOk {
 		if str, ok := regVal.(string); ok {
 			regValStr = str
+		} else {
+			// Key exists but value is not a string
+			debug.Printf("Path [%s] 'registry' value exists but is not a string.\n", pathToString(path))
+			return "", "", "", "", false, nil
 		}
 	}
 
@@ -267,6 +288,10 @@ func (d *Detector) validateMapStructure(m map[string]interface{}, path []string)
 	if tagOk {
 		if str, ok := tagVal.(string); ok {
 			tagValStr = str
+		} else {
+			// Key exists but value is not a string
+			debug.Printf("Path [%s] 'tag' value exists but is not a string.\n", pathToString(path))
+			return "", "", "", "", false, nil
 		}
 	}
 
@@ -274,6 +299,10 @@ func (d *Detector) validateMapStructure(m map[string]interface{}, path []string)
 	if digestOk {
 		if str, ok := digestVal.(string); ok {
 			digestValStr = str
+		} else {
+			// Key exists but value is not a string
+			debug.Printf("Path [%s] 'digest' value exists but is not a string.\n", pathToString(path))
+			return "", "", "", "", false, nil
 		}
 	}
 
@@ -303,70 +332,99 @@ func (d *Detector) checkForTemplates(repoStr, regStr, tagStr, digestStr string) 
 
 // createImageReference creates and validates an image reference from map values
 func (d *Detector) createImageReference(repoStr, regStr, tagStr, digestStr string, path []string) (*Reference, error) {
-	// If registry is provided explicitly, use the separate components.
-	// Otherwise, try parsing the repoStr as a potential full reference.
+	// Combine components into a potential reference string
+	var fullRefStr string
 	if regStr != "" {
-		// Create base reference with explicit components
-		ref := &Reference{
-			Repository: repoStr,
-			Path:       copyPath(path),
-			Original:   fmt.Sprintf("repository=%s,registry=%s,tag=%s,digest=%s", repoStr, regStr, tagStr, digestStr),
-		}
-
-		if !isValidRegistryName(regStr) {
-			return nil, fmt.Errorf("invalid registry name '%s' in map at path %v", regStr, path)
-		}
-		ref.Registry = regStr
-
-		// Handle tag
-		if tagStr != "" {
-			if !isValidTag(tagStr) {
-				return nil, fmt.Errorf("invalid tag '%s' in map at path %v", tagStr, path)
-			}
-			ref.Tag = tagStr
-		}
-
-		// Handle digest
-		if digestStr != "" {
-			if !isValidDigest(digestStr) {
-				return nil, fmt.Errorf("invalid digest '%s' in map at path %v", digestStr, path)
-			}
-			ref.Digest = digestStr
-		}
-
-		// Check tag and digest conflict
-		if ref.Tag != "" && ref.Digest != "" {
-			return nil, fmt.Errorf("%w: map at path %v contains both tag ('%s') and digest ('%s')",
-				ErrTagAndDigestPresent, path, ref.Tag, ref.Digest)
-		}
-
-		// Normalize and validate
-		NormalizeImageReference(ref) // Applies default registry if needed AFTER explicit parts are set
-		if !IsValidImageReference(ref) {
-			return nil, fmt.Errorf("map at path %v is invalid after normalization (explicit registry)", path)
-		}
-		ref.Detected = true // Mark as detected from map structure
-		return ref, nil
-
+		fullRefStr = regStr + "/" + repoStr
 	} else {
-		// Registry field is empty, try parsing repoStr as a full reference
-		// potentially including registry/repo/tag/digest
-		fullRefStr := repoStr
-		if tagStr != "" && !strings.Contains(fullRefStr, ":") && !strings.Contains(fullRefStr, "@") {
-			fullRefStr = fmt.Sprintf("%s:%s", fullRefStr, tagStr)
-		} else if digestStr != "" && !strings.Contains(fullRefStr, "@") {
-			fullRefStr = fmt.Sprintf("%s@%s", fullRefStr, digestStr)
-		} // If tag/digest are already in repoStr, ParseImageReference should handle it.
+		fullRefStr = repoStr
+	}
 
-		ref, err := ParseImageReference(fullRefStr)
+	// Append tag or digest if provided and valid
+	if tagStr != "" && digestStr != "" {
+		return nil, fmt.Errorf("%w: map at path %v has both tag ('%s') and digest ('%s')",
+			ErrTagAndDigestPresent, path, tagStr, digestStr)
+	} else if tagStr != "" {
+		if !isValidTag(tagStr) {
+			return nil, fmt.Errorf("invalid tag format ('%s') in map at path %v", tagStr, path)
+		}
+		fullRefStr += ":" + tagStr
+	} else if digestStr != "" {
+		if !isValidDigest(digestStr) {
+			return nil, fmt.Errorf("invalid digest format ('%s') in map at path %v", digestStr, path)
+		}
+		fullRefStr += "@" + digestStr
+	} else {
+		// No tag or digest explicitly provided in map structure
+	}
+
+	// If repoStr already contains tag/digest, use it directly after validation
+	// This handles cases like `repository: myimage:latest` or `repository: myimage@sha256:...`
+	// We pass strict mode here as well.
+	if strings.Contains(repoStr, ":") || strings.Contains(repoStr, "@") {
+		ref, err := ParseImageReference(repoStr, d.context.Strict) // Pass strict mode
+		if err == nil {
+			// Successfully parsed from repoStr, potentially overriding separate tag/digest fields
+			ref.Path = copyPath(path)
+			ref.Original = fmt.Sprintf("repository=%s,tag=%s,digest=%s (parsed from repository field)", repoStr, tagStr, digestStr)
+			ref.Detected = true
+			NormalizeImageReference(ref) // Normalize potential defaults (e.g., missing tag)
+			if !IsValidImageReference(ref) {
+				return nil, fmt.Errorf("invalid map structure at path %v resulted in invalid reference after parsing repository field", path)
+			}
+			return ref, nil
+		}
+		// If parsing repoStr fails, continue to assemble from parts (fallthrough)
+		debug.Printf("Parsing repoStr ('%s') failed: %v. Will attempt assembly.", repoStr, err)
+	}
+
+	// If repoStr didn't contain tag/digest or parsing failed, try parsing the assembled string
+	if fullRefStr != repoStr { // Only parse assembled if it's different from repoStr
+		ref, err := ParseImageReference(fullRefStr, d.context.Strict) // Pass strict mode
+		if err != nil {
+			// If parsing assembled string fails, try adding global registry if available
+			if d.context.GlobalRegistry != "" && regStr == "" { // Only apply if no explicit registry
+				refWithGlobal := &Reference{
+					Registry:   d.context.GlobalRegistry,
+					Repository: repoStr, // Use original repo string
+					Tag:        tagStr,  // Use explicit tag/digest if present
+					Digest:     digestStr,
+					Path:       copyPath(path),
+					Original:   fmt.Sprintf("repository=%s,tag=%s,digest=%s (global registry applied)", repoStr, tagStr, digestStr),
+				}
+				NormalizeImageReference(refWithGlobal) // Normalize before validation
+				if IsValidImageReference(refWithGlobal) {
+					refWithGlobal.Detected = true
+					return refWithGlobal, nil
+				}
+				// Global registry didn't help, fall through to return original assembly error
+			}
+			// Return original assembled parse error
+			return nil, fmt.Errorf("failed to parse assembled reference '%s' from map at path %v: %w", fullRefStr, path, err)
+		}
+
+		// Parsed successfully from assembled string
+		ref.Path = copyPath(path)
+		ref.Original = fmt.Sprintf("repository=%s,registry=%s,tag=%s,digest=%s (assembled from map)", repoStr, regStr, tagStr, digestStr)
+		ref.Detected = true
+		NormalizeImageReference(ref) // Final normalization
+		if !IsValidImageReference(ref) {
+			return nil, fmt.Errorf("invalid map structure at path %v resulted in invalid reference after assembly and normalization", path)
+		}
+		return ref, nil
+	} else {
+		// Assembled string is the same as repoStr, and parsing repoStr failed earlier (or it had no tag/digest)
+		// This implies either an invalid repoStr or a repoStr without tag/digest.
+		// We need to rely on normalization to add the default tag if applicable.
+		ref, err := ParseImageReference(repoStr, d.context.Strict) // Parse repoStr again, rely on normalization
 		if err != nil {
 			// If parsing repoStr fails, try adding global registry if available
 			if d.context.GlobalRegistry != "" {
 				refWithGlobal := &Reference{
 					Registry:   d.context.GlobalRegistry,
 					Repository: repoStr,
-					Tag:        tagStr,
-					Digest:     digestStr,
+					Tag:        tagStr,    // Should be empty here unless explicitly set
+					Digest:     digestStr, // Should be empty here unless explicitly set
 					Path:       copyPath(path),
 					Original:   fmt.Sprintf("repository=%s,tag=%s,digest=%s (global registry applied)", repoStr, tagStr, digestStr),
 				}
@@ -484,7 +542,7 @@ func (d *Detector) tryExtractImageFromString(s string, path []string) (*Detected
 		return nil, ErrSkippedTemplateDetection // Return sentinel error instead of nil, nil
 	}
 
-	ref, err := ParseImageReference(s)
+	ref, err := ParseImageReference(s, d.context.Strict) // Pass strict mode
 	if err != nil {
 		debug.Printf("ParseImageReference err: %v", err)
 		// Wrap the error to provide context about the failure type if needed upstream
@@ -547,42 +605,37 @@ func isImagePath(path []string) bool {
 		return false
 	}
 
-	// Simple check for "image" as the last element
-	if path[len(path)-1] == "image" {
-		// Check for common preceding elements like containers, initContainers
+	lastSegment := path[len(path)-1]
+
+	// Check if the last segment ends with "image" (case-insensitive)
+	if strings.HasSuffix(strings.ToLower(lastSegment), "image") {
+		// Existing checks for common preceding elements can remain if needed,
+		// but the primary check is now suffix-based.
 		if len(path) > 1 {
 			// Example: spec.template.spec.containers[0].image
-			// Example: spec.template.spec.initContainers[0].image
-			// Example: image (direct)
-			// Look for array index followed by 'containers' or 'initContainers'
-			// This is a basic heuristic and might need refinement.
+			// Example: jobTemplate.spec.template.spec.containers[0].image
+			// Heuristics based on array index before the image field
 			if len(path) > 2 {
-				// Check for patterns like containers[*].image or initContainers[*].image
 				if (path[len(path)-3] == "containers" || path[len(path)-3] == "initContainers") && strings.HasPrefix(path[len(path)-2], "[") && strings.HasSuffix(path[len(path)-2], "]") {
 					return true
 				}
-				// Check for patterns like jobTemplate.spec.template.spec.containers[*].image (common in CronJobs)
 				if len(path) > 5 && path[len(path)-6] == "jobTemplate" && path[len(path)-3] == "containers" && strings.HasPrefix(path[len(path)-2], "[") && strings.HasSuffix(path[len(path)-2], "]") {
 					return true
 				}
-				// Check for patterns like jobTemplate.spec.template.spec.initContainers[*].image
 				if len(path) > 5 && path[len(path)-6] == "jobTemplate" && path[len(path)-3] == "initContainers" && strings.HasPrefix(path[len(path)-2], "[") && strings.HasSuffix(path[len(path)-2], "]") {
 					return true
 				}
 			}
-			// Simpler check: Is the path segment *before* 'image' an array index?
-			// Covers cases like sidecars[0].image
+			// Simpler check: Is the path segment *before* the image key an array index?
 			if strings.HasPrefix(path[len(path)-2], "[") && strings.HasSuffix(path[len(path)-2], "]") {
-				// Requires a preceding element like 'containers' or similar, assume true for now if index is present
 				return true
 			}
 		}
-		// Allow if 'image' is the only element or if preceding element isn't an index (e.g., simple map key)
+		// Allow if the key ending in 'image' is the only element or if preceding element isn't an index.
 		return true
 	}
 
 	// TODO: Add more sophisticated path pattern matching if needed.
-	// Consider cases from common Helm charts or CRDs.
 
 	return false
 }

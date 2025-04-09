@@ -190,7 +190,7 @@ func (g *Generator) filterEligibleImages(detectedImages []analysis.ImagePattern)
 		var registry string
 
 		if pattern.Type == analysis.PatternTypeString {
-			imgRef, err := image.ParseImageReference(pattern.Value)
+			imgRef, err := image.ParseImageReference(pattern.Value, g.strict)
 			if err != nil {
 				debug.Printf("Skipping pattern at path %s due to parse error on value '%s': %v", pattern.Path, pattern.Value, err)
 				continue
@@ -276,7 +276,7 @@ func (g *Generator) processImagePattern(pattern analysis.ImagePattern) (*image.R
 	pathForError := pattern.Path // Use the original string path for error messages
 
 	if pattern.Type == analysis.PatternTypeString {
-		ref, err := image.ParseImageReference(pattern.Value)
+		ref, err := image.ParseImageReference(pattern.Value, g.strict)
 		if err != nil {
 			// Wrap the parsing error for context using the string path
 			return nil, fmt.Errorf("failed to parse image string '%s' at path %s: %w", pattern.Value, pathForError, err)
@@ -326,7 +326,7 @@ func (g *Generator) processImagePattern(pattern analysis.ImagePattern) (*image.R
 	}
 
 	// Parse the constructed string to get a validated Reference object
-	ref, err := image.ParseImageReference(imgStr)
+	ref, err := image.ParseImageReference(imgStr, g.strict)
 	if err != nil {
 		// Wrap the error with context about the map structure
 		return nil, fmt.Errorf("failed to parse constructed image string '%s' from map at path %s: %w", imgStr, pathForError, err)

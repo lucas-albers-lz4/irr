@@ -15,273 +15,101 @@
 - [ ] Explore support for additional target registries (Quay, ECR, GCR, ACR, GHCR)
 - [ ] Enhance strategy validation and error handling
 
+## Phase 2.5: Quality & Testing Enhancements (Pending)
+- [ ] **Leverage `distribution/reference` for Robustness:**
+    - **Goal:** Enhance program quality and test accuracy by fully utilizing the `github.com/distribution/reference` library.
+    - **Program Quality Improvements:**
+        - Ensure strict compliance with the official Docker image reference specification.
+        - Inherit robustness by using the library's handling of edge cases (e.g., implicit registries, ports, digests, tags).
+        - Improve code clarity and type safety using specific types (`reference.Named`, `reference.Tagged`, `reference.Digested`) and methods (`Domain()`, `Path()`, `Tag()`, `Digest()`).
+        - Benefit from built-in normalization (e.g., adding `docker.io`, `latest` tag).
+        - Reduce maintenance by relying on the upstream library for spec updates.
+        - **Action:** Review `pkg/image/parser.go` and potentially remove the `parseImageReferenceCustom` fallback if all necessary cases are covered by the official parser in non-strict mode, simplifying the codebase.
+    - **Test Case Improvements:**
+        - Use `reference.ParseNamed` as the canonical source of truth in test assertions for validating parsing results.
+        - Focus tests on application logic rather than custom parsing validation.
+        - Simplify testing of invalid inputs by checking errors returned by `reference.ParseNamed`.
+        - Increase test coverage by using known edge-case reference strings and verifying correct parsing via the library.
+        - **Action:** Refactor existing tests in `pkg/image/parser_test.go` and `pkg/image/detection_test.go` to use `distribution/reference` for validation where applicable.
+
 ## Phase 3: Active Development - Linting & Refinement (In Progress)
 
 **Goal:** Systematically eliminate lint errors while ensuring all tests pass.
 
-**General Workflow:**
-1.  **Pre-Verification:** Run the specific linter command and `go test ./...` to confirm the starting state.
-2.  **Action:** Fix the reported lint errors for the targeted category.
-3.  **Post-Verification:** Rerun the specific linter command (expecting no errors for that category) and `go test ./...` (expecting all tests to pass).
+**Current Status & Blocking Issues:**
+*   **Test Failures:** `make test` is failing. Multiple integration tests (`TestMinimalChart`, `TestParentChart`, `TestKubePrometheusStack`, `TestCertManagerIntegration`, `TestKubePrometheusStackIntegration`, `TestIngressNginxIntegration`, `TestComplexChartFeatures/*`, `TestRegistryMappingFile`, `TestMinimalGitImageOverride`, `TestDryRunFlag`, `TestReadOverridesFromStdout`, `TestChartFeatures_CertManager`, `TestChartFeatures_PrometheusStack`) are exiting with code 11 ("failed to process chart: unsupported structure found").
+    *   **Cause:** The tests run with strict mode enabled, and the image detector now correctly identifies Helm template strings (e.g., `{{ .Values.image }}`) as unsupported structures, causing the failures.
+    *   **Resolution:** The integration tests need to be updated. They should either:
+        *   Run the `irr override` command without the `--strict` flag if the goal is to test non-strict behavior where templates are ignored.
+        *   Or, if testing strict mode, the test charts need modification, or the assertions need to expect the `ExitImageProcessingError` (exit code 11).
+    *   **Priority:** **[BLOCKER]** Test failures must be resolved before proceeding with further linting or feature development.
+*   **Lint Errors:** `make lint` reports 148 issues. Several categories remain.
 
-**Note on Running Specific Tests:** To run a single test function (e.g., `TestMyFunction`), use the `-run` flag with a regex matching the function name: `go test ./... -v -run "^TestMyFunction$"`. This is useful for isolating failures during debugging.
+**Completed Linting Steps (Condensed):**
+*   [✓] **Critical Error Handling:** `errcheck` (suppressed intentionally), `errorlint` (1 fixed), `wrapcheck` (3 fixed), `nilerr` (1 fixed).
+*   [✓] **Type Checking:** `typecheck` errors related to `ParseImageReference` arguments and `distribution/reference` usage resolved.
 
-**Note on Linter Commands:** We use `golangci-lint run --enable-only=<linter> ./... | cat` to isolate the output for the specific linter category being addressed in each step.
-
----
-
-### Step 1: Fix Critical Error Handling Linters (Highest Priority)
-
-1.  **Address `errcheck` Warnings:**
-    *   **Status:** [✓] Completed (Suppressed via `#nolint`)
-    *   **Issue:** Unchecked errors can lead to unexpected behavior or panics. 1 instance reported (was 10).
-    *   **Files:** `cmd/irr/main.go`.
-    *   **Note:** Error ignored intentionally using `#nolint:errcheck` as Cobra handles errors/exit internally.
-    *   **Pre-Verification:**
-        ```bash
-        golangci-lint run --enable-only=errcheck ./... | cat
-        go test ./...
-        ```
-    *   **Action:** Add error handling (e.g., `if err != nil`) for all reported unchecked errors (type assertions, `regexp.MatchString`, `os.Getwd`, `cmd.Run`).
-    *   **Post-Verification:**
-        ```bash
-        golangci-lint run --enable-only=errcheck ./... | cat # Expect no output
-        go test ./... # Expect PASS
-        ```
-
-2.  **Address `errorlint` Warnings:**
-    *   **Status:** [✓] Completed
-    *   **Issue:** Incorrect error type checking can miss wrapped errors. 1 instance reported.
-    *   **File:** `test/integration/harness.go`.
-    *   **Pre-Verification:**
-        ```bash
-        golangci-lint run --enable-only=errorlint ./... | cat
-        go test ./...
-        ```
-    *   **Action:** Use `errors.As` for type assertion on `*exec.ExitError` instead of direct type assertion.
-    *   **Post-Verification:**
-        ```bash
-        golangci-lint run --enable-only=errorlint ./... | cat # Expect no output
-        go test ./... # Expect PASS
-        ```
-
-3.  **Address `wrapcheck` Warnings:**
-    *   **Status:** [✓] Completed
-    *   **Issue:** Unwrapped errors lose context, making debugging harder. 3 instances reported (no change).
-    *   **Files:** `cmd/irr/root.go`, `cmd/irr/test_helpers_test.go`.
-    *   **Pre-Verification:**
-        ```bash
-        golangci-lint run --enable-only=wrapcheck ./... | cat
-        go test ./...
-        ```
-    *   **Action:** Wrap errors returned from external packages (`mock.Arguments.Error`, `image.ParseImageReference`, `cmd.CombinedOutput`) using `fmt.Errorf("...: %w", err)`.
-    *   **Post-Verification:**
-        ```bash
-        golangci-lint run --enable-only=wrapcheck ./... | cat # Expect no output
-        go test ./... # Expect PASS
-        ```
-
-### Step 2: Remove Unused Code (High Priority)
+**Remaining Linting Steps (Order TBD - Post Test Fixes):**
 
 1.  **Review and Remove `unused` Code:**
-    *   **Status:** [ ] Pending (Re-run Required)
-    *   **Issue:** Dead code increases maintenance overhead. 20 instances reported after blocker fix (includes the fix itself). Previous attempt caused issues. Requires careful removal and verification.
-    *   **Files:** Widespread (check `make lint` output, e.g., `cmd/irr/root.go`, `pkg/image/parser.go`, `pkg/image/path_patterns.go`, `pkg/image/validation.go`, `test/integration/harness.go`, `test/integration/integration_test.go`).
-    *   **Pre-Verification:**
-        *   **Capture Lint Errors:** `golangci-lint run --enable-only=unused ./... | cat > unused_errors.txt` (Capture the specific list for careful review).
-        *   **Check Tests:** `go test ./...` (Ensure tests pass before starting).
-    *   **Action:**
-        *   Carefully review the captured list in `unused_errors.txt`.
-        *   Systematically remove identified unused variables, functions, constants, or types.
-        *   **Crucially:** Before removing items reported in `cmd/irr/root.go` (check flags/vars) or `pkg/image/validation.go` (check `validIdentifierRegex`/`isValidIdentifier`), verify their context to avoid breaking builds or necessary logic.
-        *   If unsure about removal, consider adding `#nolint:unused // TODO: Re-evaluate necessity` for later review instead of removing immediately.
-    *   **Post-Verification:**
-        *   **Check Linter:** `golangci-lint run --enable-only=unused ./... | cat` (Expect no output).
-        *   **Check Tests:** `go test ./...` (Expect PASS).
-        *   **If Fails:** Revert changes (e.g., `git checkout -- .`) and retry, possibly addressing items individually.
+    *   **Status:** [ ] Pending Re-evaluation (7 issues reported by `make lint`)
+    *   **Issue:** Dead code increases maintenance. Previous attempts caused build issues. Requires careful review, especially after recent changes.
+    *   **Action:** Run `golangci-lint run --enable-only=unused ./... | cat`. Carefully review and remove unused items, verifying tests pass after each removal/group of removals.
 
-### Step 3: Address Medium Priority Linting Issues
+2.  **Fix `errorlint` Issues:**
+    *   **Status:** [ ] Pending Re-evaluation (1 issue reported by `make lint`)
+    *   **Issue:** Incorrect error type checking. Although marked complete previously, a new instance appeared.
+    *   **Action:** Run `golangci-lint run --enable-only=errorlint ./... | cat`. Use `errors.As` for type assertions on errors.
 
-1.  **Fix `gosec` Security Warnings:**
-    *   **Status:** [ ] Pending
-    *   **Issue:** Potential security vulnerabilities. 6 instances reported (no change).
-    *   **Files:** `cmd/irr/override_test.go`, `pkg/chart/generator_test.go`, `test/integration/harness.go`.
-    *   **Pre-Verification:**
-        ```bash
-        golangci-lint run --enable-only=gosec ./... | cat
-        go test ./...
-        ```
-    *   **Action:** Review file permissions (aim for `0o600`/`0o700` where appropriate, use constants), analyze potential file inclusion (`os.ReadFile` - ensure paths aren't user-controlled), review subprocess calls (`exec.Command` - ensure arguments are properly sanitized if dynamic). Add `#nosec` directives with justification if warnings are false positives after careful review.
-    *   **Post-Verification:**
-        ```bash
-        golangci-lint run --enable-only=gosec ./... | cat # Expect no output (or only justified #nosec)
-        go test ./... # Expect PASS
-        ```
+3.  **Fix `gosec` Security Warnings:**
+    *   **Status:** [ ] Pending (1 issue reported)
+    *   **Action:** Review `test/integration/harness.go:655` (directory permissions). Aim for secure permissions (e.g., `0o700`) or add a `#nosec` justification if appropriate.
 
-2.  **Refactor `funlen` Long Functions:**
-    *   **Status:** [ ] Pending
-    *   **Issue:** Long functions (33 identified) are harder to read, test, and maintain. `analyzeValuesRecursive` already refactored.
-    *   **Files:** Widespread (see list below).
-    *   **Prioritized:**
-        *   `TestParseImageReference` (pkg/image/parser_test.go:11) - 157 lines
-        *   `TestOverrideCmdExecution` (cmd/irr/override_test.go:170) - 153 lines
-        *   `TestSetValueAtPath` (pkg/override/path_utils_test.go:149) - 173 lines
-    *   **Other Examples:**
-        *   `TestComplexChartFeatures` (test/integration/integration_test.go:121) - 181 lines
-        *   `TestAnalyzeCmd` (cmd/irr/analyze_test.go:46) - 139 lines
-        *   `TestDeepCopy` (pkg/override/path_utils_test.go:9) - 130 lines
-        *   `TestLoadMappings` (pkg/registry/mappings_test.go:14) - 127 lines
-        *   `createImageReference` (pkg/image/detector.go:305) - 89 lines
-        *   `runOverride` (cmd/irr/override.go:114) - 77 statements
-    *   **General Workflow (Per Function):**
-        1.  **Pre-Verification:**
-            *   Confirm state: `golangci-lint run --enable-only=funlen ./... | cat` and `go test ./...`.
-            *   Read function: Use file reading tool.
-        2.  **Action:** Refactor by extracting logic into smaller helper functions.
-        3.  **Post-Verification:**
-            *   Check linter: `golangci-lint run --enable-only=funlen ./... | cat` (expect one fewer error).
-            *   Check tests: `go test ./...` (expect PASS).
+4.  **Refactor `funlen` Long Functions:**
+    *   **Status:** [ ] Pending (31 issues reported)
+    *   **Issue:** Long functions hinder readability/maintenance.
+    *   **Action:** (Post-Test Fixes) Systematically refactor long functions identified by `golangci-lint run --enable-only=funlen ./... | cat` into smaller, focused helpers.
 
-3.  **Fix `gocritic` Style Issues:**
-    *   **Status:** [ ] Pending
-    *   **Issue:** Code style inconsistencies and potential anti-patterns. 24 issues reported (was 25).
-    *   **Files:** Widespread (check `make lint` output).
-    *   **Pre-Verification:**
-        ```bash
-        golangci-lint run --enable-only=gocritic ./... | cat
-        go test ./...
-        ```
-    *   **Action:** Apply suggested fixes: use `0o` octal literals, convert `if-else` chains to `switch` where appropriate, remove commented-out code blocks, name results where needed, combine parameters with the same type, fix `tooManyResultsChecker` by refactoring or using a struct return.
-    *   **Post-Verification:**
-        ```bash
-        golangci-lint run --enable-only=gocritic ./... | cat # Expect no output
-        go test ./... # Expect PASS
-        ```
+5.  **Fix `gocritic` Style Issues:**
+    *   **Status:** [ ] Pending (31 issues reported)
+    *   **Action:** Apply suggested fixes (octal literals, switch statements, remove commented code, name results, combine params, etc.) reported by `golangci-lint run --enable-only=gocritic ./... | cat`.
 
-4.  **Fix `dupl` Code Duplication:**
-    *   **Status:** [ ] Pending
-    *   **Issue:** Duplicated code increases maintenance effort and risk of bugs. 4 instances reported (no change).
-    *   **File:** `pkg/image/detection_test.go`.
-    *   **Pre-Verification:**
-        ```bash
-        golangci-lint run --enable-only=dupl ./... | cat
-        go test ./...
-        ```
-    *   **Action:** Refactor duplicated test setup/case blocks into table-driven tests or shared helper functions.
-    *   **Post-Verification:**
-        ```bash
-        golangci-lint run --enable-only=dupl ./... | cat # Expect no output
-        go test ./... # Expect PASS
-        ```
+6.  **Fix `dupl` Code Duplication:**
+    *   **Status:** [ ] Pending (6 issues reported)
+    *   **Files:** `pkg/image/detection_test.go`, `test/integration/integration_test.go`.
+    *   **Action:** Refactor duplicated test blocks reported by `golangci-lint run --enable-only=dupl ./... | cat` into table-driven tests or shared helpers.
 
-### Step 4: Address Low Priority Linting Issues
+7.  **Fix `revive` Issues:**
+    *   **Status:** [ ] Pending (41 issues reported)
+    *   **Action:** Address style issues (comments, error strings, unused params, var declarations, empty blocks, etc.) reported by `golangci-lint run --enable-only=revive ./... | cat`.
 
-1.  **Fix `revive` Issues:**
-    *   **Status:** [ ] Pending
-    *   **Issue:** Style issues, missing comments, potential logic errors. 38 issues reported (no change).
-    *   **Files:** Widespread (check `make lint` output).
-    *   **Pre-Verification:**
-        ```bash
-        golangci-lint run --enable-only=revive ./... | cat
-        go test ./...
-        ```
-    *   **Action:** Add missing package/exported comments, fix error string formatting (lowercase, no punctuation), address unused parameters (use `_`), fix indentation errors (e.g., `indent-error-flow`), simplify var declarations.
-    *   **Post-Verification:**
-        ```bash
-        golangci-lint run --enable-only=revive ./... | cat # Expect no output
-        go test ./... # Expect PASS
-        ```
+8.  **Fix `lll` Line Length Issues:**
+    *   **Status:** [ ] Pending (21 issues reported)
+    *   **Action:** Break long lines logically based on `golangci-lint run --enable-only=lll ./... | cat`.
 
-2.  **Fix `lll` Line Length Issues:**
-    *   **Status:** [ ] Pending
-    *   **Issue:** Long lines reduce readability. 12 instances reported (was 13).
-    *   **Files:** Widespread (check `make lint` output).
-    *   **Pre-Verification:**
-        ```bash
-        golangci-lint run --enable-only=lll ./... | cat
-        go test ./...
-        ```
-    *   **Action:** Break long lines logically (e.g., at operators, parameters).
-    *   **Post-Verification:**
-        ```bash
-        golangci-lint run --enable-only=lll ./... | cat # Expect no output
-        go test ./... # Expect PASS
-        ```
+9.  **Fix `mnd` Magic Numbers:**
+    *   **Status:** [ ] Pending (6 issues reported)
+    *   **Action:** Replace unnamed numbers with named constants based on `golangci-lint run --enable-only=mnd ./... | cat`.
 
-3.  **Fix `mnd` Magic Numbers:**
-    *   **Status:** [ ] Pending
-    *   **Issue:** Unnamed numbers obscure intent. 5 instances reported (was 6).
-    *   **Files:** `cmd/irr/override.go`, `pkg/chart/generator.go`, `pkg/image/validation.go`.
-    *   **Pre-Verification:**
-        ```bash
-        golangci-lint run --enable-only=mnd ./... | cat
-        go test ./...
-        ```
-    *   **Action:** Replace numbers (e.g., `0o644`, `100`, `128`, `0o600`) with named constants (e.g., `defaultFilePerm`, `percentageMultiplier`, `maxTagLength`). Define constants appropriately (e.g., file modes in `fs` or os, lengths near validation).
-    *   **Post-Verification:**
-        ```bash
-        golangci-lint run --enable-only=mnd ./... | cat # Expect no output
-        go test ./... # Expect PASS
-        ```
+10. **Fix `ineffassign` Issues:**
+    *   **Status:** [ ] Pending (1 issue reported)
+    *   **File:** `pkg/image/parser.go`
+    *   **Action:** Address the ineffectual assignment reported by `golangci-lint run --enable-only=ineffassign ./... | cat`.
 
-4.  **Fix `nilerr` Issue:**
-    *   **Status:** [✓] Completed
-    *   **Issue:** Returning nil when an error exists. 1 instance reported (no change).
-    *   **File:** `pkg/image/detector.go`.
-    *   **Pre-Verification:**
-        ```bash
-        golangci-lint run --enable-only=nilerr ./... | cat
-        go test ./...
-        ```
-    *   **Action:** Ensure the error is propagated correctly in the non-strict mode logic path identified by the linter.
-    *   **Post-Verification:**
-        ```bash
-        golangci-lint run --enable-only=nilerr ./... | cat # Expect no output
-        go test ./... # Expect PASS
-        ```
+11. **Fix `staticcheck` Issues:**
+    *   **Status:** [ ] Pending (2 issues reported)
+    *   **Action:** Address issues reported by `golangci-lint run --enable-only=staticcheck ./... | cat` (e.g., unused append result, tagged switch suggestion).
 
-### Step 5: Final Validation
-
-1.  **Run All Tests:**
-    *   **Command:** `go test ./... -v`
-    *   **Expected:** All tests PASS.
-2.  **Run Full Linter Suite:**
-    *   **Command:** `make lint` or `golangci-lint run ./...`
-    *   **Expected:** No lint errors reported (Exit Code 0).
-3.  **Manual Smoke Test:**
-    *   **Command:** `go run ./cmd/irr/main.go --help`
-    *   **Expected:** Help message displays correctly without errors.
-    *   **Command:** Try basic `analyze` and `override` commands on a simple test chart.
-    *   **Expected:** Commands execute without errors and produce expected output/files.
-
-### Current Status & Observations (as of last interaction)
-
-**Blocking Issue:**
-*   **`typecheck` Error:** Compilation is currently blocked by an `undefined: validIdentifierRegex` error in `pkg/image/validation.go`. **This must be resolved before proceeding with other linting or testing.** This likely resulted from an incorrect removal during the `unused` code cleanup.
-
-**Progress:**
-*   **`typecheck`:** Blocker fixed (added `validIdentifierRegex`).
-*   **Import Path & Function Call:** Fixed incorrect import path `github.com/lalbers/irr/test/testutil` to `github.com/lalbers/irr/pkg/testutil` in `test/integration/integration_test.go`. Corrected the call in `TestMain` from `testutil.BuildIrrBinary` to the local `buildIrrBinary` function, resolving the subsequent `undefined` error.
-*   **`errcheck`:** Fixed (suppressed via `#nolint` in `cmd/irr/main.go`).
-*   **`errorlint`:** Fixed.
-*   **`nilerr`:** Fixed.
-*   **`wrapcheck`:** Fixed.
-*   **`unused`:** Partially addressed previously, but caused blocker. 20 items now reported including the fix. Needs careful re-run.
-
-**Next Steps & Refined Workflow:**
-1.  **[BLOCKER] Resolve `typecheck` Error:** Fix the `undefined: validIdentifierRegex` error in `pkg/image/validation.go`. Determine if `isValidIdentifier` is still needed and either define the regex or remove the function and its usages.
-2.  **Re-verify Test State:** Run `go test ./...` to check for any test failures. Address any failures.
-3.  **Re-verify Full Lint State:** Run `golangci-lint run ./...` to get an accurate list of *all* current lint errors.
-4.  **Update TODO Statuses:** Update the specific linter steps based on the accurate lint/test results, marking any newly passing linters as complete.
-5.  **Resume Linting (Order TBD):** Proceed with fixing remaining lint errors one category at a time, adhering strictly to the refined pre/post verification:
-    *   **Pre-Verification:** Run `golangci-lint run --enable-only=<linter> ./... | cat` AND `go test ./...`.
-    *   **Action:** Fix reported errors for the target linter.
-    *   **Post-Verification:** Run `golangci-lint run --enable-only=<linter> ./... | cat` (expect no errors for this linter) AND `go test ./...` (expect PASS).
+**General Workflow (Post-Test Fixes):**
+1.  **Pre-Verification:** `go test ./...` (Confirm tests PASS). Run `golangci-lint run --enable-only=<linter> ./... | cat` for the target linter.
+2.  **Action:** Fix reported lint errors for the category.
+3.  **Post-Verification:** Rerun `golangci-lint run --enable-only=<linter> ./... | cat` (expect no errors for that category) and `go test ./...` (expect all tests to pass).
 
 ---
 **Previous Progress Snippets (Historical):**
 ✓ Fixed command structure, exit codes, logging.
 ✓ Addressed initial critical bugs & test failures.
 ✓ Refactored core components (`detection.go`, `registry`).
+✓ Fixed `typecheck` blocker, `errcheck`, `errorlint`, `nilerr`, `wrapcheck`.
 
 **Note:** The debug flag (`-debug` or `DEBUG=1`) can be used during testing and development to enable detailed logging.

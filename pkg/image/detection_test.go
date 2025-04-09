@@ -1009,25 +1009,25 @@ func TestDetectImages_BasicDetection(t *testing.T) {
 // TestDetectImages_StrictMode tests image detection in strict mode
 func TestDetectImages_StrictMode(t *testing.T) {
 	values := map[string]interface{}{
-		"knownPathValid":     "docker.io/library/nginx:1.23",    // Valid, known path, source registry
-		"knownPathNonSource": "other.registry/app:1.0",          // Valid, known path, non-source registry
-		"knownPathInvalid":   "invalid-image-string",            // Invalid, known path
-		"unknownPathValid":   "docker.io/library/alpine:latest", // Valid, unknown path
-		"templatedImage":     "{{ .Values.image.tag }}",         // Templated string
+		"appImage":            "docker.io/library/nginx:1.23",    // Valid, known path (.image), source registry
+		"sidecarImage":        "other.registry/app:1.0",          // Valid, known path (.image), non-source registry
+		"initImage":           "invalid-image-string",            // Invalid, known path (.image)
+		"someOtherConfigKey":  "docker.io/library/alpine:latest", // Valid, unknown path
+		"templatedValueImage": "{{ .Values.image.tag }}",         // Templated string, known path (.image)
 	}
 
 	expectedDetected := []DetectedImage{
 		{
 			Reference: &Reference{Registry: "docker.io", Repository: "library/nginx", Tag: "1.23"},
-			Path:      []string{"knownPathValid"},
+			Path:      []string{"appImage"},
 			Pattern:   PatternString,
 			Original:  "docker.io/library/nginx:1.23",
 		},
 	}
 	expectedUnsupported := []UnsupportedImage{
-		{Location: []string{"knownPathInvalid"}, Type: UnsupportedTypeStringParseError},
-		{Location: []string{"knownPathNonSource"}, Type: UnsupportedTypeNonSourceImage},
-		{Location: []string{"templatedImage"}, Type: UnsupportedTypeTemplateString},
+		{Location: []string{"initImage"}, Type: UnsupportedTypeStringParseError},
+		{Location: []string{"sidecarImage"}, Type: UnsupportedTypeNonSourceImage},
+		{Location: []string{"templatedValueImage"}, Type: UnsupportedTypeTemplateString},
 	}
 
 	// Run with strict mode and docker.io as source
