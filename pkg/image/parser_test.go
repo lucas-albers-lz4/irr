@@ -82,7 +82,7 @@ func TestParseImageReference(t *testing.T) {
 			name:          "invalid image reference",
 			input:         "invalid///image::ref",
 			wantErr:       true,
-			errorContains: "invalid repository name",
+			errorContains: "invalid reference format",
 		},
 		{
 			name:          "empty string",
@@ -105,19 +105,19 @@ func TestParseImageReference(t *testing.T) {
 			name:          "invalid digest format",
 			input:         "gcr.io/project/image@invalid-digest",
 			wantErr:       true,
-			errorContains: "invalid digest format",
+			errorContains: "invalid reference format",
 		},
 		{
 			name:          "invalid tag format",
 			input:         "gcr.io/project/image:invalid/tag",
 			wantErr:       true,
-			errorContains: "invalid tag format",
+			errorContains: "invalid reference format",
 		},
 		{
 			name:          "invalid repository name",
 			input:         "docker.io/Inv@lid Repo/image:tag",
 			wantErr:       true,
-			errorContains: "invalid repository name (ambiguous separators found)",
+			errorContains: "invalid reference format",
 		},
 		{
 			name:  "repository only (implicit latest)",

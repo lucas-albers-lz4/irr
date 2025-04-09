@@ -56,6 +56,11 @@ func SortUnsupportedImages(images []UnsupportedImage) {
 // It assumes the slices have been sorted beforehand.
 func assertDetectedImages(t *testing.T, expected, actual []DetectedImage, checkOriginal bool) {
 	t.Helper()
+
+	// Sort both slices by path string for deterministic comparison
+	SortDetectedImages(expected)
+	SortDetectedImages(actual)
+
 	assert.Equal(t, len(expected), len(actual), "Detected image count mismatch")
 	if len(expected) == len(actual) {
 		for i := range actual {
@@ -1025,9 +1030,21 @@ func TestDetectImages_StrictMode(t *testing.T) {
 		},
 	}
 	expectedUnsupported := []UnsupportedImage{
-		{Location: []string{"initImage"}, Type: UnsupportedTypeStringParseError},
-		{Location: []string{"sidecarImage"}, Type: UnsupportedTypeNonSourceImage},
-		{Location: []string{"templatedValueImage"}, Type: UnsupportedTypeTemplateString},
+		{
+			Location: []string{"initImage"},
+			Type:     UnsupportedTypeStringParseError,
+			Error:    fmt.Errorf("strict mode: string at known image path [initImage] was skipped (likely invalid format)"),
+		},
+		{
+			Location: []string{"sidecarImage"},
+			Type:     UnsupportedTypeNonSourceImage,
+			Error:    fmt.Errorf("strict mode: string at path [sidecarImage] is not from a configured source registry"),
+		},
+		{
+			Location: []string{"templatedValueImage"},
+			Type:     UnsupportedTypeTemplateString,
+			Error:    fmt.Errorf("strict mode: template variable detected in string at path [templatedValueImage]"),
+		},
 	}
 
 	// Run with strict mode and docker.io as source

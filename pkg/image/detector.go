@@ -31,16 +31,47 @@ func (d *Detector) DetectImages(values interface{}, path []string) ([]DetectedIm
 	debug.DumpValue("Context", d.context)
 	debug.Printf("[DETECTOR ENTRY] Path: %v, Type: %T", path, values)
 
+	var detectedImages []DetectedImage
+	var unsupportedMatches []UnsupportedImage
+	var err error
+
 	switch v := values.(type) {
 	case map[string]interface{}:
-		return d.processMapValue(v, path)
+		detectedImages, unsupportedMatches, err = d.processMapValue(v, path)
 	case []interface{}:
-		return d.processSliceValue(v, path)
+		detectedImages, unsupportedMatches, err = d.processSliceValue(v, path)
 	case string:
-		return d.processStringValue(v, path)
+		detectedImages, unsupportedMatches, err = d.processStringValue(v, path)
 	default:
+		// Non-mappable types are ignored, return empty slices and nil error
 		return nil, nil, nil
 	}
+
+	// Handle potential error from processing functions
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Post-detection Filtering for Non-Strict Mode
+	if !d.context.Strict && (len(d.context.SourceRegistries) > 0 || len(d.context.ExcludeRegistries) > 0) {
+		debug.Printf("Applying post-detection filtering (non-strict mode) to %d images for path %v", len(detectedImages), path)
+		filteredDetected := make([]DetectedImage, 0, len(detectedImages))
+		for _, detected := range detectedImages {
+			// Normalize before checking source registry (important for docker.io vs index.docker.io)
+			NormalizeImageReference(detected.Reference)
+			if IsSourceRegistry(detected.Reference, d.context.SourceRegistries, d.context.ExcludeRegistries) {
+				filteredDetected = append(filteredDetected, detected)
+			} else {
+				debug.Printf("Filtering out non-source/excluded image (non-strict): %s at path %v", detected.Reference.String(), detected.Path)
+				// Optionally, add to unsupportedMatches if we want to report these in non-strict mode too
+				// unsupportedMatches = append(unsupportedMatches, UnsupportedImage{...})
+			}
+		}
+		detectedImages = filteredDetected // Replace with filtered list
+		debug.Printf("Finished post-detection filtering. %d images remain.", len(detectedImages))
+	}
+
+	return detectedImages, unsupportedMatches, nil
 }
 
 // processMapValue handles detection of images in map values
@@ -241,18 +272,33 @@ func (d *Detector) processStringValueStrict(v string, path []string, isKnownImag
 		return detectedImages, unsupportedMatches, nil
 	}
 
-	// If err is nil, proceed with source registry check
+	// If err is nil, proceed with source registry check or handle unexpected nil ref
 	if imgRefDetected != nil {
+		// Successfully parsed
 		NormalizeImageReference(imgRefDetected.Reference)
 		if IsSourceRegistry(imgRefDetected.Reference, d.context.SourceRegistries, d.context.ExcludeRegistries) {
 			detectedImages = append(detectedImages, *imgRefDetected)
 		} else {
+			// Parsed correctly, but not a source registry
 			unsupportedMatches = append(unsupportedMatches, UnsupportedImage{
 				Location: path,
 				Type:     UnsupportedTypeNonSourceImage,
 				Error:    fmt.Errorf("strict mode: string at path %v is not from a configured source registry", path),
 			})
 		}
+	} else {
+		// Handle the case where err is nil but imgRefDetected is also nil
+		// This happens if tryExtractImageFromString heuristic skips the parse (e.g., "invalid-string")
+		// In strict mode, if this happened at a known image path, it's an error.
+		if isKnownImagePath {
+			debug.Printf("Strict mode: String at known image path %v was skipped by heuristic or returned nil ref unexpectedly.", path)
+			unsupportedMatches = append(unsupportedMatches, UnsupportedImage{
+				Location: path,
+				Type:     UnsupportedTypeStringParseError, // Treat heuristic skip at known path as parse error
+				Error:    fmt.Errorf("strict mode: string at known image path %v was skipped (likely invalid format)", path),
+			})
+		}
+		// If not a known image path, returning nil, nil implicitly skips it, which is fine.
 	}
 
 	return detectedImages, unsupportedMatches, nil
@@ -481,7 +527,25 @@ func (d *Detector) tryExtractImageFromString(s string, path []string) (*Detected
 		return nil, ErrSkippedTemplateDetection // Return sentinel error instead of nil, nil
 	}
 
+	// Heuristic: If the string doesn't contain typical image separators, it's unlikely an image ref.
+	if !strings.ContainsAny(s, "/:@") {
+		debug.Printf("String '%s' lacks image separators (/ : @), skipping parse attempt.", s)
+		// Return nil, nil to silently skip in non-strict, allows strict checks later if needed.
+		// If strict mode required parsing *any* string at known paths, this logic would need adjustment,
+		// but current strict logic relies on isImagePath, so skipping non-image-like strings here is okay.
+		return nil, nil
+	}
+
+	// DEBUG: Log input to ParseImageReference
+	debug.Printf("Calling ParseImageReference with: %s", s)
+
 	ref, err := ParseImageReference(s)
+
+	// DEBUG: Log output from ParseImageReference
+	debug.Printf("ParseImageReference returned: err=%v", err)
+	// Use %+v to see struct details if ref is not nil
+	debug.Printf("ParseImageReference returned: ref=%+v", ref)
+
 	if err != nil {
 		// Restore original debug message and error format
 		debug.Printf("ParseImageReference err: %v", err)
