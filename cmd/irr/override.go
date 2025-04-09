@@ -267,26 +267,28 @@ func runOverride(cmd *cobra.Command, args []string) error {
 	// Generate overrides
 	overrideFile, err := generator.Generate()
 	if err != nil {
-		if errors.Is(err, strategy.ErrThresholdExceeded) {
+		switch {
+		case errors.Is(err, strategy.ErrThresholdExceeded):
 			return &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitThresholdError,
 				Err:  fmt.Errorf("failed to process chart: %w", err),
 			}
-		} else if errors.Is(err, chart.ErrChartNotFound) || errors.Is(err, chart.ErrChartLoadFailed) {
+		case errors.Is(err, chart.ErrChartNotFound) || errors.Is(err, chart.ErrChartLoadFailed):
 			return &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitChartParsingError,
 				Err:  fmt.Errorf("failed to process chart: %w", err),
 			}
-		} else if errors.Is(err, chart.ErrStrictValidationFailed) {
+		case errors.Is(err, chart.ErrStrictValidationFailed):
 			return &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitUnsupportedStructure,
 				Err:  fmt.Errorf("failed to process chart: %w", err),
 			}
-		}
-		// Default to image processing error for any other errors
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitImageProcessingError,
-			Err:  fmt.Errorf("failed to process chart: %w", err),
+		default:
+			// Default to image processing error for any other errors
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitImageProcessingError,
+				Err:  fmt.Errorf("failed to process chart: %w", err),
+			}
 		}
 	}
 

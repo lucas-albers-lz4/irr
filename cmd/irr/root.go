@@ -379,20 +379,27 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		// Text output format matching test expectations
 		var sb strings.Builder
 		sb.WriteString("Chart Analysis\n\n")
-		sb.WriteString(fmt.Sprintf("Total image patterns: %d\n\n", len(result.ImagePatterns)))
+		sb.WriteString(fmt.Sprintf("Total image patterns found: %d\n", len(result.ImagePatterns)))
+		sb.WriteString(fmt.Sprintf("Total global patterns found: %d\n\n", len(result.GlobalPatterns)))
 
-		for _, pattern := range result.ImagePatterns {
-			sb.WriteString(fmt.Sprintf("Path: %s\n", pattern.Path))
-			sb.WriteString(fmt.Sprintf("Type: %s\n", pattern.Type))
-			sb.WriteString(fmt.Sprintf("Value: %s\n", pattern.Value))
+		if len(result.ImagePatterns) > 0 {
+			sb.WriteString("Detected Image Patterns:\n")
+			for _, pattern := range result.ImagePatterns {
+				sb.WriteString(fmt.Sprintf("  - Path: %s\n", pattern.Path))
+				sb.WriteString(fmt.Sprintf("    Type: %s\n", pattern.Type))
+				// Use %+v for potentially complex values like maps
+				formattedValue := fmt.Sprintf("%+v", pattern.Value)
+				sb.WriteString(fmt.Sprintf("    Value: %s\n", formattedValue))
+			}
 			sb.WriteString("\n")
 		}
 
 		if len(result.GlobalPatterns) > 0 {
-			sb.WriteString(fmt.Sprintf("\nGlobal patterns: %d\n", len(result.GlobalPatterns)))
+			sb.WriteString("Detected Global Patterns:\n")
 			for _, pattern := range result.GlobalPatterns {
-				sb.WriteString(fmt.Sprintf("  Path: %s\n", pattern.Path))
+				sb.WriteString(fmt.Sprintf("  - Path: %s\n", pattern.Path))
 			}
+			sb.WriteString("\n")
 		}
 		output = sb.String()
 	}

@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -195,7 +197,7 @@ func TestAnalyzeCmd(t *testing.T) {
 			},
 			expectErr:         false,
 			expectFile:        "analyze_test_output.txt",
-			expectFileContent: "Chart Analysis", // Basic check for text output in file
+			expectFileContent: "{", // Check for start of JSON output
 		},
 		{
 			name: "analyzer returns error",
@@ -217,11 +219,7 @@ func TestAnalyzeCmd(t *testing.T) {
 }
 
 func TestAnalyzeCommand_Success_TextOutput(t *testing.T) {
-	fs := setupAnalyzeTestFS(t)
-	AppFs = fs // Use mock FS for the command
 	chartPath := "/fake/chart"
-	err := fs.MkdirAll(chartPath, 0755) // Ensure dir exists
-	require.NoError(t, err, "Failed to create test directory")
 
 	// Mock the analyzer factory
 	mockResult := analysis.NewChartAnalysis()
@@ -242,30 +240,47 @@ func TestAnalyzeCommand_Success_TextOutput(t *testing.T) {
 	}
 	defer func() { currentAnalyzerFactory = originalFactory }()
 
-	args := []string{"analyze", chartPath, "--source-registries", "source.io"}
-	cmd := getRootCmd() // Get the root command
-	output, err := executeAnalyzeCommand(cmd, args...)
+	// Create a dummy command object to pass to runAnalyze
+	cmd := newAnalyzeCmd()
+	err := cmd.Flags().Set("source-registries", "source.io")
 	require.NoError(t, err)
 
+	// Capture stdout
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stdout = w
+
+	// Execute the core run function
+	err = runAnalyze(cmd, []string{chartPath})
+	require.NoError(t, err)
+
+	// Restore stdout and read captured output
+	err = w.Close()
+	require.NoError(t, err)
+	os.Stdout = oldStdout
+	buf := new(bytes.Buffer)
+	_, err = buf.ReadFrom(r)
+	require.NoError(t, err)
+	output := buf.String()
+
+	// Verify output
 	assert.Contains(t, output, "Chart Analysis")
-	assert.Contains(t, output, "Total image patterns: 1")
+	assert.Contains(t, output, "Total image patterns found: 1")
 	assert.Contains(t, output, "image.repository")
 	assert.Contains(t, output, "string")
 	assert.Contains(t, output, "source.io/nginx:1.23")
 }
 
 func TestAnalyzeCommand_Success_JsonOutput(t *testing.T) {
-	fs := setupAnalyzeTestFS(t)
-	AppFs = fs
 	chartPath := "/fake/json/chart"
-	err := fs.MkdirAll(chartPath, 0755)
-	require.NoError(t, err, "Failed to create test directory")
 
+	// Mock the analyzer factory
 	mockResult := analysis.NewChartAnalysis()
 	mockResult.ImagePatterns = append(mockResult.ImagePatterns, analysis.ImagePattern{
-		Path:  "image.repository",
+		Path:  "image",
 		Type:  analysis.PatternTypeString,
-		Value: "source.io/nginx:1.23",
+		Value: "source.io/redis:latest",
 		Count: 1,
 	})
 	mockAnalysis := &mockAnalyzer{
@@ -279,24 +294,49 @@ func TestAnalyzeCommand_Success_JsonOutput(t *testing.T) {
 	}
 	defer func() { currentAnalyzerFactory = originalFactory }()
 
-	args := []string{"analyze", chartPath, "--source-registries", "source.io", "--output", "json"}
-	cmd := getRootCmd()
-	output, err := executeAnalyzeCommand(cmd, args...)
+	// Create a dummy command object and set flags
+	cmd := newAnalyzeCmd()
+	err := cmd.Flags().Set("source-registries", "source.io")
+	require.NoError(t, err)
+	err = cmd.Flags().Set("output", "json")
 	require.NoError(t, err)
 
-	// Basic check for JSON structure
-	assert.True(t, strings.HasPrefix(strings.TrimSpace(output), "{"), "Expected JSON output")
+	// Capture stdout
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stdout = w
+
+	// Execute the core run function
+	err = runAnalyze(cmd, []string{chartPath})
+	require.NoError(t, err)
+
+	// Restore stdout and read captured output
+	err = w.Close()
+	require.NoError(t, err)
+	os.Stdout = oldStdout
+	buf := new(bytes.Buffer)
+	_, err = buf.ReadFrom(r)
+	require.NoError(t, err)
+	output := buf.String()
+
+	// Verify output is valid JSON
+	assert.True(t, strings.HasPrefix(output, "{"), "Expected JSON output")
 	var jsonData map[string]interface{}
 	err = json.Unmarshal([]byte(output), &jsonData)
 	require.NoError(t, err, "Failed to unmarshal JSON output")
-	assert.NotNil(t, jsonData["ImagePatterns"])
+
+	// Basic check for expected data in JSON
+	imagePatterns, ok := jsonData["ImagePatterns"].([]interface{})
+	assert.True(t, ok, "JSON should have ImagePatterns array")
+	assert.Len(t, imagePatterns, 1, "JSON should contain one image pattern")
 }
 
 func TestAnalyzeCommand_AnalysisError(t *testing.T) {
 	fs := setupAnalyzeTestFS(t)
 	AppFs = fs
 	chartPath := "/fake/error/chart"
-	err := fs.MkdirAll(chartPath, 0755)
+	err := fs.MkdirAll(chartPath, 0o755)
 	require.NoError(t, err, "Failed to create test directory")
 
 	analysisError := errors.New("failed to analyze")

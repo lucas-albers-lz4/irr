@@ -38,16 +38,20 @@
 
 **Current Status & Blocking Issues:**
 *   **Test Failures:** `make test` and `go test ./pkg/image/...` are failing.
-    *   **Parser Failures (`pkg/image/parser_test.go`):** The `ParseImageReference` function, relying on `distribution/reference.ParseNamed`, is failing tests because it lacks necessary pre-normalization (e.g., adding `docker.io/library/`, `latest` tag) and post-processing (e.g., stripping ports from registry). Errors like "repository name must be canonical" indicate stricter requirements from the underlying library. Specific expected errors (like tag/digest conflict) are also not being returned correctly.
-    *   **Detector Failures (`pkg/image/detection_test.go`):** Many tests fail because they expect detected images but receive `nil`. This is largely a downstream effect of the parser failures. `tryExtractImageFromMap` correctly identifies map structures but calls `createImageReference`, which in turn calls the faulty `ParseImageReference`. The parser's failure to return a valid `Reference` object leads to `nil` being passed down, causing the detector tests to fail (e.g., "Internal inconsistency... detectedImage=nil").
+    *   **Parser Failures (`pkg/image/parser_test.go`):** [RESOLVED] ~~The `ParseImageReference` function, relying on `distribution/reference.ParseNamed`, is failing tests because it lacks necessary pre-normalization (e.g., adding `docker.io/library/`, `latest` tag) and post-processing (e.g., stripping ports from registry). Errors like "repository name must be canonical" indicate stricter requirements from the underlying library. Specific expected errors (like tag/digest conflict) are also not being returned correctly.~~
+    *   **Detector Failures (`pkg/image/detection_test.go`):** [RESOLVED] ~~Many tests fail because they expect detected images but receive `nil`. This is largely a downstream effect of the parser failures. `tryExtractImageFromMap` correctly identifies map structures but calls `createImageReference`, which in turn calls the faulty `ParseImageReference`. The parser's failure to return a valid `Reference` object leads to `nil` being passed down, causing the detector tests to fail (e.g., "Internal inconsistency... detectedImage=nil").~~
     *   **Integration Test Failures (`test/integration/*`):** Failures previously attributed to strict mode handling of templates are likely compounded or caused by the underlying parser issues. Exit code 11 ("unsupported structure found") might still occur in strict mode for templates, but the parser issues need to be resolved first.
     *   **[RESOLVED]** ~~Helm validation failures (`Invalid type for path image.repository`) were caused by incorrect parsing of `mappings.yaml` in `test/integration/harness.go:ValidateOverrides`. Mappings are now loaded correctly at the start of the function.~~
+    *   **[RESOLVED]** ~~`pkg/registry` failures (`TestLoadMappings/invalid_path_traversal`) were caused by incorrect test setup disabling the path traversal check.~~
+    *   **[RESOLVED]** ~~`pkg/chart` failures (`TestGenerator_Generate_Mappings`, `TestGenerateOverrides_Integration`) were caused by test data using registry names not considered valid by `distribution/reference` and incorrect test assertions.~~
     *   **Resolution:**
-        1.  **Fix `ParseImageReference` (`pkg/image/parser.go`):** Implement pre-normalization (add defaults) and post-processing (strip ports), ensuring correct error propagation based on `distribution/reference` behavior. This is the top priority.
-        2.  **Run `pkg/image` tests:** Execute `go test ./pkg/image/... -v` to verify parser and detector fixes.
-        3.  **Address Remaining Detector Issues:** If detector tests still fail after the parser fix, revisit `tryExtractImageFromMap` and `createImageReference` in `pkg/image/detector.go`.
-        4.  **Fix Integration Tests:** Once `pkg/image` tests pass, re-run `make test`. Address any remaining integration test failures, potentially related to strict mode template handling or other issues revealed after fixing the parser.
-    *   **Priority:** **[BLOCKER]** Parser and detector test failures must be resolved before proceeding with further linting or feature development.
+        1.  **[DONE]** ~~Fix `ParseImageReference` (`pkg/image/parser.go`): Implement pre-normalization (add defaults) and post-processing (strip ports), ensuring correct error propagation based on `distribution/reference` behavior. This is the top priority.~~
+        2.  **[DONE]** ~~Run `pkg/image` tests: Execute `go test ./pkg/image/... -v` to verify parser and detector fixes.~~
+        3.  **[DONE]** ~~Address Remaining Detector Issues: If detector tests still fail after the parser fix, revisit `tryExtractImageFromMap` and `createImageReference` in `pkg/image/detector.go`.~~
+        4.  **[DONE]** ~~Fix `pkg/registry` and `pkg/chart` tests.~~
+        5.  **[In Progress]** Fix Integration Tests: Once `pkg/image`, `pkg/registry`, and `pkg/chart` tests pass, re-run `make test`. Address any remaining integration test failures, potentially related to strict mode template handling or other issues revealed after fixing the parser.
+        6.  **[Pending]** Fix `cmd/irr` tests.
+    *   **Priority:** **[BLOCKER RESOLVED]** ~~Parser and detector test failures must be resolved before proceeding with further linting or feature development.~~ Remaining `cmd/irr` and integration tests are the current priority.
 *   **Lint Errors:** `make lint` reports numerous issues across various categories.
 
 **Completed Linting Steps (Condensed):**
