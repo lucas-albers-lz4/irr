@@ -63,67 +63,135 @@
 **Status Summary (Based on last test run):**
 *   **Build Errors:** Fixed.
 *   **Tests:**
-    *   `cmd/irr`: Failing extensively (flag handling, execution logic, output).
-    *   `pkg/chart`: Newly failing (`TestGenerator_...`, `TestGenerateOverrides_Integration`).
-    *   `pkg/image`: Minor failure persists (`TestImageDetector_...`).
-    *   `pkg/registry`: Failing (`TestLoadMappings`, `TestGetTargetRegistry`).
+    *   `cmd/irr`: Failing extensively (`TestAnalyzeCommand_*`, `TestOverrideCmd*`, `TestOverrideCommand_*`).
+    *   `pkg/chart`: Failing (`TestGenerator_Generate_Simple`).
+    *   `pkg/image`: Passing.
+    *   `pkg/registry`: Passing.
     *   `test/integration`: Failing extensively.
     *   Other `pkg/` tests seem okay.
-*   **Lint:** ~141 issues estimated.
+*   **Lint:** ~154 issues estimated (`errcheck`, `errorlint`, `gocritic`, `gosec`, `ineffassign`, `lll`, `mnd`, `revive`, `unused`, `wrapcheck`).
+
+**General Pre/Post Steps for Each Fix:**
+*   **Pre-fix:**
+    1.  `git status`: Ensure clean working directory.
+    2.  `go test ./<relevant_package_or_integration_path>/... -run <SpecificFailingTestName>`: Confirm the specific test failure still exists.
+    3.  `(Optional) golangci-lint run ./...`: Note current lint state for reference.
+*   **Post-fix:**
+    1.  `go test ./<relevant_package_or_integration_path>/... -run <SpecificFailingTestName>`: Verify fix locally for the specific test.
+    2.  `go test ./<relevant_package_or_integration_path>/...`: Verify all tests in the relevant scope pass.
+    3.  `go test ./...`: Ensure no regressions were introduced in other packages.
+    4.  `golangci-lint run ./...`: Ensure no new lint errors were introduced by the fix.
+    5.  `git commit`: Commit the fix with a clear message.
 
 **Revised Fix Plan (Sequential):**
 
-*Pre-step:* Ensure working directory is clean (`git status`). Run `go test ./...` and `golangci-lint run ./...` to establish a baseline.
+*Initial Pre-step:* Ensure working directory is clean (`git status`). Run `go test ./...` and `golangci-lint run ./...` to establish a baseline.
 
-1.  **Fix `pkg/image` Unit Test (`TestImageDetector_DetectImages_EdgeCases`)**
-    *   **Goal:** Fix minor assertion mismatch.
-    *   **Status:** Still failing (newline mismatch).
-    *   **Action:** Re-apply fix to add trailing `\\n` to the expected error string in `detection_test.go`.
-    *   **Validation:** Run `go test ./pkg/image/... -run TestImageDetector_DetectImages_EdgeCases`. Expect PASS.
+1.  **Fix `pkg/chart` Unit Tests (`TestGenerator_Generate_Simple`)**
+    *   **Goal:** Resolve failure in `TestGenerator_Generate_Simple`.
+    *   **Status:** Failing.
+    *   **Relevant Path:** `./pkg/chart/...`
+    *   **Target Files/Functions:**
+        *   `pkg/chart/generator.go`: Primarily `Generate()`. Possibly helper functions like `isExcluded`, `filterEligibleImages` (if used internally), or interactions with `image.ParseReference`.
+        *   `pkg/chart/generator_test.go`: `TestGenerator_Generate_Simple`, mock setups (`MockChartLoader`, `MockPathStrategy`, `mockDetector`), expected override map definition.
+    *   **Action:**
+        1.  **(Pre-fix Steps)** Run `go test ./pkg/chart/... -run TestGenerator_Generate_Simple`.
+        2.  Examine failure details: Which assertion in `TestGenerator_Generate_Simple` is failing? (Likely `assert.Equal` or `require.Equal` comparing the expected vs actual `overrideFile.Overrides` map).
+        3.  Verify Mock Setup:
+            *   `MockChartLoader`: Confirm `chart.Values` it returns matches test expectations.
+            *   `MockPathStrategy`: Confirm `GeneratePath` returns the expected string for the mock image reference.
+            *   `mockDetector`: Confirm `Detect` returns the exact `[]image.DetectedImage` expected by the test logic (pay attention to `Path`, `Reference.Original`, etc.).
+        4.  Debug `Generate()`:
+            *   Step through the function call with a debugger or add temporary `debug.Printf` statements.
+            *   Check `loader.Load()` and `detector.Detect()` return values match the mock setup.
+            *   Trace the loop over `detectedImages`. For the image(s) expected in the test:
+                *   Does `image.ParseReference(d.Reference.Original)` succeed and produce the correct `parsedRef`?
+                *   Is the image correctly deemed eligible (passing `isExcluded`, `isSourceRegistry` checks)?
+                *   Is `pathStrategy.GeneratePath()` called with the correct `parsedRef` and `targetRegistry`, and does it return the expected result?
+                *   Is `override.SetValueAtPath()` called with the correct `overrideFile.Overrides` map, the image's `d.Path`, and the generated strategy path?
+        5.  Compare the final `overrideFile.Overrides` map content just before the return with the map expected by the failing assertion. Identify the discrepancy.
+        6.  Adjust mock data, `Generate()` logic (e.g., filtering, path extraction, strategy input), or test assertions as necessary.
+        7.  **(Post-fix Steps)**
+    *   **Validation:** `go test ./pkg/chart/...` should PASS.
 
-2.  **Fix `pkg/registry` Unit Tests (`TestLoadMappings`, `TestGetTargetRegistry`)**
-    *   **Goal:** Ensure registry mapping loading, validation, and lookup work correctly.
-    *   **Status:** Still failing (YAML loading, normalization).
-    *   **Action:** Debug `LoadMappings` (YAML parsing, file validation errors) and `GetTargetRegistry` (normalization logic for docker.io/quay.io, map lookup). Adjust logic or test assertions.
-    *   **Validation:** Run `go test ./pkg/registry/...`. Expect PASS.
+2.  **Fix `cmd/irr` Unit Tests (`TestAnalyzeCommand_*`, `TestOverrideCmd*`, `TestOverrideCommand_*`)**
+    *   **Goal:** Resolve extensive failures in command-level unit tests.
+    *   **Status:** Failing extensively.
+    *   **Relevant Path:** `./cmd/irr/...`
+    *   **Target Files/Functions:**
+        *   `cmd/irr/root.go`: `runOverride()`, `runAnalyze()`, `init()` / command constructors (`newOverrideCmd`, `newAnalyzeCmd`), `PersistentPreRun` flag handling.
+        *   `cmd/irr/override.go`: `newOverrideCmd()`, flag definitions/requirements.
+        *   `cmd/irr/analyze.go`: `newAnalyzeCmd()`, flag definitions/requirements.
+        *   `cmd/irr/override_test.go`, `cmd/irr/analyze_test.go`: Test setup (`setupTestFS`, `setupAnalyzeTestFS`), `executeCommand` helper, specific test functions, mock interactions (analyzer/generator factories).
+    *   **Action (Iterative Approach):**
+        *   **Sub-Step 2a: Fix Flag Parsing/Validation (`TestOverrideCmdArgs`, `TestOverrideCommand_MissingFlags`, relevant parts of `TestAnalyzeCommand_*`)**
+            1.  **(Pre-fix Steps)** Run `go test ./cmd/irr/... -run TestOverrideCmdArgs` (or similar).
+            2.  Focus on tests asserting errors due to missing required flags.
+            3.  In `override.go` (`newOverrideCmd`) and `analyze.go` (`newAnalyzeCmd`), ensure `cmd.MarkFlagRequired(...)` is used correctly for *all* required flags.
+            4.  Address `errcheck` lint errors for `MarkFlagRequired`. Check the returned error: `if err := cmd.MarkFlagRequired("target-registry"); err != nil { /* Handle setup error, maybe panic */ }`.
+            5.  In `root.go` (`runOverride`, `runAnalyze`), ensure flag values are retrieved using `cmd.Flags().Get...()` (not `PersistentFlags` unless defined as such).
+            6.  Address `errcheck` lint errors for `cmd.Flags().Get...()`. Check the error: `targetRegistry, err := cmd.Flags().GetString("target-registry"); if err != nil { /* return fmt.Errorf("failed to get flag 'target-registry': %w", err) */ }`.
+            7.  Debug the `executeCommand` helper in tests if flag issues persist after fixing retrieval/definitions.
+            8.  **(Post-fix Steps for Flag Tests)**
+        *   **Sub-Step 2b: Fix Execution Logic (`TestOverrideCmdExecution`, `TestAnalyzeCommand_Success*`, `TestOverrideCommand_Success`, etc.)**
+            1.  **(Pre-fix Steps)** Run `go test ./cmd/irr/... -run TestOverrideCmdExecution` (or similar success/error execution tests).
+            2.  Focus on tests simulating successful runs or generator/analyzer errors.
+            3.  In `override_test.go` / `analyze_test.go`, verify mock factory setup. Ensure `currentGeneratorFactory` / `currentAnalyzerFactory` are correctly replaced and the mock methods (`Generate`, `Analyze`) return the expected values/errors for the specific test case.
+            4.  Step through `runOverride` / `runAnalyze` in `root.go`:
+                *   Confirm correct retrieval of all flag values (re-check step 2a.6).
+                *   Verify the generator/analyzer is created via the (mocked) factory.
+                *   Confirm the mock `Generate`/`Analyze` is called.
+                *   Trace error handling logic. Is the error returned from the mock handled correctly?
+                *   Trace output logic: Check YAML marshalling (`yaml.Marshal`). Check writing to `cmd.OutOrStdout()` or file (`os.WriteFile`).
+            5.  Adjust mock behavior, command logic, or test assertions.
+            6.  **(Post-fix Steps for Execution Tests)**
+    *   **Validation:** `go test ./cmd/irr/...` should PASS.
 
-3.  **Fix `pkg/chart` Unit Tests (`TestGenerator_Generate_...`, `TestGenerateOverrides_Integration`)**
-    *   **Goal:** Resolve new failures in the chart generator tests.
-    *   **Status:** Newly failing after previous changes.
-    *   **Action:** Debug `generator.Generate`. Focus on:
-        *   The logic converting `analysis.ImagePattern` back to a structure usable by the path strategy (parsing `pattern.Value` / using `pattern.Structure`).
-        *   Registry extraction and filtering logic for `eligibleImages`.
-        *   How map-based patterns are handled when generating the final override path/value.
-        *   Verify test setup, mocks, and expected outputs for `TestGenerator_Generate_*` and `TestGenerateOverrides_Integration`.
-    *   **Validation:** Run `go test ./pkg/chart/...`. Expect PASS.
-
-4.  **Fix `cmd/irr` Unit Tests (`TestAnalyzeCommand_*`, `TestOverrideCmd*`)**
-    *   **Goal:** Resolve extensive failures in command-level tests.
-    *   **Status:** Still failing extensively.
-    *   **Action:** Systematically debug:
-        *   **Flag Access:** Ensure `runOverride` and `runAnalyze` (in `root.go`) correctly retrieve flag values using `cmd.Flags().Get...`. Verify no conflicts with removed persistent flags.
-        *   **Required Flags:** Double-check flag definitions (`MarkFlagRequired`) in `override.go` and `root.go` (`newAnalyzeCmd`) against test expectations for missing flags.
-        *   **Execution Logic:** Step through `runOverride` and `runAnalyze` to ensure correct interaction with generator/analyzer factories, error handling, and output formatting.
-        *   **Test Setup:** Examine `cmd/irr/*_test.go` files. Is the `executeCommand` helper correctly simulating Cobra execution? Are mocks (analyzer, generator, filesystem) behaving as expected?
-        *   **(Cleanup - Optional but Recommended):** Consider moving `runOverride` and `runAnalyze` logic into `override.go` and `analyze.go` respectively.
-    *   **Validation:** Run `go test ./cmd/irr/...`. Expect PASS.
-
-5.  **Fix `test/integration` Failures**
+3.  **Fix `test/integration` Failures**
     *   **Goal:** Resolve end-to-end test failures.
-    *   **Status:** Still failing extensively.
-    *   **Action:** After all package and command unit tests pass, re-run integration tests. Debug failures by:
-        *   Checking exit codes (`harness.AssertExitCode`).
-        *   Examining stderr/stdout (`harness.AssertErrorContains`, `harness.AssertOutputContains`).
-        *   Inspecting generated override files (`harness.ValidateOverrides`).
-        *   Using `--debug` flag in test runs for more `irr` output.
-    *   **Validation:** Run `go test ./test/integration/...`. Expect PASS.
+    *   **Status:** Failing extensively.
+    *   **Relevant Path:** `./test/integration/...`
+    *   **Target Files/Functions:**
+        *   `test/integration/integration_test.go`: All `Test*` functions.
+        *   `test/integration/harness.go`: Core harness logic (`Execute`, `ValidateOverrides`, `AssertExitCode`, `GetOverrides`, `setup`, `teardown`).
+        *   Likely involves debugging interactions across `cmd/irr/root.go`, `pkg/chart/generator.go`, `pkg/image/detector.go`, `pkg/registry/mappings.go`, etc.
+    *   **Action (Iterative Approach - AFTER Unit Tests Pass):**
+        *   **Sub-Step 3a: Fix Basic Tests (`TestNoArgs`, `TestMinimalChart`)**
+            1.  **(Pre-fix Steps)** Run `go test ./test/integration/... -run TestNoArgs`.
+            2.  Debug: Why doesn't it exit with the expected error/output for no arguments? Check root command definition in `cmd/irr/root.go`.
+            3.  **(Post-fix Steps)**
+            4.  **(Pre-fix Steps)** Run `go test ./test/integration/... -run TestMinimalChart`.
+            5.  Debug: Use `harness.Execute` with `debug: true` or manually run `irr` with `--debug` against the `minimal-chart` fixture. Compare generated overrides (`harness.ValidateOverrides`) and exit code (`harness.AssertExitCode`) against expectations. Trace the discrepancy through the debug logs.
+            6.  **(Post-fix Steps)**
+        *   **Sub-Step 3b: Fix Feature-Specific Tests (`TestDryRunFlag`, `TestStrictMode`, `TestRegistryMappingFile`, `TestComplexChartFeatures`, etc.)**
+            1.  **(Pre-fix Steps)** Run `go test ./test/integration/... -run TestDryRunFlag`.
+            2.  Debug: Does the test correctly check that no file is written? Is the `--dry-run` flag correctly processed in `runOverride` (`cmd/irr/root.go`) to skip the file write?
+            3.  **(Post-fix Steps)**
+            4.  Repeat for `TestStrictMode` (check exit code 5 handling in `root.go`), `TestRegistryMappingFile` (check `registry.LoadMappings` interaction), and complex charts (check image detection/override generation for specific structures).
+        *   **Sub-Step 3c: Fix Remaining Tests**
+            1.  Address any other failing integration tests systematically using debug logs and manual runs.
+    *   **Validation:** `go test ./test/integration/...` should PASS.
 
-6.  **Address Lint Errors**
+4.  **Address Lint Errors (~154 issues)**
     *   **Goal:** Improve code quality, security, and robustness.
     *   **Status:** Pending test fixes.
-    *   **Action:** Once all tests pass, proceed with the prioritized linting plan (`errcheck`, `gosec`, `dupl`, etc.) as previously outlined.
-    *   **Validation:** Run `golangci-lint run ./...`. Expect zero critical/high/medium errors. Address low-priority ones as feasible.
+    *   **Relevant Path:** `./...`
+    *   **Target Files/Functions:** All files listed in `golangci-lint run ./...` output.
+    *   **Action (Batching Recommended):**
+        1.  **(Pre-fix Steps - Ensure `go test ./...` passes)**
+        2.  Run `golangci-lint run ./... --disable-all -E <LinterName>` for each linter group below. Fix the reported issues.
+        3.  **(Post-fix Steps after each batch)**
+        *   **Batch 1 (Security):** `gosec`
+        *   **Batch 2 (Error Handling):** `errcheck`, `errorlint`, `wrapcheck`
+        *   **Batch 3 (Potential Bugs):** `unused`, `ineffassign`
+        *   **Batch 4 (Code Health/Readability):** `gocritic`, `revive` (Review suggestions carefully)
+        *   **Batch 5 (Style):** `mnd`, `lll` (Address Magic Numbers; be pragmatic about Line Length if fixes are too disruptive)
+        4.  Run `golangci-lint run ./...` (all enabled linters) and fix any remaining stragglers.
+    *   **Validation:** `golangci-lint run ./...` should report zero relevant errors.
 
-9.  **Address Low Priority Lint Errors & Technical Debt**
-    *   **Goal:** Clean up remaining style issues, unused code, and consolidate functions.
-    *   **Order:** Consolidate `SetValueAtPath` -> `unused` -> `funlen` (Tests) -> `
+5.  **Address Low Priority Lint Errors & Technical Debt**
+    *   **Goal:** Final cleanup.
+    *   **(Action requires all previous steps complete)**
+    *   Review any remaining low-priority lint issues.
+    *   Review functions flagged by `funlen` (if enabled/configured) and refactor if complexity warrants it.
+    *   Manually review core files (`generator.go`, `detector.go`, `root.go`) for potential simplifications or clarity improvements.

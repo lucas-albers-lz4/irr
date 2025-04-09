@@ -12,24 +12,29 @@ import (
 
 // Test function names updated to match consolidated functions
 func TestLoadMappings(t *testing.T) {
-	// Create a temporary mappings file
-	// **NOTE:** Updated fixture to match map[string]string format expected by LoadMappings.
-	content := `mappings:
+	// Create a temporary mappings file with new format
+	newFormatContent := `mappings:
   - source: quay.io
     target: my-registry.example.com/quay-mirror
   - source: docker.io
     target: my-registry.example.com/docker-mirror`
 	tmpDir := t.TempDir()
-	tmpFile := filepath.Join(tmpDir, "mappings.yaml")
-	err := os.WriteFile(tmpFile, []byte(content), 0o600)
+	newFormatFile := filepath.Join(tmpDir, "new-format.yaml")
+	err := os.WriteFile(newFormatFile, []byte(newFormatContent), 0o600)
+	require.NoError(t, err)
+
+	// Create a temporary file with old format
+	oldFormatContent := `quay.io: my-registry.example.com/quay-mirror
+docker.io: my-registry.example.com/docker-mirror`
+	oldFormatFile := filepath.Join(tmpDir, "old-format.yaml")
+	err = os.WriteFile(oldFormatFile, []byte(oldFormatContent), 0o600)
 	require.NoError(t, err)
 
 	// Create an empty temporary file
 	emptyTmpFile := filepath.Join(tmpDir, "empty.yaml")
-	// #nosec G304 // Testing file operations with temporary files is safe
 	emptyFile, err := os.Create(emptyTmpFile)
 	require.NoError(t, err)
-	if err := emptyFile.Close(); err != nil { // Close immediately after creation
+	if err := emptyFile.Close(); err != nil {
 		t.Logf("Warning: failed to close empty temp file: %v", err)
 	}
 
@@ -41,7 +46,6 @@ func TestLoadMappings(t *testing.T) {
 
 	// Create a temporary file with an invalid extension
 	invalidExtTmpFile := filepath.Join(tmpDir, "mappings.txt")
-	// #nosec G304 // Testing file operations with temporary files is safe
 	invalidExtFile, err := os.Create(invalidExtTmpFile)
 	require.NoError(t, err)
 	if err := invalidExtFile.Close(); err != nil {
@@ -58,22 +62,31 @@ func TestLoadMappings(t *testing.T) {
 	err = os.WriteFile(tmpDirFile, []byte(""), 0o600)
 	require.NoError(t, err)
 
+	expectedMappings := &Mappings{
+		Entries: []Mapping{
+			{Source: "quay.io", Target: "my-registry.example.com/quay-mirror"},
+			{Source: "docker.io", Target: "my-registry.example.com/docker-mirror"},
+		},
+	}
+
 	tests := []struct {
 		name          string
 		path          string
-		wantMappings  *Mappings // Use consolidated Mappings type
+		wantMappings  *Mappings
 		wantErr       bool
 		errorContains string
 	}{
 		{
-			name: "valid mappings file",
-			path: tmpFile,
-			wantMappings: &Mappings{
-				Entries: []Mapping{
-					{Source: "quay.io", Target: "my-registry.example.com/quay-mirror"},
-					{Source: "docker.io", Target: "my-registry.example.com/docker-mirror"},
-				},
-			},
+			name:          "valid mappings file (new format)",
+			path:          newFormatFile,
+			wantMappings:  expectedMappings,
+			wantErr:       false,
+			errorContains: "",
+		},
+		{
+			name:          "valid mappings file (old format)",
+			path:          oldFormatFile,
+			wantMappings:  expectedMappings,
 			wantErr:       false,
 			errorContains: "",
 		},
@@ -81,7 +94,7 @@ func TestLoadMappings(t *testing.T) {
 			name:          "nonexistent file",
 			path:          "nonexistent.yaml",
 			wantErr:       true,
-			errorContains: "mappings file does not exist", // Check specific error text from WrapMappingFileNotExist
+			errorContains: "mappings file does not exist",
 		},
 		{
 			name:          "empty file",
@@ -111,7 +124,7 @@ func TestLoadMappings(t *testing.T) {
 			name:          "invalid path traversal",
 			path:          "../../../etc/passwd.yaml",
 			wantErr:       true,
-			errorContains: "mappings file path must be within the current working directory tree",
+			errorContains: "mappings file path '../../../etc/passwd.yaml' must be within the current working directory tree",
 		},
 		{
 			name: "empty path",
@@ -121,9 +134,11 @@ func TestLoadMappings(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Only skip CWD check for non-traversal tests
-			if tt.name != "invalid path traversal" {
-				t.Setenv("IRR_TESTING", "true")
+			// Set up environment for path traversal testing
+			if tt.name == "invalid path traversal" {
+				t.Setenv("IRR_ALLOW_PATH_TRAVERSAL", "false")
+			} else {
+				t.Setenv("IRR_ALLOW_PATH_TRAVERSAL", "true")
 			}
 
 			// Call the consolidated LoadMappings function
@@ -135,10 +150,9 @@ func TestLoadMappings(t *testing.T) {
 			}
 			require.NoError(t, err)
 			if tt.path == "" {
-				assert.Nil(t, got) // Correct expectation for empty path
+				assert.Nil(t, got)
 			} else {
-				// Use ElementsMatch because the order from map iteration is not guaranteed
-				assert.ElementsMatch(t, tt.wantMappings.Entries, got.Entries) // Use .Entries
+				assert.ElementsMatch(t, tt.wantMappings.Entries, got.Entries)
 			}
 		})
 	}

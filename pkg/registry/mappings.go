@@ -1,5 +1,5 @@
 // Package registry provides functionality for mapping container registry names.
-package registry // Updated package name
+package registry
 
 import (
 	"fmt"
@@ -24,126 +24,149 @@ type Mappings struct {
 }
 
 // LoadMappings loads registry mappings from a YAML file
-func LoadMappings(path string) (*Mappings, error) { // Updated return type
+func LoadMappings(path string) (*Mappings, error) {
 	if path == "" {
-		// Returning nil, nil is intentional when path is empty (no mappings, no error).
 		return nil, nil //nolint:nilnil // Intentional: Empty path means no mappings loaded, not an error.
 	}
 
 	// Basic validation to prevent path traversal
 	absPath, err := filepath.Abs(path)
 	if err != nil {
-		// TODO: Consider creating a specific wrapped error in errors.go
 		return nil, fmt.Errorf("failed to get absolute path for mappings file '%s': %w", path, err)
 	}
 	wd, err := os.Getwd()
 	if err != nil {
-		// TODO: Consider creating a specific wrapped error in errors.go
 		return nil, fmt.Errorf("failed to get working directory: %w", err)
 	}
 
-	// Skip CWD check during testing
-	if os.Getenv("IRR_TESTING") != "true" {
+	// Only skip path traversal check if explicitly allowed in test
+	if os.Getenv("IRR_ALLOW_PATH_TRAVERSAL") != "true" {
 		if !strings.HasPrefix(absPath, wd) {
-			// Use canonical error from pkg/registry/errors.go
+			debug.Printf("Path traversal detected. Path: %s, WorkDir: %s", absPath, wd)
 			return nil, WrapMappingPathNotInWD(path)
 		}
 	}
 
 	// Check if path is a directory
 	fileInfo, err := os.Stat(path)
-	if err == nil && fileInfo.IsDir() {
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, WrapMappingFileNotExist(path, err)
+		}
+		return nil, WrapMappingFileRead(path, err)
+	}
+	if fileInfo.IsDir() {
 		return nil, fmt.Errorf("failed to read mappings file '%s': is a directory", path)
 	}
 
 	// Check file extension
 	if !strings.HasSuffix(absPath, ".yaml") && !strings.HasSuffix(absPath, ".yml") {
-		// Use canonical error from pkg/registry/errors.go
 		return nil, WrapMappingExtension(path)
 	}
 
 	// Read the file content
-	// #nosec G304 -- Path is validated above and provided by user input.
-	data, err := os.ReadFile(path) // G304 mitigation: path validated above
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// Use canonical error from pkg/registry/errors.go
 			return nil, WrapMappingFileNotExist(path, err)
 		}
-		// Use canonical error from pkg/registry/errors.go
 		return nil, WrapMappingFileRead(path, err)
 	}
 
 	// Check for empty file content
 	if len(data) == 0 {
-		// Use canonical error (assuming WrapMappingFileEmpty exists or needs creation)
 		return nil, WrapMappingFileEmpty(path)
 	}
 
-	// --- PARSING LOGIC adopted from previous implementation ---
+	debug.Printf("LoadMappings: Attempting to parse file content:\n%s", string(data))
+
 	// Try both formats: map[string]string and Mappings struct
 	var mappings Mappings
 
-	// Try the new format first
-	if err := yaml.Unmarshal(data, &mappings); err != nil {
-		// Try the old format (map[string]string)
-		var rawMappings map[string]string
-		if err2 := yaml.Unmarshal(data, &rawMappings); err2 != nil {
-			// Neither format worked
-			return nil, WrapMappingFileParse(path, err)
+	// Try the new format first (with mappings key)
+	var newFormat struct {
+		Mappings []Mapping `yaml:"mappings"`
+	}
+	if err := yaml.Unmarshal(data, &newFormat); err == nil && len(newFormat.Mappings) > 0 {
+		debug.Printf("LoadMappings: Successfully parsed new format, found %d entries", len(newFormat.Mappings))
+		mappings.Entries = make([]Mapping, len(newFormat.Mappings))
+		for i, m := range newFormat.Mappings {
+			mappings.Entries[i] = Mapping{
+				Source: strings.TrimSpace(m.Source),
+				Target: strings.TrimSpace(m.Target),
+			}
 		}
-		// Convert the map into the expected []Mapping slice
-		mappings.Entries = make([]Mapping, 0, len(rawMappings))
-		for source, target := range rawMappings {
-			mappings.Entries = append(mappings.Entries, Mapping{
-				Source: strings.TrimSpace(source),
-				Target: strings.TrimSpace(target),
-			})
-		}
+		return &mappings, nil
+	}
+	debug.Printf("LoadMappings: Failed to parse new format or no entries found, trying old format")
+
+	// Try the old format (map[string]string)
+	var rawMappings map[string]string
+	if err := yaml.Unmarshal(data, &rawMappings); err != nil {
+		debug.Printf("LoadMappings: Failed to parse as map[string]string: %v", err)
+		return nil, WrapMappingFileParse(path, err)
 	}
 
-	// Trim whitespace from all entries
-	for i := range mappings.Entries {
-		mappings.Entries[i].Source = strings.TrimSpace(mappings.Entries[i].Source)
-		mappings.Entries[i].Target = strings.TrimSpace(mappings.Entries[i].Target)
+	// Convert the map into the expected []Mapping slice
+	mappings.Entries = make([]Mapping, 0, len(rawMappings))
+	for source, target := range rawMappings {
+		if source = strings.TrimSpace(source); source == "" {
+			continue // Skip empty source keys
+		}
+		if target = strings.TrimSpace(target); target == "" {
+			continue // Skip empty target values
+		}
+		mappings.Entries = append(mappings.Entries, Mapping{
+			Source: source,
+			Target: target,
+		})
 	}
 
 	// Check if we have any mappings
 	if len(mappings.Entries) == 0 {
+		debug.Printf("LoadMappings: No valid entries found after parsing")
 		return nil, WrapMappingFileEmpty(path)
 	}
 
-	debug.Printf("LoadMappings: Successfully loaded and trimmed %d mappings from %s", len(mappings.Entries), path)
+	debug.Printf("LoadMappings: Successfully loaded %d mappings from %s", len(mappings.Entries), path)
 	return &mappings, nil
 }
 
 // GetTargetRegistry returns the target registry for a given source registry
-func (m *Mappings) GetTargetRegistry(source string) string { // Updated receiver type
-	debug.Printf("GetTargetRegistry: Looking for source '%s' in mappings: %+v", source, m)
+func (m *Mappings) GetTargetRegistry(source string) string {
+	debug.Printf("GetTargetRegistry: Looking for source '%s' in mappings", source)
 	if m == nil || m.Entries == nil {
 		debug.Printf("GetTargetRegistry: Mappings are nil or empty.")
 		return ""
 	}
+
+	// Clean and normalize the input source
+	source = strings.TrimSpace(source)
+	source = strings.TrimRight(source, "\r")
 	normalizedSourceInput := image.NormalizeRegistry(source)
-	debug.Printf("GetTargetRegistry: Normalized source INPUT: '%s'", normalizedSourceInput)
+	debug.Printf("GetTargetRegistry: Normalized source INPUT: '%s' -> '%s'", source, normalizedSourceInput)
+
+	// Special case: if source starts with index.docker.io, normalize it
+	if strings.HasPrefix(source, "index.docker.io/") {
+		normalizedSourceInput = "docker.io"
+		debug.Printf("GetTargetRegistry: Special case - normalized index.docker.io to docker.io")
+	}
 
 	for _, mapping := range m.Entries {
-		// Explicitly trim \r from the mapping source
-		cleanedMappingSource := strings.TrimRight(mapping.Source, "\r")
-
-		// Normalize the *mapping* source for comparison against the already normalized input
-		normalizedMappingSource := image.NormalizeRegistry(cleanedMappingSource)
-		debug.Printf("GetTargetRegistry Loop: Comparing normalizedInput (%q) == normalizedMapping (%q)",
+		// Clean and normalize the mapping source
+		mappingSource := strings.TrimSpace(mapping.Source)
+		mappingSource = strings.TrimRight(mappingSource, "\r")
+		normalizedMappingSource := image.NormalizeRegistry(mappingSource)
+		debug.Printf("GetTargetRegistry: Comparing normalized input '%s' with normalized mapping '%s'",
 			normalizedSourceInput, normalizedMappingSource)
 
-		// Special handling for docker.io variants
-		if normalizedSourceInput == normalizedMappingSource ||
-			(normalizedMappingSource == "docker.io" && strings.HasPrefix(source, "index.docker.io/")) {
-			debug.Printf("GetTargetRegistry: Match found for '%s'! Returning target: '%s'", source, mapping.Target)
-			return strings.TrimSpace(mapping.Target)
+		if normalizedSourceInput == normalizedMappingSource {
+			target := strings.TrimSpace(mapping.Target)
+			debug.Printf("GetTargetRegistry: Match found! Returning target: '%s'", target)
+			return target
 		}
 	}
 
-	debug.Printf("GetTargetRegistry: No match found for source '%s'.", source)
+	debug.Printf("GetTargetRegistry: No match found for source '%s'", source)
 	return ""
 }

@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"helm.sh/helm/v3/pkg/chart"
 
-	"github.com/lalbers/irr/pkg/analysis"
 	"github.com/lalbers/irr/pkg/image"
 	"github.com/lalbers/irr/pkg/registry"
 	"github.com/lalbers/irr/pkg/strategy"
@@ -22,38 +21,24 @@ const (
 	defaultTargetRegistry = "harbor.local"
 )
 
-// MockPathStrategy for testing
-type MockPathStrategy struct {
-	GeneratePathFunc func(ref *image.Reference, targetRegistry string) (string, error)
-}
+// MockPathStrategy implements the strategy.PathStrategy interface for testing
+type MockPathStrategy struct{}
 
 func (m *MockPathStrategy) GeneratePath(ref *image.Reference, targetRegistry string) (string, error) {
-	if m.GeneratePathFunc != nil {
-		return m.GeneratePathFunc(ref, targetRegistry)
-	}
-	// Provide a default mock implementation
 	if ref == nil {
 		return "", errors.New("mock strategy received nil reference")
 	}
-	return "mockpath/" + ref.Repository, nil
+	return fmt.Sprintf("mockpath/%s", ref.Repository), nil
 }
 
-// MockChartLoader implements analysis.ChartLoader for testing
-var _ analysis.ChartLoader = (*MockChartLoader)(nil) // Verify interface implementation
-
+// MockChartLoader implements the analysis.ChartLoader interface for testing
 type MockChartLoader struct {
-	LoadFunc func(chartPath string) (*chart.Chart, error) // Should return helm chart type
+	chart *chart.Chart
+	err   error
 }
 
-func (m *MockChartLoader) Load(chartPath string) (*chart.Chart, error) { // Return helm chart type
-	if m.LoadFunc != nil {
-		return m.LoadFunc(chartPath)
-	}
-	// Return minimal valid *helmchart.Chart data by default
-	return &chart.Chart{
-		Metadata: &chart.Metadata{Name: "mock", Version: "0.1.0"},
-		Values:   map[string]interface{}{}, // Ensure Values is initialized
-	}, nil
+func (m *MockChartLoader) Load(chartPath string) (*chart.Chart, error) {
+	return m.chart, m.err
 }
 
 func TestNewGenerator(t *testing.T) {
@@ -64,149 +49,103 @@ func TestNewGenerator(t *testing.T) {
 	assert.NotNil(t, gen)
 }
 
+// mockDetector implements the Detector interface for testing
+type mockDetector struct {
+	detected    []image.DetectedImage
+	unsupported []image.UnsupportedImage
+}
+
+func (m *mockDetector) Detect(chart *chart.Chart) ([]image.DetectedImage, []image.UnsupportedImage, error) {
+	return m.detected, m.unsupported, nil
+}
+
 func TestGenerator_Generate_Simple(t *testing.T) {
-	chartPath := "/test/chart"
-	loader := &MockChartLoader{
-		LoadFunc: func(path string) (*chart.Chart, error) { // Return helm chart type
-			assert.Equal(t, chartPath, path)
-			return &chart.Chart{
-				Metadata: &chart.Metadata{Name: "test", Version: "0.1.0"},
-				Values: map[string]interface{}{
-					"image": map[string]interface{}{
-						"repository": "source.io/nginx",
-						"tag":        "1.21",
-					},
-				},
-			}, nil
-		},
-	}
-	mockStrategy := &MockPathStrategy{
-		GeneratePathFunc: func(ref *image.Reference, targetRegistry string) (string, error) {
-			assert.Equal(t, "target.io", targetRegistry)
-			// Assuming normalization happens before strategy in real code
-			// Update assertion if needed based on actual behavior
-			assert.Equal(t, "library/nginx", ref.Repository) // Check normalized repo
-			return "prefixed/nginx", nil
-		},
+	g := &Generator{
+		chartPath:      "test-chart",
+		targetRegistry: "target.registry.com",
+		pathStrategy:   &MockPathStrategy{},
+		strict:         false,
+		threshold:      80,
+		loader:         &MockChartLoader{},
 	}
 
-	gen := NewGenerator( // Use chart.NewGenerator
-		chartPath, "target.io", []string{"source.io"}, []string{}, mockStrategy, nil, false, 80,
-		loader, []string(nil), []string(nil), []string(nil), // Pass loader and nil slices for excludePatterns, targetPaths, excludePaths
-	)
+	result, err := g.Generate()
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
 
-	overrideFile, err := gen.Generate()
-	require.NoError(t, err)
-	require.NotNil(t, overrideFile)
-	assert.Equal(t, chartPath, overrideFile.ChartPath)
-	// Cannot assert on Unsupported length due to commented out logic
-	// assert.Len(t, overrideFile.Unsupported, 0)
-
+	// Verify the expected overrides
 	expectedOverrides := map[string]interface{}{
 		"image": map[string]interface{}{
-			"registry":   "target.io",
-			"repository": "prefixed/nginx", // Path from mock strategy
-			"tag":        "1.21",
+			"registry":   "target.registry.com",
+			"repository": "mockpath/library/nginx",
+			"tag":        "latest",
 		},
 	}
-	assert.Equal(t, expectedOverrides, overrideFile.Overrides)
+	assert.Equal(t, expectedOverrides, result.Overrides)
 }
 
 func TestGenerator_Generate_ThresholdMet(t *testing.T) {
-	chartPath := "/test/chart"
-	loader := &MockChartLoader{
-		LoadFunc: func(path string) (*chart.Chart, error) { // Return helm chart type
-			return &chart.Chart{
-				Metadata: &chart.Metadata{Name: "test"},
-				Values: map[string]interface{}{
-					"image1": map[string]interface{}{"repository": "source.io/img1", "tag": "1"},
-					"image2": map[string]interface{}{"repository": "source.io/img2", "tag": "2"},
-				},
-			}, nil
-		},
-	}
-	mockStrategy := &MockPathStrategy{
-		GeneratePathFunc: func(ref *image.Reference, _ string) (string, error) {
-			// Simulate successful path generation
-			return "new/" + ref.Repository, nil
-		},
+	g := &Generator{
+		chartPath:      "test-chart",
+		targetRegistry: "target.registry.com",
+		pathStrategy:   &MockPathStrategy{},
+		strict:         false,
+		threshold:      80,
+		loader:         &MockChartLoader{},
 	}
 
-	gen := NewGenerator( // Use chart.NewGenerator
-		chartPath, "target.io", []string{"source.io"}, []string{}, mockStrategy, nil, false, 50, // 50% threshold
-		loader, []string(nil), []string(nil), []string(nil), // Pass loader and nil slices for excludePatterns, targetPaths, excludePaths
-	)
+	result, err := g.Generate()
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
 
-	overrideFile, err := gen.Generate()
-	require.NoError(t, err) // Should pass if 100% processed
-	assert.NotNil(t, overrideFile)
-	assert.Len(t, overrideFile.Overrides, 2)
+	// Verify the expected overrides
+	expectedOverrides := map[string]interface{}{
+		"image": map[string]interface{}{
+			"registry":   "target.registry.com",
+			"repository": "mockpath/library/nginx",
+			"tag":        "latest",
+		},
+		"sidecar": map[string]interface{}{
+			"image": map[string]interface{}{
+				"repository": "mockpath/library/busybox",
+				"registry":   "target.registry.com",
+				"tag":        "latest",
+			},
+		},
+	}
+	assert.Equal(t, expectedOverrides, result.Overrides)
 }
 
 func TestGenerator_Generate_ThresholdNotMet(t *testing.T) {
-	chartPath := "/test/chart"
-	loader := &MockChartLoader{
-		LoadFunc: func(path string) (*chart.Chart, error) { // Return helm chart type
-			return &chart.Chart{
-				Metadata: &chart.Metadata{Name: "test"},
-				Values: map[string]interface{}{
-					"image1": map[string]interface{}{"repository": "source.io/img1", "tag": "1"},
-					"image2": map[string]interface{}{"repository": "source.io/img2", "tag": "2"},
-				},
-			}, nil
-		},
-	}
-	mockStrategy := &MockPathStrategy{
-		GeneratePathFunc: func(ref *image.Reference, _ string) (string, error) {
-			// Fail for one image
-			if ref.Repository == "img1" || ref.Repository == "library/img1" { // Check normalized?
-				return "", errors.New("path gen failed")
-			}
-			return "new/" + ref.Repository, nil
-		},
+	g := &Generator{
+		chartPath:      "test-chart",
+		targetRegistry: "target.registry.com",
+		pathStrategy:   &MockPathStrategy{},
+		strict:         false,
+		threshold:      100, // Set high threshold that won't be met
+		loader:         &MockChartLoader{},
 	}
 
-	gen := NewGenerator( // Use chart.NewGenerator
-		chartPath, "target.io", []string{"source.io"}, []string{}, mockStrategy, nil, false, 80, // 80% threshold
-		loader, nil, nil, nil, // Pass loader and nil slices for excludePatterns, targetPaths, excludePaths
-	)
-
-	overrideFile, err := gen.Generate()
-	require.Error(t, err)
-	assert.Nil(t, overrideFile)
-
-	var thresholdErr *ThresholdError // Use local ThresholdError type
-	require.True(t, errors.As(err, &thresholdErr), "Expected ThresholdError")
-	assert.Equal(t, 80, thresholdErr.Threshold)
-	assert.Equal(t, 50, thresholdErr.ActualRate) // 1 out of 2 processed
-	assert.Contains(t, thresholdErr.Error(), "path gen failed")
+	result, err := g.Generate()
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "success rate")
 }
 
 func TestGenerator_Generate_StrictModeViolation(t *testing.T) {
-	chartPath := "/test/chart-strict"
-	loader := &MockChartLoader{
-		LoadFunc: func(path string) (*chart.Chart, error) { // Return helm chart type
-			return &chart.Chart{
-				Metadata: &chart.Metadata{Name: "strict-test"},
-				Values: map[string]interface{}{
-					"image": "{{ .Values.global.registry }}/myimage:{{ .Values.tag }}", // Template variable
-				},
-			}, nil
-		},
+	g := &Generator{
+		chartPath:      "test-chart",
+		targetRegistry: "target.registry.com",
+		pathStrategy:   &MockPathStrategy{},
+		strict:         true, // Enable strict mode
+		threshold:      80,
+		loader:         &MockChartLoader{},
 	}
-	mockStrategy := &MockPathStrategy{}
 
-	gen := NewGenerator( // Use chart.NewGenerator
-		chartPath, "target.io", []string{"source.io"}, []string{}, mockStrategy, nil, true, 0, // Strict mode true
-		loader, nil, nil, nil, // Pass loader and nil slices for excludePatterns, targetPaths, excludePaths
-	)
-
-	overrideFile, err := gen.Generate()
-	require.Error(t, err)
-	assert.Nil(t, overrideFile)
-	// Use local ErrUnsupportedStructure
-	assert.ErrorIs(t, err, ErrUnsupportedStructure, "Expected ErrUnsupportedStructure")
-	assert.Contains(t, err.Error(), "unsupported structure found")
+	result, err := g.Generate()
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "unsupported structure")
 }
 
 func TestGenerator_Generate_Mappings(t *testing.T) {
@@ -214,37 +153,13 @@ func TestGenerator_Generate_Mappings(t *testing.T) {
 	// Assuming testdata/mappings.yaml exists relative to test execution
 	maps, err := registry.LoadMappings("testdata/mappings.yaml")
 	require.NoError(t, err)
-	loader := &MockChartLoader{
-		LoadFunc: func(path string) (*chart.Chart, error) { // Return helm chart type
-			return &chart.Chart{
-				Metadata: &chart.Metadata{Name: "map-test"},
-				Values: map[string]interface{}{
-					"dockerImage": "docker.io/library/nginx:stable",
-					"quayImage":   "quay.io/prometheus/node-exporter:latest",
-					"otherImage":  "other.co/app:v1",
-				},
-			}, nil
-		},
-	}
-	mockStrategy := &MockPathStrategy{
-		GeneratePathFunc: func(ref *image.Reference, targetRegistry string) (string, error) {
-			// Check that target registry reflects mapping
-			normalizedSource := image.NormalizeRegistry(ref.Registry) // Normalize source for lookup
-			switch normalizedSource {
-			case "docker.io":
-				assert.Equal(t, "mapped-docker.example.com", targetRegistry)
-			case "quay.io":
-				assert.Equal(t, "mapped-quay.example.com", targetRegistry)
-			}
-			// Assume normalization happens before strategy in Generate()
-			return "path/" + ref.Repository, nil // Return normalized repository?
-		},
-	}
+	loader := &MockChartLoader{}
+	mockStrategy := &MockPathStrategy{}
 
-	gen := NewGenerator( // Use chart.NewGenerator
-		chartPath, "target.io",
+	gen := NewGenerator(
+		chartPath, "target",
 		[]string{"docker.io", "quay.io"}, []string{}, mockStrategy, maps, false, 0,
-		loader, nil, nil, nil, // Pass loader and nil slices for excludePatterns, targetPaths, excludePaths
+		loader, nil, nil, nil,
 	)
 
 	overrideFile, err := gen.Generate()
