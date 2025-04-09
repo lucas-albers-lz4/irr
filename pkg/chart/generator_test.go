@@ -611,7 +611,7 @@ func TestOverridesToYAML(t *testing.T) {
 		"key2": map[string]interface{}{"nestedKey": "nestedValue"},
 	}
 
-	t.Run("Successful marshalling", func(t *testing.T) {
+	t.Run("Successful marshaling", func(t *testing.T) {
 		yamlBytes, err := OverridesToYAML(overrideData)
 		require.NoError(t, err, "OverridesToYAML should not fail for valid map")
 

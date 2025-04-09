@@ -52,7 +52,7 @@ func (d *Detector) DetectImages(values interface{}, path []string) ([]DetectedIm
 				// Handle errors returned by tryExtractImageFromMap (e.g., template variables in strict mode)
 				stdLog.Debugf("[UNSUPPORTED ADD - Map Error] Path: %v, Error: %v\n", path, err)
 				// Determine the type code based on the error
-				var typeCode UnsupportedType = UnsupportedTypeMapError // Default
+				var typeCode = UnsupportedTypeMapError // Default
 				if errors.Is(err, ErrTemplateVariableDetected) {
 					typeCode = UnsupportedTypeTemplateMap
 				} else if errors.Is(err, ErrTagAndDigestPresent) {

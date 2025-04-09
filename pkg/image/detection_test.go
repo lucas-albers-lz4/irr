@@ -585,6 +585,15 @@ func TestImageDetector_GlobalRegistry(t *testing.T) {
 }
 
 func TestImageDetector_TemplateVariables(t *testing.T) {
+	// Helper function to check the common unsupported error structure
+	checkTemplateVariableUnsupportedError := func(t *testing.T, unsupported []UnsupportedImage) {
+		t.Helper()
+		require.Len(t, unsupported, 1)
+		assert.ErrorIs(t, unsupported[0].Error, ErrTemplateVariableDetected, "Error should be ErrTemplateVariableDetected")
+		assert.Equal(t, []string{"image"}, unsupported[0].Location, "Unsupported location path mismatch")
+		assert.Equal(t, UnsupportedTypeTemplateMap, unsupported[0].Type, "Unsupported type mismatch")
+	}
+
 	tests := []struct {
 		name                     string
 		values                   map[string]interface{}
@@ -605,14 +614,9 @@ func TestImageDetector_TemplateVariables(t *testing.T) {
 				SourceRegistries: []string{"docker.io"}, // Assume docker.io for nginx
 				Strict:           true,                  // Enable strict mode
 			},
-			expectedCount:            0, // Should NOT be detected in strict mode
-			expectedUnsupportedCount: 1, // Should be marked as unsupported
-			checkError: func(t *testing.T, unsupported []UnsupportedImage) {
-				require.Len(t, unsupported, 1)
-				assert.ErrorIs(t, unsupported[0].Error, ErrTemplateVariableDetected, "Error should be ErrTemplateVariableDetected")
-				assert.Equal(t, []string{"image"}, unsupported[0].Location, "Unsupported location path mismatch")
-				assert.Equal(t, UnsupportedTypeTemplateMap, unsupported[0].Type, "Unsupported type mismatch")
-			},
+			expectedCount:            0,                                     // Should NOT be detected in strict mode
+			expectedUnsupportedCount: 1,                                     // Should be marked as unsupported
+			checkError:               checkTemplateVariableUnsupportedError, // Use helper
 		},
 		{
 			name: "template variable in repository",
@@ -626,14 +630,9 @@ func TestImageDetector_TemplateVariables(t *testing.T) {
 				SourceRegistries: []string{"docker.io"}, // Assume docker.io
 				Strict:           true,                  // Enable strict mode
 			},
-			expectedCount:            0, // Should NOT be detected in strict mode
-			expectedUnsupportedCount: 1, // Should be marked as unsupported
-			checkError: func(t *testing.T, unsupported []UnsupportedImage) {
-				require.Len(t, unsupported, 1)
-				assert.ErrorIs(t, unsupported[0].Error, ErrTemplateVariableDetected, "Error should be ErrTemplateVariableDetected")
-				assert.Equal(t, []string{"image"}, unsupported[0].Location, "Unsupported location path mismatch")
-				assert.Equal(t, UnsupportedTypeTemplateMap, unsupported[0].Type, "Unsupported type mismatch")
-			},
+			expectedCount:            0,                                     // Should NOT be detected in strict mode
+			expectedUnsupportedCount: 1,                                     // Should be marked as unsupported
+			checkError:               checkTemplateVariableUnsupportedError, // Use helper
 		},
 		// Add more test cases for templates in strings, different strictness levels etc.
 	}

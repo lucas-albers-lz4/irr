@@ -259,7 +259,7 @@ func TestComplexChartFeatures(t *testing.T) {
 				t.Fatalf("Failed to validate overrides: %v", err)
 			}
 
-			overrides, err := harness.GetOverrides()
+			overrides, err := harness.getOverrides()
 			if err != nil {
 				t.Fatalf("Failed to get overrides: %v", err)
 			}
@@ -399,7 +399,7 @@ quay.io: quaycustom
 	output, err := harness.ExecuteIRR(args...)
 	require.NoError(t, err, "irr command with mapping file failed. Output: %s", output)
 
-	overrides, err := harness.GetOverrides()
+	overrides, err := harness.getOverrides()
 	require.NoError(t, err, "Failed to read/parse generated overrides file")
 
 	// Check image from first mapped source (docker.io -> dckr)
@@ -448,7 +448,7 @@ func TestMinimalGitImageOverride(t *testing.T) {
 	output, err := harness.ExecuteIRR(args...)
 	require.NoError(t, err, "irr override failed for minimal-git-image chart. Output: %s", output)
 
-	overrides, err := harness.GetOverrides()
+	overrides, err := harness.getOverrides()
 	require.NoError(t, err, "Failed to read/parse generated overrides file")
 
 	expectedRepo := "dockerio/bitnami/git"
@@ -633,8 +633,10 @@ func TestNoArgs(t *testing.T) {
 	t.Parallel()
 	h := NewTestHarness(t)
 	output, err := h.ExecuteIRR()
-	assert.NoError(t, err, "Running with no args should not produce an execution error")
-	assert.Contains(t, output, "Usage:", "Output should contain usage information when no args are provided")
+	// Expect an error because a subcommand is required
+	assert.Error(t, err, "Running with no args should produce an execution error")
+	// Check that the error output (stderr or combined output) contains the expected message
+	assert.Contains(t, output, "a subcommand is required", "Error output should contain subcommand required message")
 	t.Cleanup(h.Cleanup)
 }
 

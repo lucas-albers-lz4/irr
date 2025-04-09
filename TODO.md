@@ -303,94 +303,231 @@ The file handled multiple responsibilities: core detection orchestration, refere
 
 ### 24.7 Strategies for Large File Edit Failures
 
-## 25. Fix Test and Lint Errors (High Priority)
-- [x] **Integration Test (`TestMinimalChart`) Panic** (Critical - Blocking Build)
-    - [x] Investigated panic `nil pointer dereference` in `harness.ValidateOverrides`.
-    - [x] Fixed override generation to respect original format (string/map), resolving helm template errors.
-    - [x] Made test harness validation logic robust against registry mapping file load errors and check actual used targets.
-- [x] **Path Parsing (`pkg/override/path_utils.go`)** (High - Core Functionality)
-    - [x] Fixed array index extraction in `parsePathPart()`.
-    - [x] Implemented consistent bracket validation (fixed `TestParseArrayPath/malformed...`).
-    - [x] Added proper error handling for malformed array indices.
-    - [ ] *Note:* `TestParseArrayPath/simple_key` still logs a failure, but logic seems correct. Revisit if causes issues.
-- [x] **Image Detection (`pkg/image/detection.go`)** (High - Core Functionality)
-    - [x] Fix strict mode logic (`TestDetectImages/Strict_mode` failures).
-    - [x] Fix error string formatting (`TestImageDetector_DetectImages_EdgeCases` extra newline).
-    - [x] Add missing detection for "imageMap" entries (failing in `TestDetectImages/Basic_detection` - *From previous TODO*).
-    - [x] Standardize error message format for invalid images (*From previous TODO*).
-    - [x] Fix error reporting for invalid repository types (*From previous TODO*).
-    - [x] Update test expectations to match implementation behavior (*From previous TODO*).
-    - [x] Verify `TestDetectImages` and `TestImageDetector_DetectImages_EdgeCases` pass.
-- [x] **Image Parsing (`pkg/image/parser.go`)** (High - Core Functionality)
-    - [x] Correct image reference validation logic (*From previous TODO*).
-    - [x] Fix port handling in registry parsing (failing in `TestParseImageReference/image_with_port_in_registry` - *Fixed by changing test assertion*).
-    - [x] Ensure consistent error message format for all parsing errors (*From previous TODO*).
-    - [x] Update tests to properly compare Reference objects (*From previous TODO*).
-    - [x] All `TestParseImageReference` tests should pass after these changes.
-- [ ] **Linter - Security (`gosec`)** (High)
-    - [x] Fix file permissions in tests (`pkg/chart/generator_test.go`, `test/integration/integration_test.go`).
-    - [x] Review G304 potential file inclusion in `test/integration/integration_test.go`. (Suppressed with `#nosec`)
-    - [x] Review G204 subprocess launched with variable in `test/integration/integration_test.go`. (Suppressed with `#nosec`)
-- [ ] **Linter - Error Handling (`errcheck`, `errorlint`, `nilnil`)** (High)
-    - [ ] Address `errcheck` warnings in core logic (`pkg/image/validation.go`). (Skipped - edit failed, added comments)
-    - [x] Address `errcheck` warnings in test helpers (`test/integration/harness.go`, `pkg/chart/generator_test.go`, `test/integration/chart_override_test.go`). (Skipped generator_test.go - edit failed, added checks)
-    - [x] Fix `errorlint` type assertion in `test/integration/harness.go`. (Applied manually)
-    - [ ] Fix `nilnil` return in `pkg/image/detector.go`.
-- [ ] **Registry Mapping (`pkg/registry/mappings.go`)** (Medium - Depends on Image Parsing)
-    - [ ] Fix empty/invalid file handling in `LoadMappings` (`TestLoadMappings` failures).
-    - [ ] Fix directory check logic/error message (`TestLoadMappings/path_is_a_directory`).
-    - [ ] Fix Docker registry normalization logic (`TestGetTargetRegistry` failures).
-    - [ ] Implement proper target registry resolution.
-    - [ ] Improve error messages for invalid paths and directories (*From previous TODO*).
-    - [ ] Address specific test failures: `TestLoadMappings/invalid_yaml_format`, `TestLoadMappings/invalid_path_traversal`.
-- [ ] **Analysis Package (`pkg/analysis/analyzer.go`)** (Medium)
-    - [ ] Fix image detection logic (`TestAnalyze/SimpleNesting` failure).
-    - [ ] Update test expectations to account for implementation behavior (*From previous TODO*).
-- [ ] **Command Layer (`cmd/irr`)** (Medium)
-    - [ ] Fix flag parsing/validation error messages (`TestOverrideCmdArgs` failures).
-    - [ ] Fix JSON output validation (`TestAnalyzeCmd/success_with_json_output` failure).
-    - [ ] Fix stdout/stderr content validation (`TestOverrideCmdExecution` failures).
-    - [ ] Debug `TestAnalyzeCmd/no_arguments` failure (*From previous TODO*).
-    - [ ] Fix flag redefinition issue in analyze command (*From previous TODO*).
-    - [ ] Ensure clean command execution in test environment (*From previous TODO*).
-- [ ] **Linter - Code Quality (`revive`, `gocritic`, `unused`)** (Low-Medium)
-    - [ ] Address `revive` issues (unused params, error strings, etc.).
-    - [ ] Address `gocritic` style issues (octal literals, if-else chains, etc.).
-    - [ ] Remove `unused` code.
-- [ ] **Linter - Minor (`lll`, `dupl`, `misspell`, `mnd`)** (Low)
-    - [ ] Fix long lines (`lll`).
-    - [ ] Refactor duplicate code (`dupl`).
-    - [ ] Fix typos (`misspell`).
-    - [ ] Address magic numbers (`mnd`).
-- [ ] **Integration Test Infrastructure** (Critical - *Partially addressed by panic fix*)
-    - [x] ~~Create `test/integration/harness.go`~~ (Already exists)
-    - [ ] Fix `TestMain(m *testing.M)` in `test/integration/integration_test.go`:
-        - [ ] Implement missing `setup()` function.
-        - [ ] Implement missing `teardown()` function.
-        - [ ] Fix unused variable declarations (`h`, `code`).
-    - [ ] Verify `TestHarness` usage in failing tests:
-        - [ ] Check if `NewHarness` vs `NewTestHarness` naming mismatch.
-        - [ ] Ensure proper initialization in each test case.
-        - [ ] Fix variable usage in test functions.
-- [x] **Test Output Control** (Completed)
-    - [x] Implement `-debug` flag for integration tests to control verbose `[DEBUG irr SPATH]` output.
-        - [x] Added flag parsing in `test/integration/integration_test.go`
-        - [x] Made debug output in `pkg/override/path_utils.go::SetValueAtPath` conditional on flag (passed as arg).
-        - [x] Updated callers of `override.SetValueAtPath` to pass debug flag (defaulting to false).
+## 25. Consolidated Test & Lint Fix Tasks
 
-**Note on Implementation Order:**
-1.  Integration test panic (`TestMinimalChart`) must be fixed first.
-2.  Core functionality (Path Parsing, Image Detection, Image Parsing) and high-priority linters (gosec, errcheck) should follow.
-3.  Registry mapping depends on correct image parsing.
-4.  Command layer tests and lower-priority linters can be addressed afterwards.
-5.  Integration test infrastructure (`TestMain` setup/teardown) can be implemented once core tests pass.
+**Goal:** Achieve a stable codebase by fixing all remaining test failures and addressing outstanding linter warnings.
 
-**Key Findings from Code Review:**
-1.  Test harness infrastructure largely exists but has naming inconsistencies.
-2.  Many test failures are related to error message format changes or incorrect test expectations.
-3.  Port handling in registry parsing needs special attention.
-4.  Array path parsing has fundamental issues in index extraction.
-5.  Override generation for string-based images seems flawed, causing integration test panic.
+**Key Priorities:**
+1.  Fix critical test failures blocking builds.
+2.  Address high-priority core functionality test failures.
+3.  Fix high-priority linter warnings (Security, Error Handling).
+4.  Refactor long functions (`funlen`) in implementation files, prioritizing those significantly over the limit or in historically problematic large files.
+5.  Address medium/low priority test failures and linter warnings.
+6.  Refactor long test functions (`funlen`) using helpers or table-driven tests.
 
-**Technical Debt / Refactoring:**
-- [ ] Investigate and consolidate duplicate `SetValueAtPath` functions in `pkg/override/path_utils.go` and `pkg/image/path_utils.go`.
+**Remaining Tasks (Prioritized):**
+
+**Critical Priority:**
+
+*   **Integration Test Infrastructure (`test/integration/integration_test.go`)**
+    *   [ ] Fix `TestMain(m *testing.M)`:
+        *   [ ] Implement missing `setup()` function.
+        *   [ ] Implement missing `teardown()` function.
+        *   [ ] Fix unused variable declarations (`h`, `code`).
+    *   [ ] Verify `TestHarness` usage in failing tests:
+        *   [ ] Check if `NewHarness` vs `NewTestHarness` naming mismatch.
+        *   [ ] Ensure proper initialization in each test case.
+        *   [ ] Fix variable usage in test functions.
+
+**High Priority:**
+
+*   **Path Parsing (`pkg/override/path_utils.go`)**
+    *   [ ] *Note:* `TestParseArrayPath/simple_key` still logs a failure, but logic seems correct. Revisit if causes issues. *(From previous Section 25)*
+*   **Linter - Security (`gosec`)**
+    *   *(No remaining high-priority gosec issues identified)*
+*   **Linter - Error Handling (`errcheck`, `errorlint`, `nilnil`)**
+    *   [ ] `errcheck`: Address warnings in core logic (`pkg/image/validation.go`). *(Skipped - edit failed, added comments)*
+    *   [ ] `errcheck`: Address warnings in `pkg/chart/generator_test.go`. *(Skipped generator_test.go - edit failed, added checks)*
+    *   [ ] `nilnil`: Fix `nilnil` return in `pkg/image/detector.go`.
+*   **Linter - Function Length (`funlen` - Implementation Files)**
+    *   [ ] `pkg/chart/generator.go:118`: Refactor `Generate` (137 > 40) - *High risk due to file size/complexity. Split function.*
+    *   [ ] `pkg/image/detector.go:27`: Refactor `DetectImages` (85 > 40) - *Split function.*
+    *   [ ] `pkg/image/detector.go:280`: Refactor `tryExtractImageFromMap` (82 > 40) - *Split function.*
+    *   [ ] `pkg/image/path_utils.go:51`: Refactor `SetValueAtPath` (72 > 60) - *Consolidate with `pkg/override/path_utils.go::SetValueAtPath` first (See Technical Debt).*
+    *   [ ] `pkg/override/path_utils.go:44`: Refactor `SetValueAtPath` (51 > 40) - *Consolidate with `pkg/image/path_utils.go::SetValueAtPath` first (See Technical Debt).*
+    *   [ ] `pkg/image/parser.go:26`: Refactor `ParseImageReference` (52 > 40) - *Split function.*
+    *   [ ] `test/integration/harness.go:277`: Refactor `ValidateOverrides` (53 > 40) - *Split function.*
+    *   [ ] `cmd/irr/root.go:253`: Refactor `runOverride` (50 > 40) - *Split function.*
+    *   [ ] `pkg/chart/generator.go:578`: Refactor `processChartForOverrides` (62 > 60) - *Split function.*
+
+**Medium Priority:**
+
+*   **Registry Mapping (`pkg/registry/mappings.go`)**
+    *   [ ] Fix empty/invalid file handling in `LoadMappings` (`TestLoadMappings` failures).
+    *   [ ] Fix directory check logic/error message (`TestLoadMappings/path_is_a_directory`).
+    *   [ ] Fix Docker registry normalization logic (`TestGetTargetRegistry` failures).
+    *   [ ] Implement proper target registry resolution.
+    *   [ ] Improve error messages for invalid paths and directories (*From previous TODO*).
+    *   [ ] Address specific test failures: `TestLoadMappings/invalid_yaml_format`, `TestLoadMappings/invalid_path_traversal`.
+*   **Analysis Package (`pkg/analysis/analyzer.go`)**
+    *   [ ] Fix image detection logic (`TestAnalyze/SimpleNesting` failure).
+    *   [ ] Update test expectations to account for implementation behavior (*From previous TODO*).
+*   **Command Layer (`cmd/irr`)**
+    *   [ ] Fix flag parsing/validation error messages (`TestOverrideCmdArgs` failures).
+    *   [ ] Fix JSON output validation (`TestAnalyzeCmd/success_with_json_output` failure).
+    *   [ ] Fix stdout/stderr content validation (`TestOverrideCmdExecution` failures).
+    *   [ ] Debug `TestAnalyzeCmd/no_arguments` failure (*From previous TODO*).
+    *   [ ] Fix flag redefinition issue in analyze command (*From previous TODO*).
+    *   [ ] Ensure clean command execution in test environment (*From previous TODO*).
+*   **Linter - Code Quality (`revive`, `gocritic`, `unused`)**
+    *   [ ] Address `revive` issues (unused params, error strings, etc.). *(From previous Section 23/25)*
+    *   [ ] Address `gocritic` style issues (octal literals, if-else chains, etc.). *(From previous Section 23/25 - includes `nestingReduce` in `pkg/override/path_utils_test.go`)*
+    *   [ ] Remove `unused` code (`pkg/image/detection.go`). *(From previous Section 23/25)*
+    *   [ ] `gocritic:appendAssign`: Deferred (`test/integration/harness.go`). *(From previous Section 23)*
+*   **Linter - Function Length (`funlen` - Test Files)**
+    *   [ ] `pkg/chart/generator_test.go:92`: Refactor `TestGenerate` (422 > 60) - *Use helpers/table tests.*
+    *   [ ] `pkg/analysis/analyzer_test.go:45`: Refactor `TestAnalyze` (235 > 60) - *Use helpers/table tests.*
+    *   [ ] `pkg/chart/generator_test.go:1130`: Refactor `TestProcessChartForOverrides` (213 > 60) - *Use helpers/table tests.*
+    *   [ ] `pkg/image/detection_test.go:769`: Refactor `TestDetectImages` (218 > 60) - *Use helpers/table tests.*
+    *   [ ] `pkg/image/detection_test.go:123`: Refactor `TestImageDetector` (195 > 60) - *Use helpers/table tests.*
+    *   [ ] `test/integration/integration_test.go:120`: Refactor `TestComplexChartFeatures` (190 > 60) - *Use helpers/table tests.*
+    *   [ ] `cmd/irr/override_test.go:110`: Refactor `TestOverrideCmdExecution` (164 > 60) - *Use helpers/table tests.*
+    *   [ ] `pkg/chart/generator_test.go:968`: Refactor `TestMergeOverrides` (148 > 60) - *Use helpers/table tests.*
+    *   [ ] `pkg/override/path_utils_test.go:149`: Refactor `TestSetValueAtPath` (173 > 60) - *Use helpers/table tests.*
+    *   [ ] `pkg/override/path_utils_test.go:9`: Refactor `TestDeepCopy` (130 > 60) - *Use helpers/table tests.*
+    *   [ ] `cmd/irr/analyze_test.go:47`: Refactor `TestAnalyzeCmd` (123 > 60) - *Use helpers/table tests.*
+    *   [ ] `pkg/chart/generator_test.go:843`: Refactor `TestExtractSubtree` (122 > 60) - *Use helpers/table tests.*
+    *   [ ] `pkg/image/detection_test.go:325`: Refactor `TestImageDetector_DetectImages_EdgeCases` (120 > 60) - *Use helpers/table tests.*
+    *   [ ] `pkg/image/detection_test.go:460`: Refactor `TestImageDetector_GlobalRegistry` (118 > 60) - *Use helpers/table tests.*
+    *   [ ] `pkg/analysis/analyzer_test.go:532`: Refactor `TestAnalyzeArray` (103 > 60) - *Use helpers/table tests.*
+    *   [ ] `pkg/analysis/analyzer_test.go:303`: Refactor `TestNormalizeImageValues` (102 > 60) - *Use helpers/table tests.*
+    *   [ ] `pkg/registry/mappings_test.go:14`: Refactor `TestLoadMappings` (102 > 60) - *Use helpers/table tests.*
+    *   [ ] `pkg/image/detection_test.go:662`: Refactor `TestImageDetector_ContainerArrays` (101 > 60) - *Use helpers/table tests.*
+    *   [ ] `pkg/analysis/analyzer_test.go:424`: Refactor `TestAnalyzeValues` (100 > 60) - *Use helpers/table tests.*
+    *   [ ] `pkg/chart/generator_test.go:719`: Refactor `TestGenerateOverrides` (93 > 60) - *Use helpers/table tests.*
+    *   [ ] `pkg/override/override_test.go:14`: Refactor `TestGenerateOverrides` (93 > 60) - *Use helpers/table tests.*
+    *   [ ] `pkg/chart/generator_test.go:1351`: Refactor `TestGenerateOverrides_Integration` (92 > 60) - *Use helpers/table tests.*
+    *   [ ] `pkg/image/path_utils_test.go:90`: Refactor `TestSetValueAtPath` (84 > 60) - *Use helpers/table tests.*
+    *   [ ] `test/integration/chart_override_test.go:56`: Refactor `TestChartOverrideStructures` (82 > 60) - *Use helpers/table tests.*
+    *   [ ] `pkg/image/path_utils_test.go:10`: Refactor `TestGetValueAtPath` (77 > 60) - *Use helpers/table tests.*
+    *   [ ] `pkg/override/path_utils_test.go:365`: Refactor `TestParseArrayPath` (74 > 60) - *Use helpers/table tests.*
+
+**Low Priority:**
+
+*   **Linter - Minor (`lll`, `dupl`, `misspell`, `mnd`)**
+    *   [ ] Fix long lines (`lll`). *(Deferred files: `pkg/image/detection.go`, `test/integration/integration_test.go`, `pkg/strategy/path_strategy.go` - From previous Section 23)*
+    *   [ ] Refactor duplicate code (`dupl` - `pkg/image/detection.go`). *(From previous Section 23)*
+    *   [ ] Fix typos (`misspell`). *(Deferred - From previous Section 23)*
+    *   [ ] Address magic numbers (`mnd`). *(Deferred - From previous Section 23)*
+*   **Technical Debt / Refactoring:**
+    *   [ ] Investigate and consolidate duplicate `SetValueAtPath` functions in `pkg/override/path_utils.go` and `pkg/image/path_utils.go`. *(Moved from previous Section 25 - Prerequisite for high-priority `funlen`)*
+
+**Deferred Items:**
+
+*   Items explicitly marked as deferred in Section 25 will be addressed opportunistically or if they become blockers.
+
+This detailed plan provides specific commands and considers dependencies for a more structured approach to improving code quality and stability.
+
+## 26. Consolidate Fixes & Finalize Stability (April 8th Plan)
+
+**Goal:** Achieve a stable codebase with a fully passing test suite (`go test ./...`) and a clean lint report (`golangci-lint run ./...`) by systematically addressing all remaining issues identified after recent refactoring and debugging efforts.
+
+**Current Test Status (Summary):**
+
+*   **FAILING Packages/Tests:**
+    *   `cmd/irr`: `TestAnalyzeCmd/success_with_json_output` (Panic likely affects others), `TestOverrideCmdArgs/*`, `TestOverrideCmdExecution/*`
+    *   `pkg/analysis`: `TestAnalyze/SimpleNesting`
+    *   `pkg/chart`: `TestGenerate/*`, `TestGenerateOverrides_Integration`
+    *   `pkg/override`: `TestParseArrayPath/simple_key`
+    *   `pkg/registry`: `TestLoadMappings/*`, `TestGetTargetRegistry/*`
+    *   `test/integration`: `TestIngressNginxIntegration`, `TestComplexChartFeatures/*`
+*   **PASSING Packages/Tests (Notable):**
+    *   `pkg/image`: Most tests pass, including `TestImageDetector_TemplateVariables`. Failures remain in edge cases/strict mode.
+    *   `test/integration`: `TestStrictModeExitCode5` passes.
+
+**Current Lint Status (Summary - `golangci-lint run`):**
+
+*   ~92 issues remain across various categories:
+    *   `errcheck` (16): Unchecked errors, mostly in tests and validation.
+    *   `errorlint` (1): Type assertion style.
+    *   `gocritic` (26): `ifElseChain`, `octalLiteral`, `commentedOutCode`, `paramTypeCombine`, `nestingReduce`.
+    *   `gosec` (2): `G301` (permissions), `G204` (subprocess).
+    *   `ineffassign` (1): Ineffectual assignment.
+    *   `lll` (20): Long lines.
+    *   `mnd` (2): Magic numbers.
+    *   `revive` (14): `var-declaration`, `unused-parameter`, `package-comments`, `error-strings`, `indent-error-flow`, `exported`, `empty-block`.
+    *   `unused` (10): Unused functions, constants, variables.
+
+**Detailed Fix Plan (Sequential):**
+
+*Pre-step:* Ensure working directory is clean (`git status`).
+
+1.  **Fix `cmd/irr` Test Panic (`TestAnalyzeCmd`)**
+    *   **Goal:** Resolve flag redefinition panic blocking `cmd/irr` tests.
+    *   **Pre-check:** Confirm failure with `go test ./cmd/irr/... -run TestAnalyzeCmd`. Note the panic message related to `-o`.
+    *   **Action:** Read `cmd/irr/analyze.go`. Locate the `outputFormat` flag definition. Remove the `-o` shorthand: `cmd.Flags().StringVar(&outputFormat, "output-format", "summary", "...")`. Leave the persistent `-o` on `outputFile` in `root.go`.
+    *   **Validation:** Run `go test ./cmd/irr/... -run TestAnalyzeCmd`. Expect PASS.
+    *   **Post-check:** Run `go test ./cmd/irr/...`. Assess remaining failures (likely in `TestOverrideCmdArgs` and `TestOverrideCmdExecution` due to dependencies).
+
+2.  **Fix `pkg/image` Remaining Test Failures**
+    *   **Goal:** Resolve strict mode count mismatches and error string issues.
+    *   **Pre-check (Newline):** Confirm `TestImageDetector_DetectImages_EdgeCases/mixed_valid_and_invalid_images` fails with a diff showing only a trailing `\n`.
+    *   **Action (Newline):** Edit `pkg/image/detection_test.go`. Locate the `mixed_valid_and_invalid_images` test case. Remove the `\n` from the *end* of the expected error string within the `fmt.Errorf` call.
+    *   **Validation (Newline):** Run `go test ./pkg/image/... -run TestImageDetector_DetectImages_EdgeCases/mixed_valid_and_invalid_images`. Expect PASS.
+    *   **Pre-check (Strict Counts):** Confirm `TestDetectImages/Strict_mode` fails with count mismatches (Detected: 0 vs 1, Unsupported: 2 vs 4).
+    *   **Action (Strict Counts):** Read the test case inputs and expected values in `detection_test.go`. Use `LOG_LEVEL=DEBUG go test -v ./pkg/image/... -run TestDetectImages/Strict_mode` to trace execution. Identify why `knownPathValid` isn't detected and why `unknownPath`, `templateValue`, and `mapWithTemplate` aren't all being added to unsupported. Apply necessary fixes to `pkg/image/detector.go` strict mode logic or test expectations.
+    *   **Validation (Strict Counts):** Run `go test ./pkg/image/... -run TestDetectImages/Strict_mode`. Expect PASS.
+    *   **Post-check:** Run `go test ./pkg/image/...`. Expect PASS for the entire package.
+
+3.  **Fix `pkg/override` Array Path Parsing (`TestParseArrayPath`)**
+    *   **Goal:** Correctly parse paths containing array indices.
+    *   **Pre-check:** Confirm failure with `go test ./pkg/override/... -run TestParseArrayPath`. Note error messages about parsing keys like `[0]`.
+    *   **Action:** Read `pkg/override/path_utils.go` (likely `getValueAtPath`, `setValueAtPath` or helpers). Debug the logic that handles path segments starting with `[`. Ensure it correctly extracts the index and accesses the slice. Apply fixes.
+    *   **Validation:** Run `go test ./pkg/override/... -run TestParseArrayPath`. Expect PASS.
+    *   **Post-check:** Run `go test ./pkg/override/...`. Expect PASS for the entire package.
+
+4.  **Fix `pkg/registry` Test Failures (`TestLoadMappings`, `TestGetTargetRegistry`)**
+    *   **Goal:** Ensure registry mapping loading and lookup works correctly, including edge cases.
+    *   **Pre-check:** Confirm failures with `go test ./pkg/registry/... -run "TestLoadMappings|TestGetTargetRegistry"`. Note errors related to empty files, paths, validation, normalization.
+    *   **Action:** Read `pkg/registry/registry.go` and relevant tests.
+        *   `LoadMappings`: Improve file reading (handle empty files gracefully), add checks for directory paths (`os.Stat`), potentially refine path cleaning/validation logic.
+        *   `GetTargetRegistry`: Review normalization calls (`NormalizeRegistry`) and map lookup logic. Ensure comparisons handle different but equivalent registry names correctly.
+    *   **Validation:** Run `go test ./pkg/registry/... -run "TestLoadMappings|TestGetTargetRegistry"`. Expect PASS.
+    *   **Post-check:** Run `go test ./pkg/registry/...`. Expect PASS for the entire package.
+
+5.  **Fix `pkg/analysis` Test Failure (`TestAnalyze/SimpleNesting`)**
+    *   **Goal:** Correctly count image patterns during analysis.
+    *   **Pre-check:** Confirm failure with `go test ./pkg/analysis/... -run "TestAnalyze/SimpleNesting"`. Note the pattern count mismatch.
+    *   **Action:** Read `pkg/analysis/analyzer.go` and the test. Debug the `analyzeNode` or similar recursive function. Check how `analysis.ImagePatterns` map is populated during traversal. Apply fix.
+    *   **Validation:** Run `go test ./pkg/analysis/... -run "TestAnalyze/SimpleNesting"`. Expect PASS.
+    *   **Post-check:** Run `go test ./pkg/analysis/...`. Expect PASS for the entire package.
+
+6.  **Fix `pkg/chart` Test Failures (`TestGenerate`, `TestGenerateOverrides_Integration`)**
+    *   **Goal:** Resolve failures in the core override generation logic and its integration test.
+    *   **Pre-check:** Confirm failures with `go test ./pkg/chart/...`. Note errors related to specific generation scenarios (simple string, exclusions, mappings, dependencies).
+    *   **Action:** These failures likely stem from issues fixed in `pkg/image`, `pkg/override`, or `pkg/registry`. If they persist after previous steps, use `LOG_LEVEL=DEBUG` and `IRR_DEBUG=1` with focused tests (`go test -v ./pkg/chart/... -run TestGenerate/Simple_Image_String_Override`) to trace the `Generate` function flow. Debug detection results, strategy application, and override value setting. Apply fixes in `pkg/chart/generator.go`.
+    *   **Validation:** Run `go test ./pkg/chart/...`. Expect PASS.
+    *   **Post-check:** Run `go test ./...` to check for cross-package regressions.
+
+7.  **Fix `test/integration` Test Failures (`TestIngressNginxIntegration`, `TestComplexChartFeatures`)**
+    *   **Goal:** Ensure end-to-end functionality works for complex charts.
+    *   **Pre-check:** Confirm failures with `go test ./test/integration/...`. Note assertion failures related to expected override content or command output.
+    *   **Action:** Similar to Step 6, these may be resolved by upstream fixes. If not, use the integration test harness debugging (`[HARNESS ...]` logs) and potentially re-run the specific failing test command manually with `LOG_LEVEL=DEBUG` and `IRR_DEBUG=1` outside the harness to get detailed application logs. Debug the full flow from chart loading to override generation for the specific chart used in the test. Apply fixes (likely in `pkg/chart` or `pkg/image`).
+    *   **Validation:** Run `go test ./test/integration/...`. Expect PASS.
+    *   **Post-check:** Run `go test ./...`. Expect PASS.
+
+8.  **Address High/Medium Priority Lint Errors (`errcheck`, `gosec`, `dupl`, `funlen` Impl)**
+    *   **Goal:** Improve code quality and robustness.
+    *   **Action (`errcheck` Impl):** Read `pkg/image/validation.go`. Check errors from `regexp.MatchString`. Handle them appropriately (e.g., panic if regex compilation itself could fail, or return the error if matching can fail at runtime).
+    *   **Validation (`errcheck` Impl):** `golangci-lint run --enable-only=errcheck ./pkg/image/validation.go`, `go test ./pkg/image/...`.
+    *   **Action (`gosec`):** Read `test/integration/harness.go`. Add `#nosec G301` to `os.MkdirAll` if 0755 is acceptable for test dirs. Add `#nosec G204` to `exec.Command` if variable input is deemed safe in test context.
+    *   **Validation (`gosec`):** `golangci-lint run --enable-only=gosec ./test/integration/harness.go`, `go test ./test/integration/...`.
+    *   **Action (`dupl`):** Read `pkg/image/parser.go`. Identify duplicated registry/repo parsing logic. Create private helper function `parseRegistryRepoComponents(namePart string) (registry, repository string, isRegistry bool)` (or similar). Replace duplicated blocks with calls to helper.
+    *   **Validation (`dupl`):** `golangci-lint run --enable-only=dupl ./pkg/image/parser.go`, `go test ./pkg/image/...`.
+    *   **Action (`funlen` Impl):** Refactor `pkg/chart/generator.go: Generate`, then `pkg/image/detector.go: DetectImages` & `tryExtractImageFromMap`, extracting logical blocks into private helper functions.
+    *   **Validation (`funlen` Impl):** After each function refactor: `golangci-lint run --enable-only=funlen <file>`, `go test ./...`.
+
+9.  **Address Low Priority Lint Errors**
+    *   **Goal:** Clean up remaining style and minor issues.
+    *   **Action:** Work through remaining categories (`gocritic`, `errorlint`, `unused`, `lll`, `mnd`, `revive`, `funlen` tests) systematically, file by file or category by category. Prioritize `unused` and `revive` fixes over purely stylistic ones like `lll`.
+    *   **Validation:** Run `golangci-lint run ./...` periodically. Run `go test ./...` after significant batches of changes.
+
+10. **Final Verification**
+    *   **Goal:** Confirm a clean state.
+    *   **Action:** Run `go test ./...`.
+    *   **Action:** Run `golangci-lint run ./...`.
+    *   **Validation:** Expect zero test failures and zero lint errors.
+
+---
+
+This provides a clear, step-by-step approach with validation checks at each stage to tackle the remaining issues.

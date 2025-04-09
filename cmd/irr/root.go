@@ -13,6 +13,7 @@ import (
 	"github.com/lalbers/irr/pkg/analysis"
 	"github.com/lalbers/irr/pkg/chart"
 	"github.com/lalbers/irr/pkg/debug"
+	stdLog "github.com/lalbers/irr/pkg/log"
 	"github.com/lalbers/irr/pkg/override"
 	"github.com/lalbers/irr/pkg/registry"
 	"github.com/lalbers/irr/pkg/strategy"
@@ -164,14 +165,17 @@ func newRootCmd() *cobra.Command {
 		Short: "Tool for generating Helm overrides to redirect container images",
 		Long: `IRR (Image Registry Rewrite) helps migrate container images between registries by generating
 Helm value overrides that redirect image references to a new registry.`,
-		PersistentPreRun: func(cmd *cobra.Command, _ []string) {
-			// Initialize debug logging early based on the persistent flag
-			// Find the debug flag value - check if it exists and is true
-			if debugFlag := cmd.Flags().Lookup("debug"); debugFlag != nil {
-				if debugEnabledVal, err := cmd.Flags().GetBool("debug"); err == nil && debugEnabledVal {
-					debug.Init(true)
-				}
+		PersistentPreRun: func(cmd *cobra.Command, args []string) {
+			// Initialize logging levels based on flags or ENV vars
+			if debugEnabled { // Use the package-level variable bound to the --debug flag
+				debug.Init(true)                   // Force enable detailed tracing
+				stdLog.SetLevel(stdLog.LevelDebug) // Set log level to Debug
+			} else {
+				// If flag not set, init debug tracing based *only* on IRR_DEBUG env var
+				// (stdLog level is already handled by LOG_LEVEL env var in its init)
+				debug.Init(debug.Enabled) // Respect env var
 			}
+			// Note: LOG_LEVEL env var is handled automatically by stdLog's init function.
 		},
 		// Disable automatic printing of usage on error
 		SilenceUsage: true,
@@ -217,12 +221,16 @@ Helm value overrides that redirect image references to a new registry.`,
 	return rootCmd
 }
 
-// Execute adds all child commands to the root command sets flags appropriately.
+// Execute adds all child commands to the root command and sets flags appropriately.
 // This is called by main.main(). It only needs to happen once to the rootCmd.
 func Execute() {
+	// Create the root command and its subcommands
 	rootCmd := newRootCmd()
-	if err := rootCmd.Execute(); err != nil {
-		// Check if the error is an ExitCodeError and use its code
+
+	// Execute the root command
+	err := rootCmd.Execute()
+	if err != nil {
+		// Handle exit codes properly
 		var exitCodeErr *ExitCodeError
 		exitCode := ExitGeneralRuntimeError // Default exit code
 		if errors.As(err, &exitCodeErr) {
@@ -493,4 +501,40 @@ func formatTextOutput(analysis *analysis.ChartAnalysis) string {
 	}
 
 	return sb.String()
+}
+
+func formatStringSlice(slice []string) string {
+	var sb strings.Builder
+	for i, s := range slice {
+		sb.WriteString(s)
+		if i < len(slice)-1 {
+			sb.WriteString(", ")
+		}
+	}
+	return sb.String()
+}
+
+// initConfig reads in config file and ENV variables if set.
+// NOTE: We are not currently using a config file or environment variables beyond LOG_LEVEL/IRR_DEBUG (handled in packages).
+func initConfig() {
+	// Original viper logic commented out as it's not used
+	// if cfgFile != "" {
+	// 	 // Use config file from the flag.
+	// 	 viper.SetConfigFile(cfgFile)
+	// } else {
+	// 	 // Find home directory.
+	// 	 home, err := os.UserHomeDir()
+	// 	 cobra.CheckErr(err)
+	//
+	// 	 // Search config in home directory with name ".irr" (without extension).
+	// 	 viper.AddConfigPath(home)
+	// 	 viper.SetConfigType("yaml")
+	// 	 viper.SetConfigName(".irr")
+	// }
+	//
+	// viper.AutomaticEnv()
+	//
+	// if err := viper.ReadInConfig(); err == nil {
+	// 	 fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
+	// }
 }

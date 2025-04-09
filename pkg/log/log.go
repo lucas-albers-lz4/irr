@@ -3,11 +3,8 @@ package log
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"strings"
-
-	"github.com/lalbers/irr/pkg/debug"
 )
 
 // Level represents the logging level
@@ -44,27 +41,23 @@ func init() {
 
 // IsDebugEnabled returns whether debug logging is enabled
 func IsDebugEnabled() bool {
-	return debug.Enabled || currentLevel <= LevelDebug
+	// Only controlled by LOG_LEVEL
+	return currentLevel <= LevelDebug
 }
 
 // SetLevel sets the logging level
 func SetLevel(level Level) {
 	currentLevel = level
-	if level == LevelDebug {
-		debug.Init(true)
-	}
+	// Removed debug.Init(true) - decouple from debug package
 	fmt.Fprintf(os.Stderr, "Log level set to %s\n", level)
 }
 
 // Debugf logs a debug message if debug logging is enabled
 func Debugf(format string, args ...interface{}) {
+	// Check if debug level is enabled via LOG_LEVEL
 	if IsDebugEnabled() {
-		if debug.Enabled {
-			// Use the debug package's formatting if it's enabled
-			log.Printf("[DEBUG] "+format, args...)
-		} else {
-			fmt.Fprintf(os.Stderr, format+"\n", args...)
-		}
+		// Always write to stderr for consistency
+		fmt.Fprintf(os.Stderr, "[LOG_DEBUG] "+format+"\n", args...)
 	}
 }
 

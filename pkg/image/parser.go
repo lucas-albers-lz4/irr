@@ -319,7 +319,7 @@ func IsValidImageReference(ref *Reference) bool {
 }
 
 // looksLikeImageReference is a helper function to quickly check if a string resembles an image reference format.
-// This is less strict than full parsing and used for heuristics in strict mode.
+// This is less strict than full parsing and used for heuristics.
 func looksLikeImageReference(s string) bool {
 	// Check for required separator (: for tag or @ for digest)
 	hasSeparator := strings.Contains(s, ":") || strings.Contains(s, "@")
