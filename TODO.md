@@ -120,19 +120,27 @@
 
 2.  **Refactor `funlen` Long Functions:**
     *   **Status:** [ ] Pending
-    *   **Issue:** Long functions are harder to read, test, and maintain. 30 functions reported (no change).
-    *   **Files:** Widespread (check `make lint` output). Prioritize `TestParseImageReference`, `TestOverrideCmdExecution`, `TestSetValueAtPath` (`pkg/override/path_utils_test.go`).
-    *   **Pre-Verification:**
-        ```bash
-        golangci-lint run --enable-only=funlen ./... | cat
-        go test ./...
-        ```
-    *   **Action:** Break down functions exceeding ~60 lines / 40 statements into smaller, focused helper functions. Aim for single responsibility.
-    *   **Post-Verification:**
-        ```bash
-        golangci-lint run --enable-only=funlen ./... | cat # Expect significantly fewer or no errors
-        go test ./... # Expect PASS
-        ```
+    *   **Issue:** Long functions (33 identified) are harder to read, test, and maintain. `analyzeValuesRecursive` already refactored.
+    *   **Files:** Widespread (see list below).
+    *   **Prioritized:**
+        *   `TestParseImageReference` (pkg/image/parser_test.go:11) - 157 lines
+        *   `TestOverrideCmdExecution` (cmd/irr/override_test.go:170) - 153 lines
+        *   `TestSetValueAtPath` (pkg/override/path_utils_test.go:149) - 173 lines
+    *   **Other Examples:**
+        *   `TestComplexChartFeatures` (test/integration/integration_test.go:121) - 181 lines
+        *   `TestAnalyzeCmd` (cmd/irr/analyze_test.go:46) - 139 lines
+        *   `TestDeepCopy` (pkg/override/path_utils_test.go:9) - 130 lines
+        *   `TestLoadMappings` (pkg/registry/mappings_test.go:14) - 127 lines
+        *   `createImageReference` (pkg/image/detector.go:305) - 89 lines
+        *   `runOverride` (cmd/irr/override.go:114) - 77 statements
+    *   **General Workflow (Per Function):**
+        1.  **Pre-Verification:**
+            *   Confirm state: `golangci-lint run --enable-only=funlen ./... | cat` and `go test ./...`.
+            *   Read function: Use file reading tool.
+        2.  **Action:** Refactor by extracting logic into smaller helper functions.
+        3.  **Post-Verification:**
+            *   Check linter: `golangci-lint run --enable-only=funlen ./... | cat` (expect one fewer error).
+            *   Check tests: `go test ./...` (expect PASS).
 
 3.  **Fix `gocritic` Style Issues:**
     *   **Status:** [ ] Pending

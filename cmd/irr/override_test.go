@@ -243,8 +243,14 @@ func TestOverrideCmdExecution(t *testing.T) {
 			setupEnv:       map[string]string{"IRR_SKIP_HELM_VALIDATION": "true"},
 			postCheck: func(t *testing.T, testDir string) {
 				outputPath := filepath.Join(testDir, "test-output.yaml")
+				t.Logf("Generated override file path: %s", outputPath)
+
+				// Read the generated file content
+				// #nosec G304 -- Path is constructed safely within the test from test directory and case name.
 				content, err := os.ReadFile(outputPath)
-				require.NoError(t, err, "Failed to read output file")
+				if err != nil {
+					t.Fatalf("Failed to read generated override file '%s': %v", outputPath, err)
+				}
 				assert.Contains(t, string(content), "repository: mock-target.com/dockerio/nginx")
 			},
 		},

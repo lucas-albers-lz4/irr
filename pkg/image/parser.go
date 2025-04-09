@@ -2,7 +2,6 @@ package image
 
 import (
 	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -12,16 +11,16 @@ import (
 // Constants for regex patterns
 // Remove unused tagPattern and digestPattern
 
-// Full pattern combining registry, repository, and tag/digest parts
-const referencePattern = `^` +
-	`(?:(?P<registry>[a-zA-Z0-9][-a-zA-Z0-9.]*[a-zA-Z0-9](:[0-9]+)?)/)?` + // Registry (optional)
-	`(?P<repository>[a-zA-Z0-9_./-]+)` + // Repository (required)
-	`(?:(?P<separator>[:@])` + // Separator (: or @)
-	`(?P<tagordigest>[a-zA-Z0-9_.-]+(?:[.+_-][a-zA-Z0-9_.-]+)*))?` + // Tag or Digest (optional)
-	`$`
+// Unused constant, removing.
+// const referencePattern = `^` +
+// 	`(?:(?P<registry>[a-zA-Z0-9][-a-zA-Z0-9.]*[a-zA-Z0-9](:[0-9]+)?)/)?` + // Registry (optional)
+// 	`(?P<repository>[a-zA-Z0-9_./-]+)` + // Repository (required)
+// 	`(?:(?P<separator>[:@])` + // Separator (: or @)
+// 	`(?P<tagordigest>[a-zA-Z0-9_.-]+(?:[.+_-][a-zA-Z0-9_.-]+)*))?` + // Tag or Digest (optional)
+// 	`$`
 
-// Compiled regex for the full reference
-var compiledReferenceRegex = regexp.MustCompile(referencePattern)
+// Unused variable, removing.
+// var compiledReferenceRegex = regexp.MustCompile(referencePattern)
 
 const (
 	// maxSplitTwo is the limit for splitting into at most two parts

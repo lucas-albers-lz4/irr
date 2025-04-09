@@ -655,23 +655,23 @@ func (h *TestHarness) BuildIRR() {
 	err := os.MkdirAll(filepath.Join(rootDir, "bin"), 0755)
 	require.NoError(h.t, err)
 
+	// #nosec G204 -- Building the project's own binary is safe.
 	cmd := exec.Command("go", "build", "-o", binPath, "./cmd/irr")
-	cmd.Dir = rootDir
-	var stderr bytes.Buffer
-	cmd.Stdout = os.Stdout // Keep stdout for progress
-	cmd.Stderr = &stderr   // Capture stderr for errors
-
-	// errcheck: Capture error, but test might focus on stderr content, so don't require.NoError here.
-	runErr := cmd.Run()
-	if runErr != nil {
+	projectRoot, err := getProjectRoot() // Get project root
+	if err != nil {
+		h.t.Fatalf("Failed to get project root for build: %v", err)
+	}
+	cmd.Dir = projectRoot // Run build from project root
+	output, err := cmd.CombinedOutput()
+	if err != nil {
 		// errorlint: Use errors.As instead of type assertion
 		var exitErr *exec.ExitError
-		if errors.As(runErr, &exitErr) {
+		if errors.As(err, &exitErr) {
 			// If it's an ExitError, log stderr for detailed Go build failure info
-			h.t.Fatalf("BuildIRR failed with exit code %d: %v\nStderr:\n%s", exitErr.ExitCode(), runErr, stderr.String())
+			h.t.Fatalf("BuildIRR failed with exit code %d: %v\nStderr:\n%s", exitErr.ExitCode(), err, string(output))
 		} else {
 			// For other errors, just log the error
-			h.t.Fatalf("BuildIRR failed: %v\nStderr:\n%s", runErr, stderr.String())
+			h.t.Fatalf("BuildIRR failed: %v\nStderr:\n%s", err, string(output))
 		}
 	}
 	h.t.Logf("BuildIRR successful.")

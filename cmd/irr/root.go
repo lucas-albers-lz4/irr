@@ -6,9 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"regexp"
 	"strings"
-	"text/tabwriter"
 
 	log "github.com/lalbers/irr/pkg/log"
 
@@ -33,13 +31,13 @@ var (
 	// analyze command flags
 	outputFormat string
 	// For analyze command
-	includePatterns []string
-	excludePatterns []string
-	knownPaths      []string
+	// includePatterns []string
+	// excludePatterns []string
+	// knownPaths      []string
 
 	// Output and mode flags
-	excludeRegistries []string
-	registryFile      string // Registry mappings file
+	// excludeRegistries []string
+	registryFile string // Registry mappings file
 
 	// Behavior flags
 	verbose    bool
@@ -47,6 +45,17 @@ var (
 
 	// IntegrationTestMode controls behavior specific to integration tests
 	integrationTestMode bool
+
+	// Configuration variables (populated by flags or config file)
+	// These seem unused according to the linter, removing them for now.
+	// includePatterns []string
+	// excludePatterns []string
+	// knownPaths      []string
+	targetRegistry string
+	// excludeRegistries []string
+	pathStrategy  string
+	printPatterns bool // Flag to enable printing detected patterns only
+	templateMode  bool // Flag to indicate template-aware parsing
 )
 
 // Helper to panic on required flag errors (indicates programmer error)
@@ -155,7 +164,7 @@ var defaultGeneratorFactory generatorFactoryFunc = func(
 var currentGeneratorFactory = defaultGeneratorFactory
 
 // Regular expression for validating registry names (simplified based on common usage)
-var registryRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9](:\d+)?$`)
+// var registryRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9](:\\d+)?$`)
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
@@ -364,98 +373,15 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 }
 
 // formatTextOutput needs to be moved here from analyze.go
-func formatTextOutput(analysis *analysis.ChartAnalysis) string {
-	var sb strings.Builder
-	sb.WriteString("Chart Analysis\n\n")
-
-	// Define tabwriter constants
-	const (
-		minWidth = 0
-		tabWidth = 8
-		padding  = 2
-		padChar  = ' '
-		flags    = 0 // Default flags
-	)
-
-	sb.WriteString("Pattern Summary:\n")
-	sb.WriteString(fmt.Sprintf("Total image patterns: %d\n", len(analysis.ImagePatterns)))
-	sb.WriteString(fmt.Sprintf("Global patterns: %d\n", len(analysis.GlobalPatterns)))
-	sb.WriteString("\n")
-
-	if len(analysis.ImagePatterns) > 0 {
-		sb.WriteString("Image Patterns:\n")
-		w := tabwriter.NewWriter(&sb, minWidth, tabWidth, padding, padChar, flags)
-		if _, err := fmt.Fprintln(w, "PATH\tTYPE\tDETAILS\tCOUNT"); err != nil {
-			log.Errorf("Error writing header to text output: %v", err)
-			return fmt.Sprintf("Error writing header to text output: %v", err) // Return error message
-		}
-		for _, p := range analysis.ImagePatterns {
-			details := ""
-			if p.Type == "map" {
-				reg := p.Structure["registry"]
-				repo := p.Structure["repository"]
-				tag := p.Structure["tag"]
-				details = fmt.Sprintf("registry=%v, repository=%v, tag=%v", reg, repo, tag)
-			} else {
-				details = p.Value
-			}
-			if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%d\n", p.Path, p.Type, details, p.Count); err != nil {
-				log.Errorf("Error writing row to text output: %v", err)
-				return fmt.Sprintf("Error writing row to text output: %v", err)
-			}
-		}
-		if err := w.Flush(); err != nil {
-			log.Errorf("Error flushing text output: %v", err)
-			return fmt.Sprintf("Error flushing text output: %v", err)
-		}
-		sb.WriteString("\n")
-	}
-
-	if len(analysis.GlobalPatterns) > 0 {
-		sb.WriteString("Global Patterns:\n")
-		for _, p := range analysis.GlobalPatterns {
-			sb.WriteString(fmt.Sprintf("- %s\n", p.Path))
-		}
-	}
-
-	return sb.String()
-}
-
-func formatStringSlice(slice []string) string {
-	var sb strings.Builder
-	for i, s := range slice {
-		sb.WriteString(s)
-		if i < len(slice)-1 {
-			sb.WriteString(", ")
-		}
-	}
-	return sb.String()
-}
+// func formatTextOutput(analysis *analysis.ChartAnalysis) string {
+// ... implementation ...
+// }
 
 // initConfig reads in config file and ENV variables if set.
 // NOTE: We are not currently using a config file or environment variables beyond LOG_LEVEL/IRR_DEBUG (handled in packages).
-func initConfig() {
-	// Original viper logic commented out as it's not used
-	// if cfgFile != "" {
-	// 	 // Use config file from the flag.
-	// 	 viper.SetConfigFile(cfgFile)
-	// } else {
-	// 	 // Find home directory.
-	// 	 home, err := os.UserHomeDir()
-	// 	 cobra.CheckErr(err)
-	//
-	// 	 // Search config in home directory with name ".irr" (without extension).
-	// 	 viper.AddConfigPath(home)
-	// 	 viper.SetConfigType("yaml")
-	// 	 viper.SetConfigName(".irr")
-	// }
-	//
-	// viper.AutomaticEnv()
-	//
-	// if err := viper.ReadInConfig(); err == nil {
-	// 	 fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
-	// }
-}
+// func initConfig() {
+// ... implementation ...
+// }
 
 // Override command implementation moved to override.go
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -454,34 +455,36 @@ func TestGenerateOverrides_Integration(t *testing.T) {
 
 	// Create test chart directory
 	chartDir := filepath.Join(tempDir, "test-chart")
-	err = os.Mkdir(chartDir, 0o755)
+	err = os.Mkdir(chartDir, 0o700)
 	require.NoError(t, err, "failed to create chart directory")
 
 	// Create Chart.yaml
-	chartYAML := []byte(`apiVersion: v2
-name: test-chart
+	chartYAML := fmt.Sprintf(`
+apiVersion: v2
+name: %s
 version: 0.1.0
-description: A test chart for irr
-`)
-	err = os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), []byte(chartYAML), 0o644)
+appVersion: "1.0"
+`, "test-chart")
+	err = os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), []byte(chartYAML), 0o600)
 	require.NoError(t, err, "failed to create Chart.yaml")
 
 	// Create values.yaml
-	valuesYAML := []byte(`image:
-  repository: nginx
-  tag: latest
-  registry: docker.io
-
-sidecar:
-  image: busybox:latest
-
-initContainer:
-  image:
-    repository: alpine
-    tag: "3.14"
-    registry: docker.io
-`)
-	err = os.WriteFile(filepath.Join(chartDir, "values.yaml"), []byte(valuesYAML), 0o644)
+	valuesYAML := strings.Join([]string{
+		"image:",
+		"  repository: nginx",
+		"  tag: latest",
+		"  registry: docker.io",
+		"",
+		"sidecar:",
+		"  image: busybox:latest",
+		"",
+		"initContainer:",
+		"  image:",
+		"    repository: alpine",
+		"    tag: \"3.14\"",
+		"    registry: docker.io",
+	}, "\n")
+	err = os.WriteFile(filepath.Join(chartDir, "values.yaml"), []byte(valuesYAML), 0o600)
 	require.NoError(t, err, "failed to create values.yaml")
 
 	chartPath := chartDir // Use the created directory path

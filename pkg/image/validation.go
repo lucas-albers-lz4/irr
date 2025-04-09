@@ -7,9 +7,6 @@ import (
 	"github.com/lalbers/irr/pkg/debug"
 )
 
-// validIdentifierRegex is used to validate parts of an image reference
-var validIdentifierRegex = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-])*[a-z0-9]$`)
-
 // isValidRegistryName checks if a string is potentially a valid registry name component.
 // Note: This is a basic check. Docker reference spec is complex.
 func isValidRegistryName(name string) bool {
@@ -78,11 +75,6 @@ func isValidDigest(digest string) bool {
 		return false
 	}
 	return matched
-}
-
-// isValidIdentifier checks if a string is valid for parts of an image reference (e.g., repository component).
-func isValidIdentifier(name string) bool {
-	return validIdentifierRegex.MatchString(name)
 }
 
 // IsValidRepository checks if the repository name conforms to allowed patterns.
