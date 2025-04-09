@@ -378,7 +378,7 @@ func (h *TestHarness) ValidateOverrides() error {
 				}
 			}
 			if imageStr, ok := value.(string); ok && imageStr != "" {
-				ref, parseErr := image.ParseImageReference(imageStr, true)
+				ref, parseErr := image.ParseImageReference(imageStr)
 				if parseErr == nil && ref != nil && ref.Registry != "" {
 					actualTargetsUsed[image.NormalizeRegistry(ref.Registry)] = true // Normalize here too
 				}

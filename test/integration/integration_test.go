@@ -290,7 +290,7 @@ func TestComplexChartFeatures(t *testing.T) {
 					t.Logf("Found image string at path %v: '%s'", path, imageStr)
 					foundImageStrings[imageStr] = true // Store full string
 					// Also try to parse and store the repo part for compatibility with existing validation
-					if ref, err := image.ParseImageReference(imageStr, true); err == nil {
+					if ref, err := image.ParseImageReference(imageStr); err == nil {
 						repoKey := ref.Repository // Default to just repo
 						if ref.Registry != "" {
 							// Construct registry/repository format if registry is present
@@ -737,7 +737,7 @@ func TestChartFeatures_CertManager(t *testing.T) {
 			t.Logf("Found image string at path %v: '%s'", path, imageStr)
 			foundImageStrings[imageStr] = true // Store full string
 			// Also try to parse and store the repo part for compatibility with existing validation
-			if ref, err := image.ParseImageReference(imageStr, true); err == nil {
+			if ref, err := image.ParseImageReference(imageStr); err == nil {
 				repoKey := ref.Repository // Default to just repo
 				if ref.Registry != "" {
 					// Construct registry/repository format if registry is present

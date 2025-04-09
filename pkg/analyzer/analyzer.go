@@ -262,7 +262,7 @@ func analyzeStringValue(path string, val reflect.Value, patterns *[]ImagePattern
 		// We need to check if the string value itself is a valid image reference
 		// before considering it for pattern detection.
 		// Use non-strict parsing here as we just want to know if it *looks* like an image.
-		if _, err := image.ParseImageReference(strValue, false); err == nil {
+		if _, err := image.ParseImageReference(strValue); err == nil {
 			// Valid image string format, but standalone (not in a map)
 			// This might be an image string that needs overriding.
 			log.Debugf("Analyzer: Found potential standalone image string at path %s: %s", path, strValue)

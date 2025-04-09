@@ -37,13 +37,17 @@
 **Goal:** Systematically eliminate lint errors while ensuring all tests pass.
 
 **Current Status & Blocking Issues:**
-*   **Test Failures:** `make test` is failing. Multiple integration tests (`TestMinimalChart`, `TestParentChart`, `TestKubePrometheusStack`, `TestCertManagerIntegration`, `TestKubePrometheusStackIntegration`, `TestIngressNginxIntegration`, `TestComplexChartFeatures/*`, `TestRegistryMappingFile`, `TestMinimalGitImageOverride`, `TestDryRunFlag`, `TestReadOverridesFromStdout`, `TestChartFeatures_CertManager`, `TestChartFeatures_PrometheusStack`) are exiting with code 11 ("failed to process chart: unsupported structure found").
-    *   **Cause:** The tests run with strict mode enabled, and the image detector now correctly identifies Helm template strings (e.g., `{{ .Values.image }}`) as unsupported structures, causing the failures.
-    *   **Resolution:** The integration tests need to be updated. They should either:
-        *   Run the `irr override` command without the `--strict` flag if the goal is to test non-strict behavior where templates are ignored.
-        *   Or, if testing strict mode, the test charts need modification, or the assertions need to expect the `ExitImageProcessingError` (exit code 11).
-    *   **Priority:** **[BLOCKER]** Test failures must be resolved before proceeding with further linting or feature development.
-*   **Lint Errors:** `make lint` reports 148 issues. Several categories remain.
+*   **Test Failures:** `make test` and `go test ./pkg/image/...` are failing.
+    *   **Parser Failures (`pkg/image/parser_test.go`):** The `ParseImageReference` function, relying on `distribution/reference.ParseNamed`, is failing tests because it lacks necessary pre-normalization (e.g., adding `docker.io/library/`, `latest` tag) and post-processing (e.g., stripping ports from registry). Errors like "repository name must be canonical" indicate stricter requirements from the underlying library. Specific expected errors (like tag/digest conflict) are also not being returned correctly.
+    *   **Detector Failures (`pkg/image/detection_test.go`):** Many tests fail because they expect detected images but receive `nil`. This is largely a downstream effect of the parser failures. `tryExtractImageFromMap` correctly identifies map structures but calls `createImageReference`, which in turn calls the faulty `ParseImageReference`. The parser's failure to return a valid `Reference` object leads to `nil` being passed down, causing the detector tests to fail (e.g., "Internal inconsistency... detectedImage=nil").
+    *   **Integration Test Failures (`test/integration/*`):** Failures previously attributed to strict mode handling of templates are likely compounded or caused by the underlying parser issues. Exit code 11 ("unsupported structure found") might still occur in strict mode for templates, but the parser issues need to be resolved first.
+    *   **Resolution:**
+        1.  **Fix `ParseImageReference` (`pkg/image/parser.go`):** Implement pre-normalization (add defaults) and post-processing (strip ports), ensuring correct error propagation based on `distribution/reference` behavior. This is the top priority.
+        2.  **Run `pkg/image` tests:** Execute `go test ./pkg/image/... -v` to verify parser and detector fixes.
+        3.  **Address Remaining Detector Issues:** If detector tests still fail after the parser fix, revisit `tryExtractImageFromMap` and `createImageReference` in `pkg/image/detector.go`.
+        4.  **Fix Integration Tests:** Once `pkg/image` tests pass, re-run `make test`. Address any remaining integration test failures, potentially related to strict mode template handling or other issues revealed after fixing the parser.
+    *   **Priority:** **[BLOCKER]** Parser and detector test failures must be resolved before proceeding with further linting or feature development.
+*   **Lint Errors:** `make lint` reports numerous issues across various categories.
 
 **Completed Linting Steps (Condensed):**
 *   [✓] **Critical Error Handling:** `errcheck` (suppressed intentionally), `errorlint` (1 fixed), `wrapcheck` (3 fixed), `nilerr` (1 fixed).
@@ -101,9 +105,9 @@
     *   **Action:** Address issues reported by `golangci-lint run --enable-only=staticcheck ./... | cat` (e.g., unused append result, tagged switch suggestion).
 
 **General Workflow (Post-Test Fixes):**
-1.  **Pre-Verification:** `go test ./...` (Confirm tests PASS). Run `golangci-lint run --enable-only=<linter> ./... | cat` for the target linter.
+1.  **Pre-Verification:** Confirm tests pass (`go test ./...`). Run `golangci-lint run --enable-only=<linter> ./... | cat` for the target linter to see the specific errors.
 2.  **Action:** Fix reported lint errors for the category.
-3.  **Post-Verification:** Rerun `golangci-lint run --enable-only=<linter> ./... | cat` (expect no errors for that category) and `go test ./...` (expect all tests to pass).
+3.  **Post-Verification:** Rerun `golangci-lint run --enable-only=<linter> ./... | cat` (expect no errors for *that specific linter*) and `go test ./...` (expect *all* tests to pass).
 
 ---
 **Previous Progress Snippets (Historical):**
