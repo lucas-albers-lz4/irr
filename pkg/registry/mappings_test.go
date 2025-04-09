@@ -14,10 +14,11 @@ import (
 func TestLoadMappings(t *testing.T) {
 	// Create a temporary mappings file
 	// **NOTE:** Updated fixture to match map[string]string format expected by LoadMappings.
-	content := `
- "quay.io": "my-registry.example.com/quay-mirror"
- "docker.io": "my-registry.example.com/docker-mirror"
- `
+	content := `mappings:
+  - source: quay.io
+    target: my-registry.example.com/quay-mirror
+  - source: docker.io
+    target: my-registry.example.com/docker-mirror`
 	tmpDir := t.TempDir()
 	tmpFile := filepath.Join(tmpDir, "mappings.yaml")
 	err := os.WriteFile(tmpFile, []byte(content), 0o600)
@@ -33,7 +34,7 @@ func TestLoadMappings(t *testing.T) {
 	}
 
 	// Create a temporary file with invalid YAML
-	invalidYAMLContent := `"key: value" : missing_quote`
+	invalidYAMLContent := `mappings: [invalid yaml`
 	invalidTmpFile := filepath.Join(tmpDir, "invalid.yaml")
 	err = os.WriteFile(invalidTmpFile, []byte(invalidYAMLContent), 0o600)
 	require.NoError(t, err)
@@ -52,6 +53,11 @@ func TestLoadMappings(t *testing.T) {
 	err = os.MkdirAll(tmpSubDir, 0o750)
 	require.NoError(t, err)
 
+	// Create a temporary file in the directory
+	tmpDirFile := filepath.Join(tmpSubDir, "mappings.yaml")
+	err = os.WriteFile(tmpDirFile, []byte(""), 0o600)
+	require.NoError(t, err)
+
 	tests := []struct {
 		name          string
 		path          string
@@ -62,13 +68,13 @@ func TestLoadMappings(t *testing.T) {
 		{
 			name: "valid mappings file",
 			path: tmpFile,
-			wantMappings: &Mappings{ // Use consolidated Mappings type
-				Entries: []Mapping{ // Use .Entries
+			wantMappings: &Mappings{
+				Entries: []Mapping{
 					{Source: "quay.io", Target: "my-registry.example.com/quay-mirror"},
 					{Source: "docker.io", Target: "my-registry.example.com/docker-mirror"},
 				},
 			},
-			wantErr:       false, // Should succeed now
+			wantErr:       false,
 			errorContains: "",
 		},
 		{
@@ -99,13 +105,13 @@ func TestLoadMappings(t *testing.T) {
 			name:          "path is a directory",
 			path:          tmpSubDir,
 			wantErr:       true,
-			errorContains: "is a directory",
+			errorContains: "failed to read mappings file",
 		},
 		{
 			name:          "invalid path traversal",
-			path:          "../../../etc/passwd", // Example invalid path
+			path:          "../../../etc/passwd.yaml",
 			wantErr:       true,
-			errorContains: "path must be within the current working directory tree",
+			errorContains: "mappings file path must be within the current working directory tree",
 		},
 		{
 			name: "empty path",
@@ -115,8 +121,10 @@ func TestLoadMappings(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Set env variable to skip CWD check in LoadMappings during testing
-			t.Setenv("IRR_TESTING", "true")
+			// Only skip CWD check for non-traversal tests
+			if tt.name != "invalid path traversal" {
+				t.Setenv("IRR_TESTING", "true")
+			}
 
 			// Call the consolidated LoadMappings function
 			got, err := LoadMappings(tt.path)
@@ -139,7 +147,7 @@ func TestLoadMappings(t *testing.T) {
 // Test function names updated to match consolidated functions
 func TestGetTargetRegistry(t *testing.T) {
 	mappings := &Mappings{ // Use consolidated Mappings type
-		Entries: []Mapping{ // Use .Entries
+		Entries: []Mapping{
 			{Source: "quay.io", Target: "my-registry.example.com/quay-mirror"},
 			{Source: "docker.io", Target: "my-registry.example.com/docker-mirror"},
 		},

@@ -174,39 +174,30 @@ It can analyze Helm charts to identify image references and generate override va
 files compatible with Helm, pointing images to a new registry according to specified strategies.
 It also supports linting image references for potential issues.`,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
-		// Retrieve flag values first
-		logLevelStr, _ := cmd.Flags().GetString("log-level")
-		debugEnabled, _ := cmd.Flags().GetBool("debug") // Use debugEnabled consistently
+		// Setup logging before any command logic runs
+		logLevelStr, err := cmd.Flags().GetString("log-level")
+		if err != nil {
+			log.Errorf("Error getting log-level flag: %v", err) // Log error
+		}
+		debugEnabled, err := cmd.Flags().GetBool("debug") // Use debugEnabled consistently
+		if err != nil {
+			log.Errorf("Error getting debug flag: %v", err) // Log error
+		}
 
-		// Configure logging level based on flags
-		levelToSet := "" // Use string temporarily for comparison
-
+		level := log.LevelInfo // Default level is now defined in pkg/log
 		if debugEnabled {
-			levelToSet = "DEBUG"
+			level = log.LevelDebug
 		} else if logLevelStr != "" { // Only check --log-level if --debug is not set
-			// Validate the string, but don't parse yet
-			upperLevel := strings.ToUpper(logLevelStr)
-			switch upperLevel {
-			case "DEBUG", "WARN", "ERROR":
-				levelToSet = upperLevel
-			default:
+			parsedLevel, err := log.ParseLevel(logLevelStr)
+			if err != nil {
 				// Use the package's Warnf directly
-				log.Warnf("Invalid log level '%s', ignoring flag. Current level remains based on LOG_LEVEL or default.", logLevelStr)
-				// Don't change levelToSet, let existing level persist
+				log.Warnf("Invalid log level specified: '%s'. Using default: %s. Error: %v", logLevelStr, level, err)
+			} else {
+				level = parsedLevel
 			}
 		}
 
-		// Set the level if a valid flag was provided
-		switch levelToSet {
-		case "DEBUG":
-			log.SetLevel(log.LevelDebug)
-			// This initial Debugf might not show if initial level wasn't already debug, but confirms setting
-			log.Debugf("Log level explicitly set to DEBUG by flag.")
-		case "WARN":
-			log.SetLevel(log.LevelWarn)
-		case "ERROR":
-			log.SetLevel(log.LevelError)
-		}
+		log.SetLevel(level)
 
 		// Final check to confirm debug status and log timestamp
 		if log.IsDebugEnabled() {
@@ -253,30 +244,26 @@ func init() {
 	// Add subcommands
 	rootCmd.AddCommand(newAnalyzeCmd())
 	// rootCmd.AddCommand(newDefaultCmd()) // Default command logic likely moved or removed
-	// Temporarily comment out commands with missing definitions
-	// rootCmd.AddCommand(newOverrideCmd())
+	rootCmd.AddCommand(newOverrideCmd()) // Re-enable the override command
 	// rootCmd.AddCommand(newLintCmd())
 	// rootCmd.AddCommand(newVersionCmd())
 
-	// Add Persistent Flags
-	rootCmd.PersistentFlags().StringVarP(&chartPath, "chart-path", "p", "", "Path to the Helm chart directory or archive")
-	rootCmd.PersistentFlags().StringVarP(&targetRegistry, "target-registry", "t", "", "Target container registry URL")
-	rootCmd.PersistentFlags().StringSliceVarP(&sourceRegistries, "source-registries", "s", []string{}, "Source container registry URLs")
-	rootCmd.PersistentFlags().StringSliceVarP(&excludeRegistries, "exclude-registries", "e", []string{}, "Source registries to exclude")
-	rootCmd.PersistentFlags().BoolVar(&strictMode, "strict", false, "Enable strict mode")
-	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output")
-	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "Preview changes instead of writing file")
-	rootCmd.PersistentFlags().IntVar(&pathDepth, "path-depth", DefaultPathDepth, "Maximum recursion depth for values traversal")
-	rootCmd.PersistentFlags().StringVar(&imageRegistry, "image-registry", "",
-		"Global image registry override (DEPRECATED, use global-registry)")
-	rootCmd.PersistentFlags().StringVar(&globalRegistry, "global-registry", "", "Global image registry override")
-	rootCmd.PersistentFlags().StringVar(&registryFile, "registry-file", "", "Path to YAML file containing registry mappings")
-	rootCmd.PersistentFlags().StringVarP(&outputFile, "output-file", "o", "", "Path to the output override file")
-	rootCmd.PersistentFlags().StringVar(&pathStrategy, "path-strategy", "prefix-source-registry", "Path generation strategy")
-	rootCmd.PersistentFlags().BoolVar(&templateMode, "template-mode", true, "Enable template variable detection")
-
-	// NOTE: Cannot mark persistent flags as required conditionally for a specific subcommand here.
-	// Validation must happen within the RunE function of the command.
+	// REMOVED Redundant Persistent Flags - These are defined locally in subcommands now.
+	// rootCmd.PersistentFlags().StringVarP(&chartPath, "chart-path", "p", "", "Path to the Helm chart directory or archive")
+	// rootCmd.PersistentFlags().StringVarP(&targetRegistry, "target-registry", "t", "", "Target container registry URL")
+	// rootCmd.PersistentFlags().StringSliceVarP(&sourceRegistries, "source-registries", "s", []string{}, "Source container registry URLs")
+	// rootCmd.PersistentFlags().StringSliceVarP(&excludeRegistries, "exclude-registries", "e", []string{}, "Source registries to exclude")
+	// rootCmd.PersistentFlags().BoolVar(&strictMode, "strict", false, "Enable strict mode")
+	// rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output")
+	// rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "Preview changes instead of writing file")
+	// rootCmd.PersistentFlags().IntVar(&pathDepth, "path-depth", DefaultPathDepth, "Maximum recursion depth for values traversal")
+	// rootCmd.PersistentFlags().StringVar(&imageRegistry, "image-registry", "",
+	// 	"Global image registry override (DEPRECATED, use global-registry)")
+	// rootCmd.PersistentFlags().StringVar(&globalRegistry, "global-registry", "", "Global image registry override")
+	// rootCmd.PersistentFlags().StringVar(&registryFile, "registry-file", "", "Path to YAML file containing registry mappings")
+	// rootCmd.PersistentFlags().StringVarP(&outputFile, "output-file", "o", "", "Path to the output override file")
+	// rootCmd.PersistentFlags().StringVar(&pathStrategy, "path-strategy", "prefix-source-registry", "Path generation strategy")
+	// rootCmd.PersistentFlags().BoolVar(&templateMode, "template-mode", true, "Enable template variable detection")
 }
 
 // --- Default (Override) Command --- Moved from original main.go
@@ -300,31 +287,42 @@ func runOverride(cmd *cobra.Command, args []string) error {
 	debug.FunctionEnter("runOverride")
 	defer debug.FunctionExit("runOverride")
 
-	debug.Println("Validating inputs...")
-	// --- Input Validation ---
-	if chartPath == "" || targetRegistry == "" || len(sourceRegistries) == 0 {
-		return &ExitCodeError{
-			Code: ExitInputConfigurationError,
-			Err:  errors.New("missing required flags: --chart-path, --target-registry, --source-registries must be provided"),
-		}
-	}
+	// Retrieve flags needed early
+	chartPath, _ := cmd.Flags().GetString("chart-path")
+	targetRegistry, _ := cmd.Flags().GetString("target-registry")
+	sourceRegistries, _ := cmd.Flags().GetStringSlice("source-registries")
+	outputFile, _ := cmd.Flags().GetString("output-file")
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	registryFile, _ := cmd.Flags().GetString("registry-file") // Renamed from registryMappingsFile
+	strategyName, _ := cmd.Flags().GetString("strategy")
+	excludeRegistries, _ := cmd.Flags().GetStringSlice("exclude-registries")
+	threshold, _ := cmd.Flags().GetInt("threshold") // Get threshold value
+	validate, _ := cmd.Flags().GetBool("validate")  // Get validate flag
 
-	// Validate target registry format
-	if !registryRegex.MatchString(targetRegistry) {
-		return &ExitCodeError{Code: ExitInputConfigurationError, Err: fmt.Errorf("invalid target registry format: %s", targetRegistry)}
+	// Validate required flags
+	if chartPath == "" {
+		return errors.New("chart-path flag is required")
 	}
-	// Validate source registry formats
-	for _, sr := range sourceRegistries {
-		if !registryRegex.MatchString(sr) {
-			return &ExitCodeError{Code: ExitInputConfigurationError, Err: fmt.Errorf("invalid source registry format: %s", sr)}
-		}
+	if targetRegistry == "" {
+		return errors.New("target-registry flag is required")
 	}
-	// Validate exclude registry formats
-	for _, er := range excludeRegistries {
-		if !registryRegex.MatchString(er) {
-			return &ExitCodeError{Code: ExitInputConfigurationError, Err: fmt.Errorf("invalid exclude registry format: %s", er)}
-		}
-	}
+	// source-registries is not strictly required, an empty list means process all non-excluded.
+	// if len(sourceRegistries) == 0 {
+	// 	return errors.New("source-registries flag is required")
+	// }
+
+	// Log the received flag values
+	debug.Printf("Executing override command with flags:")
+	debug.Printf("  Chart Path: %s", chartPath)
+	debug.Printf("  Target Registry: %s", targetRegistry)
+	debug.Printf("  Source Registries: %v", sourceRegistries)
+	debug.Printf("  Exclude Registries: %v", excludeRegistries)
+	debug.Printf("  Output File: %s", outputFile)
+	debug.Printf("  Dry Run: %v", dryRun)
+	debug.Printf("  Strategy: %s", strategyName)
+	debug.Printf("  Registry File: %s", registryFile)
+	debug.Printf("  Threshold: %d%%", threshold)
+	debug.Printf("  Validate: %v", validate)
 
 	// Load registry mappings if file is provided
 	var mappings *registry.Mappings
@@ -352,19 +350,19 @@ func runOverride(cmd *cobra.Command, args []string) error {
 	debug.Printf("Exclude Registries: %v", excludeRegistries)
 	debug.Printf("Registry File: %s", registryFile)
 
-	// Retrieve flags needed for generator factory
-	pathDepth, _ := cmd.Flags().GetInt("override-path-depth")
-	strictMode, _ := cmd.Flags().GetBool("strict")
-
-	// Validate chart path exists
-	if _, err := os.Stat(chartPath); os.IsNotExist(err) {
-		return &ExitCodeError{Code: ExitInputConfigurationError, Err: fmt.Errorf("chart path does not exist: %s", chartPath)}
-	}
-
 	// Retrieve necessary flags just before use
-	includePattern, _ := cmd.Flags().GetStringSlice("include-pattern")
-	excludePattern, _ := cmd.Flags().GetStringSlice("exclude-pattern")
-	knownPathsVal, _ := cmd.Flags().GetStringSlice("known-image-paths")
+	includePattern, err := cmd.Flags().GetStringSlice("include-pattern")
+	if err != nil {
+		log.Warnf("Error getting include-pattern flag: %v. Using default (nil).", err)
+	}
+	excludePattern, err := cmd.Flags().GetStringSlice("exclude-pattern")
+	if err != nil {
+		log.Warnf("Error getting exclude-pattern flag: %v. Using default (nil).", err)
+	}
+	knownPathsVal, err := cmd.Flags().GetStringSlice("known-image-paths")
+	if err != nil {
+		log.Warnf("Error getting known-image-paths flag: %v. Using default (nil).", err)
+	}
 
 	// Create generator using the factory
 	// Match the updated factory signature

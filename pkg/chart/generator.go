@@ -279,7 +279,7 @@ func (g *Generator) Generate() (*override.File, error) {
 			Path:           strings.Split(pattern.Path, "."), // Convert dot-path to slice
 			Reference:      imgRef,
 			OriginalFormat: originalFormat,
-			Pattern:        fmt.Sprintf("%d", pattern.Type), // Convert pattern type int to string
+			Pattern:        fmt.Sprintf("%s", pattern.Type), // Use %s for string type analysis.PatternType
 		})
 	}
 
@@ -334,10 +334,11 @@ func (g *Generator) Generate() (*override.File, error) {
 
 		if g.threshold > 0 && int(successRate) < g.threshold {
 			thresholdErrMsg := fmt.Sprintf(ThresholdErrorMessage, int(successRate), imagesSuccessfullyProcessed, eligibleImagesCount, g.threshold)
-			// Use fmt.Errorf to correctly format the error message
-			combinedError := fmt.Errorf(thresholdErrMsg)
+			// Create the base error using the formatted message
+			var combinedError error = fmt.Errorf("%s", thresholdErrMsg) // FIX: Use %s to treat thresholdErrMsg as literal
 			if len(processingErrors) > 0 {
-				combinedError = fmt.Errorf("%s - Underlying errors: %w", thresholdErrMsg, errors.Join(processingErrors...))
+				// Wrap the underlying processing errors
+				combinedError = fmt.Errorf("%w - Underlying errors: %w", combinedError, errors.Join(processingErrors...))
 			}
 			return nil, &ThresholdError{
 				Threshold:   g.threshold,

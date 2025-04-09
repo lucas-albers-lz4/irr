@@ -41,6 +41,7 @@ func LoadMappings(path string) (*Mappings, error) { // Updated return type
 		// TODO: Consider creating a specific wrapped error in errors.go
 		return nil, fmt.Errorf("failed to get working directory: %w", err)
 	}
+
 	// Skip CWD check during testing
 	if os.Getenv("IRR_TESTING") != "true" {
 		if !strings.HasPrefix(absPath, wd) {
@@ -48,6 +49,14 @@ func LoadMappings(path string) (*Mappings, error) { // Updated return type
 			return nil, WrapMappingPathNotInWD(path)
 		}
 	}
+
+	// Check if path is a directory
+	fileInfo, err := os.Stat(path)
+	if err == nil && fileInfo.IsDir() {
+		return nil, fmt.Errorf("failed to read mappings file '%s': is a directory", path)
+	}
+
+	// Check file extension
 	if !strings.HasSuffix(absPath, ".yaml") && !strings.HasSuffix(absPath, ".yml") {
 		// Use canonical error from pkg/registry/errors.go
 		return nil, WrapMappingExtension(path)
@@ -72,31 +81,40 @@ func LoadMappings(path string) (*Mappings, error) { // Updated return type
 	}
 
 	// --- PARSING LOGIC adopted from previous implementation ---
-	// Unmarshal into a temporary map first, as the input format is map[string]string
-	var rawMappings map[string]string
-	if err := yaml.Unmarshal(data, &rawMappings); err != nil {
-		// Use canonical error from pkg/registry/errors.go
-		return nil, WrapMappingFileParse(path, err)
+	// Try both formats: map[string]string and Mappings struct
+	var mappings Mappings
+
+	// Try the new format first
+	if err := yaml.Unmarshal(data, &mappings); err != nil {
+		// Try the old format (map[string]string)
+		var rawMappings map[string]string
+		if err2 := yaml.Unmarshal(data, &rawMappings); err2 != nil {
+			// Neither format worked
+			return nil, WrapMappingFileParse(path, err)
+		}
+		// Convert the map into the expected []Mapping slice
+		mappings.Entries = make([]Mapping, 0, len(rawMappings))
+		for source, target := range rawMappings {
+			mappings.Entries = append(mappings.Entries, Mapping{
+				Source: strings.TrimSpace(source),
+				Target: strings.TrimSpace(target),
+			})
+		}
 	}
 
-	// Convert the map into the expected []Mapping slice
-	finalMappings := &Mappings{ // Updated type
-		Entries: make([]Mapping, 0, len(rawMappings)), // Updated type
+	// Trim whitespace from all entries
+	for i := range mappings.Entries {
+		mappings.Entries[i].Source = strings.TrimSpace(mappings.Entries[i].Source)
+		mappings.Entries[i].Target = strings.TrimSpace(mappings.Entries[i].Target)
 	}
 
-	for source, target := range rawMappings {
-		trimmedSource := strings.TrimSpace(source)
-		trimmedTarget := strings.TrimSpace(target)
-		finalMappings.Entries = append(finalMappings.Entries, Mapping{ // Updated type
-			Source: trimmedSource,
-			Target: trimmedTarget,
-		})
-		debug.Printf("LoadMappings: Parsed and trimmed mapping: Source='%s', Target='%s'", trimmedSource, trimmedTarget)
+	// Check if we have any mappings
+	if len(mappings.Entries) == 0 {
+		return nil, WrapMappingFileEmpty(path)
 	}
-	// --- END PARSING LOGIC ---
 
-	debug.Printf("LoadMappings: Successfully loaded and trimmed %d mappings from %s", len(finalMappings.Entries), path)
-	return finalMappings, nil
+	debug.Printf("LoadMappings: Successfully loaded and trimmed %d mappings from %s", len(mappings.Entries), path)
+	return &mappings, nil
 }
 
 // GetTargetRegistry returns the target registry for a given source registry
@@ -113,15 +131,16 @@ func (m *Mappings) GetTargetRegistry(source string) string { // Updated receiver
 		// Explicitly trim \r from the mapping source
 		cleanedMappingSource := strings.TrimRight(mapping.Source, "\r")
 
-		// --- SIMPLIFIED COMPARISON ---
 		// Normalize the *mapping* source for comparison against the already normalized input
 		normalizedMappingSource := image.NormalizeRegistry(cleanedMappingSource)
 		debug.Printf("GetTargetRegistry Loop: Comparing normalizedInput (%q) == normalizedMapping (%q)",
 			normalizedSourceInput, normalizedMappingSource)
 
-		if normalizedSourceInput == normalizedMappingSource {
+		// Special handling for docker.io variants
+		if normalizedSourceInput == normalizedMappingSource ||
+			(normalizedMappingSource == "docker.io" && strings.HasPrefix(source, "index.docker.io/")) {
 			debug.Printf("GetTargetRegistry: Match found for '%s'! Returning target: '%s'", source, mapping.Target)
-			return mapping.Target
+			return strings.TrimSpace(mapping.Target)
 		}
 	}
 

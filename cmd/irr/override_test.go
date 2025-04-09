@@ -335,7 +335,8 @@ func executeCommand(cmd *cobra.Command, args ...string) (string, error) {
 func setupTestFS(t *testing.T) (afero.Fs, string) {
 	fs := afero.NewMemMapFs()
 	tempDir := t.TempDir()
-	_ = fs.MkdirAll(tempDir, 0755)
+	err := fs.MkdirAll(tempDir, 0755)
+	require.NoError(t, err)
 	return fs, tempDir
 }
 
@@ -410,11 +411,13 @@ func TestOverrideCommand_Success(t *testing.T) {
 	require.NoError(t, err, "Command execution failed. Output:\n%s", output)
 
 	// Check if the output file was created
-	exists, _ := afero.Exists(fs, outputFile)
+	exists, err := afero.Exists(fs, outputFile)
+	require.NoError(t, err)
 	assert.True(t, exists, "Output file was not created")
 
 	// Check file content (optional, depending on Generate mock)
-	content, _ := afero.ReadFile(fs, outputFile)
+	content, err := afero.ReadFile(fs, outputFile)
+	require.NoError(t, err)
 	assert.Contains(t, string(content), "registry: target.io")
 }
 
@@ -460,7 +463,8 @@ func TestOverrideCommand_DryRun(t *testing.T) {
 	assert.Contains(t, output, "repository: new-repo")
 
 	// Assert file was NOT created
-	exists, _ := afero.Exists(fs, outputFile)
+	exists, err := afero.Exists(fs, outputFile)
+	require.NoError(t, err)
 	assert.False(t, exists, "Output file should not be created in dry run mode")
 }
 

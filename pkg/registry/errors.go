@@ -2,71 +2,107 @@
 package registry
 
 import (
-	"errors"
 	"fmt"
 )
 
-// Registry mapping errors.
-var (
-	// ErrInvalidMappingPath is returned when the registry mapping file path is invalid.
-	ErrInvalidMappingPath = errors.New("invalid mappings file path")
+// Define specific error types for registry mapping issues.
 
-	// ErrMappingPathNotInWD is returned when the registry mapping file is not within the current working directory tree.
-	ErrMappingPathNotInWD = errors.New("mappings file path must be within the current working directory tree")
+// ErrMappingPathNotInWD indicates the mappings file path is outside the current working directory tree.
+type ErrMappingPathNotInWD struct {
+	Path string
+}
 
-	// ErrInvalidMappingExtension is returned when the registry mapping file does not have a valid extension (.yaml or .yml).
-	ErrInvalidMappingExtension = errors.New("mappings file path must end with .yaml or .yml")
+func (e *ErrMappingPathNotInWD) Error() string {
+	return fmt.Sprintf("mappings file path '%s' must be within the current working directory tree", e.Path)
+}
 
-	// ErrMappingFileNotExist is returned when the registry mapping file does not exist.
-	ErrMappingFileNotExist = errors.New("mappings file does not exist")
-
-	// ErrMappingFileRead is returned when the registry mapping file cannot be read.
-	ErrMappingFileRead = errors.New("failed to read mappings file")
-
-	// ErrMappingFileParse is returned when the registry mapping file cannot be parsed.
-	ErrMappingFileParse = errors.New("failed to parse mappings file")
-
-	// ErrNoMappingsLoaded is returned when no registry mappings could be loaded.
-	ErrNoMappingsLoaded = errors.New("no registry mappings loaded")
-
-	// ErrNoTargetMapping is returned when no mapping exists for the specified source registry.
-	ErrNoTargetMapping = errors.New("no target registry mapping found for source registry")
-
-	// ErrMappingFileEmpty is returned when the mappings file is empty.
-	ErrMappingFileEmpty = errors.New("mappings file is empty")
-)
-
-// WrapMappingPathNotInWD wraps ErrMappingPathNotInWD with the given path for context.
+// WrapMappingPathNotInWD creates a new ErrMappingPathNotInWD error.
 func WrapMappingPathNotInWD(path string) error {
-	return fmt.Errorf("%w: %s", ErrMappingPathNotInWD, path)
+	return &ErrMappingPathNotInWD{Path: path}
 }
 
-// WrapMappingExtension wraps ErrInvalidMappingExtension with the given path for context.
+// ErrMappingExtension indicates the mappings file path has an invalid extension.
+type ErrMappingExtension struct {
+	Path string
+}
+
+func (e *ErrMappingExtension) Error() string {
+	return fmt.Sprintf("mappings file path must end with .yaml or .yml: %s", e.Path)
+}
+
+// WrapMappingExtension creates a new ErrMappingExtension error.
 func WrapMappingExtension(path string) error {
-	return fmt.Errorf("%w: %s", ErrInvalidMappingExtension, path)
+	return &ErrMappingExtension{Path: path}
 }
 
-// WrapMappingFileNotExist wraps ErrMappingFileNotExist with the given path and original error for context.
+// ErrMappingFileNotExist indicates the mappings file does not exist.
+type ErrMappingFileNotExist struct {
+	Path string
+	Err  error
+}
+
+func (e *ErrMappingFileNotExist) Error() string {
+	return fmt.Sprintf("mappings file does not exist: %s (%v)", e.Path, e.Err)
+}
+
+func (e *ErrMappingFileNotExist) Unwrap() error {
+	return e.Err
+}
+
+// WrapMappingFileNotExist creates a new ErrMappingFileNotExist error.
 func WrapMappingFileNotExist(path string, err error) error {
-	return fmt.Errorf("%w: %s: %w", ErrMappingFileNotExist, path, err)
+	return &ErrMappingFileNotExist{Path: path, Err: err}
 }
 
-// WrapMappingFileRead wraps ErrMappingFileRead with the given path and original error for context.
+// ErrMappingFileRead indicates an error occurred while reading the mappings file.
+type ErrMappingFileRead struct {
+	Path string
+	Err  error
+}
+
+func (e *ErrMappingFileRead) Error() string {
+	// Include the underlying error message, which might contain "is a directory"
+	return fmt.Sprintf("failed to read mappings file '%s': %v", e.Path, e.Err)
+}
+
+func (e *ErrMappingFileRead) Unwrap() error {
+	return e.Err
+}
+
+// WrapMappingFileRead creates a new ErrMappingFileRead error.
 func WrapMappingFileRead(path string, err error) error {
-	return fmt.Errorf("%w: %s: %w", ErrMappingFileRead, path, err)
+	return &ErrMappingFileRead{Path: path, Err: err}
 }
 
-// WrapMappingFileParse wraps ErrMappingFileParse with the given path and original error for context.
-func WrapMappingFileParse(path string, err error) error {
-	return fmt.Errorf("%w: %s: %w", ErrMappingFileParse, path, err)
+// ErrMappingFileEmpty indicates the mappings file is empty.
+type ErrMappingFileEmpty struct {
+	Path string
 }
 
-// WrapMappingFileEmpty wraps ErrMappingFileEmpty with the given path for context.
+func (e *ErrMappingFileEmpty) Error() string {
+	return fmt.Sprintf("mappings file is empty: %s", e.Path)
+}
+
+// WrapMappingFileEmpty creates a new ErrMappingFileEmpty error.
 func WrapMappingFileEmpty(path string) error {
-	return fmt.Errorf("%w: %s", ErrMappingFileEmpty, path)
+	return &ErrMappingFileEmpty{Path: path}
 }
 
-// WrapNoTargetMapping wraps ErrNoTargetMapping with the given source registry for context.
-func WrapNoTargetMapping(sourceRegistry string) error {
-	return fmt.Errorf("%w: %s", ErrNoTargetMapping, sourceRegistry)
+// ErrMappingFileParse indicates an error occurred while parsing the mappings file content.
+type ErrMappingFileParse struct {
+	Path string
+	Err  error
+}
+
+func (e *ErrMappingFileParse) Error() string {
+	return fmt.Sprintf("failed to parse mappings file '%s': %v", e.Path, e.Err)
+}
+
+func (e *ErrMappingFileParse) Unwrap() error {
+	return e.Err
+}
+
+// WrapMappingFileParse creates a new ErrMappingFileParse error.
+func WrapMappingFileParse(path string, err error) error {
+	return &ErrMappingFileParse{Path: path, Err: err}
 }

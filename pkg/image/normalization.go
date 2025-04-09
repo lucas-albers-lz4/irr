@@ -2,6 +2,7 @@ package image
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/lalbers/irr/pkg/debug"
@@ -12,36 +13,49 @@ const (
 	libraryNamespace = "library"
 )
 
+// Define a simple regex to check if a string looks like a potential port number
+var portRegex = regexp.MustCompile(`^\d+$`)
+
 // NormalizeRegistry standardizes registry names for comparison
 func NormalizeRegistry(registry string) string {
-	if registry == "" {
+	// Trim leading/trailing whitespace and control characters (like \r)
+	trimmedRegistry := strings.TrimSpace(registry)
+	if trimmedRegistry == "" {
 		return defaultRegistry
 	}
 
 	// Convert to lowercase for consistent comparison
-	registry = strings.ToLower(registry)
+	lowerRegistry := strings.ToLower(trimmedRegistry)
 
-	// Handle docker.io special cases
-	if registry == defaultRegistry || registry == "index.docker.io" {
+	// Handle docker.io special cases EARLY, before path/port stripping
+	if lowerRegistry == defaultRegistry || lowerRegistry == "index.docker.io" {
 		return defaultRegistry
 	}
 
-	// Strip port number if present
-	if portIndex := strings.LastIndex(registry, ":"); portIndex != -1 {
-		// Basic validation: ensure the part after ':' is numeric
-		potentialPort := registry[portIndex+1:]
-		if _, err := fmt.Sscan(potentialPort, new(int)); err == nil {
-			registry = registry[:portIndex]
-			debug.Printf("NormalizeRegistry: Stripped port from '%s', result: '%s'", registry+potentialPort, registry)
+	// Separate hostname from potential path/port
+	hostname := lowerRegistry
+	firstSlash := strings.Index(hostname, "/")
+	if firstSlash != -1 {
+		hostname = hostname[:firstSlash]
+		debug.Printf("NormalizeRegistry: Stripped path component from '%s', result: '%s'", lowerRegistry, hostname)
+	}
+
+	// Strip port number from the hostname part if present
+	if portIndex := strings.LastIndex(hostname, ":"); portIndex != -1 {
+		potentialPort := hostname[portIndex+1:]
+		// Use regex to ensure it's only digits
+		if portRegex.MatchString(potentialPort) {
+			debug.Printf("NormalizeRegistry: Stripped port '%s' from hostname '%s'", potentialPort, hostname)
+			hostname = hostname[:portIndex]
 		} else {
-			debug.Printf("NormalizeRegistry: ':' found in '%s' but part after it ('%s') is not numeric, not stripping.", registry, potentialPort)
+			debug.Printf("NormalizeRegistry: ':' found in hostname '%s' but part after it ('%s') is not numeric, not stripping.", hostname, potentialPort)
 		}
 	}
 
-	// Remove trailing slashes
-	registry = strings.TrimSuffix(registry, "/")
+	// Note: No need to remove trailing slashes as path component is already removed.
 
-	return registry
+	debug.Printf("NormalizeRegistry: Input '%s' -> Normalized '%s'", registry, hostname)
+	return hostname
 }
 
 // SanitizeRegistryForPath makes a registry name safe for use in a path component.

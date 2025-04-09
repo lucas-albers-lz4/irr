@@ -56,73 +56,73 @@
 
 ## 25. (Removed - Merged into Section 26)
 
-## 26. Consolidate Fixes & Finalize Stability (Revised Plan)
+## 26. Consolidate Fixes & Finalize Stability (Revised Plan II)
 
 **Goal:** Achieve a stable codebase with a fully passing test suite (`go test ./...`) and a clean lint report (`golangci-lint run ./...`) by systematically addressing all remaining issues.
 
-**Status Summary (Based on last update):**
+**Status Summary (Based on last test run):**
 *   **Build Errors:** Fixed.
-*   **Tests:** Major unit test packages PASS (`pkg/image`, `pkg/override`, `pkg/registry`, `pkg/analysis`, `pkg/chart`). Failures remain in `test/integration` and potentially some `cmd/irr` tests dependent on integration.
-*   **Lint:** ~141 issues estimated across various linters (`errcheck`, `gocritic`, `gosec`, `lll`, `revive`, `unused`, `funlen`, etc.). `errcheck` partially addressed.
+*   **Tests:**
+    *   `cmd/irr`: Failing extensively (flag handling, execution logic, output).
+    *   `pkg/chart`: Newly failing (`TestGenerator_...`, `TestGenerateOverrides_Integration`).
+    *   `pkg/image`: Minor failure persists (`TestImageDetector_...`).
+    *   `pkg/registry`: Failing (`TestLoadMappings`, `TestGetTargetRegistry`).
+    *   `test/integration`: Failing extensively.
+    *   Other `pkg/` tests seem okay.
+*   **Lint:** ~141 issues estimated.
 
-**Detailed Fix Plan (Sequential):**
+**Revised Fix Plan (Sequential):**
 
-*Pre-step:* Ensure working directory is clean (`git status`). Run `go test ./...` and `golangci-lint run ./...` to establish a baseline for remaining failures/issues.
+*Pre-step:* Ensure working directory is clean (`git status`). Run `go test ./...` and `golangci-lint run ./...` to establish a baseline.
 
-0.  **Fix Build Errors:** (Completed)
-    *   **(A) Refactor Logging Calls:** Corrected the usage of the `pkg/log` package.
-    *   **(B) Address Missing Commands:** Temporarily commented out `rootCmd.AddCommand(...)` calls.
-    *   **(C) Fix Generator Factory Signature:** Updated `generatorFactoryFunc` type and `defaultGeneratorFactory`.
-
-1.  **Diagnose & Fix Integration `exit status 1`** (Corresponds to 7.A & 7.B above)
-2.  **Fix Integration Exit Codes & Messages** (Corresponds to 7.C & 7.D above)
-
-3.  **Fix `pkg/registry` Unit Tests (`TestLoadMappings`, `TestGetTargetRegistry`)**
-    *   **Goal:** Ensure registry mapping loading, validation, and lookup work correctly.
-    *   **Pre-check:** Run `go test ./pkg/registry/...`. Note specific assertion failures.
-    *   **Action:** Debug `LoadMappings` (YAML parsing, file validation) and `GetTargetRegistry` (normalization, map lookup). Adjust logic or test assertions.
-    *   **Validation:** Run `go test ./pkg/registry/...`. Expect PASS.
-
-4.  **Fix `pkg/image` Unit Test (`TestImageDetector_DetectImages_EdgeCases`)**
+1.  **Fix `pkg/image` Unit Test (`TestImageDetector_DetectImages_EdgeCases`)**
     *   **Goal:** Fix minor assertion mismatch.
-    *   **Pre-check:** Run `go test ./pkg/image/... -run TestImageDetector_DetectImages_EdgeCases`. Note newline difference.
-    *   **Action:** Add trailing `\\n` to the expected error string in `detection_test.go:455`.
+    *   **Status:** Still failing (newline mismatch).
+    *   **Action:** Re-apply fix to add trailing `\\n` to the expected error string in `detection_test.go`.
     *   **Validation:** Run `go test ./pkg/image/... -run TestImageDetector_DetectImages_EdgeCases`. Expect PASS.
 
-5.  **Fix Remaining `test/integration` Failures** (Corresponds to 7.E above)
+2.  **Fix `pkg/registry` Unit Tests (`TestLoadMappings`, `TestGetTargetRegistry`)**
+    *   **Goal:** Ensure registry mapping loading, validation, and lookup work correctly.
+    *   **Status:** Still failing (YAML loading, normalization).
+    *   **Action:** Debug `LoadMappings` (YAML parsing, file validation errors) and `GetTargetRegistry` (normalization logic for docker.io/quay.io, map lookup). Adjust logic or test assertions.
+    *   **Validation:** Run `go test ./pkg/registry/...`. Expect PASS.
 
-6.  **Address High/Medium Priority Lint Errors**
-    *   **Goal:** Improve code quality, security, and robustness by fixing critical linter warnings.
-    *   **Order:** `errcheck` -> `gosec` -> `dupl` -> `funlen` (Implementation) -> `nilnil` -> `gocritic` (Medium) -> `revive` (Medium).
-    *   **(A) `errcheck` (In Progress):**
-        *   **Pre-check:** Run `golangci-lint run --enable-only=errcheck ./...`. Note errors (e.g., in `pkg/image/validation.go`).
-        *   **Action:** Read flagged files. Add error handling/checking for unchecked function calls (e.g., `regexp.MatchString`). *Fixes applied to `override_test.go`, but attempts failed for `analyze_test.go`.*
-        *   **Validation:** Run `golangci-lint run --enable-only=errcheck <file_path>`. Expect no errors for the file. Run `go test <package_path>`. Expect PASS.
-    *   **(B) `gosec`:**
-        *   **Pre-check:** Run `golangci-lint run --enable-only=gosec ./...`. Note G301/G204 warnings (e.g., in `test/integration/harness.go`).
-        *   **Action:** Read flagged files. Add `#nosec G301` / `#nosec G204` comments with justification if deemed safe for test context or specific use case.
-        *   **Validation:** Run `golangci-lint run --enable-only=gosec <file_path>`. Expect no errors for the file. Run `go test <package_path>`. Expect PASS.
-    *   **(C) `dupl`:**
-        *   **Pre-check:** Run `golangci-lint run --enable-only=dupl ./...`. Note duplication warnings (e.g., in `pkg/image/parser.go`).
-        *   **Action:** Read flagged files. Refactor duplicated logic into private helper functions. *Because repeating yourself is only cool in music.*
-        *   **Validation:** Run `golangci-lint run --enable-only=dupl <file_path>`. Expect no errors for the file. Run `go test <package_path>`. Expect PASS.
-    *   **(D) `funlen` (Implementation):**
-        *   **Pre-check:** Run `golangci-lint run --enable-only=funlen ./... | grep -v _test.go`. Note functions exceeding limits (e.g., `generator.Generate`, `detector.DetectImages`, `detector.tryExtractImageFromMap`, `parser.ParseImageReference`, `harness.ValidateOverrides`, `root.runOverride`, `generator.processChartForOverrides`, `*.SetValueAtPath`).
-        *   **Action:** Prioritize the longest functions or those in historically complex files (`generator.Generate`, `detector.DetectImages`). Refactor by extracting logical blocks into smaller, private helper functions. *Defer `SetValueAtPath` until Technical Debt item 9.A is addressed.*
-        *   **Validation:** After refactoring each function: Run `golangci-lint run --enable-only=funlen <file_path>`. Expect no error for the refactored function. Run `go test ./...`. Expect PASS.
-    *   **(E) `nilnil`:**
-        *   **Pre-check:** Run `golangci-lint run --enable-only=nilnil ./...`. Note warnings (e.g., in `pkg/image/detector.go`).
-        *   **Action:** Read flagged files. Fix `return nil, nil` instances to return a concrete error type or `nil` appropriately.
-        *   **Validation:** Run `golangci-lint run --enable-only=nilnil <file_path>`. Expect no errors for the file. Run `go test <package_path>`. Expect PASS.
-    *   **(F) `gocritic` (Medium - ifElseChain, octalLiteral, commentedOutCode, paramTypeCombine):**
-        *   **Pre-check:** Run `golangci-lint run --enable-only=gocritic ./...`. Note medium priority warnings.
-        *   **Action:** Address these style/potential logic issues. Remove commented code unless it's a `// TODO`.
-        *   **Validation:** Run `golangci-lint run --enable-only=gocritic <file_path>`. Expect fewer/no warnings for the file. Run `go test ./...`. Expect PASS.
-    *   **(G) `revive` (Medium - unused-parameter, error-strings, etc.):**
-        *   **Pre-check:** Run `golangci-lint run --enable-only=revive ./...`. Note medium priority warnings.
-        *   **Action:** Address unused parameters, inconsistent error strings, etc.
-        *   **Validation:** Run `golangci-lint run --enable-only=revive <file_path>`. Expect fewer/no warnings for the file. Run `go test ./...`. Expect PASS.
-    *   **Post-check:** Run `golangci-lint run ./...`. Assess remaining medium/low priority warnings.
+3.  **Fix `pkg/chart` Unit Tests (`TestGenerator_Generate_...`, `TestGenerateOverrides_Integration`)**
+    *   **Goal:** Resolve new failures in the chart generator tests.
+    *   **Status:** Newly failing after previous changes.
+    *   **Action:** Debug `generator.Generate`. Focus on:
+        *   The logic converting `analysis.ImagePattern` back to a structure usable by the path strategy (parsing `pattern.Value` / using `pattern.Structure`).
+        *   Registry extraction and filtering logic for `eligibleImages`.
+        *   How map-based patterns are handled when generating the final override path/value.
+        *   Verify test setup, mocks, and expected outputs for `TestGenerator_Generate_*` and `TestGenerateOverrides_Integration`.
+    *   **Validation:** Run `go test ./pkg/chart/...`. Expect PASS.
+
+4.  **Fix `cmd/irr` Unit Tests (`TestAnalyzeCommand_*`, `TestOverrideCmd*`)**
+    *   **Goal:** Resolve extensive failures in command-level tests.
+    *   **Status:** Still failing extensively.
+    *   **Action:** Systematically debug:
+        *   **Flag Access:** Ensure `runOverride` and `runAnalyze` (in `root.go`) correctly retrieve flag values using `cmd.Flags().Get...`. Verify no conflicts with removed persistent flags.
+        *   **Required Flags:** Double-check flag definitions (`MarkFlagRequired`) in `override.go` and `root.go` (`newAnalyzeCmd`) against test expectations for missing flags.
+        *   **Execution Logic:** Step through `runOverride` and `runAnalyze` to ensure correct interaction with generator/analyzer factories, error handling, and output formatting.
+        *   **Test Setup:** Examine `cmd/irr/*_test.go` files. Is the `executeCommand` helper correctly simulating Cobra execution? Are mocks (analyzer, generator, filesystem) behaving as expected?
+        *   **(Cleanup - Optional but Recommended):** Consider moving `runOverride` and `runAnalyze` logic into `override.go` and `analyze.go` respectively.
+    *   **Validation:** Run `go test ./cmd/irr/...`. Expect PASS.
+
+5.  **Fix `test/integration` Failures**
+    *   **Goal:** Resolve end-to-end test failures.
+    *   **Status:** Still failing extensively.
+    *   **Action:** After all package and command unit tests pass, re-run integration tests. Debug failures by:
+        *   Checking exit codes (`harness.AssertExitCode`).
+        *   Examining stderr/stdout (`harness.AssertErrorContains`, `harness.AssertOutputContains`).
+        *   Inspecting generated override files (`harness.ValidateOverrides`).
+        *   Using `--debug` flag in test runs for more `irr` output.
+    *   **Validation:** Run `go test ./test/integration/...`. Expect PASS.
+
+6.  **Address Lint Errors**
+    *   **Goal:** Improve code quality, security, and robustness.
+    *   **Status:** Pending test fixes.
+    *   **Action:** Once all tests pass, proceed with the prioritized linting plan (`errcheck`, `gosec`, `dupl`, etc.) as previously outlined.
+    *   **Validation:** Run `golangci-lint run ./...`. Expect zero critical/high/medium errors. Address low-priority ones as feasible.
 
 9.  **Address Low Priority Lint Errors & Technical Debt**
     *   **Goal:** Clean up remaining style issues, unused code, and consolidate functions.

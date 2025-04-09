@@ -184,7 +184,7 @@ func (d *Detector) DetectImages(values interface{}, path []string) ([]DetectedIm
 				unsupportedMatches = append(unsupportedMatches, UnsupportedImage{
 					Location: path,
 					Type:     UnsupportedTypeStringParseError,
-					Error:    fmt.Errorf("strict mode: string at known image path %v failed to parse: %w", path, err),
+					Error:    fmt.Errorf("strict mode: string at known image path %v failed to parse: %w\n", path, err),
 				})
 			} else if imgRef != nil {
 				NormalizeImageReference(imgRef.Reference)

@@ -13,6 +13,8 @@ type Level int
 const (
 	// LevelDebug enables debug level logging
 	LevelDebug Level = iota
+	// LevelInfo enables info level logging
+	LevelInfo
 	// LevelWarn enables warning level logging
 	LevelWarn
 	// LevelError enables error level logging
@@ -20,22 +22,38 @@ const (
 )
 
 var (
-	// currentLevel is the current logging level
-	currentLevel = LevelWarn
+	// currentLevel is the current logging level, default to Info
+	currentLevel = LevelInfo
+	// ErrInvalidLogLevel indicates an invalid log level string was provided.
+	ErrInvalidLogLevel = fmt.Errorf("invalid log level")
 )
 
 // init initializes the logging package
 func init() {
 	// Check for LOG_LEVEL environment variable
-	if level := os.Getenv("LOG_LEVEL"); level != "" {
-		switch strings.ToUpper(level) {
-		case "DEBUG":
-			currentLevel = LevelDebug
-		case "WARN":
-			currentLevel = LevelWarn
-		case "ERROR":
-			currentLevel = LevelError
+	if levelStr := os.Getenv("LOG_LEVEL"); levelStr != "" {
+		level, err := ParseLevel(levelStr)
+		if err == nil {
+			currentLevel = level
+		} else {
+			fmt.Fprintf(os.Stderr, "Invalid LOG_LEVEL '%s', using default: %s\n", levelStr, currentLevel)
 		}
+	}
+}
+
+// ParseLevel converts a string to a log Level.
+func ParseLevel(levelStr string) (Level, error) {
+	switch strings.ToUpper(levelStr) {
+	case "DEBUG":
+		return LevelDebug, nil
+	case "INFO":
+		return LevelInfo, nil
+	case "WARN", "WARNING": // Allow 'WARNING' as alias
+		return LevelWarn, nil
+	case "ERROR":
+		return LevelError, nil
+	default:
+		return currentLevel, fmt.Errorf("%w: '%s'", ErrInvalidLogLevel, levelStr)
 	}
 }
 
@@ -75,11 +93,20 @@ func Errorf(format string, args ...interface{}) {
 	}
 }
 
+// Infof logs an info message (new)
+func Infof(format string, args ...interface{}) {
+	if currentLevel <= LevelInfo {
+		fmt.Fprintf(os.Stderr, format+"\n", args...)
+	}
+}
+
 // String returns the string representation of the log level.
 func (l Level) String() string {
 	switch l {
 	case LevelDebug:
 		return "DEBUG"
+	case LevelInfo:
+		return "INFO"
 	case LevelWarn:
 		return "WARN"
 	case LevelError:
