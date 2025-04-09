@@ -7,6 +7,9 @@ import (
 	"github.com/lalbers/irr/pkg/debug"
 )
 
+// validIdentifierRegex is used to validate parts of an image reference
+var validIdentifierRegex = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-])*[a-z0-9]$`)
+
 // isValidRegistryName checks if a string is potentially a valid registry name component.
 // Note: This is a basic check. Docker reference spec is complex.
 func isValidRegistryName(name string) bool {
@@ -77,28 +80,9 @@ func isValidDigest(digest string) bool {
 	return matched
 }
 
-// isImagePath checks if a given path matches known image patterns and not known non-image patterns.
-func isImagePath(path []string) bool {
-	pathStr := strings.Join(path, ".")
-
-	// Check against non-image patterns first (more specific overrides)
-	for _, re := range nonImagePathRegexps {
-		if re.MatchString(pathStr) {
-			debug.Printf("Path '%s' matches non-image pattern '%s', returning false.", pathStr, re.String())
-			return false
-		}
-	}
-
-	// Check against image patterns
-	for _, re := range imagePathRegexps {
-		if re.MatchString(pathStr) {
-			debug.Printf("Path '%s' matches image pattern '%s', returning true.", pathStr, re.String())
-			return true
-		}
-	}
-
-	debug.Printf("Path '%s' did not match any known image or non-image patterns, returning false.", pathStr)
-	return false
+// isValidIdentifier checks if a string is valid for parts of an image reference (e.g., repository component).
+func isValidIdentifier(name string) bool {
+	return validIdentifierRegex.MatchString(name)
 }
 
 // IsValidRepository checks if the repository name conforms to allowed patterns.
@@ -106,8 +90,9 @@ func IsValidRepository(repo string) bool {
 	// Pattern for valid repository names (based on Docker distribution spec)
 	// Allows lowercase alphanumeric characters and separators (., _, -, /)
 	const pattern = `^[a-z0-9]+([._-][a-z0-9]+)*(/[a-z0-9]+([._-][a-z0-9]+)*)*$`
-	// errcheck: regexp.MatchString error is always nil, safe to ignore.
-	matched, _ := regexp.MatchString(pattern, repo)
+	// errcheck: regexp.MatchString error is always nil for constant patterns, safe to ignore.
+	matched, err := regexp.MatchString(pattern, repo)
+	_ = err // Explicitly ignore the nil error to satisfy errcheck
 	return matched
 }
 
@@ -124,41 +109,17 @@ func IsValidTag(tag string) bool {
 	// Pattern for valid tags: word characters (alphanumeric + underscore) plus period and hyphen.
 	// Must start with a word character or number.
 	const pattern = `^[a-zA-Z0-9][\w.-]*$`
-	// errcheck: regexp.MatchString error is always nil, safe to ignore.
-	matched, _ := regexp.MatchString(pattern, tag)
+	// errcheck: regexp.MatchString error is always nil for constant patterns, safe to ignore.
+	matched, err := regexp.MatchString(pattern, tag)
+	_ = err // Explicitly ignore the nil error to satisfy errcheck
 	return matched
 }
 
 // IsValidDigest checks if the string is a valid image digest (e.g., sha256:...).
 func IsValidDigest(digest string) bool {
 	const pattern = `^[a-zA-Z0-9_-]+:[a-fA-F0-9]+$`
-	// errcheck: regexp.MatchString error is always nil, safe to ignore.
-	matched, _ := regexp.MatchString(pattern, digest)
-	return matched
-}
-
-func isValidTagOrDigest(tag string) bool {
-	// Check length
-	if len(tag) > 128 {
-		return false
-	}
-
-	// Check for valid characters
-	pattern := `^[a-zA-Z0-9][a-zA-Z0-9._-]*$`
-	matched, err := regexp.MatchString(pattern, tag)
-	if err != nil {
-		debug.Printf("Error matching tag pattern: %v", err)
-		return false
-	}
-	return matched
-}
-
-func isValidDigestOnly(digest string) bool {
-	pattern := `^sha256:[a-fA-F0-9]{64}$`
+	// errcheck: regexp.MatchString error is always nil for constant patterns, safe to ignore.
 	matched, err := regexp.MatchString(pattern, digest)
-	if err != nil {
-		debug.Printf("Error matching digest pattern: %v", err)
-		return false
-	}
+	_ = err // Explicitly ignore the nil error to satisfy errcheck
 	return matched
 }

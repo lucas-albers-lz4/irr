@@ -31,7 +31,6 @@ const (
 )
 
 // Global variable to hold the path to the compiled binary
-var irrBinaryPath string
 var buildOnce sync.Once
 var buildErr error
 
@@ -55,12 +54,13 @@ type TestHarness struct {
 func NewTestHarness(t *testing.T) *TestHarness {
 	t.Helper()
 
-	// Ensure the binary is built only once
-	buildOnce.Do(func() {
-		irrBinaryPath, buildErr = buildIrrBinary(t)
-	})
-	// Fail early if build failed
-	require.NoError(t, buildErr, "Failed to build irr binary")
+	// Build is handled centrally in TestMain now.
+	// // Ensure the binary is built only once
+	// buildOnce.Do(func() {
+	// 	buildErr = buildIrrBinary(t)
+	// })
+	// // Fail early if build failed
+	// require.NoError(t, buildErr, "Failed to build irr binary")
 
 	// Create temp directory for test artifacts
 	tempDir, err := os.MkdirTemp("", "irr-integration-test-")
@@ -105,7 +105,7 @@ func NewTestHarness(t *testing.T) *TestHarness {
 	return h
 }
 
-// Cleanup removes the temporary directory.
+// Cleanup removes the temporary directory and resets environment variables.
 func (h *TestHarness) Cleanup() {
 	// errcheck fix: Check error from RemoveAll
 	err := os.RemoveAll(h.tempDir)
@@ -113,15 +113,21 @@ func (h *TestHarness) Cleanup() {
 		h.t.Logf("Warning: Failed to remove temp directory %s: %v", h.tempDir, err)
 	}
 
-	// Clean up environment variable
+	// Clean up environment variables
 	if err := os.Unsetenv("IRR_TESTING"); err != nil {
 		h.t.Errorf("Failed to unset IRR_TESTING env var: %v", err)
 	}
+	// Explicitly unset IRR_DEBUG as well to avoid interference
+	if err := os.Unsetenv("IRR_DEBUG"); err != nil {
+		// Log this error but don't fail the test for it, as it might not have been set.
+		h.t.Logf("Warning: Failed to unset IRR_DEBUG env var: %v (might not have been set)", err)
+	}
 
-	// Run cleanup functions
+	// Run registered cleanup functions
 	for _, cleanup := range h.cleanupFuncs {
 		cleanup()
 	}
+	h.cleanupFuncs = nil // Clear cleanup functions
 }
 
 // createDefaultRegistryMappingFile creates a default mapping file in the harness temp dir.
@@ -429,34 +435,44 @@ func (h *TestHarness) WalkImageFields(data interface{}, visitor func(path []stri
 func (h *TestHarness) walkImageFieldsRecursive(data interface{}, currentPath []string, visitor func(path []string, value interface{})) {
 	switch v := data.(type) {
 	case map[string]interface{}:
-		// Check if this map represents an image override
-		if _, regOk := v["registry"]; regOk {
-			if _, repoOk := v["repository"]; repoOk {
-				// Looks like an image map override
-				visitor(currentPath, v)
-				return // Don't recurse into the image map itself
-			}
+		// Check if this map potentially represents an image override.
+		// Presence of "repository" is a strong indicator.
+		if _, repoOk := v["repository"]; repoOk {
+			// Consider it an image map if repository is present.
+			// We might also check for tag/digest, but repository is key.
+			visitor(currentPath, v)
+			return // Don't recurse further into this identified image map structure.
 		}
-		// Not an image map, recurse into its values
+		// Not identified as an image map structure based on keys, recurse into its values.
 		for key, value := range v {
 			newPath := append(append([]string{}, currentPath...), key)
 			h.walkImageFieldsRecursive(value, newPath, visitor)
 		}
 	case []interface{}:
 		for i, item := range v {
-			// Note: Array index format in path might differ from SetValueAtPath expectations
 			newPath := append(append([]string{}, currentPath...), fmt.Sprintf("[%d]", i))
 			h.walkImageFieldsRecursive(item, newPath, visitor)
 		}
 	case string:
-		// Assume strings encountered during override walking *might* be images if parsing succeeds
-		// This is less reliable than the map check but useful for validating structure
-		// Inline heuristic (since image.looksLikeImageReference is unexported):
-		hasSeparator := strings.Contains(v, ":") || strings.Contains(v, "@")
-		isNotPathOrURL := !strings.HasPrefix(v, "/") && !strings.HasPrefix(v, "./") && !strings.HasPrefix(v, "../") && !strings.HasPrefix(v, "http")
-		if hasSeparator && isNotPathOrURL {
-			visitor(currentPath, v)
+		// Check if the path itself suggests this string is an image.
+		// This is more reliable than guessing based on string content.
+		if len(currentPath) > 0 {
+			lastKey := currentPath[len(currentPath)-1]
+			// Simple check: if the key is "image" or ends with "Image", treat the string as an image override.
+			// This aligns better with how overrides might be structured.
+			if lastKey == "image" || strings.HasSuffix(lastKey, "Image") {
+				visitor(currentPath, v)
+			}
 		}
+		// Optional: Could add back the content heuristic as a fallback if needed,
+		// but path-based checking is generally preferred for overrides.
+		/*
+			hasSeparator := strings.Contains(v, ":") || strings.Contains(v, "@")
+			isNotPathOrURL := !strings.HasPrefix(v, "/") && !strings.HasPrefix(v, "./") && !strings.HasPrefix(v, "../") && !strings.HasPrefix(v, "http")
+			if hasSeparator && isNotPathOrURL {
+				visitor(currentPath, v)
+			}
+		*/
 	}
 }
 
@@ -550,7 +566,12 @@ func (h *TestHarness) AssertExitCode(expected int, args ...string) {
 	binPath := h.getBinaryPath()
 
 	// Debug logging for path and CWD
-	cwd, _ := os.Getwd() // Ignore error for logging only
+	cwd, err := os.Getwd() // Check error now
+	if err != nil {
+		// Log the error but don't fail the test just for this
+		h.logger.Printf("[ASSERT_EXIT_CODE WARNING] Failed to get current working directory: %v", err)
+		cwd = "(unknown)" // Use placeholder
+	}
 	h.logger.Printf("[ASSERT_EXIT_CODE DEBUG] binPath: %s, CWD: %s", binPath, cwd)
 
 	// G204: Subprocess launched with variable - Acceptable in test code.
@@ -560,7 +581,10 @@ func (h *TestHarness) AssertExitCode(expected int, args ...string) {
 	outputStr := string(outputBytes)
 
 	// Check exit code using exec.ExitError
-	if exitErr, ok := runErr.(*exec.ExitError); ok {
+	// errorlint: Use errors.As for checking the type
+	var exitErr *exec.ExitError
+	if errors.As(runErr, &exitErr) {
+		// It's an ExitError, check the code
 		assert.Equal(h.t, expected, exitErr.ExitCode(),
 			"Expected exit code %d but got %d\nArgs: %v\nOutput:\n%s", expected, exitErr.ExitCode(), args, outputStr)
 	} else if runErr != nil && expected != 0 {
@@ -582,7 +606,12 @@ func (h *TestHarness) AssertErrorContains(substring string, args ...string) {
 	binPath := h.getBinaryPath()
 
 	// Debug logging for path and CWD
-	cwd, _ := os.Getwd() // Ignore error for logging only
+	cwd, err := os.Getwd() // Check error now
+	if err != nil {
+		// Log the error but don't fail the test just for this
+		h.logger.Printf("[ASSERT_ERROR_CONTAINS WARNING] Failed to get current working directory: %v", err)
+		cwd = "(unknown)" // Use placeholder
+	}
 	h.logger.Printf("[ASSERT_ERROR_CONTAINS DEBUG] binPath: %s, CWD: %s", binPath, cwd)
 
 	// G204: Subprocess launched with variable - Acceptable in test code.
@@ -592,7 +621,9 @@ func (h *TestHarness) AssertErrorContains(substring string, args ...string) {
 	var stdout bytes.Buffer // Keep capturing stdout for context if needed, but don't check it
 	cmd.Stderr = &stderr
 	cmd.Stdout = &stdout
-	_ = cmd.Run() // Ignore error, focus on stderr content
+	// Explicitly ignore error return value from cmd.Run().
+	// This function's purpose is to assert content in stderr, regardless of exit code.
+	_ = cmd.Run() //nolint:errcheck
 
 	stderrStr := stderr.String()
 	stdoutStr := stdout.String() // Log stdout too for debugging context
@@ -648,29 +679,37 @@ func (h *TestHarness) BuildIRR() {
 
 // buildIrrBinary builds the irr binary for testing and returns its path.
 // It ensures the build happens only once per test run.
-func buildIrrBinary(t *testing.T) (string, error) {
-	t.Helper()
+// Note: This function does not use t.Helper() or t.Logf() as it might be called from TestMain.
+func buildIrrBinary() error { // Removed t *testing.T argument
 	rootDir, err := getProjectRoot()
 	if err != nil {
-		return "", fmt.Errorf("failed to find project root: %w", err)
+		return fmt.Errorf("failed to find project root: %w", err)
 	}
 
 	binDir := filepath.Join(rootDir, "bin")
 	// Use 0755 for bin directory as it needs execute permissions
 	err = os.MkdirAll(binDir, 0755) // #nosec G301
 	if err != nil {
-		return "", fmt.Errorf("failed to create bin directory %s: %w", binDir, err)
+		return fmt.Errorf("failed to create bin directory %s: %w", binDir, err)
 	}
 
 	binPath := filepath.Join(binDir, "irr")
-	t.Logf("Building irr binary at: %s", binPath)
+	fmt.Printf("Building irr binary at: %s\n", binPath) // Use fmt.Printf
 	// #nosec G204 -- Building the project's own binary is safe.
 	cmd := exec.Command("go", "build", "-o", binPath, "./cmd/irr")
 	cmd.Dir = rootDir // Run build from project root
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("go build failed: %w\nOutput:\n%s", err, string(output))
+		// Check if it's an ExitError using errors.As
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			// Include exit code in the error message for better context
+			return fmt.Errorf("go build failed with exit code %d: %w\nOutput:\n%s", exitErr.ExitCode(), err, string(output))
+		} else {
+			// Generic build failure
+			return fmt.Errorf("go build failed: %w\nOutput:\n%s", err, string(output))
+		}
 	}
-	t.Logf("Build successful.")
-	return binPath, nil
+	fmt.Printf("Build successful.\n") // Use fmt.Printf
+	return nil
 }

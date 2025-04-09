@@ -1,11 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
 	"regexp"
 	"strings"
 	"text/tabwriter"
@@ -25,19 +25,28 @@ import (
 
 // Global flag variables
 var (
-	// Chart and registry related
-	chartPath         string
-	sourceRegistries  []string
-	excludeRegistries []string
-	registryFile      string // Registry mappings file
+	cfgFile          string
+	sourceRegistries []string
+	outputFile       string
+	debugEnabled     bool
+	logLevel         string
+	// analyze command flags
+	outputFormat string
+	// For analyze command
+	includePatterns []string
+	excludePatterns []string
+	knownPaths      []string
 
 	// Output and mode flags
-	outputFile   string // Used by multiple commands
-	outputFormat string // Output format (text or json)
+	excludeRegistries []string
+	registryFile      string // Registry mappings file
 
 	// Behavior flags
 	verbose    bool
 	strictMode bool
+
+	// IntegrationTestMode controls behavior specific to integration tests
+	integrationTestMode bool
 )
 
 // Helper to panic on required flag errors (indicates programmer error)
@@ -53,9 +62,8 @@ const (
 	defaultOutputFilePerm fs.FileMode = 0o644 // Read/write for owner, read for group/others
 )
 
-// AppFs provides an abstraction over the filesystem.
-// Defaults to the OS filesystem, can be replaced with a memory map for tests.
-var AppFs afero.Fs = afero.NewOsFs()
+// AppFs defines the filesystem interface to use, allows mocking in tests.
+var AppFs = afero.NewOsFs()
 
 // ExitCodeError wraps an error with an exit code
 type ExitCodeError struct {
@@ -159,42 +167,40 @@ that redirect container image references from public registries to a private reg
 It can analyze Helm charts to identify image references and generate override values 
 files compatible with Helm, pointing images to a new registry according to specified strategies.
 It also supports linting image references for potential issues.`,
-	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		// Setup logging before any command logic runs
-		logLevelStr, err := cmd.Flags().GetString("log-level")
-		if err != nil {
-			log.Errorf("Error getting log-level flag: %v", err) // Log error
-		}
-		debugEnabled, err := cmd.Flags().GetBool("debug") // Use debugEnabled consistently
-		if err != nil {
-			log.Errorf("Error getting debug flag: %v", err) // Log error
-		}
+		logLevelStr := logLevel      // Use the global variable
+		debugEnabled := debugEnabled // Use the global variable
 
-		level := log.LevelInfo // Default level is now defined in pkg/log
+		level := log.LevelInfo // Default level
 		if debugEnabled {
 			level = log.LevelDebug
 		} else if logLevelStr != "" { // Only check --log-level if --debug is not set
 			parsedLevel, err := log.ParseLevel(logLevelStr)
 			if err != nil {
-				// Use the package's Warnf directly
 				log.Warnf("Invalid log level specified: '%s'. Using default: %s. Error: %v", logLevelStr, level, err)
 			} else {
 				level = parsedLevel
 			}
 		}
 
-		// Configure logging
 		log.SetLevel(level)
-		debug.Enabled = debugEnabled
+		debug.Enabled = debugEnabled // Set the package-level debug flag
+
+		// Integration test mode check
+		if integrationTestMode {
+			log.Warnf("Integration test mode enabled.")
+			// Perform actions specific to integration test mode if needed
+		}
+
+		return nil // PersistentPreRunE should return error
 	},
-	// Disable automatic printing of usage on error
-	SilenceUsage: true,
-	// Disable automatic printing of errors
-	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// If no arguments (subcommand) are provided, return an error.
 		if len(args) == 0 {
-			return errors.New("a subcommand is required. Use 'irr help' for available commands")
+			// Use Errorf for consistency
+			log.Errorf("Error: a subcommand is required. Use 'irr --help' for available commands.")
+			return errors.New("a subcommand is required")
 		}
 		// Otherwise, let Cobra handle the subcommand or help text.
 		return nil
@@ -203,27 +209,24 @@ It also supports linting image references for potential issues.`,
 
 // Execute adds all child commands to the root command and sets flags appropriately.
 // This is called by main.main(). It only needs to happen once to the rootCmd.
-func Execute() {
-	err := rootCmd.Execute()
-	if err != nil {
-		var exitErr *ExitCodeError
-		if errors.As(err, &exitErr) {
-			os.Exit(exitErr.ExitCode())
-		}
-		os.Exit(exitcodes.ExitGeneralRuntimeError)
+func Execute() error {
+	if err := rootCmd.Execute(); err != nil {
+		return fmt.Errorf("root command execution failed: %w", err)
 	}
+	return nil
 }
 
-// Flag to indicate integration test mode (hidden)
-var integrationTestMode bool
-
 func init() {
-	// Define persistent flags available to all commands
-	rootCmd.PersistentFlags().StringP("log-level", "l", "info", "Log level (debug, info, warn, error)")
-	rootCmd.PersistentFlags().BoolP("debug", "d", false, "Enable debug logging (overrides log-level to debug)")
+	cobra.OnInitialize()
+
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.irr.yaml)")
+	rootCmd.PersistentFlags().BoolVar(&debugEnabled, "debug", false, "Enable debug logging")
+	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "Set log level (debug, info, warn, error)")
+
+	// Integration test mode flag (hidden)
 	rootCmd.PersistentFlags().BoolVar(&integrationTestMode, "integration-test-mode", false, "Enable integration test mode (internal use)")
 	if err := rootCmd.PersistentFlags().MarkHidden("integration-test-mode"); err != nil {
-		log.Warnf("Failed to mark integration-test-mode flag as hidden: %v", err)
+		panic(fmt.Sprintf("Error marking flag hidden: %v", err)) // Panic during init is acceptable
 	}
 
 	// Add subcommands
@@ -249,43 +252,7 @@ func init() {
 	// rootCmd.PersistentFlags().StringVar(&pathStrategy, "path-strategy", "prefix-source-registry", "Path generation strategy")
 	// rootCmd.PersistentFlags().BoolVar(&templateMode, "template-mode", true, "Enable template variable detection")
 
-	// Add analyze command
-	analyzeCmd := &cobra.Command{
-		Use:   "analyze [flags] CHART",
-		Short: "Analyze a Helm chart for image references",
-		Long: `Analyze a Helm chart to identify container image references.
-		
-This command will scan a Helm chart for container image references and report them.
-It can output in text or JSON format and supports filtering by source registry.`,
-		Args: cobra.ExactArgs(1),
-		RunE: runAnalyze,
-	}
-
-	// Add flags
-	analyzeCmd.Flags().StringVarP(&outputFormat, "output", "o", "text", "Output format (text or json)")
-	analyzeCmd.Flags().StringVarP(&outputFile, "output-file", "f", "", "File to write output to (defaults to stdout)")
-	analyzeCmd.Flags().StringVarP(&registryFile, "mappings", "m", "", "Registry mappings file")
-	analyzeCmd.Flags().BoolVarP(&strictMode, "strict", "s", false, "Enable strict mode")
-	analyzeCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output")
-	analyzeCmd.Flags().StringSliceVarP(&sourceRegistries, "source-registries", "r", nil, "Source registries to analyze")
-
-	// Mark required flags
-	mustMarkFlagRequired(analyzeCmd, "source-registries")
-
-	rootCmd.AddCommand(analyzeCmd)
-
-	// Add analyze command flags using the global variables
-	analyzeCmd.Flags().StringVarP(&chartPath, "chart", "c", "", "Path to the chart directory or archive")
-	analyzeCmd.Flags().StringSliceVarP(&sourceRegistries, "source-registries", "s", []string{}, "Source registries to analyze")
-	analyzeCmd.Flags().StringSliceVarP(&excludeRegistries, "exclude-registries", "e", []string{}, "Registries to exclude from analysis")
-	analyzeCmd.Flags().StringVarP(&registryFile, "mappings", "m", "", "Path to registry mappings file")
-	analyzeCmd.Flags().BoolVarP(&strictMode, "strict", "", false, "Enable strict validation mode")
-	analyzeCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output")
-	analyzeCmd.Flags().StringVarP(&outputFormat, "output", "o", "text", "Output format (text or json)")
-	analyzeCmd.Flags().StringVarP(&outputFile, "output-file", "f", "", "File to write output to")
-
-	// Mark required flags
-	_ = analyzeCmd.MarkFlagRequired("chart")
+	// REMOVED duplicate analyzeCmd - already added via rootCmd.AddCommand(newAnalyzeCmd()) above
 }
 
 // --- Analyze Command --- Moved from analyze.go
@@ -491,3 +458,20 @@ func initConfig() {
 }
 
 // Override command implementation moved to override.go
+
+// Get the root command - useful for testing
+func getRootCmd() *cobra.Command {
+	return rootCmd
+}
+
+// executeCommand is a helper for testing Cobra commands
+func executeCommand(root *cobra.Command, args ...string) (output string, err error) {
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs(args)
+
+	err = root.Execute()
+
+	return buf.String(), err
+}

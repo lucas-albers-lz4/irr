@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/lalbers/irr/pkg/debug"
+	"github.com/lalbers/irr/pkg/exitcodes"
 	log "github.com/lalbers/irr/pkg/log"
 	// Removed cmd import to break cycle
 )
@@ -30,5 +31,16 @@ func main() {
 	}
 
 	// Execute the root command (defined in root.go, package main)
-	Execute()
+	// Cobra's Execute() handles its own error printing. We check the returned
+	// error to propagate the correct exit code.
+	if err := Execute(); err != nil {
+		// Check if the error is a custom ExitCodeError
+		if code, ok := exitcodes.IsExitCodeError(err); ok {
+			// Use the specific exit code from the error
+			os.Exit(code)
+		} else {
+			// Cobra likely printed the error already, use a generic failure code
+			os.Exit(1)
+		}
+	}
 }

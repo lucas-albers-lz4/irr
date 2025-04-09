@@ -37,7 +37,7 @@ func (m *mockGenerator) Generate() (*override.File, error) {
 		return nil, fmt.Errorf("unexpected nil result from mock generator")
 	}
 	if err := args.Error(1); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("mock generator error: %w", err)
 	}
 	overrideFile, ok := result.(*override.File)
 	if !ok {
@@ -77,7 +77,7 @@ func TestOverrideCmdArgs(t *testing.T) {
 		{
 			name: "valid flags with dry run",
 			args: []string{
-				"--chart-path", "testdata/basic",
+				"--chart-path", "../../test-data/charts/basic",
 				"--target-registry", "target.io",
 				"--source-registries", "source.io",
 				"--dry-run",
@@ -149,7 +149,7 @@ func TestOverrideCommand_GeneratorError(t *testing.T) {
 
 	cmd := newOverrideCmd()
 	cmd.SetArgs([]string{
-		"--chart-path", "testdata/basic",
+		"--chart-path", "../../test-data/charts/basic",
 		"--target-registry", "target.io",
 		"--source-registries", "source.io",
 	})
@@ -462,23 +462,4 @@ func TestOverrideCommand_DryRun(t *testing.T) {
 	assert.Contains(t, output, "--- Dry Run: Generated Overrides ---", "missing dry run header")
 	assert.Contains(t, output, "registry: target.io", "missing registry override")
 	assert.Contains(t, output, "--- End Dry Run ---", "missing dry run footer")
-}
-
-// Set up environment variables for testing
-func setupTestEnv(t *testing.T) {
-	registryMappingFile := "../../registry-mappings.yaml"
-	if err := os.Setenv("IRR_TESTING", "true"); err != nil {
-		t.Errorf("Failed to set IRR_TESTING env var: %v", err)
-	}
-	if err := os.Setenv("IRR_REGISTRY_MAPPING_FILE", registryMappingFile); err != nil {
-		t.Errorf("Failed to set IRR_REGISTRY_MAPPING_FILE env var: %v", err)
-	}
-	defer func() {
-		if err := os.Unsetenv("IRR_TESTING"); err != nil {
-			t.Errorf("Failed to unset IRR_TESTING env var: %v", err)
-		}
-		if err := os.Unsetenv("IRR_REGISTRY_MAPPING_FILE"); err != nil {
-			t.Errorf("Failed to unset IRR_REGISTRY_MAPPING_FILE env var: %v", err)
-		}
-	}()
 }

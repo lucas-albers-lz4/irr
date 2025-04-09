@@ -114,13 +114,16 @@ func TestAnalyzeCmd(t *testing.T) {
 		},
 		{
 			name: "success with output file",
-			args: []string{"analyze", "./fake/chart", "--source-registries", "source.io", "--file", "analyze_test_output.txt"},
+			args: []string{"analyze", "../../test-data/charts/basic", "--source-registries", "source.io", "--output-file", "analyze_test_output.txt"},
 			mockAnalyzeFunc: func() (*analysis.ChartAnalysis, error) {
-				return &analysis.ChartAnalysis{ImagePatterns: []analysis.ImagePattern{{Path: "file.image", Value: "test:ok"}}}, nil
+				// Provide a simple mock result for the file output test
+				result := analysis.NewChartAnalysis()
+				result.ImagePatterns = append(result.ImagePatterns, analysis.ImagePattern{Path: "some.image", Value: "source.io/test:1.0"})
+				return result, nil
 			},
 			expectErr:         false,
 			expectFile:        "analyze_test_output.txt",
-			expectFileContent: "Chart Analysis",
+			expectFileContent: "Chart Analysis", // Basic check for text output in file
 		},
 		{
 			name: "analyzer returns error",

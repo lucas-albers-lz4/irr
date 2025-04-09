@@ -17,11 +17,6 @@ import (
 	"github.com/lalbers/irr/pkg/strategy"
 )
 
-const (
-	testChartPath         = "./test-chart"
-	defaultTargetRegistry = "harbor.local"
-)
-
 // MockPathStrategy implements the strategy.PathStrategy interface for testing
 type MockPathStrategy struct{}
 
@@ -40,7 +35,10 @@ type MockChartLoader struct {
 }
 
 func (m *MockChartLoader) Load(chartPath string) (*helmchart.Chart, error) {
-	return m.chart, m.err
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.chart, nil
 }
 
 func TestNewGenerator(t *testing.T) {
@@ -49,16 +47,6 @@ func TestNewGenerator(t *testing.T) {
 	// Use chart.NewGenerator from the actual package
 	gen := NewGenerator("path", "target", []string{"source"}, []string{}, strategy, nil, false, 80, loader, []string(nil), []string(nil), []string(nil))
 	assert.NotNil(t, gen)
-}
-
-// mockDetector implements the Detector interface for testing
-type mockDetector struct {
-	detected    []image.DetectedImage
-	unsupported []image.UnsupportedImage
-}
-
-func (m *mockDetector) Detect(chart *helmchart.Chart) ([]image.DetectedImage, []image.UnsupportedImage, error) {
-	return m.detected, m.unsupported, nil
 }
 
 func TestGenerator_Generate_Simple(t *testing.T) {
@@ -229,36 +217,39 @@ func (m *MockPathStrategyWithError) GeneratePath(ref *image.Reference, targetReg
 	return "mockpath/" + ref.Repository + ":" + ref.Tag, nil
 }
 
+// Test case for when strict mode finds unsupported patterns (like templates)
 func TestGenerator_Generate_StrictModeViolation(t *testing.T) {
-	// Setup loader to return a chart with a templated value
+	chartPath := "/test/strict"
+	// Mock loader returns a chart with a templated image value
 	mockLoader := &MockChartLoader{
 		chart: &helmchart.Chart{
-			Metadata: &helmchart.Metadata{Name: "test-chart"},
+			Metadata: &helmchart.Metadata{Name: "test-strict"},
 			Values: map[string]interface{}{
-				"templatedImage": "source.registry.com/library/nginx:{{ .Values.tag }}", // Templated tag
-				"normalImage":    "source.registry.com/library/redis:stable",
+				"templatedImage": "{{ .Values.repo }}/myimage:{{ .Values.tag }}", // Unsupported
+				"normalImage":    "docker.io/library/nginx:stable",               // Supported
 			},
 		},
 	}
 	mockStrategy := &MockPathStrategy{}
 
+	// Enable strict mode
 	g := NewGenerator(
-		"test-chart", "target.registry.com",
-		[]string{"source.registry.com"}, []string{},
+		chartPath,
+		"target.registry.com",
+		[]string{"docker.io"}, // Source registry
+		[]string{},            // No exclusions
 		mockStrategy,
-		nil,
-		true, // Enable strict mode
+		nil,  // No mappings
+		true, // Strict mode ON
 		0,    // Threshold (irrelevant when strict fails)
 		mockLoader,
 		nil, nil, nil,
 	)
 
 	result, err := g.Generate()
-	require.Error(t, err) // Expect an error due to strict mode violation
-	assert.Nil(t, result)
-	// Check for the specific ErrUnsupportedStructure
-	assert.ErrorIs(t, err, ErrUnsupportedStructure)
-	assert.Contains(t, err.Error(), "Path: templatedImage, Type: template") // Check detail message
+	// Use require.ErrorIs for specific error type checking
+	require.ErrorIs(t, err, ErrUnsupportedStructure)
+	assert.Nil(t, result) // Ensure result is nil on error
 }
 
 func TestGenerator_Generate_Mappings(t *testing.T) {

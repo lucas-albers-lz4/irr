@@ -2,21 +2,28 @@ package image
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/lalbers/irr/pkg/debug"
 )
 
-const (
-	// Patterns for detecting image references
-	tagPattern = `^(?:(?P<registry>[a-zA-Z0-9][-a-zA-Z0-9.]*[a-zA-Z0-9](:[0-9]+)?)/)?` +
-		`(?P<repository>[a-zA-Z0-9][-a-zA-Z0-9._/]*[a-zA-Z0-9]):` +
-		`(?P<tag>[a-zA-Z0-9][-a-zA-Z0-9._]+)$`
-	digestPattern = `^(?:(?P<registry>[a-zA-Z0-9][-a-zA-Z0-9.]*[a-zA-Z0-9](:[0-9]+)?)/)?` +
-		`(?P<repository>[a-zA-Z0-9][-a-zA-Z0-9._/]*[a-zA-Z0-9])@` +
-		`(?P<digest>sha256:[a-fA-F0-9]{64})$`
+// Constants for regex patterns
+// Remove unused tagPattern and digestPattern
 
+// Full pattern combining registry, repository, and tag/digest parts
+const referencePattern = `^` +
+	`(?:(?P<registry>[a-zA-Z0-9][-a-zA-Z0-9.]*[a-zA-Z0-9](:[0-9]+)?)/)?` + // Registry (optional)
+	`(?P<repository>[a-zA-Z0-9_./-]+)` + // Repository (required)
+	`(?:(?P<separator>[:@])` + // Separator (: or @)
+	`(?P<tagordigest>[a-zA-Z0-9_.-]+(?:[.+_-][a-zA-Z0-9_.-]+)*))?` + // Tag or Digest (optional)
+	`$`
+
+// Compiled regex for the full reference
+var compiledReferenceRegex = regexp.MustCompile(referencePattern)
+
+const (
 	// maxSplitTwo is the limit for splitting into at most two parts
 	maxSplitTwo = 2
 )
@@ -315,41 +322,5 @@ func IsValidImageReference(ref *Reference) bool {
 	}
 
 	debug.Println("Validation Success")
-	return true
-}
-
-// looksLikeImageReference is a helper function to quickly check if a string resembles an image reference format.
-// This is less strict than full parsing and used for heuristics.
-func looksLikeImageReference(s string) bool {
-	// Check for required separator (: for tag or @ for digest)
-	hasSeparator := strings.Contains(s, ":") || strings.Contains(s, "@")
-	if !hasSeparator {
-		return false // Must have one of the separators
-	}
-
-	// Avoid matching obvious file paths or URLs
-	hasSlash := strings.Contains(s, "/")
-	isFilePath := hasSlash && (strings.HasPrefix(s, "/") || strings.HasPrefix(s, "./") || strings.HasPrefix(s, "../"))
-	isURL := strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
-	if isFilePath || isURL {
-		return false
-	}
-
-	// Further check: if no slash, ensure the part before the separator is simple
-	if !hasSlash {
-		sepIndex := strings.LastIndex(s, ":")
-		if sepIndex == -1 {
-			sepIndex = strings.LastIndex(s, "@")
-		}
-		if sepIndex > 0 {
-			potentialRepo := s[:sepIndex]
-			// Basic check for plausible repo name (avoid things like 'http:')
-			if strings.ContainsAny(potentialRepo, "./") { // If it contains path separators without a registry-like part, likely not an image
-				return false
-			}
-		}
-	}
-
-	// If it has a separator and doesn't look like a file path/URL, consider it plausible.
 	return true
 }

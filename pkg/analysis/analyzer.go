@@ -215,23 +215,26 @@ func (a *Analyzer) analyzeStringValue(key, val, path string, analysis *ChartAnal
 	debug.Printf("[analyzeStringValue ENTER] Path: '%s', Value: '%s'", path, val)
 	defer debug.Printf("[analyzeStringValue EXIT] Path: '%s', ImagePatterns Count: %d", path, len(analysis.ImagePatterns))
 
+	// Check if the value is a Go template first
+	isTemplate := strings.Contains(val, "{{") && strings.Contains(val, "}}")
+
 	// Check using the heuristic (key name, basic format)
 	isHeuristicMatch := a.isImageString(key, val)
-	debug.Printf("[analyzeStringValue] Path: '%s', isHeuristicMatch: %v", path, isHeuristicMatch)
+	debug.Printf("[analyzeStringValue] Path: '%s', isHeuristicMatch: %v, isTemplate: %v", path, isHeuristicMatch, isTemplate)
 
-	// Only consider it an image pattern if it passes the heuristic check.
-	// We will let the Generator handle parse errors and template checks later.
-	if !isHeuristicMatch {
-		debug.Printf("String at path '%s' does not qualify as image pattern based on heuristic", path)
+	// Consider it an image pattern if it passes the heuristic OR if it's a template string.
+	// We let the Generator handle parse errors and template checks later.
+	if !isHeuristicMatch && !isTemplate {
+		debug.Printf("String at path '%s' does not qualify as image pattern based on heuristic or template detection", path)
 		return nil // Not considered an error for analysis
 	}
 
-	// If heuristic matched, add it to found patterns.
+	// If heuristic matched OR it's a template, add it to found patterns.
 	pattern := ImagePattern{
 		Path:  path,
 		Type:  PatternTypeString,
-		Value: val,
-		Count: 1, // Count is always 1 for string patterns initially
+		Value: val, // Store the raw value, including templates
+		Count: 1,
 	}
 	analysis.ImagePatterns = append(analysis.ImagePatterns, pattern)
 	debug.Printf("[analyzeStringValue IMAGE APPEND] Path: '%s', Value: '%s'", pattern.Path, pattern.Value)
