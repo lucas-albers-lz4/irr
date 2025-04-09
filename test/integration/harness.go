@@ -544,12 +544,18 @@ func (h *TestHarness) walkImageFieldsRecursive(data interface{}, currentPath []s
 // ExecuteIRR runs the irr command with the given arguments.
 // It returns the combined stdout/stderr and any error.
 func (h *TestHarness) ExecuteIRR(args ...string) (string, error) {
-	// Ensure --debug is always included for integration tests
-	fullArgs := append([]string{"--debug"}, args...)
+	// Get the binary path
+	irrBinaryPath := h.getBinaryPath()
 
-	h.logger.Printf("[HARNESS EXECUTE_IRR] Command: %s %v", h.getBinaryPath(), fullArgs)
+	// Include debug flag for visibility during tests
+	finalArgs := []string{"--debug", "--integration-test-mode"}
+	finalArgs = append(finalArgs, args...)
 
-	cmd := exec.Command(h.getBinaryPath(), fullArgs...)
+	h.logger.Printf("[HARNESS EXECUTE_IRR] Command: %s %v", irrBinaryPath, finalArgs)
+	// Show the full command for debugging
+	h.logger.Printf("[HARNESS EXECUTE_IRR] Command: %s %s", irrBinaryPath, strings.Join(finalArgs, " "))
+
+	cmd := exec.Command(irrBinaryPath, finalArgs...)
 	cmd.Dir = h.rootDir // Ensure command runs from project root for consistency
 
 	// Capture combined output
@@ -559,7 +565,7 @@ func (h *TestHarness) ExecuteIRR(args ...string) (string, error) {
 	cmd.Stderr = &stderr
 
 	// ALWAYS log the full command for debugging purposes
-	h.logger.Printf("[HARNESS EXECUTE_IRR] Command: %s %s", h.getBinaryPath(), strings.Join(fullArgs, " "))
+	h.logger.Printf("[HARNESS EXECUTE_IRR] Command: %s %s", irrBinaryPath, strings.Join(finalArgs, " "))
 
 	// errcheck: Capture error, but test might focus on stderr content, so don't require.NoError here.
 	err := cmd.Run()

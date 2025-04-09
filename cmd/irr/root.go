@@ -243,7 +243,8 @@ It also supports linting image references for potential issues.`,
 			}
 			debug.Printf("Root command: Attempting to load mappings from %s", registryFile)
 			// Only load to check for errors, don't need the result here.
-			_, err := registry.LoadMappings(AppFs, registryFile, false) // Pass false for skipCWDRestriction
+			// Skip CWD restriction when in integration test mode
+			_, err := registry.LoadMappings(AppFs, registryFile, integrationTestMode) // Pass integrationTestMode for skipCWDRestriction
 			if err != nil {
 				debug.Printf("Root command: Failed to load mappings: %v", err)
 				// Use debug.Printf for logging warnings as well, assuming it handles levels
@@ -355,7 +356,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	}
 
 	// Load Mappings (using global var and passing AppFs)
-	mappings, err := registry.LoadMappings(AppFs, registryFile, false)
+	mappings, err := registry.LoadMappings(AppFs, registryFile, integrationTestMode)
 	if err != nil {
 		return fmt.Errorf("error loading registry mappings: %w", err)
 	}

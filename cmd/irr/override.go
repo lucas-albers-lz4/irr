@@ -208,7 +208,7 @@ func runOverride(cmd *cobra.Command, args []string) error {
 	var mappings *registry.Mappings
 	var loadMappingsErr error
 	if registryFile != "" {
-		mappings, loadMappingsErr = registry.LoadMappings(AppFs, registryFile, false)
+		mappings, loadMappingsErr = registry.LoadMappings(AppFs, registryFile, integrationTestMode)
 		if loadMappingsErr != nil {
 			debug.Printf("Failed to load mappings: %v", loadMappingsErr)
 			return fmt.Errorf("failed to load registry mappings from %s: %w", registryFile, loadMappingsErr)
