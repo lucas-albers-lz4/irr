@@ -1,4 +1,3 @@
-// Package analysis_test contains tests for the analysis package.
 package analysis
 
 import (
@@ -40,62 +39,64 @@ func (m *MockChartLoader) Load(_ string) (*chart.Chart, error) {
 	return m.ChartToReturn, m.ErrorToReturn
 }
 
-// --- Test Analyze --- //
+// TestAnalyzer_LoaderErrors tests error handling when loading charts fails
+func TestAnalyzer_LoaderErrors(t *testing.T) {
+	dummyChartPath := "./bad-path"
+	expectedError := fmt.Errorf("mock load error")
 
-func TestAnalyze(t *testing.T) {
-	t.Run("LoaderError", func(t *testing.T) {
-		dummyChartPath := "./bad-path"
-		expectedError := fmt.Errorf("mock load error")
+	mockLoader := &MockChartLoader{
+		ErrorToReturn: expectedError,
+	}
 
+	analyzer := NewAnalyzer(dummyChartPath, mockLoader)
+	result, err := analyzer.Analyze()
+
+	assert.Nil(t, result, "Result should be nil on loader error")
+	assert.Error(t, err, "Analyze should return an error")
+	assert.ErrorContains(t, err, "failed to load chart", "Error message should indicate load failure")
+	assert.ErrorIs(t, err, expectedError, "Original error should be wrapped")
+}
+
+// TestAnalyzer_EmptyChartValues tests handling of charts with nil or empty values
+func TestAnalyzer_EmptyChartValues(t *testing.T) {
+	dummyChartPath := "./testdata/empty-chart"
+
+	t.Run("NilValues", func(t *testing.T) {
 		mockLoader := &MockChartLoader{
-			ErrorToReturn: expectedError,
-		}
-
-		analyzer := NewAnalyzer(dummyChartPath, mockLoader)
-
-		result, err := analyzer.Analyze()
-
-		assert.Nil(t, result, "Result should be nil on loader error")
-		assert.Error(t, err, "Analyze should return an error")
-		assert.ErrorContains(t, err, "failed to load chart", "Error message should indicate load failure")
-		assert.ErrorIs(t, err, expectedError, "Original error should be wrapped")
-	})
-
-	t.Run("EmptyChartValues", func(t *testing.T) {
-		dummyChartPath := "./testdata/empty-chart"
-
-		// Chart with nil Values
-		mockLoaderNil := &MockChartLoader{
-			ChartToReturn: &chart.Chart{ // Valid chart, but Values is nil
+			ChartToReturn: &chart.Chart{
 				Metadata: &chart.Metadata{Name: "empty-chart"},
 				Values:   nil,
 			},
 		}
-		analyzerNil := NewAnalyzer(dummyChartPath, mockLoaderNil)
-		resultNil, errNil := analyzerNil.Analyze()
+		analyzer := NewAnalyzer(dummyChartPath, mockLoader)
+		result, err := analyzer.Analyze()
 
-		assert.NoError(t, errNil, "Analyze should succeed with nil values")
-		assert.NotNil(t, resultNil, "Result should not be nil for nil values")
-		assert.Empty(t, resultNil.ImagePatterns, "ImagePatterns should be empty for nil values")
-		assert.Empty(t, resultNil.GlobalPatterns, "GlobalPatterns should be empty for nil values")
+		assert.NoError(t, err, "Analyze should succeed with nil values")
+		assert.NotNil(t, result, "Result should not be nil for nil values")
+		assert.Empty(t, result.ImagePatterns, "ImagePatterns should be empty for nil values")
+		assert.Empty(t, result.GlobalPatterns, "GlobalPatterns should be empty for nil values")
+	})
 
-		// Chart with empty Values map
-		mockLoaderEmpty := &MockChartLoader{
-			ChartToReturn: &chart.Chart{ // Valid chart, with empty Values map
+	t.Run("EmptyValuesMap", func(t *testing.T) {
+		mockLoader := &MockChartLoader{
+			ChartToReturn: &chart.Chart{
 				Metadata: &chart.Metadata{Name: "empty-chart"},
 				Values:   make(map[string]interface{}),
 			},
 		}
-		analyzerEmpty := NewAnalyzer(dummyChartPath, mockLoaderEmpty)
-		resultEmpty, errEmpty := analyzerEmpty.Analyze()
+		analyzer := NewAnalyzer(dummyChartPath, mockLoader)
+		result, err := analyzer.Analyze()
 
-		assert.NoError(t, errEmpty, "Analyze should succeed with empty values map")
-		assert.NotNil(t, resultEmpty, "Result should not be nil for empty values map")
-		assert.Empty(t, resultEmpty.ImagePatterns, "ImagePatterns should be empty for empty values map")
-		assert.Empty(t, resultEmpty.GlobalPatterns, "GlobalPatterns should be empty for empty values map")
+		assert.NoError(t, err, "Analyze should succeed with empty values map")
+		assert.NotNil(t, result, "Result should not be nil for empty values map")
+		assert.Empty(t, result.ImagePatterns, "ImagePatterns should be empty for empty values map")
+		assert.Empty(t, result.GlobalPatterns, "GlobalPatterns should be empty for empty values map")
 	})
+}
 
-	t.Run("SimpleImageMap_Full", func(t *testing.T) {
+// TestAnalyzer_SimpleImageMaps tests detection of image patterns in map format
+func TestAnalyzer_SimpleImageMaps(t *testing.T) {
+	t.Run("FullImageMap", func(t *testing.T) {
 		dummyChartPath := "./testdata/simple-map-chart"
 		mockLoader := &MockChartLoader{
 			ChartToReturn: &chart.Chart{
@@ -122,18 +123,21 @@ func TestAnalyze(t *testing.T) {
 			assert.Equal(t, "testImage", pattern.Path)
 			assert.Equal(t, PatternTypeMap, pattern.Type)
 			assert.Equal(t, "docker.io/library/nginx:1.21", pattern.Value)
-			assert.Equal(t, map[string]interface{}{"registry": "docker.io", "repository": "library/nginx", "tag": "1.21"}, pattern.Structure)
+			assert.Equal(t, map[string]interface{}{
+				"registry":   "docker.io",
+				"repository": "library/nginx",
+				"tag":        "1.21",
+			}, pattern.Structure)
 		}
 	})
 
-	t.Run("SimpleImageMap_RepoTagOnly", func(t *testing.T) {
+	t.Run("RepoTagOnly", func(t *testing.T) {
 		dummyChartPath := "./testdata/simple-map-repo-tag-chart"
 		mockLoader := &MockChartLoader{
 			ChartToReturn: &chart.Chart{
 				Metadata: &chart.Metadata{Name: "simple-map-repo-tag-chart"},
 				Values: map[string]interface{}{
 					"anotherImage": map[string]interface{}{
-						// Registry missing, implies docker.io
 						"repository": "bitnami/redis",
 						"tag":        "latest",
 					},
@@ -152,152 +156,158 @@ func TestAnalyze(t *testing.T) {
 			pattern := result.ImagePatterns[0]
 			assert.Equal(t, "anotherImage", pattern.Path)
 			assert.Equal(t, PatternTypeMap, pattern.Type)
-			// Should normalize to include docker.io
 			assert.Equal(t, "docker.io/bitnami/redis:latest", pattern.Value)
-			assert.Equal(t, map[string]interface{}{"registry": "docker.io", "repository": "bitnami/redis", "tag": "latest"}, pattern.Structure)
+			assert.Equal(t, map[string]interface{}{
+				"registry":   "docker.io",
+				"repository": "bitnami/redis",
+				"tag":        "latest",
+			}, pattern.Structure)
 		}
 	})
+}
 
-	t.Run("SimpleImageString", func(t *testing.T) {
-		dummyChartPath := "./testdata/simple-string-chart"
-		mockLoader := &MockChartLoader{
-			ChartToReturn: &chart.Chart{
-				Metadata: &chart.Metadata{Name: "simple-string-chart"},
-				Values: map[string]interface{}{
-					"image": "quay.io/prometheus/node-exporter:v1.5.0",
-				},
-			},
-		}
-		analyzer := NewAnalyzer(dummyChartPath, mockLoader)
-		result, err := analyzer.Analyze()
-
-		assert.NoError(t, err, "Analyze should succeed")
-		assert.NotNil(t, result, "Result should not be nil")
-		assert.Len(t, result.ImagePatterns, 1, "Should find one image pattern")
-		assert.Empty(t, result.GlobalPatterns, "Should find no global patterns")
-
-		if len(result.ImagePatterns) == 1 {
-			pattern := result.ImagePatterns[0]
-			assert.Equal(t, "image", pattern.Path)
-			assert.Equal(t, PatternTypeString, pattern.Type)
-			assert.Equal(t, "quay.io/prometheus/node-exporter:v1.5.0", pattern.Value)
-			assert.Nil(t, pattern.Structure, "Structure should be nil for string type")
-		}
-	})
-
-	t.Run("SimpleNesting", func(t *testing.T) {
-		dummyChartPath := "./testdata/nested-chart"
-		mockLoader := &MockChartLoader{
-			ChartToReturn: &chart.Chart{
-				Metadata: &chart.Metadata{Name: "nested-chart"},
-				Values: map[string]interface{}{
-					"app": map[string]interface{}{
-						"component1": map[string]interface{}{
-							"image": map[string]interface{}{
-								"repository": "test/comp1",
-								"tag":        "1.0",
-							},
-						},
-						"component2": map[string]interface{}{
-							"sidecarImage": "ghcr.io/test/sidecar:latest",
-						},
-						"someValue": "not-an-image",
-					},
-				},
-			},
-		}
-		analyzer := NewAnalyzer(dummyChartPath, mockLoader)
-		result, err := analyzer.Analyze()
-
-		assert.NoError(t, err, "Analyze should succeed")
-		assert.NotNil(t, result, "Result should not be nil")
-		assert.Len(t, result.ImagePatterns, 2, "Should find two image patterns")
-		assert.Empty(t, result.GlobalPatterns, "Should find no global patterns")
-
-		// Use a map for easier lookup
-		patternsByPath := make(map[string]ImagePattern)
-		for _, p := range result.ImagePatterns {
-			patternsByPath[p.Path] = p
-		}
-
-		// Check component1 image (map)
-		p1, ok1 := patternsByPath["app.component1.image"]
-		assert.True(t, ok1, "Should find pattern for app.component1.image")
-		if ok1 {
-			assert.Equal(t, PatternTypeMap, p1.Type)
-			assert.Equal(t, "docker.io/test/comp1:1.0", p1.Value)
-			assert.Equal(t, map[string]interface{}{"registry": "docker.io", "repository": "test/comp1", "tag": "1.0"}, p1.Structure)
-		}
-
-		// Check component2 image (string)
-		p2, ok2 := patternsByPath["app.component2.sidecarImage"]
-		assert.True(t, ok2, "Should find pattern for app.component2.sidecarImage")
-		if ok2 {
-			assert.Equal(t, PatternTypeString, p2.Type)
-			assert.Equal(t, "ghcr.io/test/sidecar:latest", p2.Value)
-			assert.Nil(t, p2.Structure)
-		}
-	})
-
-	t.Run("WithDependencyValuesMerged", func(t *testing.T) {
-		dummyChartPath := "./testdata/chart-with-merged-deps"
-
-		// Define the parent chart WITH dependency values already merged under the expected key
-		// This simulates the state of chart.Values *after* Helm loads dependencies.
-		parentChartWithMergedValues := &chart.Chart{
-			Metadata: &chart.Metadata{Name: "parent-chart"},
+// TestAnalyzer_SimpleImageStrings tests detection of image patterns in string format
+func TestAnalyzer_SimpleImageStrings(t *testing.T) {
+	dummyChartPath := "./testdata/simple-string-chart"
+	mockLoader := &MockChartLoader{
+		ChartToReturn: &chart.Chart{
+			Metadata: &chart.Metadata{Name: "simple-string-chart"},
 			Values: map[string]interface{}{
-				"parentImage": "parent/parent-image:1.0",
-				// Values from the 'subchart' dependency merged under the key 'subchart'
-				"subchart": map[string]interface{}{
-					"subImage": map[string]interface{}{
-						"repository": "dep/sub-image",
-						"tag":        "0.1",
+				"image": "quay.io/prometheus/node-exporter:v1.5.0",
+			},
+		},
+	}
+	analyzer := NewAnalyzer(dummyChartPath, mockLoader)
+	result, err := analyzer.Analyze()
+
+	assert.NoError(t, err, "Analyze should succeed")
+	assert.NotNil(t, result, "Result should not be nil")
+	assert.Len(t, result.ImagePatterns, 1, "Should find one image pattern")
+	assert.Empty(t, result.GlobalPatterns, "Should find no global patterns")
+
+	if len(result.ImagePatterns) == 1 {
+		pattern := result.ImagePatterns[0]
+		assert.Equal(t, "image", pattern.Path)
+		assert.Equal(t, PatternTypeString, pattern.Type)
+		assert.Equal(t, "quay.io/prometheus/node-exporter:v1.5.0", pattern.Value)
+		assert.Nil(t, pattern.Structure, "Structure should be nil for string type")
+	}
+}
+
+// TestAnalyzer_NestedStructures tests detection of image patterns in nested structures
+func TestAnalyzer_NestedStructures(t *testing.T) {
+	dummyChartPath := "./testdata/nested-chart"
+	mockLoader := &MockChartLoader{
+		ChartToReturn: &chart.Chart{
+			Metadata: &chart.Metadata{Name: "nested-chart"},
+			Values: map[string]interface{}{
+				"app": map[string]interface{}{
+					"component1": map[string]interface{}{
+						"image": map[string]interface{}{
+							"repository": "test/comp1",
+							"tag":        "1.0",
+						},
 					},
-					"anotherSubValue": true,
+					"component2": map[string]interface{}{
+						"sidecarImage": "ghcr.io/test/sidecar:latest",
+					},
+					"someValue": "not-an-image",
 				},
 			},
-			// Note: The actual chart.Dependencies() return value isn't needed for this test,
-			// as we are testing the recursive analysis of the merged Values structure.
-			// The loop `for _, dep := range chart.Dependencies()` in Analyze might produce
-			// duplicate findings if not handled carefully, but this test focuses on
-			// whether analyzeValues correctly navigates the merged structure.
-		}
+		},
+	}
+	analyzer := NewAnalyzer(dummyChartPath, mockLoader)
+	result, err := analyzer.Analyze()
 
-		mockLoader := &MockChartLoader{
-			ChartToReturn: parentChartWithMergedValues,
-		}
-		analyzer := NewAnalyzer(dummyChartPath, mockLoader)
-		result, err := analyzer.Analyze()
+	assert.NoError(t, err, "Analyze should succeed")
+	assert.NotNil(t, result, "Result should not be nil")
+	assert.Len(t, result.ImagePatterns, 2, "Should find two image patterns")
+	assert.Empty(t, result.GlobalPatterns, "Should find no global patterns")
 
-		assert.NoError(t, err, "Analyze should succeed")
-		assert.NotNil(t, result, "Result should not be nil")
-		// Expect patterns found via recursion through the main Values map
-		assert.Len(t, result.ImagePatterns, 2, "Should find two image patterns (parent and merged subchart)")
-		assert.Empty(t, result.GlobalPatterns, "Should find no global patterns")
+	patternsByPath := make(map[string]ImagePattern)
+	for _, p := range result.ImagePatterns {
+		patternsByPath[p.Path] = p
+	}
 
-		patternsByPath := make(map[string]ImagePattern)
-		for _, p := range result.ImagePatterns {
-			patternsByPath[p.Path] = p
-		}
+	// Check component1 image (map)
+	p1, ok1 := patternsByPath["app.component1.image"]
+	assert.True(t, ok1, "Should find pattern for app.component1.image")
+	if ok1 {
+		assert.Equal(t, PatternTypeMap, p1.Type)
+		assert.Equal(t, "docker.io/test/comp1:1.0", p1.Value)
+		assert.Equal(t, map[string]interface{}{
+			"registry":   "docker.io",
+			"repository": "test/comp1",
+			"tag":        "1.0",
+		}, p1.Structure)
+	}
 
-		// Check parent image
-		pParent, okParent := patternsByPath["parentImage"]
-		assert.True(t, okParent, "Should find pattern for parentImage")
-		if okParent {
-			assert.Equal(t, PatternTypeString, pParent.Type)
-			assert.Equal(t, "parent/parent-image:1.0", pParent.Value)
-		}
+	// Check component2 image (string)
+	p2, ok2 := patternsByPath["app.component2.sidecarImage"]
+	assert.True(t, ok2, "Should find pattern for app.component2.sidecarImage")
+	if ok2 {
+		assert.Equal(t, PatternTypeString, p2.Type)
+		assert.Equal(t, "ghcr.io/test/sidecar:latest", p2.Value)
+		assert.Nil(t, p2.Structure)
+	}
+}
 
-		// Check subchart image found via merged values (path should be prefixed)
-		pSub, okSub := patternsByPath["subchart.subImage"]
-		assert.True(t, okSub, "Should find pattern for subchart.subImage")
-		if okSub {
-			assert.Equal(t, PatternTypeMap, pSub.Type)
-			assert.Equal(t, "docker.io/dep/sub-image:0.1", pSub.Value)
-			assert.Equal(t, map[string]interface{}{"registry": "docker.io", "repository": "dep/sub-image", "tag": "0.1"}, pSub.Structure)
-		}
-	})
+// TestAnalyzer_DependencyHandling tests analysis of charts with dependencies
+func TestAnalyzer_DependencyHandling(t *testing.T) {
+	dummyChartPath := "./testdata/chart-with-merged-deps"
+
+	// Define the parent chart WITH dependency values already merged under the expected key
+	parentChartWithMergedValues := &chart.Chart{
+		Metadata: &chart.Metadata{Name: "parent-chart"},
+		Values: map[string]interface{}{
+			"parentImage": "parent/parent-image:1.0",
+			// Values from the 'subchart' dependency merged under the key 'subchart'
+			"subchart": map[string]interface{}{
+				"subImage": map[string]interface{}{
+					"repository": "dep/sub-image",
+					"tag":        "0.1",
+				},
+				"anotherSubValue": true,
+			},
+		},
+	}
+
+	mockLoader := &MockChartLoader{
+		ChartToReturn: parentChartWithMergedValues,
+	}
+	analyzer := NewAnalyzer(dummyChartPath, mockLoader)
+	result, err := analyzer.Analyze()
+
+	assert.NoError(t, err, "Analyze should succeed")
+	assert.NotNil(t, result, "Result should not be nil")
+	assert.Len(t, result.ImagePatterns, 2, "Should find two image patterns (parent and merged subchart)")
+	assert.Empty(t, result.GlobalPatterns, "Should find no global patterns")
+
+	patternsByPath := make(map[string]ImagePattern)
+	for _, p := range result.ImagePatterns {
+		patternsByPath[p.Path] = p
+	}
+
+	// Check parent image
+	pParent, okParent := patternsByPath["parentImage"]
+	assert.True(t, okParent, "Should find pattern for parentImage")
+	if okParent {
+		assert.Equal(t, PatternTypeString, pParent.Type)
+		assert.Equal(t, "parent/parent-image:1.0", pParent.Value)
+	}
+
+	// Check subchart image found via merged values
+	pSub, okSub := patternsByPath["subchart.subImage"]
+	assert.True(t, okSub, "Should find pattern for subchart.subImage")
+	if okSub {
+		assert.Equal(t, PatternTypeMap, pSub.Type)
+		assert.Equal(t, "docker.io/dep/sub-image:0.1", pSub.Value)
+		assert.Equal(t, map[string]interface{}{
+			"registry":   "docker.io",
+			"repository": "dep/sub-image",
+			"tag":        "0.1",
+		}, pSub.Structure)
+	}
 }
 
 func TestNormalizeImageValues(t *testing.T) {
@@ -417,6 +427,140 @@ func TestNormalizeImageValues(t *testing.T) {
 			assert.Equal(t, tt.expectedRepo, repo, "Repository mismatch")
 			assert.Equal(t, tt.expectedTag, tag, "Tag mismatch")
 		})
+	}
+}
+
+// TestAnalyzeValues_EmptyAndBasic tests empty values and basic image patterns
+func TestAnalyzeValues_EmptyAndBasic(t *testing.T) {
+	analyzer := NewAnalyzer("", nil) // Path doesn't matter, loader not used directly
+
+	t.Run("EmptyValues", func(t *testing.T) {
+		analysis := NewChartAnalysis()
+		err := analyzer.analyzeValues(map[string]interface{}{}, "", analysis)
+
+		assert.NoError(t, err, "analyzeValues should not return an error for empty values")
+		assert.Empty(t, analysis.ImagePatterns, "No patterns should be found in empty values")
+	})
+
+	t.Run("SimpleMapImage", func(t *testing.T) {
+		values := map[string]interface{}{
+			"img": map[string]interface{}{"repository": "test/img", "tag": "1"},
+		}
+		analysis := NewChartAnalysis()
+		err := analyzer.analyzeValues(values, "", analysis)
+
+		assert.NoError(t, err, "analyzeValues should not return an error")
+		assert.Len(t, analysis.ImagePatterns, 1, "Should find one image pattern")
+
+		if len(analysis.ImagePatterns) == 1 {
+			pattern := analysis.ImagePatterns[0]
+			assert.Equal(t, "img", pattern.Path)
+			assert.Equal(t, PatternTypeMap, pattern.Type)
+			assert.Equal(t, "docker.io/test/img:1", pattern.Value)
+			assert.Equal(t, map[string]interface{}{
+				"registry":   "docker.io",
+				"repository": "test/img",
+				"tag":        "1",
+			}, pattern.Structure)
+			assert.Equal(t, 1, pattern.Count)
+		}
+	})
+
+	t.Run("SimpleStringImage", func(t *testing.T) {
+		values := map[string]interface{}{"image": "test/string:latest"}
+		analysis := NewChartAnalysis()
+		err := analyzer.analyzeValues(values, "", analysis)
+
+		assert.NoError(t, err, "analyzeValues should not return an error")
+		assert.Len(t, analysis.ImagePatterns, 1, "Should find one image pattern")
+
+		if len(analysis.ImagePatterns) == 1 {
+			pattern := analysis.ImagePatterns[0]
+			assert.Equal(t, "image", pattern.Path)
+			assert.Equal(t, PatternTypeString, pattern.Type)
+			assert.Equal(t, "test/string:latest", pattern.Value)
+			assert.Equal(t, 1, pattern.Count)
+		}
+	})
+}
+
+// TestAnalyzeValues_NestedStructures tests analysis of nested image patterns
+func TestAnalyzeValues_NestedStructures(t *testing.T) {
+	analyzer := NewAnalyzer("", nil)
+
+	t.Run("NestedImageMap", func(t *testing.T) {
+		values := map[string]interface{}{
+			"app": map[string]interface{}{
+				"server": map[string]interface{}{
+					"img": map[string]interface{}{"repository": "nested/server", "tag": "2"},
+				},
+			},
+		}
+		analysis := NewChartAnalysis()
+		err := analyzer.analyzeValues(values, "", analysis)
+
+		assert.NoError(t, err, "analyzeValues should not return an error")
+		assert.Len(t, analysis.ImagePatterns, 1, "Should find one image pattern")
+
+		if len(analysis.ImagePatterns) == 1 {
+			pattern := analysis.ImagePatterns[0]
+			assert.Equal(t, "app.server.img", pattern.Path)
+			assert.Equal(t, PatternTypeMap, pattern.Type)
+			assert.Equal(t, "docker.io/nested/server:2", pattern.Value)
+			assert.Equal(t, map[string]interface{}{
+				"registry":   "docker.io",
+				"repository": "nested/server",
+				"tag":        "2",
+			}, pattern.Structure)
+			assert.Equal(t, 1, pattern.Count)
+		}
+	})
+}
+
+// TestAnalyzeValues_MixedTypes tests analysis of values with mixed types and configurations
+func TestAnalyzeValues_MixedTypes(t *testing.T) {
+	analyzer := NewAnalyzer("", nil)
+
+	values := map[string]interface{}{
+		"config":    map[string]interface{}{"enabled": true, "port": 8080},
+		"mainImage": "main/app:final",
+		"workers": map[string]interface{}{
+			"image": map[string]interface{}{"repository": "worker/job", "tag": "batch"},
+		},
+	}
+	analysis := NewChartAnalysis()
+	err := analyzer.analyzeValues(values, "root", analysis)
+
+	assert.NoError(t, err, "analyzeValues should not return an error")
+	assert.Len(t, analysis.ImagePatterns, 2, "Should find two image patterns")
+
+	// Convert to map for easier lookup
+	patternsByPath := make(map[string]ImagePattern)
+	for _, p := range analysis.ImagePatterns {
+		patternsByPath[p.Path] = p
+	}
+
+	// Check string image
+	if pattern, ok := patternsByPath["root.mainImage"]; ok {
+		assert.Equal(t, PatternTypeString, pattern.Type)
+		assert.Equal(t, "main/app:final", pattern.Value)
+		assert.Equal(t, 1, pattern.Count)
+	} else {
+		t.Error("Expected to find pattern for root.mainImage")
+	}
+
+	// Check map image
+	if pattern, ok := patternsByPath["root.workers.image"]; ok {
+		assert.Equal(t, PatternTypeMap, pattern.Type)
+		assert.Equal(t, "docker.io/worker/job:batch", pattern.Value)
+		assert.Equal(t, map[string]interface{}{
+			"registry":   "docker.io",
+			"repository": "worker/job",
+			"tag":        "batch",
+		}, pattern.Structure)
+		assert.Equal(t, 1, pattern.Count)
+	} else {
+		t.Error("Expected to find pattern for root.workers.image")
 	}
 }
 

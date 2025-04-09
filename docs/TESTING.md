@@ -178,8 +178,43 @@ Test all CLI options individually and in combination:
 - `--strict` (ensure failure on unsupported structures vs. warning)
 - `--exclude-registries` (verify specified registries are skipped)
 - `--threshold` (test behavior with different percentages)
+- `--debug` (enable debug logging during test execution)
 
-### 10. Unsupported Image Handling
+### 10. Debug Mode Testing
+
+The `--debug` flag can be used during testing to enable detailed debug logging. This is particularly useful for:
+
+- Troubleshooting test failures
+- Understanding image detection paths
+- Verifying registry mapping behavior
+- Tracing override generation logic
+
+To enable debug logging in tests:
+
+```bash
+# For all tests in a package
+go test -v ./... -debug
+
+# For a specific test
+go test -v ./... -run TestSpecificTest -debug
+
+# For integration tests
+go test -v ./test/integration/... -debug
+```
+
+The debug output will include detailed information about:
+- Image detection process
+- Registry mapping decisions
+- Override generation steps
+- File operations and validation
+
+This is especially helpful when:
+- Investigating why certain images aren't being detected
+- Understanding how registry mappings are being applied
+- Debugging path strategy application
+- Tracing the flow of strict mode validation
+
+### 11. Unsupported Image Handling
 
 The tool must properly identify and handle unsupported image structures. This is particularly important when running in strict mode.
 

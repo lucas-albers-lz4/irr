@@ -32,10 +32,18 @@ type mockGenerator struct {
 
 func (m *mockGenerator) Generate() (*override.File, error) {
 	args := m.Called()
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
+	result := args.Get(0)
+	if result == nil {
+		return nil, fmt.Errorf("unexpected nil result from mock generator")
 	}
-	return args.Get(0).(*override.File), args.Error(1)
+	if err := args.Error(1); err != nil {
+		return nil, err
+	}
+	overrideFile, ok := result.(*override.File)
+	if !ok {
+		return nil, fmt.Errorf("mock generator returned invalid type: expected *override.File, got %T", result)
+	}
+	return overrideFile, nil
 }
 
 // Local ChartData/Metadata definitions needed for mockLoader
@@ -247,6 +255,12 @@ func TestOverrideCmdExecution(t *testing.T) {
 			// Setup test environment
 			testDir := t.TempDir()
 			AppFs = afero.NewOsFs() // Use real FS for file operations
+			defer func() {
+				// Cleanup any test files
+				if err := os.RemoveAll(testDir); err != nil {
+					t.Logf("Warning: Failed to cleanup test directory %s: %v", testDir, err)
+				}
+			}()
 
 			// If test case has output file, modify args to use testDir
 			if tt.name == "success with output file (flow check)" {
@@ -257,7 +271,9 @@ func TestOverrideCmdExecution(t *testing.T) {
 			// Setup mock generator
 			if tt.mockGeneratorFunc != nil {
 				mockGen := &mockGenerator{}
-				mockGen.On("Generate").Return(tt.mockGeneratorFunc())
+				result, err := tt.mockGeneratorFunc()
+				require.NoError(t, err, "mock generator setup failed")
+				mockGen.On("Generate").Return(result, err)
 				currentGeneratorFactory = func(
 					chartPath, targetRegistry string,
 					sourceRegistries, excludeRegistries []string,
@@ -272,14 +288,17 @@ func TestOverrideCmdExecution(t *testing.T) {
 				}
 			}
 
-			// Setup environment variables
+			// Setup environment variables with proper error handling
 			if tt.setupEnv != nil {
 				for k, v := range tt.setupEnv {
-					os.Setenv(k, v)
+					err := os.Setenv(k, v)
+					require.NoErrorf(t, err, "failed to set environment variable %s=%s", k, v)
 				}
 				defer func() {
 					for k := range tt.setupEnv {
-						os.Unsetenv(k)
+						if err := os.Unsetenv(k); err != nil {
+							t.Errorf("Failed to unset environment variable %s: %v", k, err)
+						}
 					}
 				}()
 			}
@@ -315,7 +334,7 @@ func TestOverrideCommand_Success(t *testing.T) {
 	require.NoError(t, createDummyChart(fs, chartDir))
 
 	mockGen := &mockGenerator{}
-	mockGen.On("Generate").Return(&override.File{
+	overrideFile := &override.File{
 		ChartPath: chartDir,
 		Overrides: map[string]interface{}{
 			"image": map[string]interface{}{
@@ -324,7 +343,8 @@ func TestOverrideCommand_Success(t *testing.T) {
 				"tag":        "1.21",
 			},
 		},
-	}, nil)
+	}
+	mockGen.On("Generate").Return(overrideFile, nil)
 
 	originalFactory := currentGeneratorFactory
 	currentGeneratorFactory = func(
@@ -352,13 +372,13 @@ func TestOverrideCommand_Success(t *testing.T) {
 
 	// Check if the output file was created
 	exists, err := afero.Exists(fs, outputFile)
-	require.NoError(t, err)
+	require.NoError(t, err, "Failed to check if output file exists")
 	assert.True(t, exists, "Output file was not created")
 
-	// Check file content (optional, depending on Generate mock)
+	// Check file content
 	content, err := afero.ReadFile(fs, outputFile)
-	require.NoError(t, err)
-	assert.Contains(t, string(content), "registry: target.io")
+	require.NoError(t, err, "Failed to read output file")
+	assert.Contains(t, string(content), "registry: target.io", "Output file missing expected content")
 }
 
 func TestOverrideCommand_DryRun(t *testing.T) {
@@ -367,7 +387,7 @@ func TestOverrideCommand_DryRun(t *testing.T) {
 	require.NoError(t, createDummyChart(fs, chartDir))
 
 	mockGen := &mockGenerator{}
-	mockGen.On("Generate").Return(&override.File{
+	overrideFile := &override.File{
 		ChartPath: chartDir,
 		Overrides: map[string]interface{}{
 			"image": map[string]interface{}{
@@ -386,7 +406,8 @@ func TestOverrideCommand_DryRun(t *testing.T) {
 				},
 			},
 		},
-	}, nil)
+	}
+	mockGen.On("Generate").Return(overrideFile, nil)
 
 	originalFactory := currentGeneratorFactory
 	currentGeneratorFactory = func(
@@ -422,7 +443,7 @@ func TestOverrideCommand_DryRun(t *testing.T) {
 
 	// Assert file was NOT created
 	exists, err := afero.Exists(fs, outputFile)
-	require.NoError(t, err)
+	require.NoError(t, err, "Failed to check if output file exists")
 	assert.False(t, exists, "Output file should not be created in dry run mode")
 
 	// Test without output file
@@ -441,4 +462,23 @@ func TestOverrideCommand_DryRun(t *testing.T) {
 	assert.Contains(t, output, "--- Dry Run: Generated Overrides ---", "missing dry run header")
 	assert.Contains(t, output, "registry: target.io", "missing registry override")
 	assert.Contains(t, output, "--- End Dry Run ---", "missing dry run footer")
+}
+
+// Set up environment variables for testing
+func setupTestEnv(t *testing.T) {
+	registryMappingFile := "../../registry-mappings.yaml"
+	if err := os.Setenv("IRR_TESTING", "true"); err != nil {
+		t.Errorf("Failed to set IRR_TESTING env var: %v", err)
+	}
+	if err := os.Setenv("IRR_REGISTRY_MAPPING_FILE", registryMappingFile); err != nil {
+		t.Errorf("Failed to set IRR_REGISTRY_MAPPING_FILE env var: %v", err)
+	}
+	defer func() {
+		if err := os.Unsetenv("IRR_TESTING"); err != nil {
+			t.Errorf("Failed to unset IRR_TESTING env var: %v", err)
+		}
+		if err := os.Unsetenv("IRR_REGISTRY_MAPPING_FILE"); err != nil {
+			t.Errorf("Failed to unset IRR_REGISTRY_MAPPING_FILE env var: %v", err)
+		}
+	}()
 }

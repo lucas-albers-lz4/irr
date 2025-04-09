@@ -29,418 +29,375 @@ func (d *Detector) DetectImages(values interface{}, path []string) ([]DetectedIm
 	debug.DumpValue("Input values", values)
 	debug.DumpValue("Current path", path)
 	debug.DumpValue("Context", d.context)
-
-	// Add detailed logging for map traversal entry
 	debug.Printf("[DETECTOR ENTRY] Path: %v, Type: %T", path, values)
+
+	switch v := values.(type) {
+	case map[string]interface{}:
+		return d.processMapValue(v, path)
+	case []interface{}:
+		return d.processSliceValue(v, path)
+	case string:
+		return d.processStringValue(v, path)
+	default:
+		return nil, nil, nil
+	}
+}
+
+// processMapValue handles detection of images in map values
+func (d *Detector) processMapValue(v map[string]interface{}, path []string) ([]DetectedImage, []UnsupportedImage, error) {
+	debug.Println("Processing map")
+	var detectedImages []DetectedImage
+	var unsupportedMatches []UnsupportedImage
+
+	// First, try to detect an image map at the current level
+	detectedImage, isImage, err := d.tryExtractImageFromMap(v, path)
+	if isImage {
+		return d.handleImageMap(detectedImage, err, path)
+	}
+
+	// If not an image map, recurse into values
+	log.Debugf("Structure at path %s did not match image map pattern, recursing into values.\n", pathToString(path))
+	for key, val := range v {
+		newPath := append(append([]string{}, path...), key)
+		detected, unsupported, err := d.DetectImages(val, newPath)
+		if err != nil {
+			log.Errorf("Error processing path %v: %v\n", newPath, err)
+			return nil, nil, fmt.Errorf("error processing path %v: %w\n", newPath, err)
+		}
+		detectedImages = append(detectedImages, detected...)
+		if len(unsupported) > 0 {
+			log.Debugf("[UNSUPPORTED AGG MAP] Path: %v, Appending %d items from key '%s'\n", path, len(unsupported), key)
+			for i, item := range unsupported {
+				log.Debugf("[UNSUPPORTED AGG MAP ITEM %d] Path: %v, Type: %v, Error: %v\n", i, item.Location, item.Type, item.Error)
+			}
+		}
+		unsupportedMatches = append(unsupportedMatches, unsupported...)
+	}
+	return detectedImages, unsupportedMatches, nil
+}
+
+// handleImageMap processes a detected image map
+func (d *Detector) handleImageMap(detectedImage *DetectedImage, err error, path []string) ([]DetectedImage, []UnsupportedImage, error) {
+	var detectedImages []DetectedImage
+	var unsupportedMatches []UnsupportedImage
+
+	switch {
+	case err != nil:
+		// Handle errors returned by tryExtractImageFromMap
+		log.Debugf("[UNSUPPORTED ADD - Map Error] Path: %v, Error: %v\n", path, err)
+		typeCode := d.determineUnsupportedTypeCode(err)
+		unsupportedMatches = append(unsupportedMatches, UnsupportedImage{
+			Location: path,
+			Type:     typeCode,
+			Error:    err,
+		})
+	case detectedImage == nil:
+		log.Debugf("Skipping nil detectedImage at path %v despite isImageMap being true.", path)
+	case detectedImage.Reference != nil && IsValidImageReference(detectedImage.Reference):
+		if IsSourceRegistry(detectedImage.Reference, d.context.SourceRegistries, d.context.ExcludeRegistries) {
+			debug.Printf("Detected map-based image at path %v: %v\n", path, detectedImage.Reference)
+			detectedImages = append(detectedImages, *detectedImage)
+		} else {
+			debug.Printf("Map-based image is not a source registry at path %v: %v\n", path, detectedImage.Reference)
+			if d.context.Strict {
+				unsupportedMatches = append(unsupportedMatches, UnsupportedImage{
+					Location: path,
+					Type:     UnsupportedTypeNonSourceImage,
+					Error:    fmt.Errorf("strict mode: map image at path %v is not from a configured source registry", path),
+				})
+			}
+		}
+	default:
+		if d.context.Strict {
+			unsupportedMatches = append(unsupportedMatches, UnsupportedImage{
+				Location: path,
+				Type:     UnsupportedTypeMapParseError,
+				Error:    fmt.Errorf("strict mode: map structure at path %v was invalid after normalization", path),
+			})
+		}
+	}
+	return detectedImages, unsupportedMatches, nil
+}
+
+// processSliceValue handles detection of images in slice/array values
+func (d *Detector) processSliceValue(v []interface{}, path []string) ([]DetectedImage, []UnsupportedImage, error) {
+	debug.Println("Processing slice/array")
+	var detectedImages []DetectedImage
+	var unsupportedMatches []UnsupportedImage
+
+	for i, item := range v {
+		itemPath := append(append([]string{}, path...), fmt.Sprintf("[%d]", i))
+		log.Debugf("Recursively processing slice item %d at path %s\n", i, itemPath)
+		detectedInItem, unsupportedInItem, err := d.DetectImages(item, itemPath)
+		if err != nil {
+			log.Errorf("Error processing slice item at path %s: %v\n", itemPath, err)
+			return nil, nil, fmt.Errorf("error processing slice item %d at path %s: %w\n", i, path, err)
+		}
+		detectedImages = append(detectedImages, detectedInItem...)
+		if len(unsupportedInItem) > 0 {
+			log.Debugf("[UNSUPPORTED AGG SLICE] Path: %v, Appending %d items from index %d\n", path, len(unsupportedInItem), i)
+			for j, item := range unsupportedInItem {
+				log.Debugf("[UNSUPPORTED AGG SLICE ITEM %d] Path: %v, Type: %v, Error: %v\n", j, item.Location, item.Type, item.Error)
+			}
+		}
+		unsupportedMatches = append(unsupportedMatches, unsupportedInItem...)
+	}
+	return detectedImages, unsupportedMatches, nil
+}
+
+// processStringValue handles detection of images in string values
+func (d *Detector) processStringValue(v string, path []string) ([]DetectedImage, []UnsupportedImage, error) {
+	log.Debugf("[DEBUG irr DETECT STRING] Processing string value at path %s: %q\n", path, v)
+	log.Debugf("[DEBUG irr DETECT STRING] Path: %v, Value: '%s', Strict Context: %v\n", path, v, d.context.Strict)
 
 	var detectedImages []DetectedImage
 	var unsupportedMatches []UnsupportedImage
 
-	switch v := values.(type) {
-	case map[string]interface{}:
-		debug.Println("Processing map")
+	isKnownImagePath := isImagePath(path)
 
-		// First, try to detect an image map at the current level
-		detectedImage, isImage, err := d.tryExtractImageFromMap(v, path)
-		if isImage {
-			// --- If isImageMap was true ---
-			// Structure looked like an image map attempt.
-			// Check for errors, then validity.
-			switch {
-			// Check for errors FIRST
-			case err != nil:
-				// Handle errors returned by tryExtractImageFromMap (e.g., template variables in strict mode)
-				log.Debugf("[UNSUPPORTED ADD - Map Error] Path: %v, Error: %v\n", path, err)
-				// Determine the type code based on the error
-				var typeCode = UnsupportedTypeMapError // Default
-				if errors.Is(err, ErrTemplateVariableDetected) {
-					typeCode = UnsupportedTypeTemplateMap
-				} else if errors.Is(err, ErrTagAndDigestPresent) {
-					typeCode = UnsupportedTypeMapTagAndDigest
-				} // Add other specific error checks if needed
-				unsupportedMatches = append(unsupportedMatches, UnsupportedImage{
-					Location: path,
-					Type:     typeCode,
-					Error:    err,
-				})
-			// Handle nil image second (e.g., non-strict skips, empty repo map)
-			case detectedImage == nil:
-				log.Debugf("Skipping nil detectedImage at path %v despite isImageMap being true. This might indicate an empty or incomplete map structure skipped in non-strict mode.", path)
-				// Do nothing, just don't recurse (handled by isImageMap=true check later)
-			// Check validity if no error and image is non-nil
-			case detectedImage.Reference != nil && IsValidImageReference(detectedImage.Reference):
-				// Valid reference found (detectedImage is implicitly non-nil here)
-				if IsSourceRegistry(detectedImage.Reference, d.context.SourceRegistries, d.context.ExcludeRegistries) {
-					debug.Printf("Detected map-based image at path %v: %v\n", path, detectedImage.Reference)
-					detectedImages = append(detectedImages, *detectedImage)
-				} else {
-					debug.Printf("Map-based image is not a source registry at path %v: %v\n", path, detectedImage.Reference)
-					if d.context.Strict {
-						log.Debugf("[UNSUPPORTED] Adding map item at path %v due to strict non-source.\n", path)
-						log.Debugf("[UNSUPPORTED ADD] Path: %v, Type: %v, Reason: Strict non-source map, Error: nil, Strict: %v\n",
-							path, UnsupportedTypeNonSourceImage, d.context.Strict)
-						unsupportedMatches = append(unsupportedMatches, UnsupportedImage{
-							Location: path,
-							Type:     UnsupportedTypeNonSourceImage,
-							Error:    fmt.Errorf("strict mode: map image at path %v is not from a configured source registry", path), // Added more context to error
-						})
-					} else {
-						log.Debugf("Non-strict mode: Skipping non-source map image at path %v\n", path)
-					}
-				}
-			default: // Covers: Invalid Reference AFTER normalization OR detectedImage.Reference was nil (should not happen if cases above are correct)
-				log.Debugf("Skipping invalid/nil map-based image reference at path %v: Ref=%+v", path, detectedImage.Reference)
-				// Treat invalid map structure as unsupported in strict mode.
-				if d.context.Strict {
-					log.Debugf("[UNSUPPORTED ADD - Strict Invalid Map] Path: %v, Type: %v\n", path, UnsupportedTypeMapParseError)
-					unsupportedMatches = append(unsupportedMatches, UnsupportedImage{
-						Location: path,
-						Type:     UnsupportedTypeMapParseError,
-						Error:    fmt.Errorf("strict mode: map structure at path %v was invalid after normalization", path),
-					})
-				}
-			}
-			// Whether detected, skipped non-source, or invalid, if it was identified AS an image map structure attempt (isImageMap == true),
-			// we should NOT recurse further into its values.
-			return detectedImages, unsupportedMatches, nil
-		}
-
-		// --- If isImageMap was false ---
-		log.Debugf("Structure at path %s did not match image map pattern, recursing into values.\n", pathToString(path))
-		for key, val := range v {
-			newPath := append(append([]string{}, path...), key)
-			detected, unsupported, err := d.DetectImages(val, newPath)
-			if err != nil {
-				log.Errorf("Error processing path %v: %v\n", newPath, err)
-				return nil, nil, fmt.Errorf("error processing path %v: %w\n", newPath, err)
-			}
-			detectedImages = append(detectedImages, detected...)
-			if len(unsupported) > 0 {
-				log.Debugf("[UNSUPPORTED AGG MAP] Path: %v, Appending %d items from key '%s'\n", path, len(unsupported), key)
-				for i, item := range unsupported {
-					log.Debugf("[UNSUPPORTED AGG MAP ITEM %d] Path: %v, Type: %v, Error: %v\n", i, item.Location, item.Type, item.Error)
-				}
-			}
-			unsupportedMatches = append(unsupportedMatches, unsupported...)
-		}
-
-	case []interface{}:
-		debug.Println("Processing slice/array")
-		// Always process arrays, path check should happen for items within if needed
-		for i, item := range v {
-			itemPath := append(append([]string{}, path...), fmt.Sprintf("[%d]", i)) // Ensure path is copied, removed erroneous newline
-			log.Debugf("Recursively processing slice item %d at path %s\n", i, itemPath)
-			detectedInItem, unsupportedInItem, err := d.DetectImages(item, itemPath)
-			if err != nil {
-				log.Errorf("Error processing slice item at path %s: %v\n", itemPath, err)
-				return nil, nil, fmt.Errorf("error processing slice item %d at path %s: %w\n", i, path, err)
-			}
-			detectedImages = append(detectedImages, detectedInItem...)
-			if len(unsupportedInItem) > 0 {
-				log.Debugf("[UNSUPPORTED AGG SLICE] Path: %v, Appending %d items from index %d\n", path, len(unsupportedInItem), i)
-				for j, item := range unsupportedInItem {
-					log.Debugf("[UNSUPPORTED AGG SLICE ITEM %d] Path: %v, Type: %v, Error: %v\n", j, item.Location, item.Type, item.Error)
-				}
-			}
-			unsupportedMatches = append(unsupportedMatches, unsupportedInItem...)
-		}
-
-	case string:
-		vStr := v
-		log.Debugf("[DEBUG irr DETECT STRING] Processing string value at path %s: %q\n", path, vStr)
-		log.Debugf("[DEBUG irr DETECT STRING] Path: %v, Value: '%s', Strict Context: %v\n", path, vStr, d.context.Strict)
-
-		isKnownImagePath := isImagePath(path)
-
-		if d.context.Strict {
-			// --- Strict Mode Logic ---
-
-			// 1. Check for templates FIRST, regardless of path.
-			if containsTemplate(vStr) {
-				log.Debugf("Strict mode: Marking string '%s' at path %s as unsupported due to template variable detected.\n", vStr, path)
-				log.Debugf("[UNSUPPORTED ADD - Strict Template String] Path: %v, Type: %v, Value: '%s'\n", path, UnsupportedTypeTemplateString, vStr)
-				unsupportedMatches = append(unsupportedMatches, UnsupportedImage{
-					Location: path,
-					Type:     UnsupportedTypeTemplateString,
-					Error:    fmt.Errorf("strict mode: template variable detected in string at path %v", path),
-				})
-				break // Template found, stop processing this string.
-			}
-
-			// 2. If NO template, check if path is known.
-			if !isKnownImagePath {
-				log.Debugf("Strict mode: Skipping non-template string at unknown image path %s: %q\n", path, vStr)
-				break // Skip non-template strings at unknown paths
-			}
-
-			// 3. If NO template AND path IS known, proceed with parsing and validation.
-			log.Debugf("Strict mode & Known path: Attempting parse for non-template string '%s' at path %s\n", vStr, path)
-			imgRef, err := d.tryExtractImageFromString(vStr, path)
-
-			if err != nil {
-				// Marks parse errors as unsupported - OK
-				log.Debugf("Strict mode: Marking string '%s' at known image path %s as unsupported due to parse error: %v\n", vStr, path, err)
-				log.Debugf("[UNSUPPORTED ADD - Strict Parse Fail] Path: %v, Type: %v, Value: '%s', Error: %v\n", path, UnsupportedTypeStringParseError, vStr, err)
-				unsupportedMatches = append(unsupportedMatches, UnsupportedImage{
-					Location: path,
-					Type:     UnsupportedTypeStringParseError,
-					Error:    fmt.Errorf("strict mode: string at known image path %v failed to parse: %w\n", path, err),
-				})
-			} else if imgRef != nil {
-				NormalizeImageReference(imgRef.Reference)
-
-				// Check source/exclude lists AFTER normalization
-				isSource := IsSourceRegistry(imgRef.Reference, d.context.SourceRegistries, d.context.ExcludeRegistries)
-
-				if isSource { // Original logic for other paths
-					log.Debugf("Strict mode: Detected source image string at known path %s: %s\n", path, imgRef.Reference.String())
-					detectedImages = append(detectedImages, *imgRef)
-				} else {
-					// It's not a source registry, but WAS it excluded?
-					isExcluded := false
-					regNorm := NormalizeRegistry(imgRef.Reference.Registry)
-					for _, exclude := range d.context.ExcludeRegistries {
-						if regNorm == NormalizeRegistry(exclude) {
-							isExcluded = true
-							break
-						}
-					}
-
-					if isExcluded {
-						log.Debugf("Strict mode: Marking EXCLUDED image string '%s' at known image path %s as unsupported.\n", vStr, path)
-						unsupportedMatches = append(unsupportedMatches, UnsupportedImage{
-							Location: path,
-							Type:     UnsupportedTypeExcludedImage,
-							Error:    fmt.Errorf("strict mode: image at known path %v is from an excluded registry", path),
-						})
-					} else {
-						log.Debugf("Strict mode: Marking NON-SOURCE image string '%s' at known image path %s as unsupported.\n", vStr, path)
-						unsupportedMatches = append(unsupportedMatches, UnsupportedImage{
-							Location: path,
-							Type:     UnsupportedTypeNonSourceImage,
-							Error:    fmt.Errorf("strict mode: image at known path %v is not from a configured source registry", path),
-						})
-					}
-				}
-			} // else imgRef == nil (shouldn't happen if err is nil, but ignore if it does)
-
-		} else {
-			// --- Non-Strict Mode Logic (remains the same) ---
-
-			// Only attempt parse if it looks like an image AND (implicitly) we are not in strict mode at a known path
-			looksLikeImage := looksLikeImageReference(vStr)
-			if !looksLikeImage {
-				log.Debugf("Non-strict: Skipping string '%s' at path %s because it does not look like an image reference.\n", vStr, path)
-				break // Skip if it doesn't look like an image
-			}
-
-			// It looks like an image, attempt to parse.
-			log.Debugf("Non-strict: Attempting parse for string '%s' at path %s\n", vStr, path)
-			imgRef, err := d.tryExtractImageFromString(vStr, path)
-
-			if err != nil {
-				// Non-strict mode: Log parse errors but don't mark as unsupported.
-				log.Debugf("Non-strict: Skipping string '%s' at path %s due to parse error: %v\n", vStr, path, err)
-				break // Skip on parse error
-			}
-
-			if imgRef != nil {
-				// Successful parse -> Check path and source
-				NormalizeImageReference(imgRef.Reference) // Normalize before checking
-				log.Debugf("[DEBUG irr DETECT STRING - Non-Strict] Normalized Ref: %+v\n", imgRef.Reference)
-				if isKnownImagePath && IsSourceRegistry(imgRef.Reference, d.context.SourceRegistries, d.context.ExcludeRegistries) {
-					// Only add if path is known AND it's a source registry
-					log.Debugf("Non-strict: Detected source image string at known path %s: %s\n", path, imgRef.Reference.String())
-					detectedImages = append(detectedImages, *imgRef)
-				} else {
-					// Skip if path unknown OR not a source registry
-					if !isKnownImagePath {
-						log.Debugf("Non-strict: Skipping string '%s' at non-image path %s (parsed ok, but path unknown).\n", vStr, path)
-					} else {
-						log.Debugf("Non-strict: Skipping non-source image string '%s' at known image path %s.\n", vStr, path)
-					}
-				}
-			} // else imgRef == nil -> do nothing
-		}
-
-	case bool, float64, int, nil:
-		debug.Printf("Skipping non-string/map/slice type (%T) at path %v", v, path)
-	default:
-		log.Warnf("Warning: Encountered unexpected type %T at path %v", v, path)
-		// Depending on strictness, maybe add to unsupported
-		// if d.context.Strict { allUnsupported = append(allUnsupported, UnsupportedImage{...}) }
+	if d.context.Strict {
+		return d.processStringValueStrict(v, path, isKnownImagePath)
 	}
 
-	debug.Printf("[DEBUG DETECT traverse END] Path=%v, Detected=%d, Unsupported=%d", path, len(detectedImages), len(unsupportedMatches))
+	// Non-strict mode processing
+	if !isKnownImagePath {
+		return nil, nil, nil
+	}
+
+	imgRef, err := d.tryExtractImageFromString(v, path)
+	if err != nil {
+		return nil, nil, nil // Skip errors in non-strict mode
+	}
+	if imgRef != nil && IsSourceRegistry(imgRef.Reference, d.context.SourceRegistries, d.context.ExcludeRegistries) {
+		detectedImages = append(detectedImages, *imgRef)
+	}
+
 	return detectedImages, unsupportedMatches, nil
 }
 
+// processStringValueStrict handles string processing in strict mode
+func (d *Detector) processStringValueStrict(v string, path []string, isKnownImagePath bool) ([]DetectedImage, []UnsupportedImage, error) {
+	var detectedImages []DetectedImage
+	var unsupportedMatches []UnsupportedImage
+
+	// 1. Check for templates first
+	if containsTemplate(v) {
+		unsupportedMatches = append(unsupportedMatches, UnsupportedImage{
+			Location: path,
+			Type:     UnsupportedTypeTemplateString,
+			Error:    fmt.Errorf("strict mode: template variable detected in string at path %v", path),
+		})
+		return detectedImages, unsupportedMatches, nil
+	}
+
+	// 2. Check if path is known
+	if !isKnownImagePath {
+		return detectedImages, unsupportedMatches, nil
+	}
+
+	// 3. Parse and validate
+	imgRef, err := d.tryExtractImageFromString(v, path)
+	if err != nil {
+		unsupportedMatches = append(unsupportedMatches, UnsupportedImage{
+			Location: path,
+			Type:     UnsupportedTypeStringParseError,
+			Error:    fmt.Errorf("strict mode: string at known image path %v failed to parse: %w", path, err),
+		})
+		return detectedImages, unsupportedMatches, nil
+	}
+
+	if imgRef != nil {
+		NormalizeImageReference(imgRef.Reference)
+		if IsSourceRegistry(imgRef.Reference, d.context.SourceRegistries, d.context.ExcludeRegistries) {
+			detectedImages = append(detectedImages, *imgRef)
+		} else {
+			unsupportedMatches = append(unsupportedMatches, UnsupportedImage{
+				Location: path,
+				Type:     UnsupportedTypeNonSourceImage,
+				Error:    fmt.Errorf("strict mode: string at path %v is not from a configured source registry", path),
+			})
+		}
+	}
+
+	return detectedImages, unsupportedMatches, nil
+}
+
+// determineUnsupportedTypeCode determines the type code for unsupported images
+func (d *Detector) determineUnsupportedTypeCode(err error) UnsupportedType {
+	if errors.Is(err, ErrTemplateVariableDetected) {
+		return UnsupportedTypeTemplateMap
+	}
+	if errors.Is(err, ErrTagAndDigestPresent) {
+		return UnsupportedTypeMapTagAndDigest
+	}
+	return UnsupportedTypeMapError
+}
+
+// validateMapStructure checks if a map has the required image structure
+func (d *Detector) validateMapStructure(m map[string]interface{}, path []string) (string, string, string, string, bool, error) {
+	// Extract values and validate types
+	repoVal, repoOk := m["repository"]
+	regVal, regOk := m["registry"]
+	tagVal, tagOk := m["tag"]
+	digestVal, digestOk := m["digest"]
+
+	// Check repository key presence
+	if !repoOk {
+		debug.Printf("Path [%s] missing required 'repository' key.\n", pathToString(path))
+		return "", "", "", "", false, nil
+	}
+
+	// Validate value types
+	repoValStr, repoIsStr := repoVal.(string)
+	if !repoIsStr {
+		debug.Printf("Path [%s] 'repository' value is not a string.\n", pathToString(path))
+		return "", "", "", "", false, nil
+	}
+
+	// Convert other values to strings if present
+	regValStr := ""
+	if regOk {
+		if str, ok := regVal.(string); ok {
+			regValStr = str
+		}
+	}
+
+	tagValStr := ""
+	if tagOk {
+		if str, ok := tagVal.(string); ok {
+			tagValStr = str
+		}
+	}
+
+	digestValStr := ""
+	if digestOk {
+		if str, ok := digestVal.(string); ok {
+			digestValStr = str
+		}
+	}
+
+	return repoValStr, regValStr, tagValStr, digestValStr, true, nil
+}
+
+// checkForTemplates checks if any map values contain template expressions
+func (d *Detector) checkForTemplates(repoStr, regStr, tagStr, digestStr string) error {
+	if containsTemplate(repoStr) {
+		debug.Printf("Template variable found in map key 'repository': '%s'", repoStr)
+		return ErrTemplateVariableDetected
+	}
+	if regStr != "" && containsTemplate(regStr) {
+		debug.Printf("Template variable found in map key 'registry': '%s'", regStr)
+		return ErrTemplateVariableDetected
+	}
+	if digestStr != "" && containsTemplate(digestStr) {
+		debug.Printf("Template variable found in map key 'digest': '%s'", digestStr)
+		return ErrTemplateVariableDetected
+	}
+	if tagStr != "" && containsTemplate(tagStr) {
+		debug.Printf("Template variable found in map key 'tag': '%s'", tagStr)
+		return ErrTemplateVariableDetected
+	}
+	return nil
+}
+
+// createImageReference creates and validates an image reference from map values
+func (d *Detector) createImageReference(repoStr, regStr, tagStr, digestStr string, path []string) (*Reference, error) {
+	// Create base reference
+	ref := &Reference{
+		Repository: repoStr,
+		Path:       copyPath(path),
+		Original:   fmt.Sprintf("repository=%s,registry=%s,tag=%s,digest=%s", repoStr, regStr, tagStr, digestStr),
+	}
+
+	// Handle registry
+	if regStr != "" {
+		if !isValidRegistryName(regStr) {
+			return nil, fmt.Errorf("invalid registry name '%s' in map at path %v", regStr, path)
+		}
+		ref.Registry = regStr
+	} else if d.context.GlobalRegistry != "" {
+		ref.Registry = d.context.GlobalRegistry
+	}
+
+	// Handle tag
+	if tagStr != "" {
+		if !isValidTag(tagStr) {
+			return nil, fmt.Errorf("invalid tag '%s' in map at path %v", tagStr, path)
+		}
+		ref.Tag = tagStr
+	}
+
+	// Handle digest
+	if digestStr != "" {
+		if !isValidDigest(digestStr) {
+			return nil, fmt.Errorf("invalid digest '%s' in map at path %v", digestStr, path)
+		}
+		ref.Digest = digestStr
+	}
+
+	// Check tag and digest conflict
+	if ref.Tag != "" && ref.Digest != "" {
+		return nil, fmt.Errorf("%w: map at path %v contains both tag ('%s') and digest ('%s')",
+			ErrTagAndDigestPresent, path, ref.Tag, ref.Digest)
+	}
+
+	// Normalize and validate
+	NormalizeImageReference(ref)
+	if !IsValidImageReference(ref) {
+		return nil, fmt.Errorf("map at path %v is invalid after normalization", path)
+	}
+
+	ref.Detected = true
+	return ref, nil
+}
+
 // tryExtractImageFromMap checks if a map conforms to a known image structure.
-// Returns the parsed *DetectedImage*, a boolean indicating if it structurally matched, and an error.
+// Returns:
+// - *DetectedImage: The detected image if valid, nil otherwise
+// - bool: true if the map matches image structure (even if invalid), false otherwise
+// - error: Any validation errors encountered
 func (d *Detector) tryExtractImageFromMap(m map[string]interface{}, path []string) (*DetectedImage, bool, error) {
 	debug.FunctionEnter("tryExtractImageFromMap")
 	defer debug.FunctionExit("tryExtractImageFromMap")
-	debug.DumpValue("Input map", m)
-	debug.Printf("Path: %v", path)
+	debug.Printf("Path='%v', Map=%v", path, m)
 
-	// --- Check for required keys and templates first ---
-
-	// Check repository presence and type
-	repoVal, repoPresent := m["repository"]
-	if !repoPresent {
-		// Repository key missing entirely - not an image map structure.
-		debug.Printf("[tryExtractImageFromMap] Map at path %v lacks 'repository' key. Not an image map structure.\n", pathToString(path))
-		return nil, false, nil // isImageMap = false
+	// Validate basic structure
+	repoStr, regStr, tagStr, digestStr, isImageMap, err := d.validateMapStructure(m, path)
+	if !isImageMap {
+		return nil, false, err
 	}
 
-	repoValStr, repoIsString := repoVal.(string)
-	if !repoIsString {
-		// Repository key present, but wrong type. THIS IS an image map attempt, but invalid.
-		debug.Printf("[tryExtractImageFromMap] Map at path %v has non-string 'repository' key (type %T). Invalid image map structure.\n", pathToString(path), repoVal)
+	// Check for templates
+	if err := d.checkForTemplates(repoStr, regStr, tagStr, digestStr); err != nil {
+		return nil, true, err
+	}
+
+	// Handle empty repository in strict mode
+	if repoStr == "" {
 		if d.context.Strict {
-			// Return specific error for invalid type in strict mode
-			err := fmt.Errorf("image map has invalid repository type (must be string): found type %T", repoVal)
-			return nil, true, err // isImageMap = true, return error
+			return nil, true, fmt.Errorf("image map validation failed: repository cannot be empty at path %v", path)
 		}
-		// In non-strict, treat as a map structure but skip detection.
-		return nil, true, nil // isImageMap = true, return nil error
-	}
-
-	// Now check other keys (presence and type assertion in one step is ok here)
-	tagValStr, tagOk := m["tag"].(string)
-	regValStr, regOk := m["registry"].(string)
-	digestValStr, digestOk := m["digest"].(string)
-
-	// Check for templates *regardless* of path, but only if keys exist
-	templateFound := false
-	if repoIsString && containsTemplate(repoValStr) { // Already know it's a string
-		debug.Printf("Template variable found in map key 'repository': '%s'", repoValStr)
-		templateFound = true
-	}
-	if tagOk && containsTemplate(tagValStr) {
-		debug.Printf("Template variable found in map key 'tag': '%s'", tagValStr)
-		templateFound = true
-	}
-	if regOk && containsTemplate(regValStr) {
-		debug.Printf("Template variable found in map key 'registry': '%s'", regValStr)
-		templateFound = true
-	}
-	if digestOk && containsTemplate(digestValStr) {
-		debug.Printf("Template variable found in map key 'digest': '%s'", digestValStr)
-		templateFound = true
-	}
-
-	if templateFound {
-		debug.Printf("[MAP DEBUG] Returning ErrTemplateVariableDetected because templateFound=true")
-		// Indicate structure match (isImageMap=true) but return nil *DetectedImage and the error
-		return nil, true, ErrTemplateVariableDetected
-	}
-
-	// --- If no templates found, proceed with structural validation ---
-
-	// Now we know repoValStr is a valid string. Check if it's empty.
-	if repoValStr == "" {
-		debug.Printf("Path [%s] has empty 'repository' value.\n", pathToString(path))
-		if d.context.Strict {
-			reason := fmt.Errorf("repository cannot be empty at path %v", path)
-			// Indicate isImageMap = true, return nil *DetectedImage and the error.
-			return nil, true, fmt.Errorf("image map validation failed: %w", reason)
-		}
-		// In non-strict, treat as potentially valid structure but skip detection.
-		// Indicate isImageMap=true, return nil *DetectedImage and nil error.
 		return nil, true, nil
 	}
 
-	// --- If we get here: No templates, has required repo key with non-empty value. ---
-	// It IS considered an image map structure attempt.
-
-	// --- Value Validation & Reference Creation ---
-	parsedRef := &Reference{
-		Repository: repoValStr,
-		Path:       copyPath(path),
-		Original:   fmt.Sprintf("%v", m),
-	}
-
-	// Handle registry: value from map takes precedence over global
-	if regOk && regValStr != "" {
-		if !isValidRegistryName(regValStr) {
-			debug.Printf("Invalid registry name in map: '%s'", regValStr)
-			if d.context.Strict {
-				return nil, true, fmt.Errorf("invalid registry name '%s' in map at path %v", regValStr, path)
-			}
-			return nil, true, nil // Skip in non-strict
-		}
-		parsedRef.Registry = regValStr
-		debug.Printf("Registry set from map key at path %v: %s", path, parsedRef.Registry)
-	} else if d.context.GlobalRegistry != "" {
-		// If registry not set in map, use global if available
-		parsedRef.Registry = d.context.GlobalRegistry
-		debug.Printf("Registry set from global context at path %v: %s", path, parsedRef.Registry)
-	} // else: registry not in map and no global - will be defaulted during normalization
-
-	// Validate tag if present
-	if tagOk {
-		if tagValStr != "" {
-			if !isValidTag(tagValStr) {
-				debug.Printf("Invalid tag in map: '%s'", tagValStr)
-				if d.context.Strict {
-					return nil, true, fmt.Errorf("invalid tag '%s' in map at path %v", tagValStr, path)
-				}
-				return nil, true, nil // Skip in non-strict
-			}
-			parsedRef.Tag = tagValStr
-		} // else: tag key exists but is empty string - allowed
-	} // else: tag key doesn't exist - allowed
-
-	// Validate digest if present
-	if digestOk {
-		if digestValStr != "" {
-			if !isValidDigest(digestValStr) {
-				debug.Printf("Invalid digest in map: '%s'", digestValStr)
-				if d.context.Strict {
-					return nil, true, fmt.Errorf("invalid digest '%s' in map at path %v", digestValStr, path)
-				}
-				return nil, true, nil // Skip in non-strict
-			}
-			parsedRef.Digest = digestValStr
-		} // else: digest key exists but is empty string - allowed
-	} // else: digest key doesn't exist - allowed
-
-	// Final check: cannot have both tag and digest
-	if parsedRef.Tag != "" && parsedRef.Digest != "" {
-		debug.Printf("Map contains both tag and digest at path %v", path)
+	// Create and validate reference
+	ref, err := d.createImageReference(repoStr, regStr, tagStr, digestStr, path)
+	if err != nil {
 		if d.context.Strict {
-			return nil, true, fmt.Errorf("%w: map at path %v contains both tag ('%s') and digest ('%s')", ErrTagAndDigestPresent, path, parsedRef.Tag, parsedRef.Digest)
+			return nil, true, err
 		}
-		return nil, true, nil // Skip in non-strict
-	}
-
-	// If we got here, the structure and values are valid (or skipped non-strictly)
-	NormalizeImageReference(parsedRef) // Normalize before returning
-
-	// Check validity *after* normalization
-	if !IsValidImageReference(parsedRef) {
-		debug.Printf("Map at path %v is invalid after normalization: %+v", path, parsedRef)
-		if d.context.Strict {
-			return nil, true, fmt.Errorf("map at path %v is invalid after normalization", path)
-		}
-		// Skip invalid normalized ref in non-strict
 		return nil, true, nil
 	}
 
-	debug.Printf("Path [%s] successfully parsed as image map: %s", pathToString(path), parsedRef.String())
-	parsedRef.Detected = true
-
-	// Create DetectedImage struct
+	// Create DetectedImage
 	detected := &DetectedImage{
-		Reference:      parsedRef,
-		Path:           copyPath(path), // Ensure path is copied
+		Reference:      ref,
+		Path:           copyPath(path),
 		Pattern:        "map",
-		Original:       m,     // Store original map
-		OriginalFormat: "map", // Set original format
+		Original:       m,
+		OriginalFormat: "map",
 	}
 
-	// +++ Add Debugging +++
 	debug.Printf("[DETECTOR DEBUG tryExtractImageFromMap] Returning DetectedImage for path %v with OriginalFormat: '%s'", detected.Path, detected.OriginalFormat)
 	debug.DumpValue("[DETECTOR DEBUG tryExtractImageFromMap] DetectedImage Value", detected)
 

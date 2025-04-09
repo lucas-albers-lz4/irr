@@ -78,11 +78,9 @@ func NewTestHarness(t *testing.T) *TestHarness {
 	// }
 
 	// Set an environment variable to indicate testing mode if needed by the core logic
-	// Note: Using require directly might not be ideal if harness is created outside a test func scope initially.
-	// Let's assume t is available for now, otherwise needs refactoring.
-	// G104 is suppressed as the error check is now added.
-	err = os.Setenv("IRR_TESTING", "true")
-	require.NoError(t, err, "Failed to set IRR_TESTING env var")
+	if err := os.Setenv("IRR_TESTING", "true"); err != nil {
+		t.Errorf("Failed to set IRR_TESTING env var: %v", err)
+	}
 
 	h := &TestHarness{
 		t:            t,
@@ -116,9 +114,9 @@ func (h *TestHarness) Cleanup() {
 	}
 
 	// Clean up environment variable
-	// G104 is suppressed as the error check is now added.
-	err = os.Unsetenv("IRR_TESTING")
-	require.NoError(h.t, err, "Failed to unset IRR_TESTING env var")
+	if err := os.Unsetenv("IRR_TESTING"); err != nil {
+		h.t.Errorf("Failed to unset IRR_TESTING env var: %v", err)
+	}
 
 	// Run cleanup functions
 	for _, cleanup := range h.cleanupFuncs {
@@ -178,15 +176,13 @@ func getProjectRoot() (string, error) {
 // and returns a cleanup function to unset it.
 func (h *TestHarness) setTestingEnv() func() {
 	h.logger.Printf("Setting IRR_TESTING=true")
-	err := os.Setenv("IRR_TESTING", "true") // #nosec G104
-	if err != nil {
-		h.t.Logf("Warning: Failed to set IRR_TESTING env var: %v", err)
+	if err := os.Setenv("IRR_TESTING", "true"); err != nil {
+		h.t.Errorf("Failed to set IRR_TESTING env var: %v", err)
 	}
 	return func() {
 		h.logger.Printf("Unsetting IRR_TESTING")
-		err := os.Unsetenv("IRR_TESTING") // #nosec G104
-		if err != nil {
-			h.t.Logf("Warning: Failed to unset IRR_TESTING env var: %v", err)
+		if err := os.Unsetenv("IRR_TESTING"); err != nil {
+			h.t.Errorf("Failed to unset IRR_TESTING env var: %v", err)
 		}
 	}
 }
@@ -267,31 +263,32 @@ func (h *TestHarness) GenerateOverrides(extraArgs ...string) error {
 // ValidateOverrides runs helm template with the generated overrides and compares output.
 func (h *TestHarness) ValidateOverrides() error {
 	h.logger.Printf("Validating overrides for chart: %s", h.chartPath)
-	actualOverrides, getOverridesErr := h.getOverrides()
 
 	// Determine expected target registries based on mapping file
 	expectedTargets := []string{image.NormalizeRegistry(h.targetReg)}
 	if h.mappingsPath != "" {
 		// #nosec G304 -- Reading a test-generated file from the test's temp directory is safe.
 		mappingBytes, err := os.ReadFile(h.mappingsPath)
-		if err == nil {
-			var mappings map[string]string
-			if yaml.Unmarshal(mappingBytes, &mappings) == nil {
-				// Clear default if mappings are used
-				expectedTargets = []string{}
-				for _, target := range mappings {
-					normTarget := image.NormalizeRegistry(target)
-					found := false
-					for _, existing := range expectedTargets {
-						if existing == normTarget {
-							found = true
-							break
-						}
-					}
-					if !found {
-						expectedTargets = append(expectedTargets, normTarget)
-					}
+		if err != nil {
+			return fmt.Errorf("failed to read mappings file %s: %w", h.mappingsPath, err)
+		}
+		var mappings map[string]string
+		if err := yaml.Unmarshal(mappingBytes, &mappings); err != nil {
+			return fmt.Errorf("failed to unmarshal mappings from %s: %w", h.mappingsPath, err)
+		}
+		// Clear default if mappings are used
+		expectedTargets = []string{}
+		for _, target := range mappings {
+			normTarget := image.NormalizeRegistry(target)
+			found := false
+			for _, existing := range expectedTargets {
+				if existing == normTarget {
+					found = true
+					break
 				}
+			}
+			if !found {
+				expectedTargets = append(expectedTargets, normTarget)
 			}
 		}
 	}
@@ -309,7 +306,7 @@ func (h *TestHarness) ValidateOverrides() error {
 	// Write the potentially modified overrides to a *temporary* file for helm template validation
 	tempValidationOverridesPath := filepath.Join(h.tempDir, "validation-overrides.yaml")
 	if err := os.WriteFile(tempValidationOverridesPath, currentOverrides, defaultFilePerm); err != nil {
-		return fmt.Errorf("failed to write temporary validation overrides file '%s': %w", tempValidationOverridesPath, err)
+		return fmt.Errorf("failed to write temporary validation overrides file %s: %w", tempValidationOverridesPath, err)
 	}
 	h.t.Logf("Wrote %d bytes to temporary validation file: %s", len(currentOverrides), tempValidationOverridesPath)
 
@@ -327,14 +324,14 @@ func (h *TestHarness) ValidateOverrides() error {
 	if h.mappingsPath != "" {
 		loadedMappings, loadErr := registry.LoadMappings(afero.NewOsFs(), h.mappingsPath)
 		if loadErr != nil {
-			h.t.Logf("Warning: could not load mappings file '%s' for validation: %v", h.mappingsPath, loadErr)
+			h.t.Logf("Warning: could not load mappings file %s for validation: %v", h.mappingsPath, loadErr)
 		} else {
 			mappings = loadedMappings
 		}
 	}
 
 	// Get the actual overrides generated to find the real target registries used.
-	actualOverrides, getOverridesErr = h.getOverrides()
+	actualOverrides, getOverridesErr := h.getOverrides()
 	actualTargetsUsed := make(map[string]bool)
 
 	if getOverridesErr != nil {
@@ -355,12 +352,12 @@ func (h *TestHarness) ValidateOverrides() error {
 			normTarget := image.NormalizeRegistry(target)
 			if normTarget != "" && strings.Contains(output, normTarget) {
 				foundExpectedTarget = true
-				h.t.Logf("[Fallback Check] Found configured target registry '%s' (normalized) in Helm output.", normTarget)
+				h.t.Logf("[Fallback Check] Found configured target registry %s (normalized) in Helm output.", normTarget)
 				break
 			}
 		}
 		if !foundExpectedTarget {
-			return fmt.Errorf("[Fallback Check] no configured target registry (default: '%s' or mapped: %v) found in validated helm template output", h.targetReg, expectedTargets)
+			return fmt.Errorf("[Fallback Check] no configured target registry (default: %s or mapped: %v) found in validated helm template output", h.targetReg, expectedTargets)
 		}
 		// -- End Fallback Check --
 
@@ -389,7 +386,7 @@ func (h *TestHarness) ValidateOverrides() error {
 			for target := range actualTargetsUsed {
 				if strings.Contains(output, target) { // Check against normalized target
 					foundActualTargetInOutput = true
-					h.t.Logf("Found actual target registry '%s' from overrides in Helm output.", target)
+					h.t.Logf("Found actual target registry %s from overrides in Helm output.", target)
 					break
 				}
 			}
@@ -494,10 +491,10 @@ func (h *TestHarness) ExecuteIRR(args ...string) (string, error) {
 	if err != nil {
 		// Return error along with the combined output for context
 		combinedOutput := outputStr + stderrStr
-		return combinedOutput, fmt.Errorf("irr command execution failed: %w. Output:\n%s", err, combinedOutput)
+		return combinedOutput, fmt.Errorf("irr command execution failed: %w\nOutput:\n%s", err, combinedOutput)
 	}
 
-	return outputStr, nil // Return only stdout on success
+	return outputStr, nil
 }
 
 // ExecuteHelm runs the helm binary with the given arguments.

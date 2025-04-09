@@ -452,41 +452,46 @@ func TestProcessChartForOverrides(t *testing.T) {
 }
 
 func TestGenerateOverrides_Integration(t *testing.T) {
-	// Setup: Create temporary directory structure and files
+	// Create a temporary directory for the test chart
 	tempDir, err := os.MkdirTemp("", "irr-test-")
-	require.NoError(t, err)
+	require.NoError(t, err, "failed to create temp directory")
 	defer func() {
-		err := os.RemoveAll(tempDir)
-		if err != nil {
-			t.Logf("Warning: failed to remove temp directory %s: %v", tempDir, err)
+		if err := os.RemoveAll(tempDir); err != nil {
+			t.Logf("Warning: Failed to cleanup temp directory %s: %v", tempDir, err)
 		}
 	}()
 
-	chartDir := filepath.Join(tempDir, "mychart")
-	err = os.Mkdir(chartDir, 0755)
-	require.NoError(t, err)
+	// Create test chart directory
+	chartDir := filepath.Join(tempDir, "test-chart")
+	err = os.Mkdir(chartDir, 0o755)
+	require.NoError(t, err, "failed to create chart directory")
 
 	// Create Chart.yaml
-	chartYAML := `
-apiVersion: v2
-name: mychart-test
+	chartYAML := []byte(`apiVersion: v2
+name: test-chart
 version: 0.1.0
-`
-	err = os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), []byte(chartYAML), 0644)
-	require.NoError(t, err)
+description: A test chart for irr
+`)
+	err = os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), []byte(chartYAML), 0o644)
+	require.NoError(t, err, "failed to create Chart.yaml")
 
-	// Create values.yaml with test image structures
-	valuesYAML := `
-image: original.registry.com/library/myapp:v1
+	// Create values.yaml
+	valuesYAML := []byte(`image:
+  repository: nginx
+  tag: latest
+  registry: docker.io
+
 sidecar:
+  image: busybox:latest
+
+initContainer:
   image:
-    registry: original.registry.com
-    repository: library/helper
-    tag: latest
-nonImage: someValue
-`
-	err = os.WriteFile(filepath.Join(chartDir, "values.yaml"), []byte(valuesYAML), 0644)
-	require.NoError(t, err)
+    repository: alpine
+    tag: "3.14"
+    registry: docker.io
+`)
+	err = os.WriteFile(filepath.Join(chartDir, "values.yaml"), []byte(valuesYAML), 0o644)
+	require.NoError(t, err, "failed to create values.yaml")
 
 	chartPath := chartDir // Use the created directory path
 	target := "my.registry.com"

@@ -155,30 +155,8 @@ func NewGenerator(
 	}
 }
 
-// Generate performs the chart analysis and generates overrides.
-// The function returns appropriate exit codes through pkg/exitcodes.ExitCodeError:
-// - ExitChartParsingError (10) for chart loading/parsing failures
-// - ExitImageProcessingError (11) for image reference processing issues
-// - ExitUnsupportedStructure (12) when strict mode validation fails
-// - ExitThresholdError (13) when success rate is below threshold
-// - ExitGeneralRuntimeError (20) for system/runtime errors
-func (g *Generator) Generate() (*override.File, error) {
-	debug.FunctionEnter("Generator.Generate")
-	defer debug.FunctionExit("Generator.Generate")
-
-	// Configure and run the analyzer
-	analyzer := analysis.NewAnalyzer(g.chartPath, g.loader)
-	debug.Printf("Analyzing chart: %s", g.chartPath)
-	analysisResults, err := analyzer.Analyze()
-	if err != nil {
-		return nil, fmt.Errorf("error analyzing chart %s: %w", g.chartPath, err)
-	}
-
-	detectedImages := analysisResults.ImagePatterns
-	debug.Printf("Analysis complete. Found %d image patterns.", len(detectedImages))
-	debug.DumpValue("[GENERATE] Detected Image Patterns", detectedImages)
-
-	// Find unsupported patterns (e.g., templates)
+// findUnsupportedPatterns identifies template expressions and other unsupported structures
+func (g *Generator) findUnsupportedPatterns(detectedImages []analysis.ImagePattern) []override.UnsupportedStructure {
 	unsupportedPatterns := []override.UnsupportedStructure{}
 	for _, pattern := range detectedImages {
 		if strings.Contains(pattern.Value, "{{") || strings.Contains(pattern.Value, "}}") {
@@ -188,27 +166,17 @@ func (g *Generator) Generate() (*override.File, error) {
 			})
 		}
 	}
+	return unsupportedPatterns
+}
 
-	// Strict Mode Check
-	if g.strict && len(unsupportedPatterns) > 0 {
-		details := []string{}
-		log.Warnf("Strict mode enabled: Found %d unsupported image structures:", len(unsupportedPatterns))
-		for i, item := range unsupportedPatterns {
-			errMsg := fmt.Sprintf("  [%d] Path: %s, Type: %s", i+1, strings.Join(item.Path, "."), item.Type)
-			log.Warnf(errMsg)
-			details = append(details, errMsg)
-		}
-		return nil, fmt.Errorf("%w: %s", ErrUnsupportedStructure, strings.Join(details, "; "))
-	}
-
-	// Filter and process detected images
+// filterEligibleImages filters detected images based on registry rules
+func (g *Generator) filterEligibleImages(detectedImages []analysis.ImagePattern) []analysis.ImagePattern {
 	eligibleImages := []analysis.ImagePattern{}
 	for _, pattern := range detectedImages {
 		var registry string
-		var imgRef *image.Reference
 
 		if pattern.Type == analysis.PatternTypeString {
-			imgRef, err = image.ParseImageReference(pattern.Value)
+			imgRef, err := image.ParseImageReference(pattern.Value)
 			if err != nil {
 				debug.Printf("Skipping pattern at path %s due to parse error on value '%s': %v", pattern.Path, pattern.Value, err)
 				continue
@@ -241,6 +209,96 @@ func (g *Generator) Generate() (*override.File, error) {
 		}
 		eligibleImages = append(eligibleImages, pattern)
 	}
+	return eligibleImages
+}
+
+// createOverride generates the override value for a pattern
+func (g *Generator) createOverride(pattern analysis.ImagePattern, imgRef *image.Reference, targetReg, newPath string) interface{} {
+	if pattern.Type == analysis.PatternTypeString {
+		// For string type, generate a full image reference string
+		override := fmt.Sprintf("%s/%s", targetReg, newPath)
+		if imgRef.Tag != "" {
+			override = fmt.Sprintf("%s:%s", override, imgRef.Tag)
+		}
+		return override
+	}
+
+	// For map type, update the map structure
+	override := map[string]interface{}{
+		"registry":   targetReg,
+		"repository": newPath,
+	}
+	if imgRef.Tag != "" {
+		override["tag"] = imgRef.Tag
+	}
+	return override
+}
+
+// setOverridePath sets the override value at the correct path in the overrides map
+func (g *Generator) setOverridePath(overrides map[string]interface{}, pattern analysis.ImagePattern, override interface{}) {
+	pathParts := strings.Split(pattern.Path, ".")
+	current := overrides
+	for i := 0; i < len(pathParts)-1; i++ {
+		part := pathParts[i]
+		if _, exists := current[part]; !exists {
+			current[part] = make(map[string]interface{})
+		}
+		current = current[part].(map[string]interface{})
+	}
+	current[pathParts[len(pathParts)-1]] = override
+}
+
+// processImagePattern processes a single image pattern and returns its reference
+func (g *Generator) processImagePattern(pattern analysis.ImagePattern) (*image.Reference, error) {
+	if pattern.Type == analysis.PatternTypeString {
+		return image.ParseImageReference(pattern.Value)
+	}
+
+	return &image.Reference{
+		Registry:   pattern.Structure["registry"].(string),
+		Repository: pattern.Structure["repository"].(string),
+		Tag:        pattern.Structure["tag"].(string),
+	}, nil
+}
+
+// Generate performs the chart analysis and generates overrides.
+// The function returns appropriate exit codes through pkg/exitcodes.ExitCodeError:
+// - ExitChartParsingError (10) for chart loading/parsing failures
+// - ExitImageProcessingError (11) for image reference processing issues
+// - ExitUnsupportedStructure (12) when strict mode validation fails
+// - ExitThresholdError (13) when success rate is below threshold
+// - ExitGeneralRuntimeError (20) for system/runtime errors
+func (g *Generator) Generate() (*override.File, error) {
+	debug.FunctionEnter("Generator.Generate")
+	defer debug.FunctionExit("Generator.Generate")
+
+	// Configure and run the analyzer
+	analyzer := analysis.NewAnalyzer(g.chartPath, g.loader)
+	debug.Printf("Analyzing chart: %s", g.chartPath)
+	analysisResults, err := analyzer.Analyze()
+	if err != nil {
+		return nil, fmt.Errorf("error analyzing chart %s: %w", g.chartPath, err)
+	}
+
+	detectedImages := analysisResults.ImagePatterns
+	debug.Printf("Analysis complete. Found %d image patterns.", len(detectedImages))
+	debug.DumpValue("[GENERATE] Detected Image Patterns", detectedImages)
+
+	// Find unsupported patterns and handle strict mode
+	unsupportedPatterns := g.findUnsupportedPatterns(detectedImages)
+	if g.strict && len(unsupportedPatterns) > 0 {
+		details := []string{}
+		log.Warnf("Strict mode enabled: Found %d unsupported image structures:", len(unsupportedPatterns))
+		for i, item := range unsupportedPatterns {
+			errMsg := fmt.Sprintf("  [%d] Path: %s, Type: %s", i+1, strings.Join(item.Path, "."), item.Type)
+			log.Warnf(errMsg)
+			details = append(details, errMsg)
+		}
+		return nil, fmt.Errorf("%w: %s", ErrUnsupportedStructure, strings.Join(details, "; "))
+	}
+
+	// Filter and process detected images
+	eligibleImages := g.filterEligibleImages(detectedImages)
 
 	// Generate overrides
 	overrides := make(map[string]interface{})
@@ -249,22 +307,10 @@ func (g *Generator) Generate() (*override.File, error) {
 	processedCount := 0
 
 	for _, pattern := range eligibleImages {
-		var imgRef *image.Reference
-		var err error
-
-		if pattern.Type == analysis.PatternTypeString {
-			imgRef, err = image.ParseImageReference(pattern.Value)
-			if err != nil {
-				processErrors = append(processErrors, fmt.Errorf("failed to parse image reference '%s': %w", pattern.Value, err))
-				continue
-			}
-		} else {
-			// For map type, construct a reference from the structure
-			imgRef = &image.Reference{
-				Registry:   pattern.Structure["registry"].(string),
-				Repository: pattern.Structure["repository"].(string),
-				Tag:        pattern.Structure["tag"].(string),
-			}
+		imgRef, err := g.processImagePattern(pattern)
+		if err != nil {
+			processErrors = append(processErrors, fmt.Errorf("failed to process image pattern '%s': %w", pattern.Value, err))
+			continue
 		}
 
 		// Determine target registry
@@ -284,37 +330,8 @@ func (g *Generator) Generate() (*override.File, error) {
 		}
 
 		processedCount++
-
-		// Create override based on pattern type
-		var override interface{}
-		if pattern.Type == analysis.PatternTypeString {
-			// For string type, generate a full image reference string
-			override = fmt.Sprintf("%s/%s", targetReg, newPath)
-			if imgRef.Tag != "" {
-				override = fmt.Sprintf("%s:%s", override, imgRef.Tag)
-			}
-		} else {
-			// For map type, update the map structure
-			override = map[string]interface{}{
-				"registry":   targetReg,
-				"repository": newPath,
-			}
-			if imgRef.Tag != "" {
-				override.(map[string]interface{})["tag"] = imgRef.Tag
-			}
-		}
-
-		// Set the override at the correct path
-		pathParts := strings.Split(pattern.Path, ".")
-		current := overrides
-		for i := 0; i < len(pathParts)-1; i++ {
-			part := pathParts[i]
-			if _, exists := current[part]; !exists {
-				current[part] = make(map[string]interface{})
-			}
-			current = current[part].(map[string]interface{})
-		}
-		current[pathParts[len(pathParts)-1]] = override
+		override := g.createOverride(pattern, imgRef, targetReg, newPath)
+		g.setOverridePath(overrides, pattern, override)
 	}
 
 	// Check threshold
@@ -376,7 +393,7 @@ func ValidateHelmTemplate(runner CommandRunner, chartPath string, overrides []by
 	}()
 
 	overrideFilePath := filepath.Join(tempDir, "temp-overrides.yaml")
-	if err := os.WriteFile(overrideFilePath, overrides, 0600); err != nil {
+	if err := os.WriteFile(overrideFilePath, overrides, 0o600); err != nil {
 		return fmt.Errorf("failed to write temp overrides file: %w", err)
 	}
 	debug.Printf("Temporary override file written to: %s", overrideFilePath)

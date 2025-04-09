@@ -9,7 +9,6 @@ import (
 	"regexp"
 	"strings"
 	"text/tabwriter"
-	"time"
 
 	log "github.com/lalbers/irr/pkg/log"
 
@@ -28,25 +27,17 @@ import (
 var (
 	// Chart and registry related
 	chartPath         string
-	targetRegistry    string
 	sourceRegistries  []string
 	excludeRegistries []string
 	registryFile      string // Registry mappings file
-	imageRegistry     string
-	globalRegistry    string
 
 	// Output and mode flags
 	outputFile   string // Used by multiple commands
 	outputFormat string // Output format (text or json)
-	pathStrategy string
-	pathDepth    int
 
 	// Behavior flags
-	verbose      bool
-	dryRun       bool
-	strictMode   bool
-	debugEnabled bool // Used by multiple commands
-	templateMode bool
+	verbose    bool
+	strictMode bool
 )
 
 // Helper to panic on required flag errors (indicates programmer error)
@@ -60,13 +51,6 @@ const (
 	// Standard file permissions
 	defaultFilePerm       fs.FileMode = 0o600 // Read/write for owner
 	defaultOutputFilePerm fs.FileMode = 0o644 // Read/write for owner, read for group/others
-
-	// Tabwriter settings
-	minWidth = 0
-	tabWidth = 4
-	padding  = 1
-	padChar  = ' '
-	flags    = 0
 )
 
 // AppFs provides an abstraction over the filesystem.
@@ -91,7 +75,8 @@ func wrapExitCodeError(err error, code int) error {
 	if err == nil {
 		return nil
 	}
-	if exitErr, ok := err.(*ExitCodeError); ok {
+	var exitErr *ExitCodeError
+	if errors.As(err, &exitErr) {
 		return exitErr
 	}
 	return &ExitCodeError{err: err, exitCode: code}
@@ -198,14 +183,8 @@ It also supports linting image references for potential issues.`,
 			}
 		}
 
+		// Configure logging
 		log.SetLevel(level)
-
-		// Final check to confirm debug status and log timestamp
-		if log.IsDebugEnabled() {
-			log.Debugf("Debug logging is enabled (Timestamp: %s)", time.Now().Format(time.RFC3339))
-		}
-
-		// Propagate the debug flag state to the debug package
 		debug.Enabled = debugEnabled
 	},
 	// Disable automatic printing of usage on error
@@ -227,7 +206,8 @@ It also supports linting image references for potential issues.`,
 func Execute() {
 	err := rootCmd.Execute()
 	if err != nil {
-		if exitErr, ok := err.(*ExitCodeError); ok {
+		var exitErr *ExitCodeError
+		if errors.As(err, &exitErr) {
 			os.Exit(exitErr.ExitCode())
 		}
 		os.Exit(exitcodes.ExitGeneralRuntimeError)
@@ -306,21 +286,6 @@ It can output in text or JSON format and supports filtering by source registry.`
 
 	// Mark required flags
 	_ = analyzeCmd.MarkFlagRequired("chart")
-}
-
-// --- Default (Override) Command --- Moved from original main.go
-
-func newDefaultCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "irr",
-		Short: "Image Registry Redirect - Helm chart image registry override tool",
-		Long: `Image Registry Redirect (irr) is a tool for generating Helm override values
-that redirect container image references from public registries to a private registry.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("a subcommand is required")
-		},
-	}
-	return cmd
 }
 
 // --- Analyze Command --- Moved from analyze.go
@@ -436,6 +401,15 @@ func formatTextOutput(analysis *analysis.ChartAnalysis) string {
 	var sb strings.Builder
 	sb.WriteString("Chart Analysis\n\n")
 
+	// Define tabwriter constants
+	const (
+		minWidth = 0
+		tabWidth = 8
+		padding  = 2
+		padChar  = ' '
+		flags    = 0 // Default flags
+	)
+
 	sb.WriteString("Pattern Summary:\n")
 	sb.WriteString(fmt.Sprintf("Total image patterns: %d\n", len(analysis.ImagePatterns)))
 	sb.WriteString(fmt.Sprintf("Global patterns: %d\n", len(analysis.GlobalPatterns)))
@@ -445,7 +419,8 @@ func formatTextOutput(analysis *analysis.ChartAnalysis) string {
 		sb.WriteString("Image Patterns:\n")
 		w := tabwriter.NewWriter(&sb, minWidth, tabWidth, padding, padChar, flags)
 		if _, err := fmt.Fprintln(w, "PATH\tTYPE\tDETAILS\tCOUNT"); err != nil {
-			return fmt.Sprintf("Error writing header to text output: %v", err)
+			log.Errorf("Error writing header to text output: %v", err)
+			return fmt.Sprintf("Error writing header to text output: %v", err) // Return error message
 		}
 		for _, p := range analysis.ImagePatterns {
 			details := ""
@@ -458,10 +433,12 @@ func formatTextOutput(analysis *analysis.ChartAnalysis) string {
 				details = p.Value
 			}
 			if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%d\n", p.Path, p.Type, details, p.Count); err != nil {
+				log.Errorf("Error writing row to text output: %v", err)
 				return fmt.Sprintf("Error writing row to text output: %v", err)
 			}
 		}
 		if err := w.Flush(); err != nil {
+			log.Errorf("Error flushing text output: %v", err)
 			return fmt.Sprintf("Error flushing text output: %v", err)
 		}
 		sb.WriteString("\n")

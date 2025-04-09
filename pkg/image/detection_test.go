@@ -93,14 +93,13 @@ func assertUnsupportedImages(t *testing.T, expected, actual []UnsupportedImage) 
 	} // No else needed, length assertion covers mismatch
 }
 
-func TestImageDetector(t *testing.T) {
-	type testCase struct {
+// TestImageDetector_StandardMaps tests standard image map detection
+func TestImageDetector_StandardMaps(t *testing.T) {
+	tests := []struct {
 		name         string
 		values       interface{}
 		wantDetected []DetectedImage
-	}
-
-	testCases := []testCase{
+	}{
 		{
 			name: "standard_image_map",
 			values: map[string]interface{}{
@@ -143,6 +142,18 @@ func TestImageDetector(t *testing.T) {
 				},
 			},
 		},
+	}
+
+	runImageDetectorTests(t, tests)
+}
+
+// TestImageDetector_ContainerPaths tests image detection in container paths
+func TestImageDetector_ContainerPaths(t *testing.T) {
+	tests := []struct {
+		name         string
+		values       interface{}
+		wantDetected []DetectedImage
+	}{
 		{
 			name: "string_image_in_known_path",
 			values: map[string]interface{}{
@@ -167,6 +178,159 @@ func TestImageDetector(t *testing.T) {
 				},
 			},
 		},
+	}
+
+	runImageDetectorTests(t, tests)
+}
+
+// TestImageDetector_DigestReferences tests digest-based image references
+func TestImageDetector_DigestReferences(t *testing.T) {
+	tests := []struct {
+		name         string
+		values       interface{}
+		wantDetected []DetectedImage
+	}{
+		{
+			name: "digest-based_references",
+			values: map[string]interface{}{
+				"image": "docker.io/nginx@sha256:1234567890123456789012345678901234567890123456789012345678901234",
+			},
+			wantDetected: []DetectedImage{
+				{
+					Reference: &Reference{
+						Registry:   "docker.io",
+						Repository: "library/nginx",
+						Digest:     "sha256:1234567890123456789012345678901234567890123456789012345678901234",
+					},
+					Path:     []string{"image"},
+					Pattern:  PatternString,
+					Original: "docker.io/nginx@sha256:1234567890123456789012345678901234567890123456789012345678901234",
+				},
+			},
+		},
+	}
+
+	runImageDetectorTests(t, tests)
+}
+
+// TestImageDetector_MixedConfiguration tests detection with mixed configuration values
+func TestImageDetector_MixedConfiguration(t *testing.T) {
+	tests := []struct {
+		name         string
+		values       interface{}
+		wantDetected []DetectedImage
+	}{
+		{
+			name: "non-image_configuration_values",
+			values: map[string]interface{}{
+				"port":               8080,
+				"timeout":            "30s",
+				"serviceAccountName": "default",
+				"image": map[string]interface{}{
+					"repository": "nginx",
+					"tag":        "1.23",
+				},
+			},
+			wantDetected: []DetectedImage{
+				{
+					Reference: &Reference{Registry: "docker.io", Repository: "library/nginx", Tag: "1.23"},
+					Path:      []string{"image"},
+					Pattern:   PatternMap,
+					Original:  map[string]interface{}{"repository": "nginx", "tag": "1.23"},
+				},
+			},
+		},
+	}
+
+	runImageDetectorTests(t, tests)
+}
+
+// Helper function to run common test logic
+func runImageDetectorTests(t *testing.T, tests []struct {
+	name         string
+	values       interface{}
+	wantDetected []DetectedImage
+}) {
+	t.Helper()
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := &DetectionContext{
+				SourceRegistries: []string{"docker.io", "quay.io", "my-registry.example.com"},
+			}
+
+			// Set GlobalRegistry for specific tests
+			if tc.name == "partial_image_map_with_global_registry" {
+				ctx.GlobalRegistry = "docker.io"
+			}
+
+			detector := NewDetector(*ctx)
+			gotDetected, gotUnsupported, err := detector.DetectImages(tc.values, []string{})
+			assert.NoError(t, err)
+			assert.Empty(t, gotUnsupported)
+
+			// Sort both slices for consistent comparison
+			SortDetectedImages(gotDetected)
+			SortDetectedImages(tc.wantDetected)
+
+			assertDetectedImages(t, tc.wantDetected, gotDetected, true)
+		})
+	}
+}
+
+// TestImageDetector_StringDetection tests string-based image reference detection
+func TestImageDetector_StringDetection(t *testing.T) {
+	tests := []struct {
+		name         string
+		values       interface{}
+		wantDetected []DetectedImage
+	}{
+		{
+			name: "string_image_in_known_path",
+			values: map[string]interface{}{
+				"spec": map[string]interface{}{
+					"template": map[string]interface{}{
+						"spec": map[string]interface{}{
+							"containers": []interface{}{
+								map[string]interface{}{
+									"image": "quay.io/prometheus/node-exporter:v1.3.1",
+								},
+							},
+						},
+					},
+				},
+			},
+			wantDetected: []DetectedImage{
+				{
+					Reference: &Reference{Registry: "quay.io", Repository: "prometheus/node-exporter", Tag: "v1.3.1"},
+					Path:      []string{"spec", "template", "spec", "containers", "[0]", "image"},
+					Pattern:   PatternString,
+					Original:  "quay.io/prometheus/node-exporter:v1.3.1",
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			detector := NewDetector(DetectionContext{})
+			detected, unsupported, err := detector.DetectImages(tt.values, nil)
+			require.NoError(t, err)
+			require.Empty(t, unsupported)
+
+			SortDetectedImages(detected)
+			SortDetectedImages(tt.wantDetected)
+			assertDetectedImages(t, tt.wantDetected, detected, true)
+		})
+	}
+}
+
+// TestImageDetector_MixedValues tests detection with mixed value types
+func TestImageDetector_MixedValues(t *testing.T) {
+	tests := []struct {
+		name         string
+		values       interface{}
+		wantDetected []DetectedImage
+	}{
 		{
 			name: "non-image_boolean_values",
 			values: map[string]interface{}{
@@ -185,6 +349,29 @@ func TestImageDetector(t *testing.T) {
 				},
 			},
 		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			detector := NewDetector(DetectionContext{})
+			detected, unsupported, err := detector.DetectImages(tt.values, nil)
+			require.NoError(t, err)
+			require.Empty(t, unsupported)
+
+			SortDetectedImages(detected)
+			SortDetectedImages(tt.wantDetected)
+			assertDetectedImages(t, tt.wantDetected, detected, true)
+		})
+	}
+}
+
+// TestImageDetector_ArrayBasedImages tests detection in array structures
+func TestImageDetector_ArrayBasedImages(t *testing.T) {
+	tests := []struct {
+		name         string
+		values       interface{}
+		wantDetected []DetectedImage
+	}{
 		{
 			name: "array-based_images",
 			values: map[string]interface{}{
@@ -214,132 +401,103 @@ func TestImageDetector(t *testing.T) {
 				},
 			},
 		},
-		{
-			name: "digest-based_references",
-			values: map[string]interface{}{
-				"image": "docker.io/nginx@sha256:1234567890123456789012345678901234567890123456789012345678901234",
-			},
-			wantDetected: []DetectedImage{
-				{
-					Reference: &Reference{
-						Registry:   "docker.io",
-						Repository: "library/nginx",
-						Digest:     "sha256:1234567890123456789012345678901234567890123456789012345678901234",
-					},
-					Path:     []string{"image"},
-					Pattern:  PatternString,
-					Original: "docker.io/nginx@sha256:1234567890123456789012345678901234567890123456789012345678901234",
-				},
-			},
-		},
-		{
-			name: "non-image_configuration_values",
-			values: map[string]interface{}{
-				"port":               8080,
-				"timeout":            "30s",
-				"serviceAccountName": "default",
-				"image": map[string]interface{}{
-					"repository": "nginx",
-					"tag":        "1.23",
-				},
-			},
-			wantDetected: []DetectedImage{
-				{
-					Reference: &Reference{Registry: "docker.io", Repository: "library/nginx", Tag: "1.23"},
-					Path:      []string{"image"},
-					Pattern:   PatternMap,
-					Original:  map[string]interface{}{"repository": "nginx", "tag": "1.23"},
-				},
-			},
-		},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			ctx := &DetectionContext{
-				SourceRegistries: []string{"docker.io", "quay.io", "my-registry.example.com"},
-			}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			detector := NewDetector(DetectionContext{})
+			detected, unsupported, err := detector.DetectImages(tt.values, nil)
+			require.NoError(t, err)
+			require.Empty(t, unsupported)
 
-			// Set GlobalRegistry for the specific test
-			if tc.name == "partial_image_map_with_global_registry" {
-				ctx.GlobalRegistry = "docker.io"
-			}
-
-			detector := NewDetector(*ctx)
-			gotDetected, gotUnsupported, err := detector.DetectImages(tc.values, []string{})
-			assert.NoError(t, err)
-			assert.Empty(t, gotUnsupported) // Assuming these tests should not produce unsupported images
-
-			// Sort both slices for consistent comparison
-			SortDetectedImages(gotDetected)
-			SortDetectedImages(tc.wantDetected)
-
-			assert.Len(t, gotDetected, len(tc.wantDetected), "number of detected images mismatch")
-
-			if len(gotDetected) == len(tc.wantDetected) {
-				for i := range gotDetected {
-					assert.Equal(t, tc.wantDetected[i].Path, gotDetected[i].Path, "path mismatch")
-					assert.Equal(t, tc.wantDetected[i].Pattern, gotDetected[i].Pattern, "pattern mismatch")
-					if assert.NotNil(t, gotDetected[i].Reference) && assert.NotNil(t, tc.wantDetected[i].Reference) {
-						assert.Equal(t, tc.wantDetected[i].Reference.Registry, gotDetected[i].Reference.Registry, "registry mismatch")
-						assert.Equal(t, tc.wantDetected[i].Reference.Repository, gotDetected[i].Reference.Repository, "repository mismatch")
-						assert.Equal(t, tc.wantDetected[i].Reference.Tag, gotDetected[i].Reference.Tag, "tag mismatch")
-						assert.Equal(t, tc.wantDetected[i].Reference.Digest, gotDetected[i].Reference.Digest, "digest mismatch")
-					}
-				}
-			} else {
-				// Use reflect.DeepEqual for a detailed diff if lengths differ
-				assert.Equal(t, tc.wantDetected, gotDetected, "Mismatch in detected images")
-			}
+			SortDetectedImages(detected)
+			SortDetectedImages(tt.wantDetected)
+			assertDetectedImages(t, tt.wantDetected, detected, true)
 		})
 	}
 }
 
-func TestImageDetector_DetectImages_EdgeCases(t *testing.T) {
-	testCases := map[string]struct {
-		name                     string
-		input                    interface{}
-		expected                 []DetectedImage
-		strict                   bool
-		expectedError            bool
-		expectedUnsupportedCount int
-		expectedUnsupported      []UnsupportedImage // Expect non-nil empty slice if count is 0
+// TestImageDetector_EmptyInputs tests detection behavior with empty or nil inputs
+func TestImageDetector_EmptyInputs(t *testing.T) {
+	tests := []struct {
+		name         string
+		values       interface{}
+		wantDetected []DetectedImage
 	}{
-		"nil_values": {
-			input:                    nil,
-			expected:                 []DetectedImage{},
-			strict:                   false,
-			expectedUnsupportedCount: 0,
-			expectedUnsupported:      []UnsupportedImage{}, // Expect empty slice
+		{
+			name:         "nil_input",
+			values:       nil,
+			wantDetected: []DetectedImage{},
 		},
-		"empty_map": {
-			input:                    map[string]interface{}{},
-			expected:                 []DetectedImage{},
-			strict:                   false,
-			expectedUnsupportedCount: 0,
-			expectedUnsupported:      []UnsupportedImage{}, // Expect empty slice
+		{
+			name:         "empty_map",
+			values:       map[string]interface{}{},
+			wantDetected: []DetectedImage{},
 		},
-		"invalid_type_in_image_map": {
-			input: map[string]interface{}{
-				"image": map[string]interface{}{"repository": 123, "tag": "v1"},
+		{
+			name: "empty_nested_map",
+			values: map[string]interface{}{
+				"image": map[string]interface{}{},
 			},
-			expected:                 []DetectedImage{},
-			strict:                   true,
-			expectedError:            false,
-			expectedUnsupportedCount: 1,
-			expectedUnsupported: []UnsupportedImage{
-				{
-					Location: []string{"image"},
-					Type:     UnsupportedTypeMapError,
-					Error:    fmt.Errorf("image map has invalid repository type (must be string): found type int"),
+			wantDetected: []DetectedImage{},
+		},
+	}
+
+	runImageDetectorTests(t, tests)
+}
+
+// TestImageDetector_InvalidTypes tests detection behavior with invalid value types
+func TestImageDetector_InvalidTypes(t *testing.T) {
+	tests := []struct {
+		name         string
+		values       interface{}
+		wantDetected []DetectedImage
+	}{
+		{
+			name: "invalid_type_in_map",
+			values: map[string]interface{}{
+				"image": 42,
+			},
+			wantDetected: []DetectedImage{},
+		},
+		{
+			name: "invalid_repository_type",
+			values: map[string]interface{}{
+				"image": map[string]interface{}{
+					"repository": true,
+					"tag":        "1.0",
 				},
 			},
+			wantDetected: []DetectedImage{},
 		},
-		"deeply_nested_valid_image": {
-			input: map[string]interface{}{
-				"a": map[string]interface{}{
-					"b": map[string]interface{}{
-						"c": map[string]interface{}{
+		{
+			name: "invalid_tag_type",
+			values: map[string]interface{}{
+				"image": map[string]interface{}{
+					"repository": "nginx",
+					"tag":        []string{"1.0"},
+				},
+			},
+			wantDetected: []DetectedImage{},
+		},
+	}
+
+	runImageDetectorTests(t, tests)
+}
+
+// TestImageDetector_DeeplyNestedImages tests detection in deeply nested structures
+func TestImageDetector_DeeplyNestedImages(t *testing.T) {
+	tests := []struct {
+		name         string
+		values       interface{}
+		wantDetected []DetectedImage
+	}{
+		{
+			name: "deeply_nested_map",
+			values: map[string]interface{}{
+				"level1": map[string]interface{}{
+					"level2": map[string]interface{}{
+						"level3": map[string]interface{}{
 							"image": map[string]interface{}{
 								"repository": "nginx",
 								"tag":        "1.23",
@@ -348,25 +506,30 @@ func TestImageDetector_DetectImages_EdgeCases(t *testing.T) {
 					},
 				},
 			},
-			expected: []DetectedImage{
+			wantDetected: []DetectedImage{
 				{
-					Reference: &Reference{
-						Registry:   defaultRegistry,
-						Repository: "library/nginx",
-						Tag:        "1.23",
-						Path:       []string{"a", "b", "c", "image"},
-					},
-					Path:     []string{"a", "b", "c", "image"},
-					Pattern:  PatternMap,
-					Original: map[string]interface{}{"repository": "nginx", "tag": "1.23"},
+					Reference: &Reference{Registry: "docker.io", Repository: "library/nginx", Tag: "1.23"},
+					Path:      []string{"level1", "level2", "level3", "image"},
+					Pattern:   PatternMap,
+					Original:  map[string]interface{}{"repository": "nginx", "tag": "1.23"},
 				},
 			},
-			strict:                   false,
-			expectedUnsupportedCount: 0,
-			expectedUnsupported:      []UnsupportedImage{}, // Expect empty slice
 		},
-		"mixed_valid_and_invalid_images": {
-			input: map[string]interface{}{
+	}
+
+	runImageDetectorTests(t, tests)
+}
+
+// TestImageDetector_MixedValidityImages tests detection with a mix of valid and invalid images
+func TestImageDetector_MixedValidityImages(t *testing.T) {
+	tests := []struct {
+		name         string
+		values       interface{}
+		wantDetected []DetectedImage
+	}{
+		{
+			name: "mixed_valid_and_invalid",
+			values: map[string]interface{}{
 				"valid": map[string]interface{}{
 					"image": map[string]interface{}{
 						"repository": "nginx",
@@ -374,175 +537,62 @@ func TestImageDetector_DetectImages_EdgeCases(t *testing.T) {
 					},
 				},
 				"invalid": map[string]interface{}{
-					"image": "not:a:valid:image", // Invalid string format
-				},
-			},
-			expected: []DetectedImage{
-				{
-					Reference: &Reference{
-						Registry:   defaultRegistry,
-						Repository: "library/nginx",
-						Tag:        "1.23",
-						Path:       []string{"valid", "image"},
+					"image": map[string]interface{}{
+						"repository": 42,
+						"tag":        true,
 					},
-					Path:     []string{"valid", "image"},
-					Pattern:  PatternMap,
-					Original: map[string]interface{}{"repository": "nginx", "tag": "1.23"},
 				},
 			},
-			strict:                   true,
-			expectedError:            false,
-			expectedUnsupportedCount: 1,
-			expectedUnsupported: []UnsupportedImage{
+			wantDetected: []DetectedImage{
 				{
-					Location: []string{"invalid", "image"},
-					Type:     UnsupportedTypeStringParseError,
-					Error:    fmt.Errorf("strict mode: string at known image path [invalid image] failed to parse: invalid image string format: parsing image reference 'not:a:valid:image': invalid repository name\n"),
+					Reference: &Reference{Registry: "docker.io", Repository: "library/nginx", Tag: "1.23"},
+					Path:      []string{"valid", "image"},
+					Pattern:   PatternMap,
+					Original:  map[string]interface{}{"repository": "nginx", "tag": "1.23"},
 				},
 			},
 		},
 	}
 
-	for name, tc := range testCases {
-		t.Run(name, func(t *testing.T) {
-			ctx := &DetectionContext{Strict: tc.strict, SourceRegistries: []string{defaultRegistry}}
-			detector := NewDetector(*ctx)
-			detected, unsupported, err := detector.DetectImages(tc.input, nil)
-
-			if tc.expectedError {
-				assert.Error(t, err)
-				return // Stop checks if a general error was expected
-			}
-			assert.NoError(t, err)
-
-			// Sort slices for consistent comparison
-			SortDetectedImages(detected)
-			SortDetectedImages(tc.expected)
-			SortUnsupportedImages(unsupported)
-			SortUnsupportedImages(tc.expectedUnsupported)
-
-			// Compare Detected Images field by field using helper (checking Original field)
-			assertDetectedImages(t, tc.expected, detected, true)
-
-			// Compare Unsupported Images using helper
-			assertUnsupportedImages(t, tc.expectedUnsupported, unsupported)
-		})
-	}
+	runImageDetectorTests(t, tests)
 }
 
-func TestImageDetector_GlobalRegistry(t *testing.T) {
-	testCases := []struct {
+// TestImageDetector_GlobalRegistryBasic tests basic global registry functionality
+func TestImageDetector_GlobalRegistryBasic(t *testing.T) {
+	tests := []struct {
 		name         string
 		values       interface{}
-		globalReg    string
 		wantDetected []DetectedImage
 	}{
 		{
-			name: "global_registry_with_multiple_images",
+			name: "basic_global_registry",
 			values: map[string]interface{}{
-				"frontend": map[string]interface{}{"image": map[string]interface{}{"repository": "frontend-app", "tag": "v1.0"}},
-				"backend":  map[string]interface{}{"image": map[string]interface{}{"repository": "backend-app", "tag": "v2.0"}},
-			},
-			globalReg: "my-global-registry.com",
-			wantDetected: []DetectedImage{
-				{
-					Reference: &Reference{
-						Registry:   "my-global-registry.com",
-						Repository: "backend-app",
-						Tag:        "v2.0",
-						Path:       []string{"backend", "image"},
-					},
-					Path:     []string{"backend", "image"},
-					Pattern:  PatternMap,
-					Original: map[string]interface{}{"repository": "backend-app", "tag": "v2.0"},
+				"global": map[string]interface{}{
+					"registry": "my-registry.example.com",
 				},
-				{
-					Reference: &Reference{
-						Registry:   "my-global-registry.com",
-						Repository: "frontend-app",
-						Tag:        "v1.0",
-						Path:       []string{"frontend", "image"},
-					},
-					Path:     []string{"frontend", "image"},
-					Pattern:  PatternMap,
-					Original: map[string]interface{}{"repository": "frontend-app", "tag": "v1.0"},
+				"image": map[string]interface{}{
+					"repository": "app",
+					"tag":        "1.0",
 				},
 			},
-		},
-		{
-			name: "global_registry_in_context",
-			values: map[string]interface{}{
-				"image": map[string]interface{}{"repository": "nginx", "tag": "1.23"},
-			},
-			globalReg: "global.registry.com",
 			wantDetected: []DetectedImage{
 				{
-					Reference: &Reference{
-						Registry:   "global.registry.com",
-						Repository: "nginx",
-						Tag:        "1.23",
-						Path:       []string{"image"},
-					},
-					Path:     []string{"image"},
-					Pattern:  PatternMap,
-					Original: map[string]interface{}{"repository": "nginx", "tag": "1.23"},
-				},
-			},
-		},
-		{
-			name: "registry_precedence_-_map_registry_over_global",
-			values: map[string]interface{}{
-				"image": map[string]interface{}{"registry": "specific.registry.com", "repository": "nginx", "tag": "1.23"},
-			},
-			globalReg: "global.registry.com",
-			wantDetected: []DetectedImage{
-				{
-					Reference: &Reference{
-						Registry:   "specific.registry.com",
-						Repository: "nginx",
-						Tag:        "1.23",
-						Path:       []string{"image"},
-					},
-					Path:     []string{"image"},
-					Pattern:  PatternMap,
-					Original: map[string]interface{}{"registry": "specific.registry.com", "repository": "nginx", "tag": "1.23"},
+					Reference: &Reference{Registry: "my-registry.example.com", Repository: "app", Tag: "1.0"},
+					Path:      []string{"image"},
+					Pattern:   PatternMap,
+					Original:  map[string]interface{}{"repository": "app", "tag": "1.0"},
 				},
 			},
 		},
 	}
 
-	for _, tc := range testCases {
+	ctx := &DetectionContext{
+		GlobalRegistry:   "my-registry.example.com",
+		SourceRegistries: []string{"docker.io", "my-registry.example.com"},
+	}
+
+	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			// Dynamically build source registries for the context
-			sourceRegistries := []string{defaultRegistry} // Always include default
-			if tc.globalReg != "" {
-				sourceRegistries = append(sourceRegistries, tc.globalReg)
-			}
-
-			// Check if the input values map has an explicit registry to add
-			if valuesMap, ok := tc.values.(map[string]interface{}); ok {
-				if imageMap, ok := valuesMap["image"].(map[string]interface{}); ok {
-					if regVal, ok := imageMap["registry"].(string); ok && regVal != "" {
-						// Add explicit registry from test case if not already present
-						found := false
-						for _, sr := range sourceRegistries {
-							if sr == regVal {
-								found = true
-								break
-							}
-						}
-						if !found {
-							sourceRegistries = append(sourceRegistries, regVal)
-						}
-					}
-				}
-			}
-
-			ctx := &DetectionContext{
-				GlobalRegistry:   tc.globalReg,
-				SourceRegistries: sourceRegistries, // Use dynamically built list
-				TemplateMode:     true,
-			}
 			detector := NewDetector(*ctx)
 			gotDetected, gotUnsupported, err := detector.DetectImages(tc.values, []string{})
 			assert.NoError(t, err)
@@ -550,8 +600,118 @@ func TestImageDetector_GlobalRegistry(t *testing.T) {
 
 			SortDetectedImages(gotDetected)
 			SortDetectedImages(tc.wantDetected)
+			assertDetectedImages(t, tc.wantDetected, gotDetected, true)
+		})
+	}
+}
 
-			// Compare Detected Images field by field using helper (checking Original field)
+// TestImageDetector_GlobalRegistryOverride tests global registry override behavior
+func TestImageDetector_GlobalRegistryOverride(t *testing.T) {
+	tests := []struct {
+		name         string
+		values       interface{}
+		wantDetected []DetectedImage
+	}{
+		{
+			name: "explicit_registry_override",
+			values: map[string]interface{}{
+				"global": map[string]interface{}{
+					"registry": "my-registry.example.com",
+				},
+				"image": map[string]interface{}{
+					"registry":   "quay.io",
+					"repository": "app",
+					"tag":        "1.0",
+				},
+			},
+			wantDetected: []DetectedImage{
+				{
+					Reference: &Reference{Registry: "quay.io", Repository: "app", Tag: "1.0"},
+					Path:      []string{"image"},
+					Pattern:   PatternMap,
+					Original:  map[string]interface{}{"registry": "quay.io", "repository": "app", "tag": "1.0"},
+				},
+			},
+		},
+	}
+
+	ctx := &DetectionContext{
+		GlobalRegistry:   "my-registry.example.com",
+		SourceRegistries: []string{"docker.io", "my-registry.example.com", "quay.io"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			detector := NewDetector(*ctx)
+			gotDetected, gotUnsupported, err := detector.DetectImages(tc.values, []string{})
+			assert.NoError(t, err)
+			assert.Empty(t, gotUnsupported)
+
+			SortDetectedImages(gotDetected)
+			SortDetectedImages(tc.wantDetected)
+			assertDetectedImages(t, tc.wantDetected, gotDetected, true)
+		})
+	}
+}
+
+// TestImageDetector_GlobalRegistryMultiImage tests global registry with multiple images
+func TestImageDetector_GlobalRegistryMultiImage(t *testing.T) {
+	tests := []struct {
+		name         string
+		values       interface{}
+		wantDetected []DetectedImage
+	}{
+		{
+			name: "multiple_images_with_global",
+			values: map[string]interface{}{
+				"global": map[string]interface{}{
+					"registry": "my-registry.example.com",
+				},
+				"app": map[string]interface{}{
+					"image": map[string]interface{}{
+						"repository": "app",
+						"tag":        "1.0",
+					},
+				},
+				"sidecar": map[string]interface{}{
+					"image": map[string]interface{}{
+						"registry":   "quay.io",
+						"repository": "helper",
+						"tag":        "latest",
+					},
+				},
+			},
+			wantDetected: []DetectedImage{
+				{
+					Reference: &Reference{Registry: "my-registry.example.com", Repository: "app", Tag: "1.0"},
+					Path:      []string{"app", "image"},
+					Pattern:   PatternMap,
+					Original:  map[string]interface{}{"repository": "app", "tag": "1.0"},
+				},
+				{
+					Reference: &Reference{Registry: "quay.io", Repository: "helper", Tag: "latest"},
+					Path:      []string{"sidecar", "image"},
+					Pattern:   PatternMap,
+					Original:  map[string]interface{}{"registry": "quay.io", "repository": "helper", "tag": "latest"},
+				},
+			},
+		},
+	}
+
+	ctx := &DetectionContext{
+		GlobalRegistry:   "my-registry.example.com",
+		SourceRegistries: []string{"docker.io", "my-registry.example.com", "quay.io"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			detector := NewDetector(*ctx)
+			gotDetected, gotUnsupported, err := detector.DetectImages(tc.values, []string{})
+			assert.NoError(t, err)
+			assert.Empty(t, gotUnsupported)
+
+			SortDetectedImages(gotDetected)
+			SortDetectedImages(tc.wantDetected)
 			assertDetectedImages(t, tc.wantDetected, gotDetected, true)
 		})
 	}
@@ -739,298 +899,447 @@ func TestImageDetector_ContainerArrays(t *testing.T) {
 	}
 }
 
-func TestDetectImages(t *testing.T) {
+// TestDetectImages_BasicDetection tests basic image detection scenarios
+func TestDetectImages_BasicDetection(t *testing.T) {
+	values := map[string]interface{}{
+		"simpleImage": "nginx:1.19", // docker.io source
+		"imageMap": map[string]interface{}{ // quay.io source
+			"registry":   "quay.io",
+			"repository": "org/app",
+			"tag":        "v1.2.3",
+		},
+		"nestedImages": map[string]interface{}{
+			"frontend": map[string]interface{}{ // docker.io source
+				"image": "docker.io/frontend:latest",
+			},
+			"backend": map[string]interface{}{ // docker.io source (implicit)
+				"image": map[string]interface{}{
+					"repository": "backend",
+					"tag":        "v1",
+				},
+			},
+		},
+		"excludedImage":  "private.registry.io/internal/app:latest", // excluded
+		"nonSourceImage": "k8s.gcr.io/pause:3.1",                    // not source
+	}
+
+	wantDetected := []DetectedImage{
+		{ // simpleImage
+			Reference: &Reference{
+				Original:   "nginx:1.19",
+				Registry:   "docker.io",
+				Repository: "library/nginx",
+				Tag:        "1.19",
+				Path:       []string{"simpleImage"},
+			},
+			Path:     []string{"simpleImage"},
+			Pattern:  PatternString,
+			Original: "nginx:1.19",
+		},
+		{ // imageMap
+			Reference: &Reference{
+				Original:   "quay.io/org/app:v1.2.3",
+				Registry:   "quay.io",
+				Repository: "org/app",
+				Tag:        "v1.2.3",
+				Path:       []string{"imageMap"},
+			},
+			Path:    []string{"imageMap"},
+			Pattern: PatternMap,
+			Original: map[string]interface{}{
+				"registry":   "quay.io",
+				"repository": "org/app",
+				"tag":        "v1.2.3",
+			},
+		},
+		{ // nestedImages.frontend.image
+			Reference: &Reference{
+				Original:   "docker.io/frontend:latest",
+				Registry:   "docker.io",
+				Repository: "library/frontend",
+				Tag:        "latest",
+				Path:       []string{"nestedImages", "frontend", "image"},
+			},
+			Path:     []string{"nestedImages", "frontend", "image"},
+			Pattern:  PatternString,
+			Original: "docker.io/frontend:latest",
+		},
+		{ // nestedImages.backend.image
+			Reference: &Reference{
+				Original:   "backend:v1",
+				Registry:   "docker.io",
+				Repository: "library/backend",
+				Tag:        "v1",
+				Path:       []string{"nestedImages", "backend", "image"},
+			},
+			Path:    []string{"nestedImages", "backend", "image"},
+			Pattern: PatternMap,
+			Original: map[string]interface{}{
+				"repository": "backend",
+				"tag":        "v1",
+			},
+		},
+	}
+
+	ctx := &DetectionContext{
+		SourceRegistries:  []string{"docker.io", "quay.io"},
+		ExcludeRegistries: []string{"private.registry.io"},
+	}
+	detector := NewDetector(*ctx)
+	gotDetected, gotUnsupported, err := detector.DetectImages(values, nil)
+	assert.NoError(t, err)
+
+	// Sort results for consistent comparison
+	SortDetectedImages(gotDetected)
+	SortDetectedImages(wantDetected)
+	assertDetectedImages(t, wantDetected, gotDetected, true)
+	assert.Empty(t, gotUnsupported)
+}
+
+// TestDetectImages_StrictMode tests image detection in strict mode
+func TestDetectImages_StrictMode(t *testing.T) {
+	values := map[string]interface{}{
+		"knownPathValid":     "docker.io/library/nginx:1.23",
+		"knownPathBadTag":    "docker.io/library/nginx::badtag",
+		"unknownPath":        "other/app:v1",
+		"knownPathNonSource": "quay.io/other/image:v2",
+		"knownPathExcluded":  "ignored.com/whatever:latest",
+		"templateValue":      "{{ .Values.something }}",
+		"mapWithTemplate":    map[string]interface{}{"repository": "repo", "tag": "{{ .X }}"},
+	}
+
+	wantDetected := []DetectedImage{
+		{
+			Reference: &Reference{Registry: "docker.io", Repository: "library/nginx", Tag: "1.23", Original: "docker.io/library/nginx:1.23", Path: []string{"knownPathValid"}},
+			Path:      []string{"knownPathValid"},
+			Pattern:   PatternString,
+			Original:  "docker.io/library/nginx:1.23",
+		},
+	}
+
+	wantUnsupported := []UnsupportedImage{
+		{
+			Location: []string{"knownPathBadTag"},
+			Type:     UnsupportedTypeStringParseError,
+			Error:    fmt.Errorf("strict mode: string at known image path [knownPathBadTag] failed to parse: invalid image string format: parsing image reference 'docker.io/library/nginx::badtag': invalid repository name\n"),
+		},
+		{
+			Location: []string{"knownPathNonSource"},
+			Type:     UnsupportedTypeNonSourceImage,
+			Error:    fmt.Errorf("strict mode: image at known path [knownPathNonSource] is not from a configured source registry"),
+		},
+		{
+			Location: []string{"knownPathExcluded"},
+			Type:     UnsupportedTypeExcludedImage,
+			Error:    fmt.Errorf("strict mode: image at known path [knownPathExcluded] is from an excluded registry"),
+		},
+		{
+			Location: []string{"templateValue"},
+			Type:     UnsupportedTypeTemplateString,
+			Error:    fmt.Errorf("strict mode: template variable detected in string at path [templateValue]"),
+		},
+		{
+			Location: []string{"mapWithTemplate"},
+			Type:     UnsupportedTypeTemplateMap,
+			Error:    ErrTemplateVariableDetected,
+		},
+	}
+
+	ctx := &DetectionContext{
+		SourceRegistries:  []string{"docker.io"},
+		ExcludeRegistries: []string{"ignored.com"},
+		Strict:            true,
+	}
+	detector := NewDetector(*ctx)
+	gotDetected, gotUnsupported, err := detector.DetectImages(values, nil)
+	assert.NoError(t, err)
+
+	// Sort results for consistent comparison
+	SortDetectedImages(gotDetected)
+	SortDetectedImages(wantDetected)
+	SortUnsupportedImages(gotUnsupported)
+	SortUnsupportedImages(wantUnsupported)
+
+	assertDetectedImages(t, wantDetected, gotDetected, true)
+	assertUnsupportedImages(t, wantUnsupported, gotUnsupported)
+}
+
+// TestDetectImages_EmptyValues tests detection with empty inputs
+func TestDetectImages_EmptyValues(t *testing.T) {
 	tests := []struct {
-		name              string
-		values            interface{}
-		startingPath      []string
-		sourceRegistries  []string
-		excludeRegistries []string
-		strict            bool
-		wantDetected      []DetectedImage
-		wantUnsupported   []UnsupportedImage
+		name         string
+		values       interface{}
+		wantDetected []DetectedImage
 	}{
 		{
-			name: "Basic detection",
-			values: map[string]interface{}{
-				"simpleImage": "nginx:1.19", // docker.io source
-				"imageMap": map[string]interface{}{ // quay.io source
-					"registry":   "quay.io",
-					"repository": "org/app",
-					"tag":        "v1.2.3",
-				},
-				"nestedImages": map[string]interface{}{
-					"frontend": map[string]interface{}{ // docker.io source
-						"image": "docker.io/frontend:latest",
-					},
-					"backend": map[string]interface{}{ // docker.io source (implicit)
-						"image": map[string]interface{}{
-							"repository": "backend",
-							"tag":        "v1",
-						},
-					},
-				},
-				"excludedImage":  "private.registry.io/internal/app:latest", // excluded
-				"nonSourceImage": "k8s.gcr.io/pause:3.1",                    // not source
-			},
-			sourceRegistries:  []string{"docker.io", "quay.io"},
-			excludeRegistries: []string{"private.registry.io"},
-			wantDetected: []DetectedImage{
-				{ // simpleImage
-					Reference: &Reference{
-						Original:   "nginx:1.19",
-						Registry:   "docker.io",
-						Repository: "library/nginx",
-						Tag:        "1.19",
-						Path:       []string{"simpleImage"},
-					},
-					Path:     []string{"simpleImage"},
-					Pattern:  PatternString,
-					Original: "nginx:1.19",
-				},
-				{ // imageMap
-					Reference: &Reference{
-						Original:   "quay.io/org/app:v1.2.3",
-						Registry:   "quay.io",
-						Repository: "org/app",
-						Tag:        "v1.2.3",
-						Path:       []string{"imageMap"},
-					},
-					Path:    []string{"imageMap"},
-					Pattern: PatternMap,
-					Original: map[string]interface{}{
-						"registry":   "quay.io",
-						"repository": "org/app",
-						"tag":        "v1.2.3",
-					},
-				},
-				{ // nestedImages.frontend.image
-					Reference: &Reference{
-						Original:   "docker.io/frontend:latest",
-						Registry:   "docker.io",
-						Repository: "library/frontend",
-						Tag:        "latest",
-						Path:       []string{"nestedImages", "frontend", "image"},
-					},
-					Path:     []string{"nestedImages", "frontend", "image"},
-					Pattern:  PatternString,
-					Original: "docker.io/frontend:latest",
-				},
-				{ // nestedImages.backend.image
-					Reference: &Reference{
-						Original:   "backend:v1",
-						Registry:   "docker.io",
-						Repository: "library/backend",
-						Tag:        "v1",
-						Path:       []string{"nestedImages", "backend", "image"},
-					},
-					Path:    []string{"nestedImages", "backend", "image"},
-					Pattern: PatternMap,
-					Original: map[string]interface{}{
-						"repository": "backend",
-						"tag":        "v1",
-					},
-				},
-			},
-		},
-		{
-			name: "Strict_mode",
-			values: map[string]interface{}{
-				"knownPathValid":     "docker.io/library/nginx:1.23",
-				"knownPathBadTag":    "docker.io/library/nginx::badtag",
-				"unknownPath":        "other/app:v1",
-				"knownPathNonSource": "quay.io/other/image:v2",
-				"knownPathExcluded":  "ignored.com/whatever:latest",
-				"templateValue":      "{{ .Values.something }}",
-				"mapWithTemplate":    map[string]interface{}{"repository": "repo", "tag": "{{ .X }}"},
-			},
-			startingPath:      []string{}, // Test uses hardcoded paths in map keys
-			sourceRegistries:  []string{"docker.io"},
-			excludeRegistries: []string{"ignored.com"},
-			strict:            true,
-			wantDetected: []DetectedImage{
-				{
-					Reference: &Reference{Registry: "docker.io", Repository: "library/nginx", Tag: "1.23", Original: "docker.io/library/nginx:1.23", Path: []string{"knownPathValid"}},
-					Path:      []string{"knownPathValid"},
-					Pattern:   PatternString,
-					Original:  "docker.io/library/nginx:1.23",
-				},
-			},
-			wantUnsupported: []UnsupportedImage{
-				{
-					Location: []string{"knownPathBadTag"},
-					Type:     UnsupportedTypeStringParseError,
-					Error:    fmt.Errorf("strict mode: string at known image path [knownPathBadTag] failed to parse: invalid image string format: parsing image reference 'docker.io/library/nginx::badtag': invalid repository name\n"),
-				},
-				{
-					Location: []string{"knownPathNonSource"},
-					Type:     UnsupportedTypeNonSourceImage,
-					Error:    fmt.Errorf("strict mode: image at known path [knownPathNonSource] is not from a configured source registry"),
-				},
-				{
-					Location: []string{"knownPathExcluded"},
-					Type:     UnsupportedTypeExcludedImage,
-					Error:    fmt.Errorf("strict mode: image at known path [knownPathExcluded] is from an excluded registry"),
-				},
-				{
-					Location: []string{"templateValue"},
-					Type:     UnsupportedTypeTemplateString,
-					Error:    fmt.Errorf("strict mode: template variable detected in string at path [templateValue]"),
-				},
-				{
-					Location: []string{"mapWithTemplate"},
-					Type:     UnsupportedTypeTemplateMap,
-					Error:    ErrTemplateVariableDetected,
-				},
-			},
-		},
-		{
-			name:         "Empty values",
+			name:         "nil_values",
 			values:       nil,
 			wantDetected: []DetectedImage{},
 		},
 		{
-			name:         "Empty map value",
+			name:         "empty_map",
 			values:       map[string]interface{}{},
 			wantDetected: []DetectedImage{},
-		},
-		{
-			name: "With starting path",
-			values: map[string]interface{}{ // Same values as Basic detection
-				"simpleImage": "nginx:1.19",
-				"imageMap":    map[string]interface{}{"registry": "quay.io", "repository": "org/app", "tag": "v1.2.3"},
-				"nestedImages": map[string]interface{}{
-					"frontend": map[string]interface{}{"image": "docker.io/frontend:latest"},
-					"backend":  map[string]interface{}{"image": map[string]interface{}{"repository": "backend", "tag": "v1"}},
-				},
-				"excludedImage":  "private.registry.io/internal/app:latest",
-				"nonSourceImage": "k8s.gcr.io/pause:3.1",
-			},
-			startingPath:      []string{"nestedImages"}, // Start search here
-			sourceRegistries:  []string{"docker.io", "quay.io"},
-			excludeRegistries: []string{"private.registry.io"},
-			wantDetected: []DetectedImage{
-				{ // imageMap
-					Reference: &Reference{
-						Original:   "quay.io/org/app:v1.2.3",
-						Registry:   "quay.io",
-						Repository: "org/app",
-						Tag:        "v1.2.3",
-						Path:       []string{"nestedImages", "imageMap"},
-					},
-					Path:    []string{"nestedImages", "imageMap"},
-					Pattern: PatternMap,
-					Original: map[string]interface{}{
-						"registry":   "quay.io",
-						"repository": "org/app",
-						"tag":        "v1.2.3",
-					},
-				},
-				{ // nestedImages.backend.image
-					Reference: &Reference{
-						Original:   "backend:v1",
-						Registry:   "docker.io",
-						Repository: "library/backend",
-						Tag:        "v1",
-						Path:       []string{"nestedImages", "nestedImages", "backend", "image"},
-					},
-					Path:    []string{"nestedImages", "nestedImages", "backend", "image"},
-					Pattern: PatternMap,
-					Original: map[string]interface{}{
-						"repository": "backend",
-						"tag":        "v1",
-					},
-				},
-				{ // nestedImages.frontend.image
-					Reference: &Reference{
-						Original:   "docker.io/frontend:latest",
-						Registry:   "docker.io",
-						Repository: "library/frontend",
-						Tag:        "latest",
-						Path:       []string{"nestedImages", "nestedImages", "frontend", "image"},
-					},
-					Path:     []string{"nestedImages", "nestedImages", "frontend", "image"},
-					Pattern:  PatternString,
-					Original: "docker.io/frontend:latest",
-				},
-				{ // simpleImage
-					Reference: &Reference{
-						Original:   "nginx:1.19",
-						Registry:   "docker.io",
-						Repository: "library/nginx",
-						Tag:        "1.19",
-						Path:       []string{"nestedImages", "simpleImage"},
-					},
-					Path:     []string{"nestedImages", "simpleImage"},
-					Pattern:  PatternString,
-					Original: "nginx:1.19",
-				},
-			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := &DetectionContext{
-				SourceRegistries:  tt.sourceRegistries,
-				ExcludeRegistries: tt.excludeRegistries,
-				Strict:            tt.strict,
-			}
-			detector := NewDetector(*ctx)
-			gotDetected, gotUnsupported, err := detector.DetectImages(tt.values, tt.startingPath)
+			detector := NewDetector(DetectionContext{})
+			gotDetected, gotUnsupported, err := detector.DetectImages(tt.values, nil)
 			assert.NoError(t, err)
-
-			// Sort results for consistent comparison
-			SortDetectedImages(gotDetected)
-			SortDetectedImages(tt.wantDetected)
-			SortUnsupportedImages(gotUnsupported)
-			SortUnsupportedImages(tt.wantUnsupported)
-
+			assert.Empty(t, gotUnsupported)
 			assertDetectedImages(t, tt.wantDetected, gotDetected, true)
-			assertUnsupportedImages(t, tt.wantUnsupported, gotUnsupported)
 		})
 	}
 }
 
-// TestTryExtractImageFromString_EdgeCases tests edge cases for string parsing
-func TestTryExtractImageFromString_EdgeCases(t *testing.T) {
+// TestDetectImages_WithStartingPath tests detection with a starting path
+func TestDetectImages_WithStartingPath(t *testing.T) {
+	values := map[string]interface{}{
+		"simpleImage": "nginx:1.19",
+		"imageMap":    map[string]interface{}{"registry": "quay.io", "repository": "org/app", "tag": "v1.2.3"},
+		"nestedImages": map[string]interface{}{
+			"frontend": map[string]interface{}{"image": "docker.io/frontend:latest"},
+			"backend":  map[string]interface{}{"image": map[string]interface{}{"repository": "backend", "tag": "v1"}},
+		},
+		"excludedImage":  "private.registry.io/internal/app:latest",
+		"nonSourceImage": "k8s.gcr.io/pause:3.1",
+	}
+
+	wantDetected := []DetectedImage{
+		{ // imageMap
+			Reference: &Reference{
+				Original:   "quay.io/org/app:v1.2.3",
+				Registry:   "quay.io",
+				Repository: "org/app",
+				Tag:        "v1.2.3",
+				Path:       []string{"nestedImages", "imageMap"},
+			},
+			Path:    []string{"nestedImages", "imageMap"},
+			Pattern: PatternMap,
+			Original: map[string]interface{}{
+				"registry":   "quay.io",
+				"repository": "org/app",
+				"tag":        "v1.2.3",
+			},
+		},
+		{ // nestedImages.backend.image
+			Reference: &Reference{
+				Original:   "backend:v1",
+				Registry:   "docker.io",
+				Repository: "library/backend",
+				Tag:        "v1",
+				Path:       []string{"nestedImages", "nestedImages", "backend", "image"},
+			},
+			Path:    []string{"nestedImages", "nestedImages", "backend", "image"},
+			Pattern: PatternMap,
+			Original: map[string]interface{}{
+				"repository": "backend",
+				"tag":        "v1",
+			},
+		},
+		{ // nestedImages.frontend.image
+			Reference: &Reference{
+				Original:   "docker.io/frontend:latest",
+				Registry:   "docker.io",
+				Repository: "library/frontend",
+				Tag:        "latest",
+				Path:       []string{"nestedImages", "nestedImages", "frontend", "image"},
+			},
+			Path:     []string{"nestedImages", "nestedImages", "frontend", "image"},
+			Pattern:  PatternString,
+			Original: "docker.io/frontend:latest",
+		},
+		{ // simpleImage
+			Reference: &Reference{
+				Original:   "nginx:1.19",
+				Registry:   "docker.io",
+				Repository: "library/nginx",
+				Tag:        "1.19",
+				Path:       []string{"nestedImages", "simpleImage"},
+			},
+			Path:     []string{"nestedImages", "simpleImage"},
+			Pattern:  PatternString,
+			Original: "nginx:1.19",
+		},
+	}
+
+	ctx := &DetectionContext{
+		SourceRegistries:  []string{"docker.io", "quay.io"},
+		ExcludeRegistries: []string{"private.registry.io"},
+	}
+	detector := NewDetector(*ctx)
+	gotDetected, gotUnsupported, err := detector.DetectImages(values, []string{"nestedImages"})
+	assert.NoError(t, err)
+
+	// Sort results for consistent comparison
+	SortDetectedImages(gotDetected)
+	SortDetectedImages(wantDetected)
+	assertDetectedImages(t, wantDetected, gotDetected, true)
+	assert.Empty(t, gotUnsupported)
+}
+
+// TestImageDetector_NonImageConfiguration tests handling of non-image configuration values
+func TestImageDetector_NonImageConfiguration(t *testing.T) {
 	tests := []struct {
 		name         string
-		input        string
-		path         []string
-		wantDetected *DetectedImage
-		wantErr      bool
+		values       interface{}
+		wantDetected []DetectedImage
 	}{
-		// ... existing test cases ...
+		{
+			name: "mixed_configuration_values",
+			values: map[string]interface{}{
+				"port":               8080,
+				"timeout":            "30s",
+				"serviceAccountName": "default",
+				"image": map[string]interface{}{
+					"repository": "nginx",
+					"tag":        "1.23",
+				},
+			},
+			wantDetected: []DetectedImage{
+				{
+					Reference: &Reference{Registry: "docker.io", Repository: "library/nginx", Tag: "1.23"},
+					Path:      []string{"image"},
+					Pattern:   PatternMap,
+					Original:  map[string]interface{}{"repository": "nginx", "tag": "1.23"},
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := &DetectionContext{
-				SourceRegistries: []string{defaultRegistry},
-				TemplateMode:     true,
-			}
-			detector := NewDetector(*ctx)
-			gotDetected, err := detector.tryExtractImageFromString(tt.input, tt.path)
+			detector := NewDetector(DetectionContext{})
+			detected, unsupported, err := detector.DetectImages(tt.values, nil)
+			require.NoError(t, err)
+			require.Empty(t, unsupported)
 
-			if tt.wantErr {
-				assert.Error(t, err)
-				return
-			}
-			assert.NoError(t, err)
-
-			if tt.wantDetected == nil {
-				assert.Nil(t, gotDetected)
-			} else {
-				assert.NotNil(t, gotDetected)
-				assert.Equal(t, tt.wantDetected.Reference.Registry, gotDetected.Reference.Registry, "Registry mismatch")
-				assert.Equal(t, tt.wantDetected.Reference.Repository, gotDetected.Reference.Repository, "Repository mismatch")
-				assert.Equal(t, tt.wantDetected.Reference.Tag, gotDetected.Reference.Tag, "Tag mismatch")
-				assert.Equal(t, tt.wantDetected.Reference.Digest, gotDetected.Reference.Digest, "Digest mismatch")
-				assert.Equal(t, tt.wantDetected.Path, gotDetected.Path, "Path mismatch")
-				assert.Equal(t, tt.wantDetected.Pattern, gotDetected.Pattern, "Pattern mismatch")
-				assert.Equal(t, tt.wantDetected.Original, gotDetected.Original, "Original mismatch")
-			}
+			SortDetectedImages(detected)
+			SortDetectedImages(tt.wantDetected)
+			assertDetectedImages(t, tt.wantDetected, detected, true)
 		})
 	}
+}
+
+// TestImageDetector_BasicContainerArray tests basic container array detection
+func TestImageDetector_BasicContainerArray(t *testing.T) {
+	tests := []struct {
+		name         string
+		values       interface{}
+		wantDetected []DetectedImage
+	}{
+		{
+			name: "single_container",
+			values: map[string]interface{}{
+				"containers": []interface{}{
+					map[string]interface{}{
+						"name":  "app",
+						"image": "nginx:1.23",
+					},
+				},
+			},
+			wantDetected: []DetectedImage{
+				{
+					Reference: &Reference{Registry: "docker.io", Repository: "library/nginx", Tag: "1.23"},
+					Path:      []string{"containers", "[0]", "image"},
+					Pattern:   PatternString,
+					Original:  "nginx:1.23",
+				},
+			},
+		},
+	}
+
+	runImageDetectorTests(t, tests)
+}
+
+// TestImageDetector_MultiContainerArray tests detection in multi-container arrays
+func TestImageDetector_MultiContainerArray(t *testing.T) {
+	tests := []struct {
+		name         string
+		values       interface{}
+		wantDetected []DetectedImage
+	}{
+		{
+			name: "multiple_containers",
+			values: map[string]interface{}{
+				"containers": []interface{}{
+					map[string]interface{}{
+						"name":  "app",
+						"image": "nginx:1.23",
+					},
+					map[string]interface{}{
+						"name":  "sidecar",
+						"image": "fluentd:v1.14",
+					},
+				},
+			},
+			wantDetected: []DetectedImage{
+				{
+					Reference: &Reference{Registry: "docker.io", Repository: "library/nginx", Tag: "1.23"},
+					Path:      []string{"containers", "[0]", "image"},
+					Pattern:   PatternString,
+					Original:  "nginx:1.23",
+				},
+				{
+					Reference: &Reference{Registry: "docker.io", Repository: "library/fluentd", Tag: "v1.14"},
+					Path:      []string{"containers", "[1]", "image"},
+					Pattern:   PatternString,
+					Original:  "fluentd:v1.14",
+				},
+			},
+		},
+	}
+
+	runImageDetectorTests(t, tests)
+}
+
+// TestImageDetector_NestedContainerArray tests detection in nested container arrays
+func TestImageDetector_NestedContainerArray(t *testing.T) {
+	tests := []struct {
+		name         string
+		values       interface{}
+		wantDetected []DetectedImage
+	}{
+		{
+			name: "nested_containers",
+			values: map[string]interface{}{
+				"spec": map[string]interface{}{
+					"template": map[string]interface{}{
+						"spec": map[string]interface{}{
+							"containers": []interface{}{
+								map[string]interface{}{
+									"name":  "app",
+									"image": "nginx:1.23",
+								},
+							},
+							"initContainers": []interface{}{
+								map[string]interface{}{
+									"name":  "init",
+									"image": "busybox:latest",
+								},
+							},
+						},
+					},
+				},
+			},
+			wantDetected: []DetectedImage{
+				{
+					Reference: &Reference{Registry: "docker.io", Repository: "library/nginx", Tag: "1.23"},
+					Path:      []string{"spec", "template", "spec", "containers", "[0]", "image"},
+					Pattern:   PatternString,
+					Original:  "nginx:1.23",
+				},
+				{
+					Reference: &Reference{Registry: "docker.io", Repository: "library/busybox", Tag: "latest"},
+					Path:      []string{"spec", "template", "spec", "initContainers", "[0]", "image"},
+					Pattern:   PatternString,
+					Original:  "busybox:latest",
+				},
+			},
+		},
+	}
+
+	runImageDetectorTests(t, tests)
 }

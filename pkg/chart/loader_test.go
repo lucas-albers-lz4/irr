@@ -98,3 +98,96 @@ image:
 }
 
 // TODO: Add tests for ProcessChart function (Removed, no longer needed)
+
+func setupTestChart(t *testing.T, chartPath string) {
+	// Create templates directory
+	err := os.MkdirAll(filepath.Join(chartPath, "templates"), 0o750)
+	require.NoErrorf(t, err, "failed to create templates directory in %s", chartPath)
+
+	// Create Chart.yaml
+	chartYaml := []byte(`
+apiVersion: v2
+name: test-chart
+version: 0.1.0
+`)
+	err = os.WriteFile(filepath.Join(chartPath, "Chart.yaml"), chartYaml, 0o600)
+	require.NoErrorf(t, err, "failed to create Chart.yaml in %s", chartPath)
+
+	// Create values.yaml
+	valuesYaml := []byte(`
+image:
+  repository: nginx
+  tag: latest
+`)
+	err = os.WriteFile(filepath.Join(chartPath, "values.yaml"), valuesYaml, 0o600)
+	require.NoErrorf(t, err, "failed to create values.yaml in %s", chartPath)
+
+	// Create a dummy template file
+	err = os.WriteFile(filepath.Join(chartPath, "templates", "dummy.yaml"), []byte("kind: Pod"), 0o600)
+	require.NoErrorf(t, err, "failed to create dummy.yaml in %s", chartPath)
+}
+
+func TestHelmLoader_LoadChart(t *testing.T) {
+	// Create a temporary directory for the test chart
+	chartPath, err := os.MkdirTemp("", "irr-test-")
+	require.NoErrorf(t, err, "failed to create temp directory")
+	defer func() {
+		if err := os.RemoveAll(chartPath); err != nil {
+			t.Logf("Warning: Failed to cleanup temp directory %s: %v", chartPath, err)
+		}
+	}()
+
+	// Setup test chart
+	setupTestChart(t, chartPath)
+
+	// Test cases
+	tests := []struct {
+		name    string
+		path    string
+		wantErr bool
+	}{
+		{
+			name:    "valid chart",
+			path:    chartPath,
+			wantErr: false,
+		},
+		{
+			name:    "nonexistent chart",
+			path:    "/nonexistent/chart",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			loader := NewLoader()
+			_, err := loader.Load(tt.path)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestHelmLoader_LoadChartWithInvalidFile(t *testing.T) {
+	// Create a temporary directory for the test chart
+	chartPath, err := os.MkdirTemp("", "irr-test-")
+	require.NoErrorf(t, err, "failed to create temp directory")
+	defer func() {
+		if err := os.RemoveAll(chartPath); err != nil {
+			t.Logf("Warning: Failed to cleanup temp directory %s: %v", chartPath, err)
+		}
+	}()
+
+	// Create an invalid Chart.yaml
+	filePath := filepath.Join(chartPath, "Chart.yaml")
+	err = os.WriteFile(filePath, []byte("hello"), 0o600)
+	require.NoErrorf(t, err, "failed to create invalid Chart.yaml in %s", chartPath)
+
+	// Test loading the invalid chart
+	loader := NewLoader()
+	_, err = loader.Load(chartPath)
+	assert.Error(t, err, "expected error loading invalid chart")
+}
