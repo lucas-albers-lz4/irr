@@ -39,6 +39,7 @@ linters:
     - lll
     - mnd
     - dupl
+    - funlen
 
   disable:
     - gomoddirectives

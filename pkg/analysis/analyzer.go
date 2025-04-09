@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/lalbers/irr/pkg/debug"
-	"github.com/lalbers/irr/pkg/image"
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
 )
@@ -216,20 +215,18 @@ func (a *Analyzer) analyzeStringValue(key, val, path string, analysis *ChartAnal
 	debug.Printf("[analyzeStringValue ENTER] Path: '%s', Value: '%s'", path, val)
 	defer debug.Printf("[analyzeStringValue EXIT] Path: '%s', ImagePatterns Count: %d", path, len(analysis.ImagePatterns))
 
-	// Check using both the heuristic and the strict parser
-	// Heuristic checks key context AND basic format
-	// Parser checks strict format validity
+	// Check using the heuristic (key name, basic format)
 	isHeuristicMatch := a.isImageString(key, val)
-	_, parseErr := image.ParseImageReference(val)
-	debug.Printf("[analyzeStringValue] Path: '%s', isHeuristicMatch: %v, Parse err: %v", path, isHeuristicMatch, parseErr)
+	debug.Printf("[analyzeStringValue] Path: '%s', isHeuristicMatch: %v", path, isHeuristicMatch)
 
-	// Only consider it an image pattern if it passes both checks
-	if !isHeuristicMatch || parseErr != nil {
-		debug.Printf("String at path '%s' does not qualify as image pattern (Heuristic: %v, ParseErr: %v)", path, isHeuristicMatch, parseErr)
+	// Only consider it an image pattern if it passes the heuristic check.
+	// We will let the Generator handle parse errors and template checks later.
+	if !isHeuristicMatch {
+		debug.Printf("String at path '%s' does not qualify as image pattern based on heuristic", path)
 		return nil // Not considered an error for analysis
 	}
 
-	// If it parsed AND matched heuristic, add it to found patterns
+	// If heuristic matched, add it to found patterns.
 	pattern := ImagePattern{
 		Path:  path,
 		Type:  PatternTypeString,
@@ -238,10 +235,6 @@ func (a *Analyzer) analyzeStringValue(key, val, path string, analysis *ChartAnal
 	}
 	analysis.ImagePatterns = append(analysis.ImagePatterns, pattern)
 	debug.Printf("[analyzeStringValue IMAGE APPEND] Path: '%s', Value: '%s'", pattern.Path, pattern.Value)
-
-	// We don't need to explicitly track sources here, as they are implicitly
-	// part of the ImagePatterns recorded.
-	// image.NormalizeImageReference(imgRef) // Normalization might still be useful for debugging/logging if needed
 
 	return nil
 }

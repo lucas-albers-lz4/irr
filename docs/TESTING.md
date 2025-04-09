@@ -179,6 +179,80 @@ Test all CLI options individually and in combination:
 - `--exclude-registries` (verify specified registries are skipped)
 - `--threshold` (test behavior with different percentages)
 
+### 10. Unsupported Image Handling
+
+The tool must properly identify and handle unsupported image structures. This is particularly important when running in strict mode.
+
+#### Unsupported Structure Types
+The following types of structures should be identified and handled appropriately:
+
+1. **Template Variables in Maps**
+   - Detected via `UnsupportedTypeTemplateMap`
+   - Example: When template variables are found in map-based image definitions
+
+2. **Tag and Digest Conflicts**
+   - Detected via `UnsupportedTypeMapTagAndDigest`
+   - Example: When both tag and digest are present in the same image definition
+
+3. **Non-Source Registry Images**
+   - Detected via `UnsupportedTypeNonSourceImage`
+   - Example: When an image is from a registry not in the source list (in strict mode)
+
+4. **Invalid Map Structures**
+   - Detected via `UnsupportedTypeMapParseError`
+   - Example: When a map structure is invalid after normalization
+
+5. **Template Variables in Strings**
+   - Detected via `UnsupportedTypeTemplateString`
+   - Example: When template variables are found in string-based image definitions
+
+6. **String Parse Errors**
+   - Detected via `UnsupportedTypeStringParseError`
+   - Example: When a string-based image reference fails to parse
+
+#### Testing Approach
+For each unsupported structure type:
+1. Create test cases that trigger the specific unsupported type
+2. Verify correct error type is returned
+3. Validate error message contains appropriate context
+4. Confirm behavior differs between strict and non-strict modes
+5. Check that unsupported structures are properly collected and reported
+
+Example Test Structure:
+```go
+func TestUnsupportedStructures(t *testing.T) {
+    cases := []struct {
+        name           string
+        input         map[string]interface{}
+        expectedType  UnsupportedType
+        expectedError string
+        strictMode    bool
+    }{
+        {
+            name: "template in map",
+            input: map[string]interface{}{
+                "image": map[string]interface{}{
+                    "repository": "{{ .Values.image }}",
+                },
+            },
+            expectedType: UnsupportedTypeTemplateMap,
+            expectedError: "template variable detected",
+            strictMode: true,
+        },
+        // Additional test cases for other unsupported types
+    }
+    // Test implementation
+}
+```
+
+#### Validation Points
+- Verify unsupported structures are properly detected
+- Confirm error messages are clear and actionable
+- Check that strict mode fails appropriately
+- Validate non-strict mode continues processing
+- Ensure all unsupported structures are reported
+- Verify error context includes value path information
+
 ## Test Environment
 
 ### Core Toolchain:
@@ -421,6 +495,8 @@ The project has two complementary test suites:
 ### 1. Unit and Integration Tests (`make test`)
 These tests run as part of the standard Go test suite and include:
 - Unit tests for individual packages
+  - Uses in-memory filesystem (afero.MemMapFs) for file operations to ensure test isolation and reliability
+  - Particularly important for registry mapping tests and file operations
 - Integration tests using controlled test fixtures in `test-data/charts/`
 - Tests for specific functionality like:
   - Basic chart processing
@@ -428,14 +504,41 @@ These tests run as part of the standard Go test suite and include:
   - Complex chart handling
   - Dry-run functionality
   - Strict mode behavior
+  - Registry mapping file handling with in-memory filesystem
 These tests are fast, deterministic, and suitable for CI/CD pipelines.
 
-> **Note:** The integration tests will only test with charts available in the `test-data/charts/` directory. Tests for charts that aren't available (like `kube-prometheus-stack`, `ingress-nginx`, etc.) will be automatically skipped. The currently available test charts are:
-> - cert-manager
-> - cert-manager-v1.17.1.tgz
-> - cert-manager-values.yaml
-> - minimal-test
-> - parent-test
+### Test Environment Best Practices
+
+#### Using In-Memory Filesystem
+For tests involving file operations (especially in `pkg/registry`), use afero's MemMapFs:
+
+```go
+// Create a memory-backed filesystem for testing
+fs := afero.NewMemMapFs()
+
+// Set up test directories/files in memory
+require.NoError(t, fs.MkdirAll("/tmp", 0o755))
+require.NoError(t, afero.WriteFile(fs, "/tmp/test.yaml", []byte("content"), 0o644))
+
+// Use the memory filesystem in your tests
+result, err := YourFunction(fs, "/tmp/test.yaml")
+```
+
+Benefits:
+- No real filesystem interaction
+- Faster test execution
+- Consistent across different environments
+- No cleanup needed
+- No permission issues
+- No path traversal concerns in tests
+
+#### Test File Operations
+When testing functions that work with files:
+1. Always use `afero.Fs` interface in your production code
+2. Use `afero.NewMemMapFs()` in tests
+3. Use `afero.NewOsFs()` in production
+4. Properly handle permissions (0o644 for files, 0o755 for directories)
+5. Clean up resources even in memory filesystem (good practice)
 
 ### 2. Chart Validation Tests (`make test-charts`)
 These tests use the `test/tools/test-charts.sh` script to validate against real-world charts:

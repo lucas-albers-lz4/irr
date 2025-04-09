@@ -9,6 +9,7 @@ import (
 
 	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/image"
+	"github.com/spf13/afero"
 	"sigs.k8s.io/yaml"
 )
 
@@ -23,8 +24,8 @@ type Mappings struct {
 	Entries []Mapping `yaml:"mappings"`
 }
 
-// LoadMappings loads registry mappings from a YAML file
-func LoadMappings(path string) (*Mappings, error) {
+// LoadMappings loads registry mappings from a YAML file using the provided filesystem.
+func LoadMappings(fs afero.Fs, path string) (*Mappings, error) {
 	if path == "" {
 		return nil, nil //nolint:nilnil // Intentional: Empty path means no mappings loaded, not an error.
 	}
@@ -47,8 +48,8 @@ func LoadMappings(path string) (*Mappings, error) {
 		}
 	}
 
-	// Check if path is a directory
-	fileInfo, err := os.Stat(path)
+	// Check if path is a directory using the provided filesystem
+	fileInfo, err := fs.Stat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, WrapMappingFileNotExist(path, err)
@@ -64,8 +65,8 @@ func LoadMappings(path string) (*Mappings, error) {
 		return nil, WrapMappingExtension(path)
 	}
 
-	// Read the file content
-	data, err := os.ReadFile(path)
+	// Read the file content using the provided filesystem
+	data, err := afero.ReadFile(fs, path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, WrapMappingFileNotExist(path, err)

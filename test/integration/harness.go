@@ -15,6 +15,7 @@ import (
 
 	"github.com/lalbers/irr/pkg/image"
 	"github.com/lalbers/irr/pkg/registry"
+	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
@@ -324,7 +325,7 @@ func (h *TestHarness) ValidateOverrides() error {
 	// Load mappings to check against mapped targets as well
 	mappings := &registry.Mappings{} // Initialize as non-nil
 	if h.mappingsPath != "" {
-		loadedMappings, loadErr := registry.LoadMappings(h.mappingsPath)
+		loadedMappings, loadErr := registry.LoadMappings(afero.NewOsFs(), h.mappingsPath)
 		if loadErr != nil {
 			h.t.Logf("Warning: could not load mappings file '%s' for validation: %v", h.mappingsPath, loadErr)
 		} else {

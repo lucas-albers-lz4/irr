@@ -1,15 +1,15 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"testing"
 
-	"github.com/lalbers/irr/pkg/analysis" // Need this for ChartAnalysis type
-	"github.com/spf13/afero"              // Add afero
+	"github.com/lalbers/irr/pkg/analysis"
+	"github.com/lalbers/irr/pkg/exitcodes"
+	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -33,36 +33,20 @@ func (m *mockAnalyzer) Analyze() (*analysis.ChartAnalysis, error) {
 // --- End Mocking ---
 
 // executeAnalyzeCommand runs the analyze command with args and returns output/error
-// Renamed to avoid conflict with override_test.go
 func executeAnalyzeCommand(cmd *cobra.Command, args ...string) (string, error) {
-	buf := new(bytes.Buffer)
-	cmd.SetOut(buf)
-	cmd.SetErr(buf)
-	cmd.SetArgs(args)
-	err := cmd.Execute()
-	return buf.String(), err
+	return executeCommand(cmd, args...)
 }
 
 // setupAnalyzeTestFS creates a temporary filesystem for tests
-// Renamed to avoid conflict
 func setupAnalyzeTestFS(t *testing.T) afero.Fs {
 	fs := afero.NewMemMapFs()
-	// Optionally create base directories if needed
 	return fs
-}
-
-// getAnalyzeRootCmd resets and returns the root command for testing
-// Renamed to avoid conflict
-func getAnalyzeRootCmd() *cobra.Command {
-	// Reset flags or state if necessary
-	return rootCmd // Use the actual rootCmd from root.go
 }
 
 func TestAnalyzeCmd(t *testing.T) {
 	// Backup and restore original factory, FS, and command outputs
 	originalFactory := currentAnalyzerFactory
 	originalFs := AppFs
-	// No need to backup stdout/stderr here, executeAnalyzeCommand handles it per call
 	defer func() {
 		currentAnalyzerFactory = originalFactory
 		AppFs = originalFs
@@ -71,15 +55,14 @@ func TestAnalyzeCmd(t *testing.T) {
 	tests := []struct {
 		name              string
 		args              []string
-		mockAnalyzeFunc   func() (*analysis.ChartAnalysis, error) // Func to setup mock
+		mockAnalyzeFunc   func() (*analysis.ChartAnalysis, error)
 		expectErr         bool
-		expectErrArgs     bool   // True if error is expected due to args, not execution
-		stdOutContains    string // Substring to check in stdout
-		stdErrContains    string // Substring to check in stderr
-		expectFile        string // Expected filename
-		expectFileContent string // Expected file content
+		expectErrArgs     bool
+		stdOutContains    string
+		stdErrContains    string
+		expectFile        string
+		expectFileContent string
 	}{
-		// --- Arg/Flag Error Cases (No Mocking Needed) ---
 		{
 			name:           "no arguments",
 			args:           []string{"analyze"},
@@ -88,16 +71,22 @@ func TestAnalyzeCmd(t *testing.T) {
 			stdErrContains: "accepts 1 arg(s), received 0",
 		},
 		{
+			name:           "missing required flag source-registries",
+			args:           []string{"analyze", "./fake/chart"},
+			expectErr:      true,
+			expectErrArgs:  true,
+			stdErrContains: "required flag(s) \"source-registries\" not set",
+		},
+		{
 			name:           "too many arguments",
-			args:           []string{"analyze", "path1", "path2"},
+			args:           []string{"analyze", "path1", "path2", "--source-registries", "source.io"},
 			expectErr:      true,
 			expectErrArgs:  true,
 			stdErrContains: "accepts 1 arg(s), received 2",
 		},
-		// --- Execution Cases (Mocking Needed) ---
 		{
 			name: "success with text output",
-			args: []string{"analyze", "./fake/chart"},
+			args: []string{"analyze", "./fake/chart", "--source-registries", "source.io"},
 			mockAnalyzeFunc: func() (*analysis.ChartAnalysis, error) {
 				return &analysis.ChartAnalysis{
 					ImagePatterns: []analysis.ImagePattern{
@@ -107,47 +96,41 @@ func TestAnalyzeCmd(t *testing.T) {
 				}, nil
 			},
 			expectErr:      false,
-			stdOutContains: "Chart Analysis", // Check for text header
-			stdErrContains: "",               // Should be no error output
+			stdOutContains: "Chart Analysis",
+			stdErrContains: "",
 		},
-		/* // Commenting out this test case as it misuses the persistent -o flag, causing a panic.
 		{
 			name: "success with json output",
-			args: []string{"analyze", "./fake/chart", "-o", "json"},
+			args: []string{"analyze", "./fake/chart", "--source-registries", "source.io", "--output", "json"},
 			mockAnalyzeFunc: func() (*analysis.ChartAnalysis, error) {
 				return &analysis.ChartAnalysis{
 					ImagePatterns: []analysis.ImagePattern{
-						{Path: "img", Type: analysis.PatternTypeString, Value: "redis:alpine", Count: 1},
+						{Path: "image", Type: analysis.PatternTypeString, Value: "nginx:latest", Count: 1},
 					},
 				}, nil
 			},
 			expectErr:      false,
-			stdOutContains: `"Path": "img"`, // Check for JSON structure
-			stdErrContains: "",
+			stdOutContains: `"Path": "image"`,
 		},
-		*/
 		{
 			name: "success with output file",
-			args: []string{"analyze", "./fake/chart", "--file", "analyze_test_output.txt"},
+			args: []string{"analyze", "./fake/chart", "--source-registries", "source.io", "--file", "analyze_test_output.txt"},
 			mockAnalyzeFunc: func() (*analysis.ChartAnalysis, error) {
 				return &analysis.ChartAnalysis{ImagePatterns: []analysis.ImagePattern{{Path: "file.image", Value: "test:ok"}}}, nil
 			},
 			expectErr:         false,
-			stdOutContains:    "",
-			stdErrContains:    "",
 			expectFile:        "analyze_test_output.txt",
-			expectFileContent: "Chart Analysis", // Check for start of text format
+			expectFileContent: "Chart Analysis",
 		},
 		{
 			name: "analyzer returns error",
-			args: []string{"analyze", "./bad/chart"},
+			args: []string{"analyze", "./bad/chart", "--source-registries", "source.io"},
 			mockAnalyzeFunc: func() (*analysis.ChartAnalysis, error) {
 				return nil, fmt.Errorf("mock analyze error: chart not found")
 			},
 			expectErr:      true,
 			expectErrArgs:  false,
-			stdOutContains: "",
-			stdErrContains: "analysis failed: mock analyze error: chart not found", // Check for wrapped error
+			stdErrContains: "mock analyze error: chart not found",
 		},
 	}
 
@@ -159,7 +142,7 @@ func TestAnalyzeCmd(t *testing.T) {
 				mockAnalyzer := &mockAnalyzer{
 					AnalyzeFunc: tt.mockAnalyzeFunc,
 				}
-				currentAnalyzerFactory = func(_ string) AnalyzerInterface { // Rename chartPath to _
+				currentAnalyzerFactory = func(_ string) AnalyzerInterface {
 					return mockAnalyzer
 				}
 			} else {
@@ -182,7 +165,7 @@ func TestAnalyzeCmd(t *testing.T) {
 			}
 
 			// Create a fresh command tree for THIS test run
-			rootCmd := getAnalyzeRootCmd()
+			rootCmd := getRootCmd()
 
 			// Execute command using the fresh rootCmd instance
 			stdout, err := executeAnalyzeCommand(rootCmd, tt.args...)
@@ -219,7 +202,8 @@ func TestAnalyzeCommand_Success_TextOutput(t *testing.T) {
 	fs := setupAnalyzeTestFS(t)
 	AppFs = fs // Use mock FS for the command
 	chartPath := "/fake/chart"
-	_ = fs.MkdirAll(chartPath, 0755) // Ensure dir exists
+	err := fs.MkdirAll(chartPath, 0755) // Ensure dir exists
+	require.NoError(t, err, "Failed to create test directory")
 
 	// Mock the analyzer factory
 	mockResult := analysis.NewChartAnalysis()
@@ -240,8 +224,8 @@ func TestAnalyzeCommand_Success_TextOutput(t *testing.T) {
 	}
 	defer func() { currentAnalyzerFactory = originalFactory }()
 
-	args := []string{"analyze", chartPath}
-	cmd := getAnalyzeRootCmd() // Get the root command
+	args := []string{"analyze", chartPath, "--source-registries", "source.io"}
+	cmd := getRootCmd() // Get the root command
 	output, err := executeAnalyzeCommand(cmd, args...)
 	require.NoError(t, err)
 
@@ -256,7 +240,8 @@ func TestAnalyzeCommand_Success_JsonOutput(t *testing.T) {
 	fs := setupAnalyzeTestFS(t)
 	AppFs = fs
 	chartPath := "/fake/json/chart"
-	_ = fs.MkdirAll(chartPath, 0755)
+	err := fs.MkdirAll(chartPath, 0755)
+	require.NoError(t, err, "Failed to create test directory")
 
 	mockResult := analysis.NewChartAnalysis()
 	mockResult.ImagePatterns = append(mockResult.ImagePatterns, analysis.ImagePattern{
@@ -276,8 +261,8 @@ func TestAnalyzeCommand_Success_JsonOutput(t *testing.T) {
 	}
 	defer func() { currentAnalyzerFactory = originalFactory }()
 
-	args := []string{"analyze", chartPath, "--output", "json"}
-	cmd := getAnalyzeRootCmd()
+	args := []string{"analyze", chartPath, "--source-registries", "source.io", "--output", "json"}
+	cmd := getRootCmd()
 	output, err := executeAnalyzeCommand(cmd, args...)
 	require.NoError(t, err)
 
@@ -293,7 +278,8 @@ func TestAnalyzeCommand_AnalysisError(t *testing.T) {
 	fs := setupAnalyzeTestFS(t)
 	AppFs = fs
 	chartPath := "/fake/error/chart"
-	_ = fs.MkdirAll(chartPath, 0755)
+	err := fs.MkdirAll(chartPath, 0755)
+	require.NoError(t, err, "Failed to create test directory")
 
 	analysisError := errors.New("failed to analyze")
 	mockAnalysis := &mockAnalyzer{
@@ -307,8 +293,8 @@ func TestAnalyzeCommand_AnalysisError(t *testing.T) {
 	}
 	defer func() { currentAnalyzerFactory = originalFactory }()
 
-	args := []string{"analyze", chartPath}
-	cmd := getAnalyzeRootCmd()
+	args := []string{"analyze", chartPath, "--source-registries", "source.io"}
+	cmd := getRootCmd()
 	output, err := executeAnalyzeCommand(cmd, args...)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), analysisError.Error())
@@ -316,7 +302,7 @@ func TestAnalyzeCommand_AnalysisError(t *testing.T) {
 
 	var exitErr *ExitCodeError
 	if errors.As(err, &exitErr) {
-		assert.Equal(t, ExitChartParsingError, exitErr.Code)
+		assert.Equal(t, exitcodes.ExitChartParsingError, exitErr.ExitCode())
 	} else {
 		t.Errorf("Expected ExitCodeError, got %T", err)
 	}
@@ -324,10 +310,8 @@ func TestAnalyzeCommand_AnalysisError(t *testing.T) {
 
 func TestAnalyzeCommand_NoArgs(t *testing.T) {
 	args := []string{"analyze"}
-	cmd := getAnalyzeRootCmd()
+	cmd := getRootCmd()
 	_, err := executeAnalyzeCommand(cmd, args...)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "accepts 1 arg(s), received 0")
 }
-
-// Add test for file output

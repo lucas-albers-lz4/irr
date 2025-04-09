@@ -161,19 +161,53 @@ exclude_registries:
 
 When an image reference matches an excluded registry, it will be skipped during processing to preserve references to private registries.
 
-### 6.1.6 Rationale for Value Handling
+### 6.1.6 Registry Mapping Format
+The tool supports a simple YAML key-value mapping format:
+```yaml
+docker.io: target.registry/docker-mirror
+quay.io: target.registry/quay-mirror
+```
 
-Processing Helm `values.yaml` files presents several complexities that necessitate the current approach to handling diverse YAML value types:
+**Path Handling Requirements**
+- Registry mapping files must be specified with absolute paths or relative paths within the working directory
+- The tool validates paths to prevent directory traversal attacks
+- Paths must use `.yaml` or `.yml` extensions
+- Uses `afero.Fs` interface for filesystem operations to support:
+  - Real filesystem in production (`afero.OsFs`)
+  - In-memory filesystem for testing (`afero.MemMapFs`)
+  - Proper permission handling (0o644 for files, 0o755 for directories)
 
-1.  **Helm's Flexibility & Diversity:** Helm charts do not enforce a strict, universal schema for `values.yaml`. Chart authors structure values in various ways. Images might be defined as simple strings (`image: registry/repo:tag`), maps (`image: { repository: repo, tag: tag }`), or even constructed using Helm template functions (`image: {{ include "myimage" . }}`). The tool must parse this heterogeneous input.
-2.  **Raw Values vs. Templated Values:** The tool reads the *raw* `values.yaml` file *before* Helm's templating engine processes it. Consequently, the raw file often contains Go template syntax (`{{ ... }}`). These template strings are not valid literal values in the context where the tool initially processes them and can cause errors if not handled. The `cleanupTemplateVariables` function attempts to mitigate this by removing template syntax or substituting reasonable defaults (like `""` for image fields, `false` for boolean fields) to create a cleaner structure for the override logic.
-3.  **Minimal Override vs. Structural Integrity:** The goal is to generate a *minimal* override file containing only the changes needed to redirect images. However, Helm applies these overrides *on top of* the original values. If the override file inadvertently removes too much structural context (e.g., parent keys, necessary non-image sibling keys like boolean flags), Helm's templating process might fail because the expected structure is broken.
-4.  **Preserving Context:** To maintain structural integrity, the value processing logic (`processValues`) preserves basic data types (strings, booleans, numbers, null) encountered alongside image references. Even if a boolean flag like `enabled: true` is not being overridden, its presence might be necessary context for an adjacent image override. Discarding such values could lead to Helm errors. The tool effectively rebuilds parts of the original YAML structure where overrides occur, including necessary non-image values to ensure Helm can correctly merge the original values with the generated overrides.
-5.  **Heuristic Identification:** Distinguishing image references from general configuration values (e.g., `replicas: 3`, `service.type: ClusterIP`) relies on heuristics (like the `isImageMap` function and pattern matching). Careful handling of different data types is crucial to avoid misidentifying values and causing errors.
+### 6.1.7 Testing Strategy
+The codebase follows these testing principles:
 
-In essence, the tool processes complex, varied, and template-filled input files to produce minimal yet structurally valid override files that correctly modify only image references without breaking downstream Helm processing.
+1. **Filesystem Operations**
+   - Use `afero.Fs` interface for all file operations
+   - Production code uses `afero.OsFs`
+   - Tests use `afero.MemMapFs` for:
+     - Isolation from real filesystem
+     - Consistent behavior across environments
+     - No cleanup requirements
+     - No permission issues
+     - Safe path traversal testing
 
-### 6.1.7 Path Strategy and Registry Mappings
+2. **Test Organization**
+   - Unit tests focus on isolated components
+   - Integration tests verify component interaction
+   - Chart validation tests ensure real-world compatibility
+
+3. **Test Data Management**
+   - Test fixtures stored in `test-data/`
+   - In-memory test files created per test
+   - Proper cleanup in test teardown
+   - Consistent file permissions
+
+4. **Error Handling**
+   - Test both success and failure paths
+   - Verify error types and messages
+   - Test permission scenarios
+   - Validate path traversal protection
+
+### 6.1.8 Path Strategy and Registry Mappings
 
 **Path Strategy Interface**
 

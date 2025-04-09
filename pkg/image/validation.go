@@ -27,24 +27,21 @@ func isValidRepositoryName(repo string) bool {
 	if repo == "" {
 		return false
 	}
-	// Regex based on Docker spec (simplified):
-	// path-component := [a-z0-9]+(?:(?:[._]|__|[-]*)[a-z0-9]+)*
-	// name-component := path-component(?:(?:/path-component)+)?
-	// Using a slightly simpler check for now:
-	// Allows: a-z, 0-9, '.', '_', '-', '/'
-	// Constraints: starts/ends with alphanum, no consecutive separators.
-	pattern := `^[a-z0-9]+(?:(?:[._-]|[/])?[a-z0-9]+)*$` // Simplified
-	matched, _ := regexp.MatchString(pattern, repo)
-	if !matched {
-		debug.Printf("Repository '%s' failed regex check '%s'", repo, pattern)
+	// Check for invalid characters
+	pattern := `^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*$`
+	matched, err := regexp.MatchString(pattern, repo)
+	if err != nil {
+		debug.Printf("Error matching repository pattern: %v", err)
 		return false
 	}
-	// Check for consecutive separators (simplistic)
-	if strings.Contains(repo, "//") || strings.Contains(repo, "..") || strings.Contains(repo, "__") || strings.Contains(repo, "--") || strings.Contains(repo, "-_") || strings.Contains(repo, "_-") {
-		debug.Printf("Repository '%s' contains consecutive separators.", repo)
+
+	// Check for invalid sequences
+	if strings.Contains(repo, "//") || strings.Contains(repo, "..") || strings.Contains(repo, "__") ||
+		strings.Contains(repo, "--") || strings.Contains(repo, "-_") || strings.Contains(repo, "_-") {
 		return false
 	}
-	return true
+
+	return matched
 }
 
 // isValidTag checks if a string is a valid tag format.
@@ -56,8 +53,13 @@ func isValidTag(tag string) bool {
 	if len(tag) > 128 {
 		return false
 	}
-	pattern := `^[a-zA-Z0-9_][a-zA-Z0-9_.-]*$`
-	matched, _ := regexp.MatchString(pattern, tag)
+	// Check for valid characters
+	pattern := `^[a-zA-Z0-9][a-zA-Z0-9._-]*$`
+	matched, err := regexp.MatchString(pattern, tag)
+	if err != nil {
+		debug.Printf("Error matching tag pattern: %v", err)
+		return false
+	}
 	return matched
 }
 
@@ -67,7 +69,11 @@ func isValidDigest(digest string) bool {
 		return false
 	}
 	pattern := `^sha256:[a-fA-F0-9]{64}$`
-	matched, _ := regexp.MatchString(pattern, digest)
+	matched, err := regexp.MatchString(pattern, digest)
+	if err != nil {
+		debug.Printf("Error matching digest pattern: %v", err)
+		return false
+	}
 	return matched
 }
 
@@ -128,5 +134,31 @@ func IsValidDigest(digest string) bool {
 	const pattern = `^[a-zA-Z0-9_-]+:[a-fA-F0-9]+$`
 	// errcheck: regexp.MatchString error is always nil, safe to ignore.
 	matched, _ := regexp.MatchString(pattern, digest)
+	return matched
+}
+
+func isValidTagOrDigest(tag string) bool {
+	// Check length
+	if len(tag) > 128 {
+		return false
+	}
+
+	// Check for valid characters
+	pattern := `^[a-zA-Z0-9][a-zA-Z0-9._-]*$`
+	matched, err := regexp.MatchString(pattern, tag)
+	if err != nil {
+		debug.Printf("Error matching tag pattern: %v", err)
+		return false
+	}
+	return matched
+}
+
+func isValidDigestOnly(digest string) bool {
+	pattern := `^sha256:[a-fA-F0-9]{64}$`
+	matched, err := regexp.MatchString(pattern, digest)
+	if err != nil {
+		debug.Printf("Error matching digest pattern: %v", err)
+		return false
+	}
 	return matched
 }

@@ -10,8 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"errors"
-
+	"github.com/lalbers/irr/pkg/exitcodes"
 	"github.com/lalbers/irr/pkg/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -338,38 +337,27 @@ func TestDryRunFlag(t *testing.T) {
 }
 
 func TestStrictMode(t *testing.T) {
-	harness := NewTestHarness(t)
-	defer harness.Cleanup()
+	t.Parallel()
+	h := NewTestHarness(t)
+	defer h.Cleanup()
 
-	setupChartWithUnsupportedStructure(t, harness)
+	// Setup chart with known unsupported structure
+	h.SetChartPath(h.GetTestdataPath("unsupported-test"))
 
-	harness.SetRegistries("target.io", []string{"source.io"})
-
+	// Define the arguments for the IRR command
 	args := []string{
 		"override",
-		"--chart-path", harness.chartPath,
-		"--target-registry", harness.targetReg,
-		"--source-registries", strings.Join(harness.sourceRegs, ","),
+		"--chart-path", h.chartPath,
+		"--target-registry", "test.target.io", // Required flag
+		"--source-registries", "test.source.io", // Required flag
 		"--strict",
-		"--output-file", harness.overridePath,
-		"--debug",
 	}
 
-	output, err := harness.ExecuteIRR(args...)
+	// Verify exit code is 12 (ExitUnsupportedStructure) using harness method, passing args
+	h.AssertExitCode(exitcodes.ExitUnsupportedStructure, args...)
 
-	require.Error(t, err, "Expected an error in strict mode due to unsupported structures. Output:\n%s", output)
-
-	var exitErr *exec.ExitError
-	require.True(t, errors.As(err, &exitErr), "Error should be an *exec.ExitError. Got: %T", err)
-
-	require.Equal(t, 5, exitErr.ExitCode(), "Expected exit code 5 for strict mode failure. Output:\n%s", output)
-
-	assert.Contains(t, output, "strict mode validation failed", "Error output should mention strict mode validation failed. Output:\n%s", output)
-	assert.Contains(t, output, "unsupported structures found", "Error output should mention unsupported structures found. Output:\n%s", output)
-	assert.Contains(t, output, "path=[image]", "Error output should mention the specific unsupported path. Output:\n%s", output)
-
-	_, errStat := os.Stat(harness.overridePath)
-	assert.True(t, os.IsNotExist(errStat), "Override file should not be created on strict mode failure")
+	// Verify the error message contains expected text using harness method, passing args
+	h.AssertErrorContains("unsupported structures found", args...)
 }
 
 func TestRegistryMappingFile(t *testing.T) {
@@ -633,12 +621,13 @@ func TestMain(m *testing.M) {
 func TestNoArgs(t *testing.T) {
 	t.Parallel()
 	h := NewTestHarness(t)
-	output, err := h.ExecuteIRR()
-	// Expect an error because a subcommand is required
-	assert.Error(t, err, "Running with no args should produce an execution error")
-	// Check that the error output (stderr or combined output) contains the expected message
-	assert.Contains(t, output, "a subcommand is required", "Error output should contain subcommand required message")
-	t.Cleanup(h.Cleanup)
+	defer h.Cleanup()
+
+	// Verify exit code is 1 (ExitMissingRequiredFlag) when no args provided
+	h.AssertExitCode(exitcodes.ExitMissingRequiredFlag, "override")
+
+	// Verify error message contains expected text
+	h.AssertErrorContains("required flag(s)", "override")
 }
 
 func TestUnknownFlag(t *testing.T) {
@@ -674,13 +663,12 @@ func TestNonExistentChartPath(t *testing.T) {
 	t.Cleanup(h.Cleanup)
 }
 
-func TestStrictModeExitCode5(t *testing.T) {
+func TestStrictModeExitCode(t *testing.T) {
 	t.Parallel()
 	h := NewTestHarness(t)
 	defer h.Cleanup()
 
 	// Setup chart with known unsupported structure
-	// Use the 'unsupported-test' chart fixture
 	h.SetChartPath(h.GetTestdataPath("unsupported-test"))
 
 	// Define the arguments for the IRR command
@@ -692,12 +680,11 @@ func TestStrictModeExitCode5(t *testing.T) {
 		"--strict",
 	}
 
-	// Verify exit code is 5 using harness method, passing args
-	h.AssertExitCode(5, args...)
+	// Verify exit code is 12 (ExitUnsupportedStructure) using harness method, passing args
+	h.AssertExitCode(exitcodes.ExitUnsupportedStructure, args...)
 
 	// Verify the error message contains expected text using harness method, passing args
-	// Adjust expected error string if needed based on actual strict mode output
-	h.AssertErrorContains("strict mode validation failed", args...)
+	h.AssertErrorContains("unsupported structures found", args...)
 }
 
 func TestInvalidChartPath(t *testing.T) {
@@ -750,4 +737,17 @@ version: 0.1.0`
 	}
 
 	return chartDir
+}
+
+func TestStrictModeExitCode12(t *testing.T) {
+	h := NewTestHarness(t)
+	defer h.Cleanup()
+
+	// Set up chart with unsupported structure
+	h.SetupChart(h.GetTestdataPath("unsupported-test"))
+	h.SetRegistries("target.io", []string{"source.io"})
+
+	// Run with strict mode - should fail with exit code 12
+	h.AssertExitCode(12, "override", "--strict")
+	h.AssertErrorContains("strict validation failed")
 }

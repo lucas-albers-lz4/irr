@@ -5,9 +5,22 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/lalbers/irr/pkg/strategy"
 )
 
-// Custom error types for the chart package
+// Error sentinel values
+var (
+	// ErrStrictValidationFailed indicates that unsupported structures were found
+	// during generation while strict mode was enabled.
+	ErrStrictValidationFailed = errors.New("strict mode validation failed: unsupported structures found")
+
+	// ErrChartNotFound indicates the chart could not be found at the specified path
+	ErrChartNotFound = fmt.Errorf("chart not found")
+
+	// ErrChartLoadFailed indicates the Helm loader failed to load the chart
+	ErrChartLoadFailed = fmt.Errorf("helm loader failed")
+)
 
 // UnsupportedStructureError indicates an image reference was found in a structure
 // that the tool cannot currently process for overrides.
@@ -18,6 +31,10 @@ type UnsupportedStructureError struct {
 
 func (e *UnsupportedStructureError) Error() string {
 	return fmt.Sprintf("unsupported structure at path %s (type: %s)", strings.Join(e.Path, "."), e.Type)
+}
+
+func (e *UnsupportedStructureError) Is(target error) bool {
+	return target == ErrStrictValidationFailed
 }
 
 // ThresholdNotMetError indicates that the percentage of successfully processed
@@ -31,6 +48,10 @@ func (e *ThresholdNotMetError) Error() string {
 	return fmt.Sprintf("processing threshold not met: required %d%%, actual %d%%", e.Required, e.Actual)
 }
 
+func (e *ThresholdNotMetError) Is(target error) bool {
+	return target == strategy.ErrThresholdExceeded
+}
+
 // ParsingError represents an error encountered during chart parsing.
 type ParsingError struct {
 	FilePath string
@@ -40,6 +61,10 @@ type ParsingError struct {
 
 func (e *ParsingError) Error() string {
 	return fmt.Sprintf("error parsing chart: %s", e.Err)
+}
+
+func (e *ParsingError) Is(target error) bool {
+	return target == ErrChartNotFound || target == ErrChartLoadFailed
 }
 
 func (e *ParsingError) Unwrap() error {
@@ -55,7 +80,7 @@ type ImageProcessingError struct {
 
 func (e *ImageProcessingError) Error() string {
 	if len(e.Path) > 0 {
-		return fmt.Sprintf("image processing error at path '%s' (ref: %s): %v", e.Path, e.Ref, e.Err)
+		return fmt.Sprintf("image processing error at path '%s' (ref: %s): %v", strings.Join(e.Path, "."), e.Ref, e.Err)
 	}
 	return fmt.Sprintf("image processing error (ref: %s): %v", e.Ref, e.Err)
 }
@@ -63,11 +88,3 @@ func (e *ImageProcessingError) Error() string {
 func (e *ImageProcessingError) Unwrap() error {
 	return e.Err
 }
-
-// ThresholdError represents an error when the processing threshold is not met.
-
-// --- Sentinel Errors ---
-
-// ErrStrictValidationFailed indicates that unsupported structures were found
-// during generation while strict mode was enabled.
-var ErrStrictValidationFailed = errors.New("strict mode validation failed: unsupported structures found")

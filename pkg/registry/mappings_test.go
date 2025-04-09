@@ -2,65 +2,52 @@
 package registry
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // Test function names updated to match consolidated functions
 func TestLoadMappings(t *testing.T) {
-	// Create a temporary mappings file with new format
+	// Create a memory-backed filesystem for testing
+	fs := afero.NewMemMapFs()
+	tmpDir := "/tmp"
+
+	// Create test file paths
+	newFormatFile := filepath.Join(tmpDir, "new-format.yaml")
+	oldFormatFile := filepath.Join(tmpDir, "old-format.yaml")
+	emptyTmpFile := filepath.Join(tmpDir, "empty.yaml")
+	invalidTmpFile := filepath.Join(tmpDir, "invalid.yaml")
+	invalidExtTmpFile := filepath.Join(tmpDir, "mappings.txt")
+	tmpSubDir := filepath.Join(tmpDir, "subdir")
+	tmpDirFile := filepath.Join(tmpSubDir, "mappings.yaml")
+
+	// Create test content
 	newFormatContent := `mappings:
   - source: quay.io
     target: my-registry.example.com/quay-mirror
   - source: docker.io
     target: my-registry.example.com/docker-mirror`
-	tmpDir := t.TempDir()
-	newFormatFile := filepath.Join(tmpDir, "new-format.yaml")
-	err := os.WriteFile(newFormatFile, []byte(newFormatContent), 0o600)
-	require.NoError(t, err)
 
-	// Create a temporary file with old format
 	oldFormatContent := `quay.io: my-registry.example.com/quay-mirror
 docker.io: my-registry.example.com/docker-mirror`
-	oldFormatFile := filepath.Join(tmpDir, "old-format.yaml")
-	err = os.WriteFile(oldFormatFile, []byte(oldFormatContent), 0o600)
-	require.NoError(t, err)
 
-	// Create an empty temporary file
-	emptyTmpFile := filepath.Join(tmpDir, "empty.yaml")
-	emptyFile, err := os.Create(emptyTmpFile)
-	require.NoError(t, err)
-	if err := emptyFile.Close(); err != nil {
-		t.Logf("Warning: failed to close empty temp file: %v", err)
-	}
-
-	// Create a temporary file with invalid YAML
 	invalidYAMLContent := `mappings: [invalid yaml`
-	invalidTmpFile := filepath.Join(tmpDir, "invalid.yaml")
-	err = os.WriteFile(invalidTmpFile, []byte(invalidYAMLContent), 0o600)
-	require.NoError(t, err)
 
-	// Create a temporary file with an invalid extension
-	invalidExtTmpFile := filepath.Join(tmpDir, "mappings.txt")
-	invalidExtFile, err := os.Create(invalidExtTmpFile)
-	require.NoError(t, err)
-	if err := invalidExtFile.Close(); err != nil {
-		t.Logf("Warning: failed to close invalid extension temp file: %v", err)
-	}
+	// Set up the memory filesystem
+	require.NoError(t, fs.MkdirAll(tmpDir, 0o755))
+	require.NoError(t, fs.MkdirAll(tmpSubDir, 0o755))
 
-	// Create a temporary directory
-	tmpSubDir := filepath.Join(tmpDir, "subdir")
-	err = os.MkdirAll(tmpSubDir, 0o750)
-	require.NoError(t, err)
-
-	// Create a temporary file in the directory
-	tmpDirFile := filepath.Join(tmpSubDir, "mappings.yaml")
-	err = os.WriteFile(tmpDirFile, []byte(""), 0o600)
-	require.NoError(t, err)
+	// Write test files
+	require.NoError(t, afero.WriteFile(fs, newFormatFile, []byte(newFormatContent), 0o644))
+	require.NoError(t, afero.WriteFile(fs, oldFormatFile, []byte(oldFormatContent), 0o644))
+	require.NoError(t, afero.WriteFile(fs, emptyTmpFile, []byte(""), 0o644))
+	require.NoError(t, afero.WriteFile(fs, invalidTmpFile, []byte(invalidYAMLContent), 0o644))
+	require.NoError(t, afero.WriteFile(fs, invalidExtTmpFile, []byte(""), 0o644))
+	require.NoError(t, afero.WriteFile(fs, tmpDirFile, []byte(""), 0o644))
 
 	expectedMappings := &Mappings{
 		Entries: []Mapping{
@@ -75,6 +62,7 @@ docker.io: my-registry.example.com/docker-mirror`
 		wantMappings  *Mappings
 		wantErr       bool
 		errorContains string
+		content       string
 	}{
 		{
 			name:          "valid mappings file (new format)",
@@ -82,6 +70,7 @@ docker.io: my-registry.example.com/docker-mirror`
 			wantMappings:  expectedMappings,
 			wantErr:       false,
 			errorContains: "",
+			content:       newFormatContent,
 		},
 		{
 			name:          "valid mappings file (old format)",
@@ -89,6 +78,7 @@ docker.io: my-registry.example.com/docker-mirror`
 			wantMappings:  expectedMappings,
 			wantErr:       false,
 			errorContains: "",
+			content:       oldFormatContent,
 		},
 		{
 			name:          "nonexistent file",
@@ -141,8 +131,8 @@ docker.io: my-registry.example.com/docker-mirror`
 				t.Setenv("IRR_ALLOW_PATH_TRAVERSAL", "true")
 			}
 
-			// Call the consolidated LoadMappings function
-			got, err := LoadMappings(tt.path)
+			// Call the consolidated LoadMappings function with the test filesystem
+			got, err := LoadMappings(fs, tt.path)
 			if tt.wantErr {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tt.errorContains)
