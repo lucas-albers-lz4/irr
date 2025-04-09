@@ -452,14 +452,14 @@ This detailed plan provides specific commands and considers dependencies for a m
 
 *Pre-step:* Ensure working directory is clean (`git status`).
 
-1.  **Fix `cmd/irr` Test Panic (`TestAnalyzeCmd`)**
+1.  **Fix `cmd/irr` Test Panic (`TestAnalyzeCmd`)** (Completed)
     *   **Goal:** Resolve flag redefinition panic blocking `cmd/irr` tests.
     *   **Pre-check:** Confirm failure with `go test ./cmd/irr/... -run TestAnalyzeCmd`. Note the panic message related to `-o`.
     *   **Action:** Read `cmd/irr/analyze.go`. Locate the `outputFormat` flag definition. Remove the `-o` shorthand: `cmd.Flags().StringVar(&outputFormat, "output-format", "summary", "...")`. Leave the persistent `-o` on `outputFile` in `root.go`.
     *   **Validation:** Run `go test ./cmd/irr/... -run TestAnalyzeCmd`. Expect PASS.
     *   **Post-check:** Run `go test ./cmd/irr/...`. Assess remaining failures (likely in `TestOverrideCmdArgs` and `TestOverrideCmdExecution` due to dependencies).
 
-2.  **Fix `pkg/image` Remaining Test Failures**
+2.  **Fix `pkg/image` Remaining Test Failures** (Completed)
     *   **Goal:** Resolve strict mode count mismatches and error string issues.
     *   **Pre-check (Newline):** Confirm `TestImageDetector_DetectImages_EdgeCases/mixed_valid_and_invalid_images` fails with a diff showing only a trailing `\n`.
     *   **Action (Newline):** Edit `pkg/image/detection_test.go`. Locate the `mixed_valid_and_invalid_images` test case. Remove the `\n` from the *end* of the expected error string within the `fmt.Errorf` call.
@@ -469,14 +469,14 @@ This detailed plan provides specific commands and considers dependencies for a m
     *   **Validation (Strict Counts):** Run `go test ./pkg/image/... -run TestDetectImages/Strict_mode`. Expect PASS.
     *   **Post-check:** Run `go test ./pkg/image/...`. Expect PASS for the entire package.
 
-3.  **Fix `pkg/override` Array Path Parsing (`TestParseArrayPath`)**
+3.  **Fix `pkg/override` Array Path Parsing (`TestParseArrayPath`)** (Completed)
     *   **Goal:** Correctly parse paths containing array indices.
     *   **Pre-check:** Confirm failure with `go test ./pkg/override/... -run TestParseArrayPath`. Note error messages about parsing keys like `[0]`.
     *   **Action:** Read `pkg/override/path_utils.go` (likely `getValueAtPath`, `setValueAtPath` or helpers). Debug the logic that handles path segments starting with `[`. Ensure it correctly extracts the index and accesses the slice. Apply fixes.
     *   **Validation:** Run `go test ./pkg/override/... -run TestParseArrayPath`. Expect PASS.
     *   **Post-check:** Run `go test ./pkg/override/...`. Expect PASS for the entire package.
 
-4.  **Fix `pkg/registry` Test Failures (`TestLoadMappings`, `TestGetTargetRegistry`)**
+4.  **Fix `pkg/registry` Test Failures (`TestLoadMappings`, `TestGetTargetRegistry`)** (Completed)
     *   **Goal:** Ensure registry mapping loading and lookup works correctly, including edge cases.
     *   **Pre-check:** Confirm failures with `go test ./pkg/registry/... -run "TestLoadMappings|TestGetTargetRegistry"`. Note errors related to empty files, paths, validation, normalization.
     *   **Action:** Read `pkg/registry/registry.go` and relevant tests.
@@ -485,14 +485,14 @@ This detailed plan provides specific commands and considers dependencies for a m
     *   **Validation:** Run `go test ./pkg/registry/... -run "TestLoadMappings|TestGetTargetRegistry"`. Expect PASS.
     *   **Post-check:** Run `go test ./pkg/registry/...`. Expect PASS for the entire package.
 
-5.  **Fix `pkg/analysis` Test Failure (`TestAnalyze/SimpleNesting`)**
+5.  **Fix `pkg/analysis` Test Failure (`TestAnalyze/SimpleNesting`)** (Completed)
     *   **Goal:** Correctly count image patterns during analysis.
     *   **Pre-check:** Confirm failure with `go test ./pkg/analysis/... -run "TestAnalyze/SimpleNesting"`. Note the pattern count mismatch.
     *   **Action:** Read `pkg/analysis/analyzer.go` and the test. Debug the `analyzeNode` or similar recursive function. Check how `analysis.ImagePatterns` map is populated during traversal. Apply fix.
     *   **Validation:** Run `go test ./pkg/analysis/... -run "TestAnalyze/SimpleNesting"`. Expect PASS.
     *   **Post-check:** Run `go test ./pkg/analysis/...`. Expect PASS for the entire package.
 
-6.  **Fix `pkg/chart` Test Failures (`TestGenerate`, `TestGenerateOverrides_Integration`)**
+6.  **Fix `pkg/chart` Test Failures (`TestGenerate`, `TestGenerateOverrides_Integration`)** (Completed)
     *   **Goal:** Resolve failures in the core override generation logic and its integration test.
     *   **Pre-check:** Confirm failures with `go test ./pkg/chart/...`. Note errors related to specific generation scenarios (simple string, exclusions, mappings, dependencies).
     *   **Action:** These failures likely stem from issues fixed in `pkg/image`, `pkg/override`, or `pkg/registry`. If they persist after previous steps, use `LOG_LEVEL=DEBUG` and `IRR_DEBUG=1` with focused tests (`go test -v ./pkg/chart/... -run TestGenerate/Simple_Image_String_Override`) to trace the `Generate` function flow. Debug detection results, strategy application, and override value setting. Apply fixes in `pkg/chart/generator.go`.
