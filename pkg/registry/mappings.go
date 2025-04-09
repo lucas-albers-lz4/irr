@@ -65,6 +65,12 @@ func LoadMappings(path string) (*Mappings, error) { // Updated return type
 		return nil, WrapMappingFileRead(path, err)
 	}
 
+	// Check for empty file content
+	if len(data) == 0 {
+		// Use canonical error (assuming WrapMappingFileEmpty exists or needs creation)
+		return nil, WrapMappingFileEmpty(path)
+	}
+
 	// --- PARSING LOGIC adopted from previous implementation ---
 	// Unmarshal into a temporary map first, as the input format is map[string]string
 	var rawMappings map[string]string

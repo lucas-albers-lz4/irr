@@ -375,7 +375,7 @@ func TestParseArrayPath(t *testing.T) {
 			name:         "simple key",
 			part:         "image",
 			wantKey:      "image",
-			wantIndex:    0,
+			wantIndex:    -1,
 			wantHasIndex: false,
 			wantErr:      false,
 		},

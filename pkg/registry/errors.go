@@ -31,6 +31,9 @@ var (
 
 	// ErrNoTargetMapping is returned when no mapping exists for the specified source registry.
 	ErrNoTargetMapping = errors.New("no target registry mapping found for source registry")
+
+	// ErrMappingFileEmpty is returned when the mappings file is empty.
+	ErrMappingFileEmpty = errors.New("mappings file is empty")
 )
 
 // WrapMappingPathNotInWD wraps ErrMappingPathNotInWD with the given path for context.
@@ -56,6 +59,11 @@ func WrapMappingFileRead(path string, err error) error {
 // WrapMappingFileParse wraps ErrMappingFileParse with the given path and original error for context.
 func WrapMappingFileParse(path string, err error) error {
 	return fmt.Errorf("%w: %s: %w", ErrMappingFileParse, path, err)
+}
+
+// WrapMappingFileEmpty wraps ErrMappingFileEmpty with the given path for context.
+func WrapMappingFileEmpty(path string) error {
+	return fmt.Errorf("%w: %s", ErrMappingFileEmpty, path)
 }
 
 // WrapNoTargetMapping wraps ErrNoTargetMapping with the given source registry for context.

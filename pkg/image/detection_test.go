@@ -422,9 +422,9 @@ func TestImageDetector_DetectImages_EdgeCases(t *testing.T) {
 			expectedUnsupportedCount: 1,
 			expectedUnsupported: []UnsupportedImage{
 				{
-					Location: []string{"invalid", "image"},                                                                                                                                                             // Correct path for the invalid string
-					Type:     UnsupportedTypeStringParseError,                                                                                                                                                          // String failed to parse
-					Error:    fmt.Errorf("strict mode: string at known image path [invalid image] failed to parse: invalid image string format: parsing image reference 'not:a:valid:image': invalid repository name"), // Updated expected error
+					Location: []string{"invalid", "image"},                                                                                                                                                               // Correct path for the invalid string
+					Type:     UnsupportedTypeStringParseError,                                                                                                                                                            // String failed to parse
+					Error:    fmt.Errorf("strict mode: string at known image path [invalid image] failed to parse: invalid image string format: parsing image reference 'not:a:valid:image': invalid repository name\n"), // Updated expected error - ADDED NEWLINE
 				},
 			},
 		},

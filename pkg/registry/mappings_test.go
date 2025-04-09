@@ -105,7 +105,7 @@ func TestLoadMappings(t *testing.T) {
 			name:          "invalid path traversal",
 			path:          "../../../etc/passwd", // Example invalid path
 			wantErr:       true,
-			errorContains: "mappings file does not exist",
+			errorContains: "path must be within the current working directory tree",
 		},
 		{
 			name: "empty path",

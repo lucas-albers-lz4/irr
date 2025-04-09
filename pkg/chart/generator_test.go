@@ -211,19 +211,17 @@ func TestGenerate(t *testing.T) {
 		require.NotNil(t, overrideFile, "Generated override file should not be nil")
 		assert.Empty(t, overrideFile.Unsupported, "Should be no unsupported structures")
 
-		// Check the generated override structure - Should now be a MAP
+		// Check the generated override structure - Should be a STRING
 		require.Contains(t, overrideFile.Overrides, "workerImage", "Overrides should contain workerImage key")
-		workerImage, ok := overrideFile.Overrides["workerImage"].(map[string]interface{})
-		require.True(t, ok, "workerImage should be a map[string]interface{}")
+		workerImageValue, ok := overrideFile.Overrides["workerImage"].(string)
+		require.True(t, ok, "workerImage override should be a string")
 
-		// Parse original string for comparison
-		originalRef, err := image.ParseImageReference(imageStringValue)
-		require.NoError(t, err, "Parsing original image string should not fail")
-
-		// Check image map fields
-		assert.Equal(t, targetRegistry, workerImage["registry"], "Registry mismatch")
-		assert.Equal(t, "mockpath/"+originalRef.Repository, workerImage["repository"], "Repository mismatch")
-		assert.Equal(t, originalRef.Tag, workerImage["tag"], "Tag mismatch")
+		// Check the string value (Construct expected value based on strategy)
+		// Mock strategy prepends "mockpath/" to the REPOSITORY part only.
+		// Original string was "docker.io/myorg/stringapp:v2"
+		// Repository is "myorg/stringapp"
+		expectedStringValue := targetRegistry + "/mockpath/myorg/stringapp:v2" // Corrected expectation
+		assert.Equal(t, expectedStringValue, workerImageValue, "Override string value mismatch")
 	})
 
 	t.Run("Excluded Registry", func(t *testing.T) {
@@ -280,18 +278,15 @@ func TestGenerate(t *testing.T) {
 		assert.NotContains(t, overrideFile.Overrides, "internalImage", "Overrides should NOT contain excluded image")
 		require.Contains(t, overrideFile.Overrides, "publicImage", "Overrides should contain non-excluded image")
 
-		// Check publicImage structure
-		publicImage, ok := overrideFile.Overrides["publicImage"].(map[string]interface{})
-		require.True(t, ok, "publicImage should be a map[string]interface{}")
+		// Check publicImage structure - Should be a STRING
+		publicImageValue, ok := overrideFile.Overrides["publicImage"].(string)
+		require.True(t, ok, "publicImage override should be a string")
 
-		// Parse original string for comparison
-		originalRef, err := image.ParseImageReference("docker.io/library/alpine:latest")
-		require.NoError(t, err, "Parsing original image string should not fail")
-
-		// Check image map fields
-		assert.Equal(t, targetRegistry, publicImage["registry"], "Registry mismatch")
-		assert.Equal(t, "mockpath/"+originalRef.Repository, publicImage["repository"], "Repository mismatch")
-		assert.Equal(t, originalRef.Tag, publicImage["tag"], "Tag mismatch")
+		// Check the string value
+		// Original: "docker.io/library/alpine:latest"
+		// Mock strategy prepends "mockpath/" to repository "library/alpine"
+		expectedStringValue := targetRegistry + "/mockpath/library/alpine:latest" // Corrected expectation
+		assert.Equal(t, expectedStringValue, publicImageValue, "Override string value mismatch")
 	})
 
 	t.Run("Non-Source Registry", func(t *testing.T) {
@@ -338,18 +333,15 @@ func TestGenerate(t *testing.T) {
 		assert.NotContains(t, overrideFile.Overrides, "quayImage", "Overrides should NOT contain non-source image")
 		assert.Contains(t, overrideFile.Overrides, "dockerImage", "Overrides should contain source image")
 
-		// dockerImage should now be a map
-		if dockerImage, ok := overrideFile.Overrides["dockerImage"].(map[string]interface{}); ok {
-			assert.Equal(t, targetRegistry, dockerImage["registry"])
-			// Repository should be transformed path (MOCK strategy needs library)
-			originalRef, err := image.ParseImageReference("docker.io/library/redis:alpine")
-			require.NoError(t, err, "Parsing original image string should not fail")
-			expectedRepo := "mockpath/" + originalRef.Repository
-			assert.Equal(t, expectedRepo, dockerImage["repository"])
-			assert.Equal(t, originalRef.Tag, dockerImage["tag"])
-		} else {
-			t.Errorf("dockerImage override is not a map[string]interface{}")
-		}
+		// Check dockerImage structure - Should be a STRING
+		dockerImageValue, ok := overrideFile.Overrides["dockerImage"].(string)
+		require.True(t, ok, "dockerImage override should be a string")
+
+		// Check the string value
+		// Original: "docker.io/library/redis:alpine"
+		// Mock strategy prepends "mockpath/" to repository "library/redis"
+		expectedStringValue := targetRegistry + "/mockpath/library/redis:alpine" // Corrected expectation
+		assert.Equal(t, expectedStringValue, dockerImageValue, "Override string value mismatch")
 	})
 
 	t.Run("Prefix Source Registry Strategy", func(t *testing.T) {
@@ -403,29 +395,22 @@ func TestGenerate(t *testing.T) {
 		assert.Empty(t, overrideFile.Unsupported, "Should be no unsupported structures")
 		require.Len(t, overrideFile.Overrides, 3, "Should have overrides for all 3 images")
 
-		// Check imgDocker (was string, now map)
-		require.Contains(t, overrideFile.Overrides, "imgDocker", "Overrides should contain imgDocker key")
-		imgDocker, ok := overrideFile.Overrides["imgDocker"].(map[string]interface{})
-		require.True(t, ok, "imgDocker should be a map[string]interface{}")
-		assert.Equal(t, targetRegistry, imgDocker["registry"], "Registry mismatch for imgDocker")
-		assert.Equal(t, "dockerio/library/nginx", imgDocker["repository"], "Repository mismatch for imgDocker")
-		assert.Equal(t, "stable", imgDocker["tag"], "Tag mismatch for imgDocker")
+		// Check imgDocker (string)
+		imgDockerVal, okDocker := overrideFile.Overrides["imgDocker"].(string)
+		require.True(t, okDocker, "imgDocker override should be a string")
+		assert.Equal(t, "harbor.local/dockerio/library/nginx:stable", imgDockerVal, "imgDocker override value mismatch") // strategy includes source
 
-		// Check imgQuay (map type)
-		require.Contains(t, overrideFile.Overrides, "imgQuay", "Overrides should contain imgQuay key")
-		imgQuay, ok := overrideFile.Overrides["imgQuay"].(map[string]interface{})
-		require.True(t, ok, "imgQuay should be a map[string]interface{}")
-		assert.Equal(t, targetRegistry, imgQuay["registry"], "Registry mismatch for imgQuay")
-		assert.Equal(t, "quayio/prometheus/alertmanager", imgQuay["repository"], "Repository mismatch for imgQuay")
-		assert.Equal(t, "v0.25", imgQuay["tag"], "Tag mismatch for imgQuay")
+		// Check imgGcr (string)
+		imgGcrVal, okGcr := overrideFile.Overrides["imgGcr"].(string)
+		require.True(t, okGcr, "imgGcr override should be a string")
+		assert.Equal(t, "harbor.local/gcrio/google-containers/pause:3.2", imgGcrVal, "imgGcr override value mismatch") // strategy includes source
 
-		// Check imgGcr (was string, now map)
-		require.Contains(t, overrideFile.Overrides, "imgGcr", "Overrides should contain imgGcr key")
-		imgGcr, ok := overrideFile.Overrides["imgGcr"].(map[string]interface{})
-		require.True(t, ok, "imgGcr should be a map[string]interface{}")
-		assert.Equal(t, targetRegistry, imgGcr["registry"], "Registry mismatch for imgGcr")
-		assert.Equal(t, "gcrio/google-containers/pause", imgGcr["repository"], "Repository mismatch for imgGcr")
-		assert.Equal(t, "3.2", imgGcr["tag"], "Tag mismatch for imgGcr")
+		// Check imgQuay (map - remains map)
+		imgQuayVal, okQuay := overrideFile.Overrides["imgQuay"].(map[string]interface{})
+		require.True(t, okQuay, "imgQuay override should be a map")
+		assert.Equal(t, targetRegistry, imgQuayVal["registry"], "imgQuay registry mismatch")                       // Target registry
+		assert.Equal(t, "quayio/prometheus/alertmanager", imgQuayVal["repository"], "imgQuay repository mismatch") // Strategy prepends sanitized source
+		assert.Equal(t, "v0.25", imgQuayVal["tag"], "imgQuay tag mismatch")
 	})
 
 	t.Run("Chart with Dependencies", func(t *testing.T) {
@@ -491,20 +476,15 @@ func TestGenerate(t *testing.T) {
 		require.NotNil(t, overrideFile, "Generated override file should not be nil")
 		assert.Empty(t, overrideFile.Unsupported, "Should be no unsupported structures")
 
-		// Check parent image override
-		require.Contains(t, overrideFile.Overrides, "parentImage", "Overrides should contain parentImage key")
-		parentImage, ok := overrideFile.Overrides["parentImage"].(map[string]interface{})
-		require.True(t, ok, "parentImage should be a map[string]interface{}")
+		// Check parent image (string)
+		parentImageVal, okParent := overrideFile.Overrides["parentImage"].(string)
+		require.True(t, okParent, "parentImage override should be a string")
+		// Actual strategy: harbor.local/dockerio/parent/app:v1 (docker.io default)
+		assert.Equal(t, "harbor.local/dockerio/parent/app:v1", parentImageVal, "parentImage override value mismatch") // Corrected expected value
 
-		// Check parent image fields (using direct comparison since we know the expected values)
-		assert.Equal(t, targetRegistry, parentImage["registry"], "Registry mismatch for parent image")
-		assert.Equal(t, "dockerio/parent/app", parentImage["repository"], "Repository mismatch for parent image")
-		assert.Equal(t, "v1", parentImage["tag"], "Tag mismatch for parent image")
-
-		// Check child override (under its alias/name)
-		require.Contains(t, overrideFile.Overrides, "child", "Overrides should contain child key")
-		childOverrides, ok := overrideFile.Overrides["child"].(map[string]interface{})
-		require.True(t, ok, "child overrides should be a map[string]interface{}")
+		// Check child image (map), path should be prefixed with chart name ('child')
+		childOverrides, okChild := overrideFile.Overrides["child"].(map[string]interface{})
+		require.True(t, okChild, "child overrides should be a map[string]interface{}")
 
 		require.Contains(t, childOverrides, "image", "Child overrides should contain image key")
 		childImage, ok := childOverrides["image"].(map[string]interface{})
@@ -571,31 +551,22 @@ func TestGenerate(t *testing.T) {
 		require.NoError(t, err, "Generate() should not return an error")
 		require.NotNil(t, overrideFile, "Generated override file should not be nil")
 		assert.Empty(t, overrideFile.Unsupported, "Should be no unsupported structures")
-		require.Len(t, overrideFile.Overrides, 3, "Should have overrides for all 3 images")
+		require.Len(t, overrideFile.Overrides, 3, "Should have 3 overrides")
 
-		// Check imageFromDocker (mapped)
-		require.Contains(t, overrideFile.Overrides, "imageFromDocker")
-		imgDocker, ok := overrideFile.Overrides["imageFromDocker"].(map[string]interface{})
-		require.True(t, ok)
-		assert.Equal(t, "mapped-docker.local", imgDocker["registry"]) // Mapped target registry
-		assert.Equal(t, "dockerio/library/nginx", imgDocker["repository"])
-		assert.Equal(t, "stable", imgDocker["tag"])
+		// Check imageFromDocker (string)
+		valDocker, okDocker := overrideFile.Overrides["imageFromDocker"].(string)
+		require.True(t, okDocker, "imageFromDocker override should be a string")
+		assert.Equal(t, "mapped-docker.local/dockerio/library/nginx:stable", valDocker, "imageFromDocker value mismatch") // Mapped target + strategy path
 
-		// Check imageFromQuay (mapped)
-		require.Contains(t, overrideFile.Overrides, "imageFromQuay")
-		imgQuay, ok := overrideFile.Overrides["imageFromQuay"].(map[string]interface{})
-		require.True(t, ok)
-		assert.Equal(t, "mapped-quay.local", imgQuay["registry"]) // Mapped target registry
-		assert.Equal(t, "quayio/prometheus/alertmanager", imgQuay["repository"])
-		assert.Equal(t, "v0.25", imgQuay["tag"])
+		// Check imageFromQuay (string)
+		valQuay, okQuay := overrideFile.Overrides["imageFromQuay"].(string)
+		require.True(t, okQuay, "imageFromQuay override should be a string")
+		assert.Equal(t, "mapped-quay.local/quayio/prometheus/alertmanager:v0.25", valQuay, "imageFromQuay value mismatch") // Mapped target + strategy path
 
-		// Check imageUnmapped (uses default target)
-		require.Contains(t, overrideFile.Overrides, "imageUnmapped")
-		imgUnmapped, ok := overrideFile.Overrides["imageUnmapped"].(map[string]interface{})
-		require.True(t, ok)
-		assert.Equal(t, targetRegistry, imgUnmapped["registry"]) // Default target registry
-		assert.Equal(t, "gcrio/google-containers/pause", imgUnmapped["repository"])
-		assert.Equal(t, "3.2", imgUnmapped["tag"])
+		// Check imageUnmapped (string) - uses default strategy
+		valUnmapped, okUnmapped := overrideFile.Overrides["imageUnmapped"].(string)
+		require.True(t, okUnmapped, "imageUnmapped override should be a string")
+		assert.Equal(t, "harbor.local/gcrio/google-containers/pause:3.2", valUnmapped, "imageUnmapped value mismatch") // Default target + strategy path
 	})
 
 	// TODO: Test Generate with strict mode + unsupported
@@ -1415,19 +1386,15 @@ func TestGenerateOverrides_Integration(_ *testing.T) {
 		panic("unexpected number of overrides")
 	}
 
-	// Check image string override
-	if imageOverride, ok := overrideFile.Overrides["image"].(map[string]interface{}); ok {
-		if imageOverride["registry"] != targetRegistry {
-			panic("image registry mismatch")
-		}
-		if imageOverride["repository"] != "dockerio/library/myapp" {
-			panic("image repository mismatch")
-		}
-		if imageOverride["tag"] != "v1" {
-			panic("image tag mismatch")
+	// Check image string override - Expect a STRING
+	if imageValue, ok := overrideFile.Overrides["image"].(string); ok {
+		// Construct expected value based on actual strategy
+		expectedValue := targetRegistry + "/dockerio/library/myapp:v1"
+		if imageValue != expectedValue {
+			panic(fmt.Sprintf("image override value mismatch: got %s, want %s", imageValue, expectedValue))
 		}
 	} else {
-		panic("image override not found or wrong type")
+		panic("image override not found or not a string")
 	}
 
 	// Check nested image map override

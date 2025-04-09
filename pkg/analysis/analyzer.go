@@ -3,6 +3,7 @@ package analysis
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/lalbers/irr/pkg/debug"
@@ -131,12 +132,16 @@ func (a *Analyzer) normalizeImageValues(val map[string]interface{}) (registry, r
 
 // analyzeValues recursively analyzes values to find image patterns
 func (a *Analyzer) analyzeValues(values map[string]interface{}, prefix string, analysis *ChartAnalysis) error {
+	debug.Printf("[analyzeValues ENTER] Prefix: '%s', Map Keys: %v", prefix, reflect.ValueOf(values).MapKeys()) // Log map keys
+	defer debug.Printf("[analyzeValues EXIT] Prefix: '%s'", prefix)
+
 	for k, v := range values {
 		path := k
 		if prefix != "" {
 			path = prefix + "." + k
 		}
 
+		debug.Printf("[analyzeValues LOOP] Path: '%s', Type: %T", path, v)
 		if err := a.analyzeSingleValue(k, v, path, analysis); err != nil {
 			// If analyzing a single value fails, wrap the error with context
 			return fmt.Errorf("error analyzing path '%s': %w", path, err)
@@ -157,6 +162,9 @@ func (a *Analyzer) analyzeValues(values map[string]interface{}, prefix string, a
 
 // analyzeSingleValue analyzes a single key-value pair based on the value type.
 func (a *Analyzer) analyzeSingleValue(key string, value interface{}, path string, analysis *ChartAnalysis) error {
+	debug.Printf("[analyzeSingleValue ENTER] Path: '%s', Type: %T", path, value)
+	defer debug.Printf("[analyzeSingleValue EXIT] Path: '%s', ImagePatterns Count: %d", path, len(analysis.ImagePatterns))
+
 	switch val := value.(type) {
 	case map[string]interface{}:
 		return a.analyzeMapValue(val, path, analysis)
@@ -172,8 +180,13 @@ func (a *Analyzer) analyzeSingleValue(key string, value interface{}, path string
 
 // analyzeMapValue handles analysis when the value is a map.
 func (a *Analyzer) analyzeMapValue(val map[string]interface{}, path string, analysis *ChartAnalysis) error {
+	debug.Printf("[analyzeMapValue ENTER] Path: '%s'", path)
+	defer debug.Printf("[analyzeMapValue EXIT] Path: '%s', ImagePatterns Count: %d", path, len(analysis.ImagePatterns))
+
 	// Check if this is an image map pattern
-	if a.isImageMap(val) {
+	isMap := a.isImageMap(val)
+	debug.Printf("[analyzeMapValue] Path: '%s', isImageMap result: %v", path, isMap)
+	if isMap {
 		registry, repository, tag := a.normalizeImageValues(val)
 		if repository != "" { // Only repository is required for a valid image pattern
 			pattern := ImagePattern{
@@ -188,6 +201,7 @@ func (a *Analyzer) analyzeMapValue(val map[string]interface{}, path string, anal
 				Count: 1,
 			}
 			analysis.ImagePatterns = append(analysis.ImagePatterns, pattern)
+			debug.Printf("[analyzeMapValue IMAGE APPEND] Path: '%s', Value: '%s'", pattern.Path, pattern.Value)
 		}
 		// Important: If it IS an image map, we *don't* recurse further into it.
 	} else {
@@ -199,21 +213,31 @@ func (a *Analyzer) analyzeMapValue(val map[string]interface{}, path string, anal
 
 // analyzeStringValue checks a string value for potential image references
 func (a *Analyzer) analyzeStringValue(key, val, path string, analysis *ChartAnalysis) error {
-	// Use image package's parser logic to check validity
-	_, err := image.ParseImageReference(val)
-	if err != nil {
-		// If it doesn't parse, it's likely not an image string
-		debug.Printf("String at path '%s' did not parse as image: %v", path, err)
+	debug.Printf("[analyzeStringValue ENTER] Path: '%s', Value: '%s'", path, val)
+	defer debug.Printf("[analyzeStringValue EXIT] Path: '%s', ImagePatterns Count: %d", path, len(analysis.ImagePatterns))
+
+	// Check using both the heuristic and the strict parser
+	// Heuristic checks key context AND basic format
+	// Parser checks strict format validity
+	isHeuristicMatch := a.isImageString(key, val)
+	_, parseErr := image.ParseImageReference(val)
+	debug.Printf("[analyzeStringValue] Path: '%s', isHeuristicMatch: %v, Parse err: %v", path, isHeuristicMatch, parseErr)
+
+	// Only consider it an image pattern if it passes both checks
+	if !isHeuristicMatch || parseErr != nil {
+		debug.Printf("String at path '%s' does not qualify as image pattern (Heuristic: %v, ParseErr: %v)", path, isHeuristicMatch, parseErr)
 		return nil // Not considered an error for analysis
 	}
 
-	// If it parsed, add it to found patterns
-	analysis.ImagePatterns = append(analysis.ImagePatterns, ImagePattern{
+	// If it parsed AND matched heuristic, add it to found patterns
+	pattern := ImagePattern{
 		Path:  path,
 		Type:  PatternTypeString,
 		Value: val,
 		Count: 1, // Count is always 1 for string patterns initially
-	})
+	}
+	analysis.ImagePatterns = append(analysis.ImagePatterns, pattern)
+	debug.Printf("[analyzeStringValue IMAGE APPEND] Path: '%s', Value: '%s'", pattern.Path, pattern.Value)
 
 	// We don't need to explicitly track sources here, as they are implicitly
 	// part of the ImagePatterns recorded.
