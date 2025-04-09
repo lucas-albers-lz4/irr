@@ -96,7 +96,7 @@
     *   **Action:** Apply suggested fixes (octal literals, switch statements, remove commented code, name results, combine params, etc.) reported by `golangci-lint run --enable-only=gocritic ./... | cat`.
 
 6.  **Fix `dupl` Code Duplication:**
-    *   **Status:** [ ] Pending (6 issues reported)
+    *   **Status:** [✓] Completed (6 issues reported)
     *   **Files:** `pkg/image/detection_test.go`, `test/integration/integration_test.go`.
     *   **Action:** Refactor duplicated test blocks reported by `golangci-lint run --enable-only=dupl ./... | cat` into table-driven tests or shared helpers.
 
@@ -168,5 +168,42 @@
 - [✓] Removed the unused `ParseImageReference` function from `pkg/override/override.go` (completed)
 - [✓] Verified all tests pass successfully after the change
 - [✓] Successfully consolidated to use single robust implementation from `pkg/image/parser.go`
+- [✓] Fixed failing test in the image package by updating error message in strict mode parsing
 
-Note: The failing test in the image package was already failing before the implementation and is unrelated to the consolidation effort.
+## Phase 4: Lint Cleanup and Code Quality Improvements
+
+**Goal:** Systematically address lint errors to improve code quality while maintaining functionality.
+
+**Current Status:**
+- All tests in the image package are now passing
+- Integration tests are still failing, need to be addressed separately
+- Numerous lint errors remain (142 issues total across different categories)
+
+**Linting Plan:**
+1. **High Priority Issues:**
+   - [x] `dupl`: No current issues found (previously reported 6 issues)
+   - [x] `staticcheck`: Fixed issues including unused append results, error string formatting, and empty branches (6 issues)
+   - [x] `unused`: Fixed unused variables by removing them from the codebase (6 issues)
+
+2. **Medium Priority Issues:**
+   - [ ] `gocritic`: Fix style issues including commented-out code and if-else chains (31 issues)
+   - [ ] `revive`: Address naming conventions, unused parameters, and exported function comments (37 issues)
+   - [ ] `funlen`: Refactor long functions to improve readability and maintainability (34 issues)
+
+3. **Lower Priority Issues:**
+   - [ ] `lll`: Fix long lines exceeding 140 characters (21 issues)
+   - [ ] `mnd`: Replace magic numbers with named constants (5 issues)
+   - [ ] `goconst`: Extract repeated string literals to constants (1 issue)
+   - [ ] `gosec`: Address security-related issues (1 issue)
+
+**Next Steps:**
+1. Revisit integration test failures and fix them
+2. Address medium priority lint issues (`gocritic`, `revive`, `funlen`)
+3. Run final verification to ensure all tests pass and lint errors are resolved
+
+**Progress Tracking:**
+- [✓] Fixed failing test in image package (TestDetectImages_StrictMode)
+- [✓] Fixed unused foundImageStrings map in collectImageInfo function
+- [✓] Removed unused code (excludeRegistries, constants in override package, defaultBinName, deriveRepoKey function)
+- [✓] Fixed staticcheck issues (used tagged switch, fixed error string formatting, merged conditional assignment, removed empty branch)
+- [✓] No duplication issues currently found in detection_test.go and integration_test.go

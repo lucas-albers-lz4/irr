@@ -134,10 +134,7 @@ docker.io: my-registry.example.com/docker-mirror`
 
 			// Determine if CWD restriction should be skipped for this test case.
 			// Only the 'invalid path traversal' test needs the check active (skip=false).
-			skipCheck := true
-			if tt.name == "invalid path traversal" {
-				skipCheck = false
-			}
+			skipCheck := tt.name != "invalid path traversal"
 
 			// Call the consolidated LoadMappings function with the test filesystem
 			got, err := LoadMappings(fs, tt.path, skipCheck)

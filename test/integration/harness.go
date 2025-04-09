@@ -25,7 +25,6 @@ import (
 // Constants
 const (
 	// defaultDirPerm = 0o750 // REMOVED UNUSED
-	defaultBinName = "irr"
 	// defaultFilePerm defines the default file permissions (rw-------)
 	defaultFilePerm = 0o600
 	// DefaultTargetRegistry is the registry used in tests when not specified.

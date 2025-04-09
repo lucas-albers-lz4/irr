@@ -11,15 +11,6 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-const (
-	// maxSplitTwo is used when splitting strings into at most two parts
-	maxSplitTwo = 2
-	// expectedDigestParts is the expected number of parts when splitting a digest reference
-	expectedDigestParts = 2
-	// expectedTagParts is the expected number of parts when splitting a tag reference
-	expectedTagParts = 2
-)
-
 // ImageLocation represents a location of an image in a Helm chart
 type ImageLocation struct {
 	Path              []string

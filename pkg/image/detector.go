@@ -105,7 +105,7 @@ func (d *Detector) processMapValue(v map[string]interface{}, path []string) ([]D
 		detected, unsupported, err := d.DetectImages(val, newPath)
 		if err != nil {
 			log.Errorf("Error processing path %v: %v\n", newPath, err)
-			return nil, nil, fmt.Errorf("error processing path %v: %w\n", newPath, err)
+			return nil, nil, fmt.Errorf("error processing path %v: %w", newPath, err)
 		}
 		detectedImages = append(detectedImages, detected...)
 		if len(unsupported) > 0 {
@@ -181,7 +181,7 @@ func (d *Detector) processSliceValue(v []interface{}, path []string) ([]Detected
 		detectedInItem, unsupportedInItem, err := d.DetectImages(item, itemPath)
 		if err != nil {
 			log.Errorf("Error processing slice item at path %s: %v\n", itemPath, err)
-			return nil, nil, fmt.Errorf("error processing slice item %d at path %s: %w\n", i, path, err)
+			return nil, nil, fmt.Errorf("error processing slice item %d at path %s: %w", i, path, err)
 		}
 		detectedImages = append(detectedImages, detectedInItem...)
 		if len(unsupportedInItem) > 0 {

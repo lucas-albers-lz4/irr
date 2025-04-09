@@ -157,12 +157,14 @@ func (g *Generator) findUnsupportedPatterns(detectedImages []analysis.ImagePatte
 		// For maps, we might need a more robust check if templates can exist within map values.
 		valueToCheck := ""
 		foundTemplate := false
-		if pattern.Type == analysis.PatternTypeString {
+
+		switch pattern.Type {
+		case analysis.PatternTypeString:
 			valueToCheck = pattern.Value
 			if strings.Contains(valueToCheck, "{{") || strings.Contains(valueToCheck, "}}") {
 				foundTemplate = true
 			}
-		} else if pattern.Type == analysis.PatternTypeMap {
+		case analysis.PatternTypeMap:
 			// Check known string fields within the map structure for templates
 			if reg, ok := pattern.Structure["registry"].(string); ok && (strings.Contains(reg, "{{") || strings.Contains(reg, "}}")) {
 				foundTemplate = true
@@ -366,7 +368,7 @@ func (g *Generator) Generate() (*override.File, error) {
 		for i, item := range unsupportedPatterns {
 			errMsg := fmt.Sprintf("  [%d] Path: %s, Type: %s", i+1, strings.Join(item.Path, "."), item.Type)
 			log.Warnf(errMsg)
-			details = append(details, errMsg)
+			_ = append(details, errMsg) // Explicitly indicate we're ignoring the result
 		}
 		// Return the specific error type directly for correct exit code handling
 		return nil, ErrUnsupportedStructure

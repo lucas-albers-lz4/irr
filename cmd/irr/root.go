@@ -38,8 +38,7 @@ var (
 	// knownPaths      []string
 
 	// Output and mode flags
-	excludeRegistries []string
-	registryFile      string
+	registryFile string
 
 	// Behavior flags
 	verbose    bool

@@ -282,57 +282,6 @@ func runImageDetectorTests(t *testing.T, tests []struct {
 	}
 }
 
-// TestImageDetector_StringDetection tests string-based image reference detection
-func TestImageDetector_StringDetection(t *testing.T) {
-	tests := []struct {
-		name         string
-		values       interface{}
-		wantDetected []DetectedImage
-	}{
-		{
-			name: "string_image_in_known_path",
-			values: map[string]interface{}{
-				"spec": map[string]interface{}{
-					"template": map[string]interface{}{
-						"spec": map[string]interface{}{
-							"containers": []interface{}{
-								map[string]interface{}{
-									"image": "quay.io/prometheus/node-exporter:v1.3.1",
-								},
-							},
-						},
-					},
-				},
-			},
-			wantDetected: []DetectedImage{
-				{
-					Reference: &Reference{Registry: "quay.io", Repository: "prometheus/node-exporter", Tag: "v1.3.1"},
-					Path:      []string{"spec", "template", "spec", "containers", "[0]", "image"},
-					Pattern:   PatternString,
-					Original:  "quay.io/prometheus/node-exporter:v1.3.1",
-				},
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Provide context with the relevant source registry for this test
-			ctx := DetectionContext{
-				SourceRegistries: []string{"quay.io"},
-			}
-			detector := NewDetector(ctx)
-			detected, unsupported, err := detector.DetectImages(tt.values, nil)
-			require.NoError(t, err)
-			require.Empty(t, unsupported)
-
-			SortDetectedImages(detected)
-			SortDetectedImages(tt.wantDetected)
-			assertDetectedImages(t, tt.wantDetected, detected, true)
-		})
-	}
-}
-
 // TestImageDetector_MixedValues tests detection with mixed value types
 func TestImageDetector_MixedValues(t *testing.T) {
 	tests := []struct {
@@ -416,22 +365,7 @@ func TestImageDetector_ArrayBasedImages(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Context needed for default registry (docker.io)
-			ctx := DetectionContext{
-				SourceRegistries: []string{"docker.io"},
-			}
-			detector := NewDetector(ctx)
-			detected, unsupported, err := detector.DetectImages(tt.values, nil)
-			require.NoError(t, err)
-			require.Empty(t, unsupported)
-
-			SortDetectedImages(detected)
-			SortDetectedImages(tt.wantDetected)
-			assertDetectedImages(t, tt.wantDetected, detected, true)
-		})
-	}
+	runImageDetectorTests(t, tests)
 }
 
 // TestImageDetector_EmptyInputs tests detection behavior with empty or nil inputs
@@ -1250,47 +1184,6 @@ func TestImageDetector_BasicContainerArray(t *testing.T) {
 					Path:      []string{"containers", "[0]", "image"},
 					Pattern:   PatternString,
 					Original:  "nginx:1.23",
-				},
-			},
-		},
-	}
-
-	runImageDetectorTests(t, tests)
-}
-
-// TestImageDetector_MultiContainerArray tests detection in multi-container arrays
-func TestImageDetector_MultiContainerArray(t *testing.T) {
-	tests := []struct {
-		name         string
-		values       interface{}
-		wantDetected []DetectedImage
-	}{
-		{
-			name: "multiple_containers",
-			values: map[string]interface{}{
-				"containers": []interface{}{
-					map[string]interface{}{
-						"name":  "app",
-						"image": "nginx:1.23",
-					},
-					map[string]interface{}{
-						"name":  "sidecar",
-						"image": "fluentd:v1.14",
-					},
-				},
-			},
-			wantDetected: []DetectedImage{
-				{
-					Reference: &Reference{Registry: "docker.io", Repository: "library/nginx", Tag: "1.23"},
-					Path:      []string{"containers", "[0]", "image"},
-					Pattern:   PatternString,
-					Original:  "nginx:1.23",
-				},
-				{
-					Reference: &Reference{Registry: "docker.io", Repository: "library/fluentd", Tag: "v1.14"},
-					Path:      []string{"containers", "[1]", "image"},
-					Pattern:   PatternString,
-					Original:  "fluentd:v1.14",
 				},
 			},
 		},

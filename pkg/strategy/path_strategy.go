@@ -76,8 +76,6 @@ func (s *PrefixSourceRegistryStrategy) GeneratePath(originalRef *image.Reference
 			// This handles cases like "quay.io/prometheus/node-exporter"
 			debug.Printf("PrefixSourceRegistryStrategy: Stripping potential registry prefix '%s' from repository path '%s'", repoPathParts[0], originalRef.Repository)
 			baseRepoPath = strings.Join(repoPathParts[1:], "/")
-		} else {
-			// Assume no registry prefix in repository path
 		}
 	}
 	debug.Printf("PrefixSourceRegistryStrategy: Using base repository path: %s", baseRepoPath)
