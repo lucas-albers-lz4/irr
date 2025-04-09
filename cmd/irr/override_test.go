@@ -491,7 +491,8 @@ func TestOverrideCommand_Success(t *testing.T) {
 	testFile := filepath.Join(chartDir, "test-direct.txt")
 	err := afero.WriteFile(AppFs, testFile, testContent, 0644)
 	require.NoError(t, err)
-	exists, _ := afero.Exists(fs, testFile)
+	exists, err := afero.Exists(fs, testFile)
+	require.NoError(t, err, "Failed to check if test file exists")
 	assert.True(t, exists, "Direct file write test failed")
 
 	// Execute the command

@@ -48,10 +48,12 @@ func setupMemoryFSContext(t *testing.T) (afero.Fs, string, func()) {
 	originalDebug := os.Getenv("DEBUG")
 
 	// Set up test environment
-	os.Setenv("DEBUG", "1")
+	err := os.Setenv("DEBUG", "1")
+	require.NoError(t, err, "Failed to set DEBUG environment variable")
+
 	fs := afero.NewMemMapFs()
 	chartDir := "/test/chart"
-	err := fs.MkdirAll(chartDir, 0o755)
+	err = fs.MkdirAll(chartDir, 0o755)
 	require.NoError(t, err, "Failed to create test chart directory")
 
 	// Replace global AppFs
@@ -61,7 +63,10 @@ func setupMemoryFSContext(t *testing.T) (afero.Fs, string, func()) {
 	cleanup := func() {
 		// Restore original state
 		AppFs = originalFS
-		os.Setenv("DEBUG", originalDebug)
+		err := os.Setenv("DEBUG", originalDebug)
+		if err != nil {
+			t.Logf("Warning: Failed to restore DEBUG environment variable: %v", err)
+		}
 	}
 
 	return fs, chartDir, cleanup

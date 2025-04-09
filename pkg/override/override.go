@@ -27,61 +27,6 @@ type ImageLocation struct {
 	OriginalReference string
 }
 
-// ImageReference represents a parsed container image reference
-type ImageReference struct {
-	Registry   string
-	Repository string
-	Tag        string
-	Digest     string
-}
-
-// ParseImageReference parses an image reference string into its components
-func ParseImageReference(ref string) (*ImageReference, error) {
-	if ref == "" {
-		return nil, fmt.Errorf("empty image reference")
-	}
-
-	// Split registry/repository
-	parts := strings.SplitN(ref, "/", maxSplitTwo)
-
-	// Check for digest
-	if digestParts := strings.SplitN(ref, "@", expectedDigestParts); len(digestParts) == expectedDigestParts {
-		// Handle digest case
-		return nil, fmt.Errorf("digest references not supported yet")
-	}
-
-	// Check for tag
-	if tagParts := strings.SplitN(ref, ":", expectedTagParts); len(tagParts) == expectedTagParts {
-		// Handle tag case
-		return nil, fmt.Errorf("tag references not supported yet")
-	}
-
-	result := &ImageReference{}
-
-	// Split registry and rest
-	if len(parts) == 2 && strings.Contains(parts[0], ".") {
-		result.Registry = parts[0]
-		ref = parts[1]
-	} else {
-		ref = strings.Join(parts, "/")
-	}
-
-	// Handle digest
-	if digestParts := strings.SplitN(ref, "@", maxSplitTwo); len(digestParts) == maxSplitTwo {
-		ref = digestParts[0]
-		result.Digest = digestParts[1]
-	}
-
-	// Handle tag
-	if tagParts := strings.SplitN(ref, ":", maxSplitTwo); len(tagParts) == maxSplitTwo {
-		ref = tagParts[0]
-		result.Tag = tagParts[1]
-	}
-
-	result.Repository = ref
-	return result, nil
-}
-
 // ChartDependency represents a Helm chart dependency with optional alias
 type ChartDependency struct {
 	Name  string

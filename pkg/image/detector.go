@@ -11,6 +11,12 @@ import (
 	log "github.com/lalbers/irr/pkg/log"
 )
 
+// Add these error declarations at the top of the file, after the import section
+var (
+	// ErrNotImageString indicates that a string doesn't have the characteristics of an image reference
+	ErrNotImageString = errors.New("string does not appear to be an image reference")
+)
+
 // Detector handles the discovery of image references within chart values.
 //
 // NOTE: The accuracy of image detection heavily relies on the pkg/image/parser module.
@@ -254,7 +260,7 @@ func (d *Detector) processStringValueStrict(v string, path []string, isKnownImag
 		} else {
 			// Assume other errors are parsing errors
 			unsupportedType = UnsupportedTypeStringParseError
-			errMsg = fmt.Sprintf("strict mode: string at known image path %v failed to parse", path)
+			errMsg = fmt.Sprintf("strict mode: string at known image path %v was skipped (likely invalid format)", path)
 		}
 
 		unsupportedMatches = append(unsupportedMatches, UnsupportedImage{
@@ -519,20 +525,17 @@ func (d *Detector) tryExtractImageFromString(s string, path []string) (*Detected
 	defer debug.FunctionExit("tryExtractImageFromString")
 	debug.Printf("Path='%v', String='%s'", path, s)
 
-	// Check for template variables first
+	// Skip template variables in normal mode
 	if containsTemplate(s) {
-		debug.Printf("Template variable detected in string: '%s'", s)
-		// Always return the specific error if a template is found.
+		debug.Printf("[DEBUG irr DETECT STRING SKIP] Skipping template string: %s", s)
 		return nil, ErrTemplateVariableDetected
 	}
 
-	// Heuristic: If the string doesn't contain typical image separators, it's unlikely an image ref.
+	// Skip strings that don't look like image references
 	if !strings.ContainsAny(s, "/:@") {
 		debug.Printf("String '%s' lacks image separators (/ : @), skipping parse attempt.", s)
-		// Return nil, nil to silently skip in non-strict, allows strict checks later if needed.
-		// If strict mode required parsing *any* string at known paths, this logic would need adjustment,
-		// but current strict logic relies on isImagePath, so skipping non-image-like strings here is okay.
-		return nil, nil
+		// Return a sentinel error instead of nil, nil
+		return nil, ErrNotImageString
 	}
 
 	// DEBUG: Log input to ParseImageReference
