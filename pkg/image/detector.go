@@ -1,3 +1,4 @@
+// Package image provides core functionality for detecting and manipulating container image references within Helm charts.
 package image
 
 import (
@@ -10,7 +11,12 @@ import (
 	log "github.com/lalbers/irr/pkg/log"
 )
 
-// Detector provides methods for finding image references within complex data structures.
+// Detector handles the discovery of image references within chart values.
+//
+// NOTE: The accuracy of image detection heavily relies on the pkg/image/parser module.
+// Recent simplification of createImageReference did not resolve test failures, as the
+// root cause lies within the parser's handling of normalization and specific error cases.
+// See TODO.md Phase 3 for details on the parser issues.
 type Detector struct {
 	context *DetectionContext
 }
@@ -145,16 +151,14 @@ func (d *Detector) handleImageMap(detectedImage *DetectedImage, err error, path 
 		// This case is reached when tryExtractImageFromMap returns (nil, true, nil)
 		// e.g., empty repo in non-strict mode, or parse error in non-strict mode.
 		log.Warnf("Internal inconsistency or non-strict skip: handleImageMap called with isImage=true, err=nil, detectedImage=nil for path %v", path)
-		// Treat as an unsupported map error in strict mode.
-		if d.context.Strict {
-			unsupportedMatches = append(unsupportedMatches, UnsupportedImage{
-				Location: path,
-				Type:     UnsupportedTypeMapError, // Generic map error
-				Error:    fmt.Errorf("strict mode: inconsistent state or skipped map structure at path %v", path),
-			})
-		}
-		// Non-strict: This map structure was identified but failed validation/creation gracefully.
-		// It should not result in a detected image, so we return empty slices.
+		// Report this as an unsupported map structure, potentially due to parsing issues
+		// that were handled internally without returning an error up the chain.
+		unsupportedMatches = append(unsupportedMatches, UnsupportedImage{
+			Location: path,
+			Type:     UnsupportedTypeMapError, // Use a specific code if distinguishable, otherwise generic map error
+			Error:    fmt.Errorf("map structure at path %v resembled an image but resulted in a nil reference without explicit error", path),
+		})
+		// Do not return an error here, just report the unsupported structure.
 	}
 	return detectedImages, unsupportedMatches, nil
 }
@@ -329,48 +333,84 @@ func (d *Detector) validateMapStructure(m map[string]interface{}, path []string)
 		return "", "", "", "", false, nil
 	}
 
-	// Validate value types
-	repoValStr, repoIsStr := repoVal.(string)
-	if !repoIsStr {
-		debug.Printf("Path [%s] 'repository' value is not a string.\n", pathToString(path))
-		return "", "", "", "", false, nil
+	// Type assertions and handling templates
+	repoStr, repoIsString := repoVal.(string)
+	if !repoIsString {
+		// Allow non-string repo only if it looks like a template
+		if !containsTemplate(fmt.Sprintf("%v", repoVal)) {
+			return "", "", "", "", false, nil
+		}
+		// Treat as template, cannot determine if it's an image map
+		return "", "", "", "", false, ErrTemplateVariableDetected // Treat as potential template
+	}
+	if containsTemplate(repoStr) {
+		return "", "", "", "", false, ErrTemplateVariableDetected // Treat as potential template
 	}
 
-	// Convert other values to strings if present, ensuring correct type if key exists
-	regValStr := ""
+	// Process Registry (optional)
+	regStr := ""
 	if regOk {
-		if str, ok := regVal.(string); ok {
-			regValStr = str
-		} else {
-			// Key exists but value is not a string
-			debug.Printf("Path [%s] 'registry' value exists but is not a string.\n", pathToString(path))
-			return "", "", "", "", false, nil
+		var regIsString bool
+		regStr, regIsString = regVal.(string)
+		if !regIsString {
+			// It exists but isn't a string. Convert to string representation.
+			regStr = fmt.Sprintf("%v", regVal)
+			debug.Printf("[validateMapStructure] Converted non-string registry value at path %v to string: %q", path, regStr)
+			// Check again if the stringified version looks like a template
+			if containsTemplate(regStr) {
+				return "", "", "", "", false, ErrTemplateVariableDetected
+			}
+			// Allow non-string registry values to proceed; validation happens later.
+			// debug.Printf("[DETECTOR DEBUG tryExtractImageFromMap] Registry key exists but value is not a string at path %v", path)
+			// return "", "", "", "", false, nil // REMOVED: Too strict
+		} else if containsTemplate(regStr) { // Check original string if it was a string
+			return "", "", "", "", false, ErrTemplateVariableDetected // Treat as potential template
 		}
 	}
 
-	tagValStr := ""
+	// Process Tag (optional)
+	tagStr := ""
 	if tagOk {
-		if str, ok := tagVal.(string); ok {
-			tagValStr = str
-		} else {
-			// Key exists but value is not a string
-			debug.Printf("Path [%s] 'tag' value exists but is not a string.\n", pathToString(path))
-			return "", "", "", "", false, nil
+		var tagIsString bool
+		tagStr, tagIsString = tagVal.(string)
+		if !tagIsString {
+			// It exists but isn't a string. Convert to string representation.
+			tagStr = fmt.Sprintf("%v", tagVal)
+			debug.Printf("[validateMapStructure] Converted non-string tag value at path %v to string: %q", path, tagStr)
+			// Check again if the stringified version looks like a template
+			if containsTemplate(tagStr) {
+				return "", "", "", "", false, ErrTemplateVariableDetected
+			}
+			// Allow non-string tag values to proceed; validation happens later.
+			// debug.Printf("[DETECTOR DEBUG tryExtractImageFromMap] Tag key exists but value is not a string at path %v", path)
+			// return "", "", "", "", false, nil // REMOVED: Too strict
+		} else if containsTemplate(tagStr) { // Check original string if it was a string
+			return "", "", "", "", false, ErrTemplateVariableDetected // Treat as potential template
 		}
 	}
 
-	digestValStr := ""
+	// Process Digest (optional)
+	digestStr := ""
 	if digestOk {
-		if str, ok := digestVal.(string); ok {
-			digestValStr = str
-		} else {
-			// Key exists but value is not a string
-			debug.Printf("Path [%s] 'digest' value exists but is not a string.\n", pathToString(path))
-			return "", "", "", "", false, nil
+		var digestIsString bool
+		digestStr, digestIsString = digestVal.(string)
+		if !digestIsString {
+			// It exists but isn't a string. Convert to string representation.
+			digestStr = fmt.Sprintf("%v", digestVal)
+			debug.Printf("[validateMapStructure] Converted non-string digest value at path %v to string: %q", path, digestStr)
+			// Check again if the stringified version looks like a template
+			if containsTemplate(digestStr) {
+				return "", "", "", "", false, ErrTemplateVariableDetected
+			}
+			// Allow non-string digest values to proceed; validation happens later.
+			// debug.Printf("[DETECTOR DEBUG tryExtractImageFromMap] Digest key exists but value is not a string at path %v", path)
+			// return "", "", "", "", false, nil // REMOVED: Too strict
+		} else if containsTemplate(digestStr) { // Check original string if it was a string
+			return "", "", "", "", false, ErrTemplateVariableDetected // Treat as potential template
 		}
 	}
 
-	return repoValStr, regValStr, tagValStr, digestValStr, true, nil
+	return repoStr, regStr, tagStr, digestStr, true, nil
 }
 
 // checkForTemplates checks if any map values contain template expressions
@@ -395,11 +435,15 @@ func (d *Detector) checkForTemplates(repoStr, regStr, tagStr, digestStr string) 
 }
 
 // createImageReference attempts to create a valid image Reference object from components extracted from a map.
-// It constructs a candidate string and uses ParseImageReference for validation and normalization.
+// It prioritizes explicit fields (registry, tag, digest) over information potentially embedded in the repository string.
 func (d *Detector) createImageReference(repoStr, regStr, tagStr, digestStr string, path []string) (*Reference, error) {
-	debug.FunctionEnter("createImageReference")
-	defer debug.FunctionExit("createImageReference")
-	debug.Printf("Inputs: repo='%s', reg='%s', tag='%s', digest='%s', path=%v", repoStr, regStr, tagStr, digestStr, path)
+	debug.FunctionEnter("Detector.createImageReference")
+	debug.Printf("Path: %v, Repo: %q", path, repoStr)
+	debug.Printf("[DEBUG createImageReference] Inputs: Repo=%q, Reg=%q, Tag=%q, Digest=%q", repoStr, regStr, tagStr, digestStr)
+	if repoStr == "" {
+		debug.Printf("[DEBUG createImageReference] Repository string is empty.")
+		return nil, fmt.Errorf("repository field is mandatory but was empty at path %v", path)
+	}
 
 	// Basic validation: cannot have both tag and digest in the map structure itself.
 	if tagStr != "" && digestStr != "" {
@@ -461,9 +505,8 @@ func (d *Detector) createImageReference(repoStr, regStr, tagStr, digestStr strin
 // - bool: true if the map matches image structure (even if invalid), false otherwise
 // - error: Any validation errors encountered
 func (d *Detector) tryExtractImageFromMap(m map[string]interface{}, path []string) (*DetectedImage, bool, error) {
-	debug.FunctionEnter("tryExtractImageFromMap")
-	defer debug.FunctionExit("tryExtractImageFromMap")
-	debug.Printf("Path='%v', Map=%v", path, m)
+	debug.FunctionEnter("Detector.tryExtractImageFromMap")
+	debug.DumpValue("Input map", m)
 
 	// Validate basic structure
 	repoStr, regStr, tagStr, digestStr, isImageMap, err := d.validateMapStructure(m, path)
@@ -484,27 +527,34 @@ func (d *Detector) tryExtractImageFromMap(m map[string]interface{}, path []strin
 		return nil, true, nil
 	}
 
-	// Create and validate reference
-	ref, err := d.createImageReference(repoStr, regStr, tagStr, digestStr, path)
+	// 4. Construct the image reference using createImageReference
+	debug.Printf("[DEBUG tryExtractImageFromMap] Calling createImageReference with: Repo=%q, Reg=%q, Tag=%q, Digest=%q, Path=%v", repoStr, regStr, tagStr, digestStr, path)
+	imgRef, err := d.createImageReference(repoStr, regStr, tagStr, digestStr, path)
+
+	// Log the result of createImageReference
 	if err != nil {
-		if d.context.Strict {
-			return nil, true, err
-		}
-		return nil, true, nil
+		debug.Printf("[DEBUG tryExtractImageFromMap] createImageReference returned error: %v", err)
+	} else if imgRef == nil {
+		debug.Printf("[DEBUG tryExtractImageFromMap] createImageReference returned nil image ref and nil error")
+	} else {
+		debug.Printf("[DEBUG tryExtractImageFromMap] createImageReference returned image ref: %s", imgRef.String())
 	}
 
-	// Create DetectedImage
+	if err != nil {
+		// Propagate error from createImageReference (e.g., parse error)
+		debug.Printf("[DEBUG tryExtractImageFromMap] Returning error from createImageReference: %v", err)
+		// Return isImageMap=true because the structure *looked* like an image map, even if parsing failed.
+		// The error indicates the problem.
+		return nil, true, fmt.Errorf("map structure at path %v resembles an image, but failed validation: %w", path, err)
+	}
+
+	// 5. Construct and return the DetectedImage object if validation passes
 	detected := &DetectedImage{
-		Reference:      ref,
-		Path:           copyPath(path),
-		Pattern:        "map",
-		Original:       m,
-		OriginalFormat: "map",
+		Reference: imgRef,
+		Path:      path,
 	}
-
-	debug.Printf("[DETECTOR DEBUG tryExtractImageFromMap] Returning DetectedImage for path %v with OriginalFormat: '%s'", detected.Path, detected.OriginalFormat)
-	debug.DumpValue("[DETECTOR DEBUG tryExtractImageFromMap] DetectedImage Value", detected)
-
+	debug.Printf("[DEBUG tryExtractImageFromMap] Successfully detected map-based image. Returning: %+v", detected.Reference)
+	debug.FunctionExit("Detector.tryExtractImageFromMap (Returning image)")
 	return detected, true, nil
 }
 

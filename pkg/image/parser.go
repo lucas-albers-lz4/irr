@@ -15,9 +15,15 @@ const (
 	maxSplitTwo = 2
 )
 
-// ParseImageReference parses an image reference string into a structured Reference object.
-// It pre-normalizes common cases (short names) and then uses the
-// distribution/reference library for robust, spec-compliant parsing.
+// ParseImageReference attempts to parse a raw image string into a structured Reference.
+// It uses the distribution/reference library for the core parsing logic.
+//
+// NOTE: This function currently has known limitations (See TODO.md Phase 3):
+//   - It does not perform necessary pre-normalization (e.g., adding docker.io/library/, latest tag).
+//   - It does not perform post-processing (e.g., stripping :port from registry/domain).
+//   - These omissions cause failures in tests expecting normalized references or specific error types.
+//   - The underlying distribution/reference.ParseNamed function has stricter requirements than
+//     simple string splitting might imply (e.g., canonical repository names).
 func ParseImageReference(imageStr string) (*Reference, error) {
 	debug.FunctionEnter("ParseImageReference")
 	defer debug.FunctionExit("ParseImageReference")

@@ -25,7 +25,8 @@ type Mappings struct {
 }
 
 // LoadMappings loads registry mappings from a YAML file using the provided filesystem.
-func LoadMappings(fs afero.Fs, path string) (*Mappings, error) {
+// skipCWDRestriction allows bypassing the check that the path must be within the CWD tree.
+func LoadMappings(fs afero.Fs, path string, skipCWDRestriction bool) (*Mappings, error) {
 	if path == "" {
 		return nil, nil //nolint:nilnil // Intentional: Empty path means no mappings loaded, not an error.
 	}
@@ -40,8 +41,8 @@ func LoadMappings(fs afero.Fs, path string) (*Mappings, error) {
 		return nil, fmt.Errorf("failed to get working directory: %w", err)
 	}
 
-	// Only skip path traversal check if explicitly allowed in test
-	if os.Getenv("IRR_ALLOW_PATH_TRAVERSAL") != "true" {
+	// Only skip path traversal check if explicitly allowed in test or via parameter
+	if !skipCWDRestriction && os.Getenv("IRR_ALLOW_PATH_TRAVERSAL") != "true" {
 		if !strings.HasPrefix(absPath, wd) {
 			debug.Printf("Path traversal detected. Path: %s, WorkDir: %s", absPath, wd)
 			return nil, WrapMappingPathNotInWD(path)

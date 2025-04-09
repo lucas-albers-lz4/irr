@@ -206,15 +206,14 @@ func runOverride(cmd *cobra.Command, args []string) error {
 
 	// Load registry mappings
 	var mappings *registry.Mappings
+	var loadMappingsErr error
 	if registryFile != "" {
-		var loadMappingsErr error
-		mappings, loadMappingsErr = registry.LoadMappings(AppFs, registryFile)
+		mappings, loadMappingsErr = registry.LoadMappings(AppFs, registryFile, false)
 		if loadMappingsErr != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitInputConfigurationError,
-				Err:  fmt.Errorf("failed to load registry mappings from %s: %w", registryFile, loadMappingsErr),
-			}
+			debug.Printf("Failed to load mappings: %v", loadMappingsErr)
+			return fmt.Errorf("failed to load registry mappings from %s: %w", registryFile, loadMappingsErr)
 		}
+		debug.Printf("Successfully loaded %d mappings from %s", len(mappings.Entries), registryFile)
 	}
 
 	// Validate strategy

@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
+	"strconv"
 	"strings"
 
 	log "github.com/lalbers/irr/pkg/log"
@@ -194,12 +196,47 @@ It also supports linting image references for potential issues.`,
 		}
 
 		log.SetLevel(level)
-		debug.Enabled = debugEnabled // Set the package-level debug flag
+
+		// Set debug.Enabled based on --debug flag OR IRR_DEBUG env var
+		if cmd.Flags().Changed("debug") {
+			// If --debug flag was explicitly set, use its value
+			debug.Enabled = debugEnabled
+			debug.Printf("Debug logging explicitly set to %v by --debug flag.", debugEnabled)
+		} else {
+			// If --debug flag was not set, check IRR_DEBUG environment variable
+			debugEnv := os.Getenv("IRR_DEBUG")
+			if debugEnv != "" {
+				envEnabled, err := strconv.ParseBool(debugEnv)
+				if err == nil {
+					debug.Enabled = envEnabled
+					debug.Printf("Debug logging set to %v by IRR_DEBUG environment variable.", envEnabled)
+				} else {
+					// Keep default (false) if env var is invalid, maybe log warning?
+					debug.Enabled = false
+					log.Warnf("Invalid boolean value for IRR_DEBUG env var: %s. Debug logging disabled.", debugEnv)
+				}
+			} else {
+				// Default to false if neither flag nor env var is set
+				debug.Enabled = false
+			}
+		}
 
 		// Integration test mode check
 		if integrationTestMode {
 			log.Warnf("Integration test mode enabled.")
 			// Perform actions specific to integration test mode if needed
+		}
+
+		if registryFile != "" {
+			AppFs = afero.NewOsFs() // Ensure filesystem is initialized
+			debug.Printf("Root command: Attempting to load mappings from %s", registryFile)
+			// Only load to check for errors, don't need the result here.
+			_, err := registry.LoadMappings(AppFs, registryFile, false) // Pass false for skipCWDRestriction
+			if err != nil {
+				debug.Printf("Root command: Failed to load mappings: %v", err)
+				// Use debug.Printf for logging warnings as well, assuming it handles levels
+				debug.Printf("Warning: Failed to load registry mappings from %s: %v. Proceeding without mappings.", registryFile, err)
+			}
 		}
 
 		return nil // PersistentPreRunE should return error
@@ -306,7 +343,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	}
 
 	// Load Mappings (using global var and passing AppFs)
-	mappings, err := registry.LoadMappings(AppFs, registryFile)
+	mappings, err := registry.LoadMappings(AppFs, registryFile, false)
 	if err != nil {
 		return fmt.Errorf("error loading registry mappings: %w", err)
 	}
@@ -400,4 +437,19 @@ func executeCommand(root *cobra.Command, args ...string) (output string, err err
 	err = root.Execute()
 
 	return buf.String(), err
+}
+
+// Function to initialize file system (moved from root execution)
+func initFS() afero.Fs {
+	// Example: Initialize based on a flag or environment variable if needed
+	return afero.NewOsFs()
+}
+
+// Function to load mappings (consider moving to a shared location or helper)
+func loadMappingsIfNeeded(fs afero.Fs, registryFile string) (*registry.Mappings, error) {
+	if registryFile == "" {
+		return nil, nil
+	}
+	// Pass false for skipCWDRestriction in normal execution path
+	return registry.LoadMappings(fs, registryFile, false)
 }
