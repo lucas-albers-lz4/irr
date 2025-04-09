@@ -7,7 +7,7 @@ import (
 	"errors"
 
 	"github.com/lalbers/irr/pkg/debug"
-	stdLog "github.com/lalbers/irr/pkg/log"
+	log "github.com/lalbers/irr/pkg/log"
 )
 
 // Detector provides methods for finding image references within complex data structures.
@@ -50,7 +50,7 @@ func (d *Detector) DetectImages(values interface{}, path []string) ([]DetectedIm
 			// Check for errors FIRST
 			case err != nil:
 				// Handle errors returned by tryExtractImageFromMap (e.g., template variables in strict mode)
-				stdLog.Debugf("[UNSUPPORTED ADD - Map Error] Path: %v, Error: %v\n", path, err)
+				log.Debugf("[UNSUPPORTED ADD - Map Error] Path: %v, Error: %v\n", path, err)
 				// Determine the type code based on the error
 				var typeCode = UnsupportedTypeMapError // Default
 				if errors.Is(err, ErrTemplateVariableDetected) {
@@ -65,7 +65,7 @@ func (d *Detector) DetectImages(values interface{}, path []string) ([]DetectedIm
 				})
 			// Handle nil image second (e.g., non-strict skips, empty repo map)
 			case detectedImage == nil:
-				stdLog.Debugf("Skipping nil detectedImage at path %v despite isImageMap being true. This might indicate an empty or incomplete map structure skipped in non-strict mode.", path)
+				log.Debugf("Skipping nil detectedImage at path %v despite isImageMap being true. This might indicate an empty or incomplete map structure skipped in non-strict mode.", path)
 				// Do nothing, just don't recurse (handled by isImageMap=true check later)
 			// Check validity if no error and image is non-nil
 			case detectedImage.Reference != nil && IsValidImageReference(detectedImage.Reference):
@@ -76,8 +76,8 @@ func (d *Detector) DetectImages(values interface{}, path []string) ([]DetectedIm
 				} else {
 					debug.Printf("Map-based image is not a source registry at path %v: %v\n", path, detectedImage.Reference)
 					if d.context.Strict {
-						stdLog.Debugf("[UNSUPPORTED] Adding map item at path %v due to strict non-source.\n", path)
-						stdLog.Debugf("[UNSUPPORTED ADD] Path: %v, Type: %v, Reason: Strict non-source map, Error: nil, Strict: %v\n",
+						log.Debugf("[UNSUPPORTED] Adding map item at path %v due to strict non-source.\n", path)
+						log.Debugf("[UNSUPPORTED ADD] Path: %v, Type: %v, Reason: Strict non-source map, Error: nil, Strict: %v\n",
 							path, UnsupportedTypeNonSourceImage, d.context.Strict)
 						unsupportedMatches = append(unsupportedMatches, UnsupportedImage{
 							Location: path,
@@ -85,14 +85,14 @@ func (d *Detector) DetectImages(values interface{}, path []string) ([]DetectedIm
 							Error:    fmt.Errorf("strict mode: map image at path %v is not from a configured source registry", path), // Added more context to error
 						})
 					} else {
-						stdLog.Debugf("Non-strict mode: Skipping non-source map image at path %v\n", path)
+						log.Debugf("Non-strict mode: Skipping non-source map image at path %v\n", path)
 					}
 				}
 			default: // Covers: Invalid Reference AFTER normalization OR detectedImage.Reference was nil (should not happen if cases above are correct)
-				stdLog.Debugf("Skipping invalid/nil map-based image reference at path %v: Ref=%+v", path, detectedImage.Reference)
+				log.Debugf("Skipping invalid/nil map-based image reference at path %v: Ref=%+v", path, detectedImage.Reference)
 				// Treat invalid map structure as unsupported in strict mode.
 				if d.context.Strict {
-					stdLog.Debugf("[UNSUPPORTED ADD - Strict Invalid Map] Path: %v, Type: %v\n", path, UnsupportedTypeMapParseError)
+					log.Debugf("[UNSUPPORTED ADD - Strict Invalid Map] Path: %v, Type: %v\n", path, UnsupportedTypeMapParseError)
 					unsupportedMatches = append(unsupportedMatches, UnsupportedImage{
 						Location: path,
 						Type:     UnsupportedTypeMapParseError,
@@ -106,19 +106,19 @@ func (d *Detector) DetectImages(values interface{}, path []string) ([]DetectedIm
 		}
 
 		// --- If isImageMap was false ---
-		stdLog.Debugf("Structure at path %s did not match image map pattern, recursing into values.\n", pathToString(path))
+		log.Debugf("Structure at path %s did not match image map pattern, recursing into values.\n", pathToString(path))
 		for key, val := range v {
 			newPath := append(append([]string{}, path...), key)
 			detected, unsupported, err := d.DetectImages(val, newPath)
 			if err != nil {
-				stdLog.Errorf("Error processing path %v: %v\n", newPath, err)
+				log.Errorf("Error processing path %v: %v\n", newPath, err)
 				return nil, nil, fmt.Errorf("error processing path %v: %w\n", newPath, err)
 			}
 			detectedImages = append(detectedImages, detected...)
 			if len(unsupported) > 0 {
-				stdLog.Debugf("[UNSUPPORTED AGG MAP] Path: %v, Appending %d items from key '%s'\n", path, len(unsupported), key)
+				log.Debugf("[UNSUPPORTED AGG MAP] Path: %v, Appending %d items from key '%s'\n", path, len(unsupported), key)
 				for i, item := range unsupported {
-					stdLog.Debugf("[UNSUPPORTED AGG MAP ITEM %d] Path: %v, Type: %v, Error: %v\n", i, item.Location, item.Type, item.Error)
+					log.Debugf("[UNSUPPORTED AGG MAP ITEM %d] Path: %v, Type: %v, Error: %v\n", i, item.Location, item.Type, item.Error)
 				}
 			}
 			unsupportedMatches = append(unsupportedMatches, unsupported...)
@@ -129,17 +129,17 @@ func (d *Detector) DetectImages(values interface{}, path []string) ([]DetectedIm
 		// Always process arrays, path check should happen for items within if needed
 		for i, item := range v {
 			itemPath := append(append([]string{}, path...), fmt.Sprintf("[%d]", i)) // Ensure path is copied, removed erroneous newline
-			stdLog.Debugf("Recursively processing slice item %d at path %s\n", i, itemPath)
+			log.Debugf("Recursively processing slice item %d at path %s\n", i, itemPath)
 			detectedInItem, unsupportedInItem, err := d.DetectImages(item, itemPath)
 			if err != nil {
-				stdLog.Errorf("Error processing slice item at path %s: %v\n", itemPath, err)
+				log.Errorf("Error processing slice item at path %s: %v\n", itemPath, err)
 				return nil, nil, fmt.Errorf("error processing slice item %d at path %s: %w\n", i, path, err)
 			}
 			detectedImages = append(detectedImages, detectedInItem...)
 			if len(unsupportedInItem) > 0 {
-				stdLog.Debugf("[UNSUPPORTED AGG SLICE] Path: %v, Appending %d items from index %d\n", path, len(unsupportedInItem), i)
+				log.Debugf("[UNSUPPORTED AGG SLICE] Path: %v, Appending %d items from index %d\n", path, len(unsupportedInItem), i)
 				for j, item := range unsupportedInItem {
-					stdLog.Debugf("[UNSUPPORTED AGG SLICE ITEM %d] Path: %v, Type: %v, Error: %v\n", j, item.Location, item.Type, item.Error)
+					log.Debugf("[UNSUPPORTED AGG SLICE ITEM %d] Path: %v, Type: %v, Error: %v\n", j, item.Location, item.Type, item.Error)
 				}
 			}
 			unsupportedMatches = append(unsupportedMatches, unsupportedInItem...)
@@ -147,8 +147,8 @@ func (d *Detector) DetectImages(values interface{}, path []string) ([]DetectedIm
 
 	case string:
 		vStr := v
-		stdLog.Debugf("[DEBUG irr DETECT STRING] Processing string value at path %s: %q\n", path, vStr)
-		stdLog.Debugf("[DEBUG irr DETECT STRING] Path: %v, Value: '%s', Strict Context: %v\n", path, vStr, d.context.Strict)
+		log.Debugf("[DEBUG irr DETECT STRING] Processing string value at path %s: %q\n", path, vStr)
+		log.Debugf("[DEBUG irr DETECT STRING] Path: %v, Value: '%s', Strict Context: %v\n", path, vStr, d.context.Strict)
 
 		isKnownImagePath := isImagePath(path)
 
@@ -157,8 +157,8 @@ func (d *Detector) DetectImages(values interface{}, path []string) ([]DetectedIm
 
 			// 1. Check for templates FIRST, regardless of path.
 			if containsTemplate(vStr) {
-				stdLog.Debugf("Strict mode: Marking string '%s' at path %s as unsupported due to template variable detected.\n", vStr, path)
-				stdLog.Debugf("[UNSUPPORTED ADD - Strict Template String] Path: %v, Type: %v, Value: '%s'\n", path, UnsupportedTypeTemplateString, vStr)
+				log.Debugf("Strict mode: Marking string '%s' at path %s as unsupported due to template variable detected.\n", vStr, path)
+				log.Debugf("[UNSUPPORTED ADD - Strict Template String] Path: %v, Type: %v, Value: '%s'\n", path, UnsupportedTypeTemplateString, vStr)
 				unsupportedMatches = append(unsupportedMatches, UnsupportedImage{
 					Location: path,
 					Type:     UnsupportedTypeTemplateString,
@@ -169,18 +169,18 @@ func (d *Detector) DetectImages(values interface{}, path []string) ([]DetectedIm
 
 			// 2. If NO template, check if path is known.
 			if !isKnownImagePath {
-				stdLog.Debugf("Strict mode: Skipping non-template string at unknown image path %s: %q\n", path, vStr)
+				log.Debugf("Strict mode: Skipping non-template string at unknown image path %s: %q\n", path, vStr)
 				break // Skip non-template strings at unknown paths
 			}
 
 			// 3. If NO template AND path IS known, proceed with parsing and validation.
-			stdLog.Debugf("Strict mode & Known path: Attempting parse for non-template string '%s' at path %s\n", vStr, path)
+			log.Debugf("Strict mode & Known path: Attempting parse for non-template string '%s' at path %s\n", vStr, path)
 			imgRef, err := d.tryExtractImageFromString(vStr, path)
 
 			if err != nil {
 				// Marks parse errors as unsupported - OK
-				stdLog.Debugf("Strict mode: Marking string '%s' at known image path %s as unsupported due to parse error: %v\n", vStr, path, err)
-				stdLog.Debugf("[UNSUPPORTED ADD - Strict Parse Fail] Path: %v, Type: %v, Value: '%s', Error: %v\n", path, UnsupportedTypeStringParseError, vStr, err)
+				log.Debugf("Strict mode: Marking string '%s' at known image path %s as unsupported due to parse error: %v\n", vStr, path, err)
+				log.Debugf("[UNSUPPORTED ADD - Strict Parse Fail] Path: %v, Type: %v, Value: '%s', Error: %v\n", path, UnsupportedTypeStringParseError, vStr, err)
 				unsupportedMatches = append(unsupportedMatches, UnsupportedImage{
 					Location: path,
 					Type:     UnsupportedTypeStringParseError,
@@ -193,7 +193,7 @@ func (d *Detector) DetectImages(values interface{}, path []string) ([]DetectedIm
 				isSource := IsSourceRegistry(imgRef.Reference, d.context.SourceRegistries, d.context.ExcludeRegistries)
 
 				if isSource { // Original logic for other paths
-					stdLog.Debugf("Strict mode: Detected source image string at known path %s: %s\n", path, imgRef.Reference.String())
+					log.Debugf("Strict mode: Detected source image string at known path %s: %s\n", path, imgRef.Reference.String())
 					detectedImages = append(detectedImages, *imgRef)
 				} else {
 					// It's not a source registry, but WAS it excluded?
@@ -207,14 +207,14 @@ func (d *Detector) DetectImages(values interface{}, path []string) ([]DetectedIm
 					}
 
 					if isExcluded {
-						stdLog.Debugf("Strict mode: Marking EXCLUDED image string '%s' at known image path %s as unsupported.\n", vStr, path)
+						log.Debugf("Strict mode: Marking EXCLUDED image string '%s' at known image path %s as unsupported.\n", vStr, path)
 						unsupportedMatches = append(unsupportedMatches, UnsupportedImage{
 							Location: path,
 							Type:     UnsupportedTypeExcludedImage,
 							Error:    fmt.Errorf("strict mode: image at known path %v is from an excluded registry", path),
 						})
 					} else {
-						stdLog.Debugf("Strict mode: Marking NON-SOURCE image string '%s' at known image path %s as unsupported.\n", vStr, path)
+						log.Debugf("Strict mode: Marking NON-SOURCE image string '%s' at known image path %s as unsupported.\n", vStr, path)
 						unsupportedMatches = append(unsupportedMatches, UnsupportedImage{
 							Location: path,
 							Type:     UnsupportedTypeNonSourceImage,
@@ -230,34 +230,34 @@ func (d *Detector) DetectImages(values interface{}, path []string) ([]DetectedIm
 			// Only attempt parse if it looks like an image AND (implicitly) we are not in strict mode at a known path
 			looksLikeImage := looksLikeImageReference(vStr)
 			if !looksLikeImage {
-				stdLog.Debugf("Non-strict: Skipping string '%s' at path %s because it does not look like an image reference.\n", vStr, path)
+				log.Debugf("Non-strict: Skipping string '%s' at path %s because it does not look like an image reference.\n", vStr, path)
 				break // Skip if it doesn't look like an image
 			}
 
 			// It looks like an image, attempt to parse.
-			stdLog.Debugf("Non-strict: Attempting parse for string '%s' at path %s\n", vStr, path)
+			log.Debugf("Non-strict: Attempting parse for string '%s' at path %s\n", vStr, path)
 			imgRef, err := d.tryExtractImageFromString(vStr, path)
 
 			if err != nil {
 				// Non-strict mode: Log parse errors but don't mark as unsupported.
-				stdLog.Debugf("Non-strict: Skipping string '%s' at path %s due to parse error: %v\n", vStr, path, err)
+				log.Debugf("Non-strict: Skipping string '%s' at path %s due to parse error: %v\n", vStr, path, err)
 				break // Skip on parse error
 			}
 
 			if imgRef != nil {
 				// Successful parse -> Check path and source
 				NormalizeImageReference(imgRef.Reference) // Normalize before checking
-				stdLog.Debugf("[DEBUG irr DETECT STRING - Non-Strict] Normalized Ref: %+v\n", imgRef.Reference)
+				log.Debugf("[DEBUG irr DETECT STRING - Non-Strict] Normalized Ref: %+v\n", imgRef.Reference)
 				if isKnownImagePath && IsSourceRegistry(imgRef.Reference, d.context.SourceRegistries, d.context.ExcludeRegistries) {
 					// Only add if path is known AND it's a source registry
-					stdLog.Debugf("Non-strict: Detected source image string at known path %s: %s\n", path, imgRef.Reference.String())
+					log.Debugf("Non-strict: Detected source image string at known path %s: %s\n", path, imgRef.Reference.String())
 					detectedImages = append(detectedImages, *imgRef)
 				} else {
 					// Skip if path unknown OR not a source registry
 					if !isKnownImagePath {
-						stdLog.Debugf("Non-strict: Skipping string '%s' at non-image path %s (parsed ok, but path unknown).\n", vStr, path)
+						log.Debugf("Non-strict: Skipping string '%s' at non-image path %s (parsed ok, but path unknown).\n", vStr, path)
 					} else {
-						stdLog.Debugf("Non-strict: Skipping non-source image string '%s' at known image path %s.\n", vStr, path)
+						log.Debugf("Non-strict: Skipping non-source image string '%s' at known image path %s.\n", vStr, path)
 					}
 				}
 			} // else imgRef == nil -> do nothing
@@ -266,7 +266,7 @@ func (d *Detector) DetectImages(values interface{}, path []string) ([]DetectedIm
 	case bool, float64, int, nil:
 		debug.Printf("Skipping non-string/map/slice type (%T) at path %v", v, path)
 	default:
-		debug.Printf("Warning: Encountered unexpected type %T at path %v", v, path)
+		log.Warnf("Warning: Encountered unexpected type %T at path %v", v, path)
 		// Depending on strictness, maybe add to unsupported
 		// if d.context.Strict { allUnsupported = append(allUnsupported, UnsupportedImage{...}) }
 	}

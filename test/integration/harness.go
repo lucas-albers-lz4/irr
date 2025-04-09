@@ -516,12 +516,20 @@ func (h *TestHarness) ExecuteHelm(args ...string) (string, error) {
 	return outputStr, nil
 }
 
-// Ensure Helm is installed
+// init ensures the binary path is determined early.
 func init() {
-	if _, err := exec.LookPath("helm"); err != nil {
-		fmt.Println("Helm command not found. Integration tests require Helm to be installed.")
-		os.Exit(1)
-	}
+	// Build is now handled lazily by buildOnce.Do in NewTestHarness
+	// to avoid redundant builds and potential issues with init-phase failures.
+	/*
+		// Ensure the binary path is determined early, potentially building it.
+		// We need this available before individual tests run.
+		var err error
+		irrBinaryPath, err = buildIrrBinary(nil) // Pass nil testing.T for init phase
+		if err != nil {
+			// Log the error and potentially panic if the build is critical for all tests
+			log.Fatalf("FATAL: Failed to build irr binary during init: %v", err)
+		}
+	*/
 }
 
 // SetChartPath sets the chart path for the test harness.

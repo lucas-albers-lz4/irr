@@ -9,11 +9,13 @@ import (
 	"regexp"
 	"strings"
 	"text/tabwriter"
+	"time"
+
+	log "github.com/lalbers/irr/pkg/log"
 
 	"github.com/lalbers/irr/pkg/analysis"
 	"github.com/lalbers/irr/pkg/chart"
 	"github.com/lalbers/irr/pkg/debug"
-	stdLog "github.com/lalbers/irr/pkg/log"
 	"github.com/lalbers/irr/pkg/override"
 	"github.com/lalbers/irr/pkg/registry"
 	"github.com/lalbers/irr/pkg/strategy"
@@ -132,7 +134,8 @@ type generatorFactoryFunc func(
 	mappings *registry.Mappings,
 	strict bool,
 	threshold int,
-	loader chart.Loader,
+	loader analysis.ChartLoader,
+	includePatterns, excludePatterns, knownPaths []string,
 ) GeneratorInterface
 
 // Default factory creates the real generator
@@ -143,12 +146,14 @@ var defaultGeneratorFactory generatorFactoryFunc = func(
 	mappings *registry.Mappings,
 	strict bool,
 	threshold int,
-	loader chart.Loader,
+	loader analysis.ChartLoader,
+	includePatterns, excludePatterns, knownPaths []string,
 ) GeneratorInterface {
 	return chart.NewGenerator(
 		chartPath, targetRegistry,
 		sourceRegistries, excludeRegistries,
 		pathStrategy, mappings, strict, threshold, loader,
+		includePatterns, excludePatterns, knownPaths,
 	)
 }
 
@@ -158,45 +163,100 @@ var currentGeneratorFactory = defaultGeneratorFactory
 // Regular expression for validating registry names (simplified based on common usage)
 var registryRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9](:\d+)?$`)
 
-// newRootCmd creates the base command when called without any subcommands
-func newRootCmd() *cobra.Command {
-	rootCmd := &cobra.Command{
-		Use:   "irr",
-		Short: "Tool for generating Helm overrides to redirect container images",
-		Long: `IRR (Image Registry Rewrite) helps migrate container images between registries by generating
-Helm value overrides that redirect image references to a new registry.`,
-		PersistentPreRun: func(cmd *cobra.Command, args []string) {
-			// Initialize logging levels based on flags or ENV vars
-			if debugEnabled { // Use the package-level variable bound to the --debug flag
-				debug.Init(true)                   // Force enable detailed tracing
-				stdLog.SetLevel(stdLog.LevelDebug) // Set log level to Debug
-			} else {
-				// If flag not set, init debug tracing based *only* on IRR_DEBUG env var
-				// (stdLog level is already handled by LOG_LEVEL env var in its init)
-				debug.Init(debug.Enabled) // Respect env var
-			}
-			// Note: LOG_LEVEL env var is handled automatically by stdLog's init function.
-		},
-		// Disable automatic printing of usage on error
-		SilenceUsage: true,
-		// Disable automatic printing of errors
-		SilenceErrors: true,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			// If no arguments (subcommand) are provided, return an error.
-			if len(args) == 0 {
-				return errors.New("a subcommand is required. Use 'irr help' for available commands")
-			}
-			// Otherwise, let Cobra handle the subcommand or help text.
-			return nil
-		},
-	}
+// rootCmd represents the base command when called without any subcommands
+var rootCmd = &cobra.Command{
+	Use:   "irr",
+	Short: "Helm Image Relocation and Rewrite tool",
+	Long: `irr (Image Relocation and Rewrite) is a CLI tool to help manage container image references 
+within Helm charts, facilitating the process of relocating images to a target registry.
 
-	// Add persistent flags available to all commands
-	rootCmd.PersistentFlags().BoolVar(&debugEnabled, "debug", false, "Enable verbose debug logging")
+It can analyze Helm charts to identify image references and generate override values 
+files compatible with Helm, pointing images to a new registry according to specified strategies.
+It also supports linting image references for potential issues.`,
+	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		// Retrieve flag values first
+		logLevelStr, _ := cmd.Flags().GetString("log-level")
+		debugEnabled, _ := cmd.Flags().GetBool("debug") // Use debugEnabled consistently
+
+		// Configure logging level based on flags
+		levelToSet := "" // Use string temporarily for comparison
+
+		if debugEnabled {
+			levelToSet = "DEBUG"
+		} else if logLevelStr != "" { // Only check --log-level if --debug is not set
+			// Validate the string, but don't parse yet
+			upperLevel := strings.ToUpper(logLevelStr)
+			switch upperLevel {
+			case "DEBUG", "WARN", "ERROR":
+				levelToSet = upperLevel
+			default:
+				// Use the package's Warnf directly
+				log.Warnf("Invalid log level '%s', ignoring flag. Current level remains based on LOG_LEVEL or default.", logLevelStr)
+				// Don't change levelToSet, let existing level persist
+			}
+		}
+
+		// Set the level if a valid flag was provided
+		switch levelToSet {
+		case "DEBUG":
+			log.SetLevel(log.LevelDebug)
+			// This initial Debugf might not show if initial level wasn't already debug, but confirms setting
+			log.Debugf("Log level explicitly set to DEBUG by flag.")
+		case "WARN":
+			log.SetLevel(log.LevelWarn)
+		case "ERROR":
+			log.SetLevel(log.LevelError)
+		}
+
+		// Final check to confirm debug status and log timestamp
+		if log.IsDebugEnabled() {
+			log.Debugf("Debug logging is enabled (Timestamp: %s)", time.Now().Format(time.RFC3339))
+		}
+
+		// Propagate the debug flag state to the debug package
+		debug.Enabled = debugEnabled
+	},
+	// Disable automatic printing of usage on error
+	SilenceUsage: true,
+	// Disable automatic printing of errors
+	SilenceErrors: true,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		// If no arguments (subcommand) are provided, return an error.
+		if len(args) == 0 {
+			return errors.New("a subcommand is required. Use 'irr help' for available commands")
+		}
+		// Otherwise, let Cobra handle the subcommand or help text.
+		return nil
+	},
+}
+
+// Execute adds all child commands to the root command and sets flags appropriately.
+// This is called by main.main(). It only needs to happen once to the rootCmd.
+func Execute() {
+	err := rootCmd.Execute()
+	if err != nil {
+		// Cobra already prints the error, so we just exit
+		os.Exit(1)
+	}
+}
+
+// Flag to indicate integration test mode (hidden)
+var integrationTestMode bool
+
+func init() {
+	// Define persistent flags available to all commands
+	rootCmd.PersistentFlags().StringP("log-level", "l", "info", "Log level (debug, info, warn, error)")
+	rootCmd.PersistentFlags().BoolP("debug", "d", false, "Enable debug logging (overrides log-level to debug)")
+	rootCmd.PersistentFlags().BoolVar(&integrationTestMode, "integration-test-mode", false, "Enable integration test mode (internal use)")
+	_ = rootCmd.PersistentFlags().MarkHidden("integration-test-mode") // Hide the flag from help output
 
 	// Add subcommands
-	rootCmd.AddCommand(newDefaultCmd()) // Renamed to overrideCmd?
 	rootCmd.AddCommand(newAnalyzeCmd())
+	// rootCmd.AddCommand(newDefaultCmd()) // Default command logic likely moved or removed
+	// Temporarily comment out commands with missing definitions
+	// rootCmd.AddCommand(newOverrideCmd())
+	// rootCmd.AddCommand(newLintCmd())
+	// rootCmd.AddCommand(newVersionCmd())
 
 	// Add Persistent Flags
 	rootCmd.PersistentFlags().StringVarP(&chartPath, "chart-path", "p", "", "Path to the Helm chart directory or archive")
@@ -217,28 +277,6 @@ Helm value overrides that redirect image references to a new registry.`,
 
 	// NOTE: Cannot mark persistent flags as required conditionally for a specific subcommand here.
 	// Validation must happen within the RunE function of the command.
-
-	return rootCmd
-}
-
-// Execute adds all child commands to the root command and sets flags appropriately.
-// This is called by main.main(). It only needs to happen once to the rootCmd.
-func Execute() {
-	// Create the root command and its subcommands
-	rootCmd := newRootCmd()
-
-	// Execute the root command
-	err := rootCmd.Execute()
-	if err != nil {
-		// Handle exit codes properly
-		var exitCodeErr *ExitCodeError
-		exitCode := ExitGeneralRuntimeError // Default exit code
-		if errors.As(err, &exitCodeErr) {
-			exitCode = exitCodeErr.Code
-		}
-		fmt.Fprintln(os.Stderr, err) // Print the error message regardless
-		os.Exit(exitCode)
-	}
 }
 
 // --- Default (Override) Command --- Moved from original main.go
@@ -258,7 +296,7 @@ to a target registry. This is the original functionality of IRR. If no subcomman
 }
 
 // runOverride implements the logic for the override command.
-func runOverride(_ *cobra.Command, _ []string) error {
+func runOverride(cmd *cobra.Command, args []string) error {
 	debug.FunctionEnter("runOverride")
 	defer debug.FunctionExit("runOverride")
 
@@ -314,11 +352,31 @@ func runOverride(_ *cobra.Command, _ []string) error {
 	debug.Printf("Exclude Registries: %v", excludeRegistries)
 	debug.Printf("Registry File: %s", registryFile)
 
+	// Retrieve flags needed for generator factory
+	pathDepth, _ := cmd.Flags().GetInt("override-path-depth")
+	strictMode, _ := cmd.Flags().GetBool("strict")
+
+	// Validate chart path exists
+	if _, err := os.Stat(chartPath); os.IsNotExist(err) {
+		return &ExitCodeError{Code: ExitInputConfigurationError, Err: fmt.Errorf("chart path does not exist: %s", chartPath)}
+	}
+
+	// Retrieve necessary flags just before use
+	includePattern, _ := cmd.Flags().GetStringSlice("include-pattern")
+	excludePattern, _ := cmd.Flags().GetStringSlice("exclude-pattern")
+	knownPathsVal, _ := cmd.Flags().GetStringSlice("known-image-paths")
+
 	// Create generator using the factory
+	// Match the updated factory signature
+	var loader analysis.ChartLoader = &chart.HelmLoader{} // Correct loader type
 	generator := currentGeneratorFactory(
 		chartPath, targetRegistry,
 		sourceRegistries, excludeRegistries,
-		selectedStrategy, mappings, strictMode, pathDepth, nil, // Pass nil loader to use default
+		selectedStrategy, mappings, strictMode, pathDepth, // Note: pathDepth isn't used by NewGenerator, but is by factory? Keep for now.
+		loader,         // Pass analysis.ChartLoader
+		includePattern, // Pass include patterns
+		excludePattern, // Pass exclude patterns
+		knownPathsVal,  // Pass known paths
 	)
 
 	// --- Generation ---

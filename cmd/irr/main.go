@@ -6,7 +6,7 @@ import (
 	"os"
 
 	"github.com/lalbers/irr/pkg/debug"
-	stdLog "github.com/lalbers/irr/pkg/log"
+	log "github.com/lalbers/irr/pkg/log"
 	// Removed cmd import to break cycle
 )
 
@@ -19,8 +19,8 @@ func main() {
 	debug.Init(debug.Enabled)
 
 	// Use stdLog for consistency, check if debug is enabled
-	if stdLog.IsDebugEnabled() {
-		stdLog.Debugf("--- IRR BINARY VERSION: %s ---", version)
+	if log.IsDebugEnabled() {
+		log.Debugf("--- IRR BINARY VERSION: %s ---", version)
 	}
 
 	// Check for IRR_DEBUG environment variable for potential future debug setup

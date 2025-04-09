@@ -609,10 +609,11 @@ func TestReadOverridesFromStdout(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "Override file should not exist when outputting to stdout")
 }
 
+// TestMain sets up the integration test environment.
 func TestMain(m *testing.M) {
 	// Define the debug flag
 	flag.BoolVar(&DebugEnabled, "debug", false, "Enable debug logging")
-	flag.Parse() // Parse flags before running tests
+	// flag.Parse() // Do NOT parse flags here; let the test runner handle it.
 
 	// Setup and teardown logic placeholders (as per TODO.md)
 	// TODO: Implement setup() and teardown() logic

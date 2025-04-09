@@ -2,7 +2,10 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/lalbers/irr/pkg/analysis" // Need this for ChartAnalysis type
@@ -24,31 +27,42 @@ func (m *mockAnalyzer) Analyze() (*analysis.ChartAnalysis, error) {
 	if m.AnalyzeFunc != nil {
 		return m.AnalyzeFunc()
 	}
-	return &analysis.ChartAnalysis{}, nil
+	return analysis.NewChartAnalysis(), nil
 }
 
 // --- End Mocking ---
 
-// executeCommand runs the command with args and returns stdout, stderr, and error
-// It uses buffers to capture output redirected via SetOut/SetErr.
-func executeCommand(cmd *cobra.Command, args ...string) (stdout, stderr string, err error) {
-	outBuf := new(bytes.Buffer)
-	errBuf := new(bytes.Buffer)
-
-	cmd.SetOut(outBuf)
-	cmd.SetErr(errBuf)
+// executeAnalyzeCommand runs the analyze command with args and returns output/error
+// Renamed to avoid conflict with override_test.go
+func executeAnalyzeCommand(cmd *cobra.Command, args ...string) (string, error) {
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
 	cmd.SetArgs(args)
+	err := cmd.Execute()
+	return buf.String(), err
+}
 
-	err = cmd.Execute()
+// setupAnalyzeTestFS creates a temporary filesystem for tests
+// Renamed to avoid conflict
+func setupAnalyzeTestFS(t *testing.T) afero.Fs {
+	fs := afero.NewMemMapFs()
+	// Optionally create base directories if needed
+	return fs
+}
 
-	return outBuf.String(), errBuf.String(), err
+// getAnalyzeRootCmd resets and returns the root command for testing
+// Renamed to avoid conflict
+func getAnalyzeRootCmd() *cobra.Command {
+	// Reset flags or state if necessary
+	return rootCmd // Use the actual rootCmd from root.go
 }
 
 func TestAnalyzeCmd(t *testing.T) {
 	// Backup and restore original factory, FS, and command outputs
 	originalFactory := currentAnalyzerFactory
 	originalFs := AppFs
-	// No need to backup stdout/stderr here, executeCommand handles it per call
+	// No need to backup stdout/stderr here, executeAnalyzeCommand handles it per call
 	defer func() {
 		currentAnalyzerFactory = originalFactory
 		AppFs = originalFs
@@ -168,10 +182,10 @@ func TestAnalyzeCmd(t *testing.T) {
 			}
 
 			// Create a fresh command tree for THIS test run
-			rootCmd := newRootCmd()
+			rootCmd := getAnalyzeRootCmd()
 
 			// Execute command using the fresh rootCmd instance
-			stdout, _, err := executeCommand(rootCmd, tt.args...)
+			stdout, err := executeAnalyzeCommand(rootCmd, tt.args...)
 
 			// Assertions (checking err.Error() for errors, stdout for success)
 			if tt.expectErr {
@@ -200,3 +214,120 @@ func TestAnalyzeCmd(t *testing.T) {
 		})
 	}
 }
+
+func TestAnalyzeCommand_Success_TextOutput(t *testing.T) {
+	fs := setupAnalyzeTestFS(t)
+	AppFs = fs // Use mock FS for the command
+	chartPath := "/fake/chart"
+	_ = fs.MkdirAll(chartPath, 0755) // Ensure dir exists
+
+	// Mock the analyzer factory
+	mockResult := analysis.NewChartAnalysis()
+	mockResult.ImagePatterns = append(mockResult.ImagePatterns, analysis.ImagePattern{
+		Path:  "image.repository",
+		Type:  analysis.PatternTypeString,
+		Value: "source.io/nginx:1.23",
+		Count: 1,
+	})
+	mockAnalysis := &mockAnalyzer{
+		AnalyzeFunc: func() (*analysis.ChartAnalysis, error) {
+			return mockResult, nil
+		},
+	}
+	originalFactory := currentAnalyzerFactory
+	currentAnalyzerFactory = func(_ string) AnalyzerInterface {
+		return mockAnalysis
+	}
+	defer func() { currentAnalyzerFactory = originalFactory }()
+
+	args := []string{"analyze", chartPath}
+	cmd := getAnalyzeRootCmd() // Get the root command
+	output, err := executeAnalyzeCommand(cmd, args...)
+	require.NoError(t, err)
+
+	assert.Contains(t, output, "Chart Analysis")
+	assert.Contains(t, output, "Total image patterns: 1")
+	assert.Contains(t, output, "image.repository")
+	assert.Contains(t, output, "string")
+	assert.Contains(t, output, "source.io/nginx:1.23")
+}
+
+func TestAnalyzeCommand_Success_JsonOutput(t *testing.T) {
+	fs := setupAnalyzeTestFS(t)
+	AppFs = fs
+	chartPath := "/fake/json/chart"
+	_ = fs.MkdirAll(chartPath, 0755)
+
+	mockResult := analysis.NewChartAnalysis()
+	mockResult.ImagePatterns = append(mockResult.ImagePatterns, analysis.ImagePattern{
+		Path:  "image.repository",
+		Type:  analysis.PatternTypeString,
+		Value: "source.io/nginx:1.23",
+		Count: 1,
+	})
+	mockAnalysis := &mockAnalyzer{
+		AnalyzeFunc: func() (*analysis.ChartAnalysis, error) {
+			return mockResult, nil
+		},
+	}
+	originalFactory := currentAnalyzerFactory
+	currentAnalyzerFactory = func(_ string) AnalyzerInterface {
+		return mockAnalysis
+	}
+	defer func() { currentAnalyzerFactory = originalFactory }()
+
+	args := []string{"analyze", chartPath, "--output", "json"}
+	cmd := getAnalyzeRootCmd()
+	output, err := executeAnalyzeCommand(cmd, args...)
+	require.NoError(t, err)
+
+	// Basic check for JSON structure
+	assert.True(t, strings.HasPrefix(strings.TrimSpace(output), "{"), "Expected JSON output")
+	var jsonData map[string]interface{}
+	err = json.Unmarshal([]byte(output), &jsonData)
+	require.NoError(t, err, "Failed to unmarshal JSON output")
+	assert.NotNil(t, jsonData["ImagePatterns"])
+}
+
+func TestAnalyzeCommand_AnalysisError(t *testing.T) {
+	fs := setupAnalyzeTestFS(t)
+	AppFs = fs
+	chartPath := "/fake/error/chart"
+	_ = fs.MkdirAll(chartPath, 0755)
+
+	analysisError := errors.New("failed to analyze")
+	mockAnalysis := &mockAnalyzer{
+		AnalyzeFunc: func() (*analysis.ChartAnalysis, error) {
+			return nil, analysisError
+		},
+	}
+	originalFactory := currentAnalyzerFactory
+	currentAnalyzerFactory = func(_ string) AnalyzerInterface {
+		return mockAnalysis
+	}
+	defer func() { currentAnalyzerFactory = originalFactory }()
+
+	args := []string{"analyze", chartPath}
+	cmd := getAnalyzeRootCmd()
+	output, err := executeAnalyzeCommand(cmd, args...)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), analysisError.Error())
+	assert.Contains(t, output, analysisError.Error()) // Cobra prints error by default
+
+	var exitErr *ExitCodeError
+	if errors.As(err, &exitErr) {
+		assert.Equal(t, ExitChartParsingError, exitErr.Code)
+	} else {
+		t.Errorf("Expected ExitCodeError, got %T", err)
+	}
+}
+
+func TestAnalyzeCommand_NoArgs(t *testing.T) {
+	args := []string{"analyze"}
+	cmd := getAnalyzeRootCmd()
+	_, err := executeAnalyzeCommand(cmd, args...)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "accepts 1 arg(s), received 0")
+}
+
+// Add test for file output

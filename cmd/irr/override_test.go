@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,16 +13,19 @@ import (
 	"github.com/stretchr/testify/require"
 
 	// Need analysis types for mocking generator return value
-	"github.com/lalbers/irr/pkg/chart"
+	"github.com/lalbers/irr/pkg/analysis"
 	"github.com/lalbers/irr/pkg/override"
 	registry "github.com/lalbers/irr/pkg/registry"
 	"github.com/lalbers/irr/pkg/strategy"
+
 	// Need cobra for command execution simulation
+	"github.com/spf13/afero"
+	"github.com/spf13/cobra"
 )
 
 // executeCommand is defined in analyze_test.go - we might move it to a shared test utility later
 
-// Mock Generator (implements GeneratorInterface from root.go)
+// Mock Generator for testing command logic
 type mockGenerator struct {
 	GenerateFunc func() (*override.File, error)
 }
@@ -29,9 +34,22 @@ func (m *mockGenerator) Generate() (*override.File, error) {
 	if m.GenerateFunc != nil {
 		return m.GenerateFunc()
 	}
-	// Default mock behavior
-	return &override.File{Overrides: make(map[string]interface{})}, nil
+	return &override.File{}, nil
 }
+
+// Local ChartData/Metadata definitions needed for mockLoader
+type ChartData struct {
+	Metadata *ChartMetadata
+	Values   map[string]interface{}
+}
+type ChartMetadata struct {
+	Name    string
+	Version string
+}
+
+// Mock Loader for testing - REMOVED as not used directly in these tests anymore
+// type mockLoader struct { ... }
+// func (m *mockLoader) Load(...) { ... }
 
 // REMOVE Mock Strategy definition - we won't mock GetStrategy directly here
 // type mockStrategy struct { ... }
@@ -91,9 +109,9 @@ func TestOverrideCmdArgs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rootCmd := newRootCmd()
+			rootCmd := getRootCmd()
 			currentGeneratorFactory = defaultGeneratorFactory
-			_, _, err := executeCommand(rootCmd, tt.args...)
+			_, err := executeCommand(rootCmd, tt.args...)
 
 			if tt.expectErr {
 				assert.Error(t, err, "Expected an error")
@@ -220,7 +238,8 @@ func TestOverrideCmdExecution(t *testing.T) {
 					_ strategy.PathStrategy, // pathStrategy
 					_ *registry.Mappings, // mappings
 					_ bool, _ int, // strict, threshold
-					_ chart.Loader, // loader
+					_ analysis.ChartLoader, // loader
+					_ []string, _ []string, _ []string,
 				) GeneratorInterface {
 					return &mockGenerator{GenerateFunc: tt.mockGeneratorFunc}
 				}
@@ -273,11 +292,11 @@ func TestOverrideCmdExecution(t *testing.T) {
 			}
 			// ---- END Add logic for registry mapping test ----
 
-			// Get a fresh command instance
-			rootCmd := newRootCmd()
+			// Get a fresh command instance using the helper
+			rootCmd := getRootCmd()
 
-			// Execute command
-			stdout, _, err := executeCommand(rootCmd, args...)
+			// Execute command, fixing assignment mismatch (should capture stdout)
+			stdout, err := executeCommand(rootCmd, args...)
 
 			// Assertions
 			if tt.expectErr {
@@ -299,3 +318,221 @@ func TestOverrideCmdExecution(t *testing.T) {
 		})
 	}
 }
+
+// --- Test Setup Helper ---
+
+// executeCommand runs the command with args and returns output/error
+func executeCommand(cmd *cobra.Command, args ...string) (string, error) {
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs(args)
+	err := cmd.Execute()
+	return buf.String(), err
+}
+
+// setupTestFS creates a temporary filesystem for tests
+func setupTestFS(t *testing.T) (afero.Fs, string) {
+	fs := afero.NewMemMapFs()
+	tempDir := t.TempDir()
+	_ = fs.MkdirAll(tempDir, 0755)
+	return fs, tempDir
+}
+
+// Test helper to create a dummy chart structure
+func createDummyChart(fs afero.Fs, chartDir string) error {
+	if err := fs.MkdirAll(chartDir, 0755); err != nil {
+		return err
+	}
+	chartYaml := `apiVersion: v2
+name: dummy-chart
+version: 0.1.0
+`
+	if err := afero.WriteFile(fs, filepath.Join(chartDir, "Chart.yaml"), []byte(chartYaml), 0644); err != nil {
+		return err
+	}
+	valuesYaml := `image:
+  repository: source.io/library/nginx
+  tag: "1.21"
+`
+	return afero.WriteFile(fs, filepath.Join(chartDir, "values.yaml"), []byte(valuesYaml), 0644)
+}
+
+// getRootCmd resets and returns the root command for testing
+func getRootCmd() *cobra.Command {
+	// Reset flags or state if necessary
+	return rootCmd
+}
+
+// --- Override Command Tests ---
+
+func TestOverrideCommand_Success(t *testing.T) {
+	fs, chartDir := setupTestFS(t)
+	AppFs = fs
+	require.NoError(t, createDummyChart(fs, chartDir))
+
+	mockGen := &mockGenerator{
+		GenerateFunc: func() (*override.File, error) {
+			return &override.File{
+				ChartPath: chartDir,
+				Overrides: map[string]interface{}{
+					"image": map[string]interface{}{
+						"registry":   "target.io",
+						"repository": "source.io/library/nginx",
+						"tag":        "1.21",
+					},
+				},
+			}, nil
+		},
+	}
+	originalFactory := currentGeneratorFactory
+	currentGeneratorFactory = func(
+		_ string, _ string, _ []string, _ []string,
+		_ strategy.PathStrategy, _ *registry.Mappings, _ bool, _ int,
+		_ analysis.ChartLoader,
+		_ []string, _ []string, _ []string,
+	) GeneratorInterface {
+		return mockGen
+	}
+	defer func() { currentGeneratorFactory = originalFactory }()
+
+	outputFile := filepath.Join(chartDir, "test-overrides.yaml")
+	args := []string{
+		"override",
+		"--chart-path", chartDir,
+		"--target-registry", "target.io",
+		"--source-registries", "source.io",
+		"--output-file", outputFile,
+	}
+
+	cmd := getRootCmd()
+	output, err := executeCommand(cmd, args...)
+	require.NoError(t, err, "Command execution failed. Output:\n%s", output)
+
+	// Check if the output file was created
+	exists, _ := afero.Exists(fs, outputFile)
+	assert.True(t, exists, "Output file was not created")
+
+	// Check file content (optional, depending on Generate mock)
+	content, _ := afero.ReadFile(fs, outputFile)
+	assert.Contains(t, string(content), "registry: target.io")
+}
+
+func TestOverrideCommand_DryRun(t *testing.T) {
+	fs, chartDir := setupTestFS(t)
+	AppFs = fs
+	require.NoError(t, createDummyChart(fs, chartDir))
+
+	mockGen := &mockGenerator{
+		GenerateFunc: func() (*override.File, error) {
+			return &override.File{
+				Overrides: map[string]interface{}{"image": map[string]interface{}{"repository": "new-repo"}},
+			}, nil
+		},
+	}
+	originalFactory := currentGeneratorFactory
+	currentGeneratorFactory = func(
+		_ string, _ string, _ []string, _ []string,
+		_ strategy.PathStrategy, _ *registry.Mappings, _ bool, _ int,
+		_ analysis.ChartLoader,
+		_ []string, _ []string, _ []string,
+	) GeneratorInterface {
+		return mockGen
+	}
+	defer func() { currentGeneratorFactory = originalFactory }()
+
+	outputFile := filepath.Join(chartDir, "test-dryrun.yaml")
+	args := []string{
+		"override",
+		"--chart-path", chartDir,
+		"--target-registry", "target.io",
+		"--source-registries", "source.io",
+		"--output-file", outputFile,
+		"--dry-run",
+	}
+
+	cmd := getRootCmd()
+	output, err := executeCommand(cmd, args...)
+	require.NoError(t, err, "Dry run command failed. Output:\n%s", output)
+
+	// Assert dry run output contains expected structure
+	assert.Contains(t, output, "--- Dry Run: Generated Overrides ---")
+	assert.Contains(t, output, "repository: new-repo")
+
+	// Assert file was NOT created
+	exists, _ := afero.Exists(fs, outputFile)
+	assert.False(t, exists, "Output file should not be created in dry run mode")
+}
+
+func TestOverrideCommand_MissingFlags(t *testing.T) {
+	testCases := []struct {
+		name   string
+		args   []string
+		errMsg string
+	}{
+		{"Missing all", []string{"override"}, "missing required flags"},
+		{"Missing target", []string{"override", "--chart-path", "/chart", "--source-registries", "src"}, "missing required flags"},
+		{"Missing source", []string{"override", "--chart-path", "/chart", "--target-registry", "tgt"}, "missing required flags"},
+		{"Missing chart", []string{"override", "--target-registry", "tgt", "--source-registries", "src"}, "missing required flags"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := getRootCmd()
+			_, err := executeCommand(cmd, tc.args...)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.errMsg)
+			var exitErr *ExitCodeError
+			if errors.As(err, &exitErr) {
+				assert.Equal(t, ExitInputConfigurationError, exitErr.Code)
+			} else {
+				t.Errorf("Expected ExitCodeError, got %T", err)
+			}
+		})
+	}
+}
+
+func TestOverrideCommand_GeneratorError(t *testing.T) {
+	fs, chartDir := setupTestFS(t)
+	AppFs = fs
+	require.NoError(t, createDummyChart(fs, chartDir))
+
+	genError := errors.New("generator failed miserably")
+	mockGen := &mockGenerator{
+		GenerateFunc: func() (*override.File, error) {
+			return nil, genError
+		},
+	}
+	originalFactory := currentGeneratorFactory
+	currentGeneratorFactory = func(
+		_ string, _ string, _ []string, _ []string,
+		_ strategy.PathStrategy, _ *registry.Mappings, _ bool, _ int,
+		_ analysis.ChartLoader,
+		_ []string, _ []string, _ []string,
+	) GeneratorInterface {
+		return mockGen
+	}
+	defer func() { currentGeneratorFactory = originalFactory }()
+
+	args := []string{
+		"override",
+		"--chart-path", chartDir,
+		"--target-registry", "target.io",
+		"--source-registries", "source.io",
+	}
+
+	cmd := getRootCmd()
+	_, err := executeCommand(cmd, args...)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "error generating overrides")
+	assert.Contains(t, err.Error(), genError.Error())
+
+	var exitErr *ExitCodeError
+	if errors.As(err, &exitErr) {
+		assert.Equal(t, ExitImageProcessingError, exitErr.Code)
+	} else {
+		t.Errorf("Expected ExitCodeError, got %T", err)
+	}
+}
+
+// Add more tests for invalid registry formats, file writing errors, etc.

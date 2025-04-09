@@ -6,446 +6,62 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
-	"helm.sh/helm/v3/pkg/chart"
+	// Import the necessary Helm types
+	helmchart "helm.sh/helm/v3/pkg/chart"
+	helmchartloader "helm.sh/helm/v3/pkg/chart/loader" // Import Helm loader
 
+	"github.com/lalbers/irr/pkg/analysis"
 	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/image"
-	stdLog "github.com/lalbers/irr/pkg/log"
+	log "github.com/lalbers/irr/pkg/log"
 	"github.com/lalbers/irr/pkg/override"
 	"github.com/lalbers/irr/pkg/registry"
 	"github.com/lalbers/irr/pkg/strategy"
 )
 
+// Constants
 const (
-	// defaultFilePerm specifies the default file permission (read/write for owner)
-	defaultFilePerm fs.FileMode = 0o600
-	// percentageMultiplier is used for calculating percentages
-	percentageMultiplier = 100
+	defaultFilePerm      fs.FileMode = 0o600
+	percentageMultiplier fs.FileMode = 100
 )
 
-// Package chart provides functionality for loading charts, detecting images, and generating override files.
-// This package is responsible for processing Helm charts and generating override structures
-// that can be used to modify image references in the chart's values.
+// --- Local Error Definitions ---
+var (
+	ErrUnsupportedStructure = errors.New("unsupported structure found")
+)
 
-// Key concepts:
-// - ImageReference: Represents a container image reference (registry/repository:tag)
-// - OverrideStructure: A nested map that mirrors the chart's values structure
-// - PathStrategy: Defines how image paths are transformed in the override structure
-
-// Type hints for map structures:
-// map[string]interface{} can contain:
-// - Nested maps (for structured data)
-// - Arrays (for list values)
-// - Strings (for image references and other values)
-// - Numbers (for ports, replicas, etc.)
-// - Booleans (for feature flags)
-
-// @llm-helper This package uses reflection and type assertions extensively
-// @llm-helper The override structure matches Helm's value override format
-// @llm-helper Image references can be in multiple formats (string, map with repository/tag)
-
-// DetectedImage represents an image reference found within the chart's values.
-type DetectedImage struct {
-	Reference *image.Reference
-	Path      []string
-	Source    string // e.g., "values.yaml", "Chart.yaml"
+// Keep LoadingError defined locally as it wraps errors from this package's perspective
+type LoadingError struct {
+	ChartPath string
+	Err       error
 }
 
-// Generator generates image overrides for a Helm chart
-type Generator struct {
-	chartPath         string
-	targetRegistry    string
-	sourceRegistries  []string
-	excludeRegistries []string
-	pathStrategy      strategy.PathStrategy
-	mappings          *registry.Mappings
-	strict            bool
-	threshold         int
-	loader            Loader
+func (e *LoadingError) Error() string {
+	return fmt.Sprintf("failed to load chart at %s: %v", e.ChartPath, e.Err)
 }
+func (e *LoadingError) Unwrap() error { return e.Err }
 
-// NewGenerator creates a new Generator
-func NewGenerator(
-	chartPath, targetRegistry string,
-	sourceRegistries, excludeRegistries []string,
-	pathStrategy strategy.PathStrategy,
-	mappings *registry.Mappings,
-	strict bool,
-	threshold int,
-	loader Loader,
-) *Generator {
-	if loader == nil {
-		loader = NewLoader()
-	}
-	return &Generator{
-		chartPath:         chartPath,
-		targetRegistry:    targetRegistry,
-		sourceRegistries:  sourceRegistries,
-		excludeRegistries: excludeRegistries,
-		pathStrategy:      pathStrategy,
-		mappings:          mappings,
-		strict:            strict,
-		threshold:         threshold,
-		loader:            loader,
-	}
-}
+// Assuming ParsingError and ImageProcessingError are defined elsewhere (e.g., analysis package or pkg/errors)
 
-// locationTypeToString converts a LocationType to its string representation
-func locationTypeToString(lt image.LocationType) string {
-	switch lt {
-	case image.TypeUnknown:
-		return "unknown"
-	case image.TypeMapRegistryRepositoryTag:
-		return "map-registry-repository-tag"
-	case image.TypeRepositoryTag:
-		return "repository-tag"
-	case image.TypeString:
-		return "string"
-	default:
-		return fmt.Sprintf("unknown-%d", lt)
-	}
-}
-
-// Generate generates image overrides for the chart
-func (g *Generator) Generate() (*override.File, error) {
-	// <<< ADD fmt.Printf LOGGING HERE AT THE VERY BEGINNING >>>
-	debug.FunctionEnter("Generator.Generate")
-	defer debug.FunctionExit("Generator.Generate")
-
-	chartData, err := g.loader.Load(g.chartPath)
-	if err != nil {
-		// Return specific ParsingError (Corrected type)
-		return nil, &ParsingError{FilePath: g.chartPath, Err: err}
-	}
-	// +++ LOGGING AFTER Load +++
-	fmt.Println("[STDLOG GENERATE] Successfully loaded chart:", chartData.Name())
-	debug.Printf("[GENERATE] Successfully loaded chart: %s", chartData.Name())
-	debug.DumpValue("[GENERATE] Loaded Chart Values (Before Copy)", chartData.Values)
-
-	baseValuesCopy := override.DeepCopy(chartData.Values)
-	// +++ LOGGING AFTER DeepCopy +++
-	fmt.Println("[STDLOG GENERATE] After DeepCopy")
-	debug.DumpValue("[GENERATE] After DeepCopy", baseValuesCopy)
-
-	baseValues, ok := baseValuesCopy.(map[string]interface{})
-	if !ok {
-		// This indicates a fundamental issue with the chart's values structure
-		// +++ LOGGING TYPE ASSERTION FAILURE +++
-		fmt.Println("[STDLOG GENERATE] ERROR: Type assertion failed!")
-		debug.Printf("[GENERATE] ERROR: Type assertion failed! baseValuesCopy is type %T, not map[string]interface{}", baseValuesCopy)
-		return nil, &ParsingError{FilePath: g.chartPath, Err: errors.New("chart values are not a map[string]interface{}")} // Corrected type
-	}
-	// +++ LOGGING AFTER Type Assertion +++
-	fmt.Println("[STDLOG GENERATE] Type assertion successful. Proceeding.")
-	debug.Printf("[GENERATE] Type assertion successful. Proceeding with detection.")
-	debug.DumpValue("Base values for type checking", baseValues)
-
-	// --- Extract Global Registry ---
-	globalRegistry := ""
-	if globalValues, ok := baseValues["global"].(map[string]interface{}); ok {
-		if reg, ok := globalValues["imageRegistry"].(string); ok {
-			globalRegistry = reg
-			debug.Printf("Extracted global.imageRegistry: %s", globalRegistry)
-		}
-	}
-
-	// --- Use ImageDetector with context ---
-	detectionContext := &image.DetectionContext{
-		SourceRegistries:  g.sourceRegistries,
-		ExcludeRegistries: g.excludeRegistries,
-		GlobalRegistry:    globalRegistry,
-		Strict:            g.strict,
-		// TemplateMode: false, // Assuming not needed for now
-	}
-	detector := image.NewDetector(*detectionContext)
-
-	// +++ LOGGING BEFORE DetectImages +++
-	fmt.Println("[STDLOG GENERATE] Before DetectImages call")
-	debug.Printf("[GENERATE] Before DetectImages - Chart Path: %s", g.chartPath)
-	debug.DumpValue("[GENERATE] Values passed to DetectImages", chartData.Values)
-	debug.DumpValue("[GENERATE] DetectionContext", detectionContext)
-	// --- ADD DEBUG LOG BEFORE DetectImages --- // <<< KEEP OLD LOG TOO >>>
-	if chartData.Values == nil {
-		fmt.Println("[DEBUG irr GEN] >>> WARNING: chartData.Values is nil before calling DetectImages!")
-	} else {
-		fmt.Printf("[DEBUG irr GEN] >>> Chart values map size: %d\n", len(chartData.Values))
-	}
-	// --- END DEBUG LOG ---
-
-	// +++ ADD LOGGING BEFORE DetectImages Call (using stdLog) +++
-	stdLog.Debugf("[STDLOG GENERATE PASSED VALUE] Value: %#v", chartData.Values)
-	images, unsupportedMatches, err := detector.DetectImages(chartData.Values, []string{}) // Pass empty path for root
-
-	// +++ LOGGING AFTER DetectImages +++
-	fmt.Printf("[STDLOG GENERATE] After DetectImages call. Error: %v, Detected: %d, Unsupported: %d\n",
-		err, len(images), len(unsupportedMatches))
-	debug.Printf("[GENERATE] After DetectImages - Error: %v", err)
-	debug.Printf("[GENERATE] After DetectImages - Detected Images Count: %d", len(images))
-	debug.DumpValue("[GENERATE] After DetectImages - Detected Images", images)
-	debug.Printf("[GENERATE] After DetectImages - Unsupported Matches Count: %d", len(unsupportedMatches))
-	debug.DumpValue("[GENERATE] After DetectImages - Unsupported Matches", unsupportedMatches)
-
-	if err != nil {
-		// Wrap detection error as ImageProcessingError (though could be ChartParsingError if structure is bad)
-		// For simplicity, using ImageProcessingError as it relates to finding images.
-		return nil, &ImageProcessingError{Err: fmt.Errorf("image detection failed: %w", err)}
-	}
-	debug.DumpValue("Found images", images)                       // <<< KEEP OLD LOG TOO >>>
-	debug.DumpValue("Unsupported structures", unsupportedMatches) // <<< KEEP OLD LOG TOO >>>
-
-	// +++ START TEMP DEBUG LOGGING for WithRegistryMapping +++
-	if g.mappings != nil { // Only log when mappings are present (like in the failing test)
-		fmt.Printf("[DEBUG irr GEN MAP TEST] Detected %d images BEFORE filtering:\n", len(images))
-		for i, img := range images {
-			if img.Reference != nil {
-				fmt.Printf("[DEBUG irr GEN MAP TEST]   [%d] Path: %v, Ref: %s\n", i, img.Path, img.Reference.String())
-			} else {
-				fmt.Printf("[DEBUG irr GEN MAP TEST]   [%d] Path: %v, Ref: <nil>\n", i, img.Path)
-			}
-		}
-	}
-	// +++ END TEMP DEBUG LOGGING +++
-
-	// --- START: Strict Mode Check ---
-	if g.strict && len(unsupportedMatches) > 0 {
-		// Combine details of unsupported structures into the error message
-		var details []string
-		for _, match := range unsupportedMatches {
-			// Keep the detailed logging format
-			debug.Printf("[STRICT VIOLATION DETAIL] Path: %v, Type: %v, Error: %v", match.Location, match.Type, match.Error)
-			details = append(details, fmt.Sprintf("path=%v type=%d error='%v'", match.Location, match.Type, match.Error))
-		}
-		// Construct a detailed message for logging/debugging, but return the specific sentinel error.
-		errMsg := fmt.Sprintf("strict mode enabled: unsupported structures found (%d): [%s]",
-			len(unsupportedMatches), strings.Join(details, "; "))
-		debug.Println(errMsg)
-
-		// Return the specific sentinel error, optionally wrapping the detailed message.
-		// Wrapping keeps details accessible via errors.Unwrap if needed, while allowing errors.Is check.
-		return nil, fmt.Errorf("%w: %s", ErrStrictValidationFailed, errMsg) // Wrap sentinel error
-	}
-	// --- END: Strict Mode Check ---
-
-	// Determine eligible images *before* processing
-	eligibleImages := []image.DetectedImage{}
-	for _, img := range images {
-		if img.Reference == nil {
-			continue // Should not happen, but guard anyway
-		}
-		// Skip excluded registries
-		if g.isExcluded(img.Reference.Registry) {
-			debug.Printf("Skipping image from excluded registry: %s", img.Reference.String())
-			continue
-		}
-		// --- MODIFIED ELIGIBILITY CHECK ---
-		// If sourceRegistries list is empty, NO images are eligible.
-		if len(g.sourceRegistries) == 0 {
-			debug.Printf("Skipping image because source registry list is empty: %s", img.Reference.String())
-			continue
-		}
-		// If sourceRegistries is NOT empty, skip if image registry is not in the list.
-		if !g.isSourceRegistry(img.Reference.Registry) {
-			debug.Printf("Skipping image from non-source registry: %s", img.Reference.String())
-			continue
-		}
-		// If not excluded and (list is not empty AND registry is in the list)
-		eligibleImages = append(eligibleImages, img)
-	}
-	eligibleImagesCount := len(eligibleImages)
-	// +++ LOGGING AFTER Filtering +++
-	fmt.Printf("[STDLOG GENERATE] After Filtering. Eligible Count: %d\n", eligibleImagesCount)
-	debug.Printf("[GENERATE] After Filtering - Eligible Images Count: %d", eligibleImagesCount)
-	debug.DumpValue("[GENERATE] After Filtering - Eligible Images", eligibleImages)
-
-	var unsupported []override.UnsupportedStructure
-	for _, match := range unsupportedMatches {
-		unsupported = append(unsupported, override.UnsupportedStructure{
-			Path: match.Location,
-			Type: locationTypeToString(image.LocationType(match.Type)),
-		})
-	}
-
-	if eligibleImagesCount == 0 {
-		debug.Printf("No eligible images requiring override found in chart.")
-		return &override.File{
-			ChartPath:   g.chartPath,
-			ChartName:   chartData.Name(),
-			Overrides:   make(map[string]interface{}),
-			Unsupported: unsupported,
-		}, nil
-	}
-
-	imagesSuccessfullyProcessed := 0
-	finalOverrides := make(map[string]interface{}) // Initialize empty map for overrides
-
-	var processingErrors []*ImageProcessingError
-
-	// Loop over ELIGIBLE images only
-	for i, img := range eligibleImages {
-		processingFailed := false
-
-		// No need to re-check source/exclude here, already filtered
-		debug.Printf("Processing eligible image %d/%d: Path: %v, Ref: %s (%s)",
-			i+1, eligibleImagesCount, img.Path, img.Reference.String(), img.Pattern)
-
-		if img.Reference == nil { // Keep guard clause
-			debug.Printf("Skipping image %d due to nil reference", i+1)
-			processingFailed = true
-			processingErrors = append(processingErrors, &ImageProcessingError{
-				Path: img.Path,
-				Ref:  "<nil>",
-				Err:  errors.New("nil image reference detected during processing"),
-			})
-			continue
-		}
-
-		// Apply registry mappings to the target registry for this specific image if applicable
-		imageTargetRegistry := g.targetRegistry // Start with the global target
-		if g.mappings != nil {
-			mappedRegistry := g.mappings.GetTargetRegistry(img.Reference.Registry)
-			if mappedRegistry != "" {
-				imageTargetRegistry = mappedRegistry
-				debug.Printf("Using mapped target registry '%s' for source '%s'", imageTargetRegistry, img.Reference.Registry)
-			}
-		}
-
-		// Get the transformed repository path from the strategy
-		transformedRepoPath, pathErr := g.pathStrategy.GeneratePath(img.Reference, imageTargetRegistry)
-		if pathErr != nil {
-			debug.Printf("Error generating path: %v", pathErr)
-			// Store error for later threshold check
-			processingErrors = append(processingErrors, &ImageProcessingError{
-				Path: img.Path,
-				Ref:  img.Reference.String(),
-				Err:  fmt.Errorf("path strategy failed: %w", pathErr),
-			})
-			continue // Skip this image
-		}
-		debug.Printf("Transformed repository path: %s", transformedRepoPath)
-
-		// --- Construct the target value based on original format ---
-		var valueToSet interface{}
-
-		// +++ Add Debugging (using fmt.Printf) +++
-		fmt.Printf("[GENERATOR DEBUG VIA FMT] Checking Image Path: %v, OriginalFormat: '%s'\n", img.Path, img.OriginalFormat)
-
-		if img.OriginalFormat == "string" {
-			// Original was a string, format the override as a string
-			var tagOrDigestSuffix string
-			if img.Reference.Digest != "" {
-				tagOrDigestSuffix = "@" + img.Reference.Digest
-			} else if img.Reference.Tag != "" {
-				tagOrDigestSuffix = ":" + img.Reference.Tag
-			} else {
-				tagOrDigestSuffix = ":latest" // Default if somehow both are empty after parsing
-			}
-			valueToSet = fmt.Sprintf("%s/%s%s", imageTargetRegistry, transformedRepoPath, tagOrDigestSuffix)
-			debug.Printf("Original format was string, setting override as string: %s", valueToSet)
-		} else {
-			// Original was likely a map (or format unknown/default), override with map structure
-			mapValue := map[string]interface{}{}
-			mapValue["registry"] = imageTargetRegistry
-			mapValue["repository"] = transformedRepoPath
-			if img.Reference.Digest != "" {
-				mapValue["digest"] = img.Reference.Digest
-			} else {
-				mapValue["tag"] = img.Reference.Tag
-			}
-			valueToSet = mapValue
-			debug.DumpValue("Original format was map, setting override as map", valueToSet)
-		}
-		// --- End Construct the target value ---
-
-		// +++ Add Debugging +++
-		debug.Printf("[GENERATOR DEBUG] Type of valueToSet: %T", valueToSet)
-		debug.DumpValue("[GENERATOR DEBUG] Value being passed to SetValueAtPath", valueToSet)
-
-		debug.Printf("[DEBUG irr GEN] Processing Eligible Image: Path=%v, OriginalRef=%s, Type=%s", img.Path, img.Reference.String(), img.Pattern)
-		debug.DumpValue("[DEBUG irr GEN] Value to set (final)", valueToSet)
-
-		// Set the new value (map or string) in the NEW override structure
-		debug.Printf("[DEBUG irr GEN] Calling SetValueAtPath with Path: %v", img.Path)
-		err = override.SetValueAtPath(finalOverrides, img.Path, valueToSet, false) // Pass false for debug
-		if err != nil {
-			debug.Printf("Error setting value at path %v: %v", img.Path, err)
-			processingFailed = true
-			processingErrors = append(processingErrors, &ImageProcessingError{
-				Path: img.Path,
-				Ref:  img.Reference.String(),
-				Err:  fmt.Errorf("failed to set override value: %w", err),
-			})
-			continue // Skip to next image on set value error
-		}
-		debug.Printf("[DEBUG irr GEN] SetValueAtPath successful for path: %v", img.Path)
-
-		if !processingFailed {
-			imagesSuccessfullyProcessed++
-		}
-	} // End loop over images
-
-	// +++ LOGGING BEFORE THRESHOLD CHECK +++
-	fmt.Printf("[STDLOG GENERATE] Before threshold check. Processed: %d, Eligible: %d\n", imagesSuccessfullyProcessed, eligibleImagesCount)
-
-	// Check if processing threshold was met
-	if eligibleImagesCount > 0 {
-		successRate := float64(imagesSuccessfullyProcessed) / float64(eligibleImagesCount) * percentageMultiplier
-		debug.Printf("Image processing success rate: %.2f%% (Processed: %d, Eligible: %d, Threshold: %d%%)",
-			successRate, imagesSuccessfullyProcessed, eligibleImagesCount, g.threshold)
-		if int(successRate) < g.threshold {
-			combinedErr := combineProcessingErrors(processingErrors)
-			thresholdErr := &ThresholdError{
-				Threshold:   g.threshold,
-				ActualRate:  int(successRate),
-				Eligible:    eligibleImagesCount,
-				Processed:   imagesSuccessfullyProcessed,
-				WrappedErrs: combinedErr,
-			}
-			return nil, thresholdErr
-		}
-	}
-
-	// +++ LOGGING BEFORE RETURN +++
-	fmt.Printf("[STDLOG GENERATE] Returning Override File. Overrides Count: %d\n", len(finalOverrides))
-
-	// Return the generated override file
-	debug.DumpValue("Final generated overrides", finalOverrides)
-	return &override.File{
-		ChartPath:   g.chartPath,
-		ChartName:   chartData.Name(),
-		Overrides:   finalOverrides,
-		Unsupported: unsupported,
-	}, nil
-}
-
-// combineProcessingErrors converts a slice of *ImageProcessingError to a slice of error.
-func combineProcessingErrors(processingErrors []*ImageProcessingError) []error {
-	errs := make([]error, len(processingErrors))
-	for i, pe := range processingErrors {
-		errs[i] = pe // *ImageProcessingError already satisfies the error interface
-	}
-	return errs
-}
-
-// ThresholdError represents a failure due to not meeting the processing threshold.
+// Keep ThresholdError defined locally as it's specific to the generator's threshold logic
 type ThresholdError struct {
 	Threshold   int
 	ActualRate  int
 	Eligible    int
 	Processed   int
-	WrappedErrs []error
+	Err         error   // Combined error
+	WrappedErrs []error // Slice of underlying errors
 }
 
 func (e *ThresholdError) Error() string {
-	errMsg := fmt.Sprintf("processing failed: success rate %.2f%% below threshold %d%% (%d/%d eligible images processed)",
-		float64(e.ActualRate)/float64(e.Eligible)*percentageMultiplier, e.Threshold, e.Processed, e.Eligible)
+	errMsg := fmt.Sprintf("processing failed: success rate %d%% below threshold %d%% (%d/%d eligible images processed)",
+		e.ActualRate, e.Threshold, e.Processed, e.Eligible)
 	if len(e.WrappedErrs) > 0 {
 		var errDetails []string
 		for _, err := range e.WrappedErrs {
@@ -455,352 +71,407 @@ func (e *ThresholdError) Error() string {
 	}
 	return errMsg
 }
+func (e *ThresholdError) Unwrap() error { return e.Err }
 
-// extractSubtree extracts a submap from a nested map structure based on a path
-// nolint:unused // Kept for potential future uses
-func extractSubtree(data map[string]interface{}, path []string) map[string]interface{} {
-	if len(path) == 0 {
-		return nil
+// --- Local Loader Implementation (implements analysis.ChartLoader) ---
+
+// Ensure HelmLoader implements analysis.ChartLoader
+var _ analysis.ChartLoader = (*HelmLoader)(nil)
+
+type HelmLoader struct{}
+
+// Load implements analysis.ChartLoader interface, returning helmchart.Chart
+func (l *HelmLoader) Load(chartPath string) (*helmchart.Chart, error) { // Return *helmchart.Chart
+	debug.Printf("HelmLoader: Loading chart from %s", chartPath)
+
+	// Use helm's loader directly
+	helmLoadedChart, err := helmchartloader.Load(chartPath)
+	if err != nil {
+		// Wrap the error from the helm loader
+		return nil, fmt.Errorf("helm loader failed for path '%s': %w", chartPath, err)
 	}
 
-	result := make(map[string]interface{})
-	current := result
-	value := data
+	// We need to extract values manually if helm loader doesn't merge them automatically?
+	// Let's assume `helmchartloader.Load` provides merged values in helmLoadedChart.Values
+	if helmLoadedChart.Values == nil {
+		helmLoadedChart.Values = make(map[string]interface{}) // Ensure Values is not nil
+		debug.Printf("Helm chart loaded with nil Values, initialized empty map for %s", chartPath)
+	}
 
-	// Build the path structure
-	for i, key := range path[:len(path)-1] {
-		// Handle array indices
-		if strings.HasPrefix(key, "[") && strings.HasSuffix(key, "]") {
-			// Extract index
-			indexStr := key[1 : len(key)-1]
-			index, err := strconv.Atoi(indexStr)
-			if err != nil {
-				return nil
-			}
+	debug.Printf("HelmLoader successfully loaded chart: %s", helmLoadedChart.Name())
+	return helmLoadedChart, nil
+}
 
-			// Get the array from the source data
-			parentKey := path[i-1]
-			if arr, ok := value[parentKey].([]interface{}); ok && index < len(arr) {
-				// Create a new array in the result
-				newArr := make([]interface{}, index+1)
-				current[parentKey] = newArr
+// --- Generator Implementation ---
 
-				// Move to the array element
-				if mapValue, ok := arr[index].(map[string]interface{}); ok {
-					value = mapValue
-					newMap := make(map[string]interface{})
-					newArr[index] = newMap
-					current = newMap
+type Generator struct {
+	chartPath         string
+	targetRegistry    string
+	sourceRegistries  []string
+	excludeRegistries []string
+	pathStrategy      strategy.PathStrategy
+	mappings          *registry.Mappings
+	strict            bool
+	includePatterns   []string // Passed to detector context
+	excludePatterns   []string // Passed to detector context
+	knownPaths        []string // Passed to detector context
+	threshold         int
+	loader            analysis.ChartLoader // Use analysis.ChartLoader interface
+}
+
+func NewGenerator(
+	chartPath, targetRegistry string,
+	sourceRegistries, excludeRegistries []string,
+	pathStrategy strategy.PathStrategy,
+	mappings *registry.Mappings,
+	strict bool,
+	threshold int,
+	loader analysis.ChartLoader,
+	includePatterns, excludePatterns, knownPaths []string,
+) *Generator {
+	if loader == nil {
+		loader = &HelmLoader{}
+	}
+	return &Generator{
+		chartPath:         chartPath,
+		targetRegistry:    targetRegistry,
+		sourceRegistries:  sourceRegistries,
+		excludeRegistries: excludeRegistries,
+		pathStrategy:      pathStrategy,
+		mappings:          mappings,
+		strict:            strict,
+		includePatterns:   includePatterns,
+		excludePatterns:   excludePatterns,
+		knownPaths:        knownPaths,
+		threshold:         threshold,
+		loader:            loader,
+	}
+}
+
+func (g *Generator) Generate() (*override.File, error) {
+	debug.FunctionEnter("Generator.Generate")
+	defer debug.FunctionExit("Generator.Generate")
+
+	// Configure and run the analyzer
+	// Create analyzer using the expected signature (chartPath, loader)
+	analyzer := analysis.NewAnalyzer(g.chartPath, g.loader)
+	// Config is likely handled internally by the analyzer based on its dependencies or structure
+	debug.Printf("Analyzer created for path: %s", g.chartPath)
+
+	// Analyze Chart
+	debug.Printf("Analyzing chart: %s", g.chartPath)
+	analysisResults, err := analyzer.Analyze() // Call Analyze()
+	if err != nil {
+		// Wrap the error generically if analysis fails
+		return nil, fmt.Errorf("error analyzing chart %s: %w", g.chartPath, err)
+	}
+
+	// --- Access Analysis Results ---
+	// Use ImagePatterns based on analyzer.go code. Comment out UnsupportedMatches for now.
+	detectedImages := analysisResults.ImagePatterns
+	// unsupportedMatches := analysisResults.UnsupportedMatches // Field name/existence uncertain
+
+	debug.Printf("Analysis complete. Found %d image patterns.", len(detectedImages))
+	// debug.Printf("Found %d unsupported items.", len(unsupportedMatches))
+	debug.DumpValue("[GENERATE] Detected Image Patterns", detectedImages)
+	// debug.DumpValue("[GENERATE] Unsupported Matches", unsupportedMatches)
+
+	// --- Strict Mode Check (Commented out as it depends on UnsupportedMatches) ---
+	/*
+		if g.strict && len(unsupportedMatches) > 0 {
+			details := []string{}
+			log.Warnf("Strict mode enabled: Found %d unsupported image structures:", len(unsupportedMatches))
+			for i, item := range unsupportedMatches {
+				errMsg := fmt.Sprintf("  [%d] Path: %s, Type: %s", i+1, item.LocationString(), item.Type)
+				if item.Value != nil {
+					errMsg += fmt.Sprintf(", Value: %v", item.Value)
 				}
+				if item.Error != nil {
+					errMsg += fmt.Sprintf(", Reason: %v", item.Error)
+				}
+				log.Warnf(errMsg)
+				debug.Printf("[STRICT VIOLATION DETAIL] Path: %s, Type: %s, Value: %v, Reason: %v", item.LocationString(), item.Type, item.Value, item.Error)
+				details = append(details, errMsg)
 			}
+			combinedErrMsg := fmt.Sprintf("%w: %d unsupported structures found", ErrUnsupportedStructure, len(unsupportedMatches))
+			return nil, fmt.Errorf(combinedErrMsg)
+		}
+	*/
+
+	// --- Filter Detected Images (based on source/exclude, similar to original logic but using ImagePattern) ---
+	eligibleImages := []analysis.ImagePattern{}
+	for _, pattern := range detectedImages {
+		// Need to parse the pattern.Value (string) or use pattern.Structure (map) to get registry
+		var registry string
+		var imgRef *image.Reference // Use image.ParseImageReference for consistency
+		var parseErr error
+
+		if pattern.Type == analysis.PatternTypeString {
+			imgRef, parseErr = image.ParseImageReference(pattern.Value)
+			if parseErr == nil {
+				registry = imgRef.Registry
+			} else {
+				debug.Printf("Skipping pattern at path %s due to parse error on value '%s': %v", pattern.Path, pattern.Value, parseErr)
+				continue // Skip if string pattern doesn't parse
+			}
+		} else if pattern.Type == analysis.PatternTypeMap {
+			if regVal, ok := pattern.Structure["registry"].(string); ok {
+				registry = regVal
+			} else {
+				// Attempt to reconstruct string and parse if registry missing in map?
+				// Or rely on normalization during strategy? Let's assume registry is needed now.
+				debug.Printf("Skipping map pattern at path %s due to missing registry in structure: %+v", pattern.Path, pattern.Structure)
+				continue
+			}
+		} else {
+			debug.Printf("Skipping pattern at path %s due to unknown pattern type: %v", pattern.Path, pattern.Type)
+			continue // Skip unknown patterns
+		}
+
+		if registry == "" { // Handle cases where registry might still be empty after extraction
+			debug.Printf("Skipping pattern at path %s due to empty registry", pattern.Path)
 			continue
 		}
 
-		// Handle regular map keys
-		if nextValue, ok := value[key].(map[string]interface{}); ok {
-			newMap := make(map[string]interface{})
-			current[key] = newMap
-			current = newMap
-			value = nextValue
+		if g.isExcluded(registry) {
+			debug.Printf("Skipping image pattern from excluded registry '%s' at path %s", registry, pattern.Path)
+			continue
 		}
-	}
-
-	// Set the final value
-	lastKey := path[len(path)-1]
-	if finalValue, ok := value[lastKey]; ok {
-		current[lastKey] = finalValue
-	}
-
-	return result
-}
-
-// isExcluded checks if a registry is in the exclude list
-func (g *Generator) isExcluded(registry string) bool {
-	for _, excluded := range g.excludeRegistries {
-		if registry == excluded {
-			return true
+		if len(g.sourceRegistries) > 0 && !g.isSourceRegistry(registry) {
+			debug.Printf("Skipping image pattern from non-source registry '%s' at path %s", registry, pattern.Path)
+			continue
 		}
+		eligibleImages = append(eligibleImages, pattern)
 	}
-	return false
-}
 
-// isSourceRegistry checks if a registry is in the source list
-func (g *Generator) isSourceRegistry(registry string) bool {
-	for _, source := range g.sourceRegistries {
-		if registry == source {
-			return true
+	// --- Apply Strategy & Generate Overrides --- (Adapt for ImagePattern)
+	debug.Printf("Generating overrides for %d eligible image patterns.", len(eligibleImages))
+
+	// Convert eligible analysis.ImagePattern to image.DetectedImage for strategy
+	detectedEligibleImages := make([]image.DetectedImage, 0, len(eligibleImages))
+	for _, pattern := range eligibleImages {
+		var imgRef *image.Reference
+		var parseErr error
+		originalFormat := pattern.Value // Default for string type
+		if pattern.Type == analysis.PatternTypeString {
+			imgRef, parseErr = image.ParseImageReference(pattern.Value)
+			if parseErr != nil {
+				log.Warnf("Could not parse eligible string image pattern at path %s ('%s'): %v - Skipping", pattern.Path, pattern.Value, parseErr)
+				continue
+			}
+		} else if pattern.Type == analysis.PatternTypeMap {
+			// Reconstruct string for parsing to get consistent Reference object
+			// This assumes normalizeImageValues logic is consistent with ParseImageReference
+			reg, repo, tag := pattern.Structure["registry"].(string), pattern.Structure["repository"].(string), pattern.Structure["tag"].(string)
+			mapValueStr := fmt.Sprintf("%s/%s:%s", reg, repo, tag)
+			originalFormat = mapValueStr // Use reconstructed string as original for map
+			imgRef, parseErr = image.ParseImageReference(mapValueStr)
+			if parseErr != nil {
+				log.Warnf("Could not parse reconstructed map image pattern at path %s ('%s'): %v - Skipping", pattern.Path, mapValueStr, parseErr)
+				continue
+			}
+		} else {
+			log.Warnf("Unknown pattern type %v encountered for eligible image at path %s - Skipping", pattern.Type, pattern.Path)
+			continue
 		}
+
+		detectedEligibleImages = append(detectedEligibleImages, image.DetectedImage{
+			Path:           strings.Split(pattern.Path, "."), // Convert dot-path to slice
+			Reference:      imgRef,
+			OriginalFormat: originalFormat,
+			Pattern:        fmt.Sprintf("%d", pattern.Type), // Convert pattern type int to string
+		})
 	}
-	return false
-}
 
-// GenerateOverrides generates the final override structure based on detected images and strategy.
-func GenerateOverrides(
-	chartData *chart.Chart,
-	targetRegistry string,
-	sourceRegistries, excludeRegistries []string,
-	pathStrategy strategy.PathStrategy,
-	verbose bool,
-) (map[string]interface{}, error) {
-	debug.FunctionEnter("GenerateOverrides")
-	defer debug.FunctionExit("GenerateOverrides")
-
-	debug.DumpValue("Target Registry", targetRegistry)
-	debug.DumpValue("Source Registries", sourceRegistries)
-	debug.DumpValue("Exclude Registries", excludeRegistries)
-	debug.DumpValue("Path Strategy", pathStrategy)
-
-	// Create a new image detector with context
-	detectionContext := &image.DetectionContext{
-		GlobalRegistry: targetRegistry,
-		Strict:         false,
-	}
-	detector := image.NewDetector(*detectionContext)
-
-	// Process the main chart (Helm loader should have merged values)
-	debug.Printf("Processing combined chart values: %s", chartData.Name())
-	// Call processChartForOverrides just once with the potentially merged chartData
-	overrides, err := processChartForOverrides(chartData, targetRegistry, sourceRegistries, excludeRegistries, pathStrategy, verbose, detector)
-	if err != nil {
-		// Changed error wrapping to match original intent better
-		return nil, fmt.Errorf("error processing chart values: %w", err)
-	}
-	// The result is directly the overrides map generated
-	return overrides, nil
-}
-
-// ImageDetector defines the interface for detecting images in chart values
-type ImageDetector interface {
-	DetectImages(values interface{}, path []string) ([]image.DetectedImage, []image.UnsupportedImage, error)
-}
-
-// processChartForOverrides processes a single chart's values to generate partial overrides.
-func processChartForOverrides(
-	chartData *chart.Chart,
-	targetRegistry string,
-	sourceRegistries, excludeRegistries []string,
-	pathStrategy strategy.PathStrategy,
-	_ bool, // verbose - currently unused in this specific function
-	detector ImageDetector,
-) (map[string]interface{}, error) {
-	debug.FunctionEnter("processChartForOverrides")
-	defer debug.FunctionExit("processChartForOverrides")
-
-	debug.Printf("Processing chart: %s", chartData.Name())
-	debug.DumpValue("Chart Values for Detection", chartData.Values)
-
-	// Initialize an empty map for the overrides generated by this chart scope
 	overrides := make(map[string]interface{})
+	imagesSuccessfullyProcessed := 0
+	processingErrors := []error{}
+	eligibleImagesCount := len(detectedEligibleImages)
 
-	// Use the provided detector
-	detectedImages, unsupportedMatches, err := detector.DetectImages(chartData.Values, []string{})
-	if err != nil {
-		return nil, fmt.Errorf("error detecting images: %w", err)
-	}
-
-	debug.Printf("Detected %d images", len(detectedImages))
-	debug.Printf("Found %d unsupported structures", len(unsupportedMatches))
-
-	// Process each detected image
-	for _, img := range detectedImages {
-		debug.Printf("Processing image at path: %v", img.Path)
-		debug.DumpValue("Image Reference", img.Reference)
-
-		// Skip if the image is from an excluded registry
-		if img.Reference != nil && img.Reference.Registry != "" {
-			if isRegistryExcluded(img.Reference.Registry, excludeRegistries) {
-				debug.Printf("Skipping excluded registry: %s", img.Reference.Registry)
-				continue
-			}
-			// Skip if not from a source registry
-			if !isRegistryInList(img.Reference.Registry, sourceRegistries) {
-				debug.Printf("Skipping non-source registry: %s", img.Reference.Registry)
-				continue
+	for _, detectedImage := range detectedEligibleImages {
+		// Determine the target registry, considering mappings
+		imageTargetRegistry := g.targetRegistry
+		if g.mappings != nil {
+			if mappedRegistry := g.mappings.GetTargetRegistry(detectedImage.Reference.Registry); mappedRegistry != "" {
+				imageTargetRegistry = mappedRegistry
+				debug.Printf("Using mapped target registry '%s' for source '%s'", imageTargetRegistry, detectedImage.Reference.Registry)
 			}
 		}
 
-		// Transform the image reference using the path strategy
-		var transformedRepoPath string
-		transformedRepoPath, err = pathStrategy.GeneratePath(img.Reference, targetRegistry)
+		// Correct call to GeneratePath with Reference and target registry
+		newPath, err := g.pathStrategy.GeneratePath(detectedImage.Reference, imageTargetRegistry)
 		if err != nil {
-			debug.Printf("Error transforming image reference: %v", err)
-			continue // Skip this image if transformation fails
-		}
-		debug.Printf("Transformed repo path: %s", transformedRepoPath)
-
-		// Create the image configuration with extracted parts
-		imageConfig := map[string]interface{}{
-			"registry":   targetRegistry,
-			"repository": transformedRepoPath,
+			// Use strings.Join for path representation
+			log.Warnf("Error generating path for image %s at path %s: %v", detectedImage.Reference.Original, strings.Join(detectedImage.Path, "."), err)
+			processingErrors = append(processingErrors, fmt.Errorf("path generation for '%s' failed: %w", detectedImage.Reference.Original, err))
+			continue // Skip this image
 		}
 
-		// Handle tag or digest
-		if img.Reference.Digest != "" {
-			imageConfig["digest"] = img.Reference.Digest
-		} else if img.Reference.Tag != "" {
-			imageConfig["tag"] = img.Reference.Tag
-		}
+		// Use strings.Join for path representation
+		debug.Printf("Applying override for path: %s, New Path: %s, Original Image Ref: %s",
+			strings.Join(detectedImage.Path, "."), newPath, detectedImage.Reference.Original)
 
-		// Set the value at the correct path IN THE NEW OVERRIDES MAP
-		err = override.SetValueAtPath(overrides, img.Path, imageConfig, false) // Pass false for debug
+		// Use the SetValueAtPath from pkg/override, add missing 'createPath' argument (false)
+		err = override.SetValueAtPath(overrides, detectedImage.Path, newPath, false)
 		if err != nil {
-			// Log and continue if setting value fails
-			log.Printf("Error setting override path %v: %v", img.Path, err)
-			continue // Skip if we cannot set the override
+			// Use strings.Join for path representation
+			log.Errorf("Failed to set override value for path %s: %v", strings.Join(detectedImage.Path, "."), err)
+			// Use strings.Join for path representation
+			processingErrors = append(processingErrors, fmt.Errorf("setting override for '%s' at path '%s' failed: %w", newPath, strings.Join(detectedImage.Path, "."), err))
+			continue // Skip this image
 		}
+		imagesSuccessfullyProcessed++
 	}
 
-	// Return only the generated overrides for this chart scope
-	debug.DumpValue("Generated Overrides for Scope", overrides)
-	return overrides, nil
-}
+	// --- Threshold Check --- (Original Block - Corrected)
+	const ThresholdErrorMessage = "Processing failed: Success rate %d%% (%d/%d) below threshold %d%%"
 
-// mergeOverrides merges the source map into the destination map recursively.
-// @param dest: Destination map to merge into
-// @param src: Source map to merge from
-// @llm-helper This function handles nested maps and preserves existing values
-// @llm-helper Arrays are replaced, not merged
-// @llm-helper Map values are merged recursively
-func mergeOverrides(dest, src map[string]interface{}) {
-	debug.FunctionEnter("mergeOverrides")
-	defer debug.FunctionExit("mergeOverrides")
+	debug.Printf("[GENERATE] Before threshold check. Processed: %d, Eligible (Patterns): %d\n", imagesSuccessfullyProcessed, eligibleImagesCount)
+	if eligibleImagesCount > 0 {
+		successRate := float64(imagesSuccessfullyProcessed) / float64(eligibleImagesCount) * float64(percentageMultiplier)
+		debug.Printf("Image processing success rate: %.2f%% (Processed: %d, Eligible: %d, Threshold: %d%%)",
+			successRate, imagesSuccessfullyProcessed, eligibleImagesCount, g.threshold)
 
-	debug.DumpValue("Destination Map", dest)
-	debug.DumpValue("Source Map", src)
-
-	for k, v := range src {
-		debug.Printf("Processing key: %s", k)
-
-		if destV, exists := dest[k]; exists {
-			debug.Printf("Key %s exists in destination", k)
-			// If both values are maps, merge them recursively
-			if destMap, ok := destV.(map[string]interface{}); ok {
-				if srcMap, ok := v.(map[string]interface{}); ok {
-					debug.Printf("Both values are maps, merging recursively")
-					mergeOverrides(destMap, srcMap)
-					continue
-				}
+		if g.threshold > 0 && int(successRate) < g.threshold {
+			thresholdErrMsg := fmt.Sprintf(ThresholdErrorMessage, int(successRate), imagesSuccessfullyProcessed, eligibleImagesCount, g.threshold)
+			// Use fmt.Errorf to correctly format the error message
+			combinedError := fmt.Errorf(thresholdErrMsg)
+			if len(processingErrors) > 0 {
+				combinedError = fmt.Errorf("%s - Underlying errors: %w", thresholdErrMsg, errors.Join(processingErrors...))
+			}
+			return nil, &ThresholdError{
+				Threshold:   g.threshold,
+				ActualRate:  int(successRate),
+				Eligible:    eligibleImagesCount,
+				Processed:   imagesSuccessfullyProcessed,
+				Err:         combinedError,
+				WrappedErrs: processingErrors,
 			}
 		}
-
-		// Otherwise, just overwrite the value
-		debug.Printf("Setting key %s in destination", k)
-		dest[k] = v
+	} else if len(processingErrors) > 0 {
+		// If threshold not enabled or no eligible images, but errors occurred, return them
+		log.Debugf("Returning combined processing errors as threshold is disabled or no eligible images.")
+		return nil, fmt.Errorf("image processing failed: %w", errors.Join(processingErrors...))
 	}
 
-	debug.DumpValue("Merged Result", dest)
-}
+	// --- Prepare Final Output ---
+	// Note: Removing the duplicated threshold check block that was added previously.
 
-// CommandRunner defines an interface for running external commands.
-type CommandRunner interface {
-	Run(name string, arg ...string) ([]byte, error)
-}
-
-// osCommandRunner implements CommandRunner using the os/exec package.
-type osCommandRunner struct{}
-
-// NewOSCommandRunner creates a new CommandRunner that uses the real os/exec package.
-func NewOSCommandRunner() CommandRunner {
-	return &osCommandRunner{}
-}
-
-// Run executes the command and returns its combined stdout/stderr output and error.
-func (r *osCommandRunner) Run(name string, arg ...string) ([]byte, error) {
-	cmd := exec.Command(name, arg...)
-	// Using CombinedOutput captures both stdout and stderr, useful for debugging Helm errors.
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		// Wrap error from external command execution
-		return nil, fmt.Errorf("helm command failed: %w", err)
+	finalOverrideFile := &override.File{
+		ChartPath: g.chartPath,
+		Overrides: overrides,
 	}
-	return output, nil
+
+	debug.Printf("Generated %d override entries.", len(overrides))
+	debug.DumpValue("[GENERATE] Final Overrides Map", overrides)
+
+	return finalOverrideFile, nil
 }
 
-// ValidateHelmTemplate runs `helm template` and validates the output.
-// It now accepts a CommandRunner to allow mocking.
+// --- Helper methods (isSourceRegistry, isExcluded) ---
+func (g *Generator) isSourceRegistry(registry string) bool {
+	return isRegistryInList(registry, g.sourceRegistries)
+}
+
+func (g *Generator) isExcluded(registry string) bool {
+	return isRegistryInList(registry, g.excludeRegistries)
+}
+
+func isRegistryInList(registry string, list []string) bool {
+	if len(list) == 0 {
+		return false
+	}
+	normalizedRegistry := image.NormalizeRegistry(registry)
+	for _, r := range list {
+		if normalizedRegistry == image.NormalizeRegistry(r) {
+			return true
+		}
+	}
+	return false
+}
+
+// ValidateHelmTemplate runs `helm template` with the generated overrides to check validity.
 func ValidateHelmTemplate(runner CommandRunner, chartPath string, overrides []byte) error {
 	debug.FunctionEnter("ValidateHelmTemplate")
 	defer debug.FunctionExit("ValidateHelmTemplate")
 
-	// Create a temporary file for overrides
-	tempDir, err := os.MkdirTemp("", "helm-overrides-")
+	tempDir, err := os.MkdirTemp("", "irr-validate-")
 	if err != nil {
-		return fmt.Errorf("failed to create temp dir for overrides: %w", err)
+		return fmt.Errorf("failed to create temp directory: %w", err)
 	}
 	defer func() {
 		if err := os.RemoveAll(tempDir); err != nil {
-			debug.Printf("Warning: failed to clean up temp dir %s: %v", tempDir, err)
+			log.Warnf("Warning: failed to clean up temp dir %s: %v", tempDir, err)
 		}
-	}() // Clean up temp dir
+	}()
 
-	overrideFilePath := filepath.Join(tempDir, "overrides.yaml")
-	if err := os.WriteFile(overrideFilePath, overrides, defaultFilePerm); err != nil {
+	overrideFilePath := filepath.Join(tempDir, "temp-overrides.yaml")
+	if err := os.WriteFile(overrideFilePath, overrides, 0600); err != nil {
 		return fmt.Errorf("failed to write temp overrides file: %w", err)
 	}
 	debug.Printf("Temporary override file written to: %s", overrideFilePath)
 
-	// Prepare helm template command arguments
 	args := []string{"template", "release-name", chartPath, "-f", overrideFilePath}
 	debug.Printf("Running helm command: helm %v", args)
 
-	// Run the command using the provided runner
 	output, err := runner.Run("helm", args...)
 	if err != nil {
-		// exec.ExitError is common, provide output context
 		debug.Printf("Helm template command failed. Error: %v\nOutput:\n%s", err, string(output))
 		return fmt.Errorf("helm template command failed: %w. Output: %s", err, string(output))
 	}
 	debug.Printf("Helm template command successful. Output length: %d", len(output))
 
-	// Basic validation of the template output
-	if err := validateYAML(output); err != nil {
-		return fmt.Errorf("failed to parse helm template output: %w", err)
+	if len(output) == 0 {
+		return errors.New("helm template output is empty")
+	}
+	dec := yaml.NewDecoder(strings.NewReader(string(output)))
+	var node interface{}
+	for {
+		if err := dec.Decode(&node); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			debug.Printf("YAML validation failed during decode: %v", err)
+			return fmt.Errorf("invalid YAML structure in helm template output: %w", err)
+		}
+		node = nil
 	}
 
 	debug.Println("Helm template output validated successfully.")
 	return nil
 }
 
-// validateYAML checks if the byte slice contains valid YAML.
-// Keep this unexported as it's an internal helper for ValidateHelmTemplate.
-func validateYAML(yamlData []byte) error {
-	dec := yaml.NewDecoder(bytes.NewReader(yamlData))
-	var node yaml.Node
-	for dec.Decode(&node) == nil { //revive:disable-line:empty-block
-		// This loop consumes all YAML documents in the stream.
-	}
+// CommandRunner interface defines an interface for running external commands, useful for testing.
+type CommandRunner interface {
+	Run(name string, arg ...string) ([]byte, error)
+}
 
-	// After the loop, check for decoding errors that are not EOF.
-	// The last call to Decode that returns io.EOF signifies successful parsing of all documents.
+// RealCommandRunner implements CommandRunner using os/exec.
+type RealCommandRunner struct{}
+
+// Run executes the command using os/exec.
+func (r *RealCommandRunner) Run(name string, arg ...string) ([]byte, error) {
+	cmd := exec.Command(name, arg...)
+	return cmd.CombinedOutput()
+}
+
+// validateYAMLStructure checks if the byte slice contains valid YAML.
+func validateYAMLStructure(data []byte) error {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	var node interface{}
 	if err := dec.Decode(&node); err != nil && !errors.Is(err, io.EOF) {
 		debug.Printf("YAML validation failed: %v", err)
-		return fmt.Errorf("invalid YAML structure: %w", err) // Use original error message format
+		return fmt.Errorf("invalid YAML structure: %w", err)
 	}
-	return nil // No error means valid YAML
+	return nil
 }
 
 // OverridesToYAML converts a map of overrides to YAML format
 func OverridesToYAML(overrides map[string]interface{}) ([]byte, error) {
 	debug.Printf("Marshaling overrides to YAML")
-	// Wrap error from external YAML library
 	yamlBytes, err := yaml.Marshal(overrides)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal overrides to YAML: %w", err)
 	}
 	return yamlBytes, nil
-}
-
-// Helper function to check if a registry is in a list
-func isRegistryInList(registry string, list []string) bool {
-	for _, r := range list {
-		if r == registry {
-			return true
-		}
-	}
-	return false
-}
-
-// Helper function to check if a registry is excluded
-func isRegistryExcluded(registry string, excludeList []string) bool {
-	return isRegistryInList(registry, excludeList)
 }
