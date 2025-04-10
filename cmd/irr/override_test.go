@@ -242,6 +242,65 @@ func TestOverrideCommand_GeneratorError(t *testing.T) {
 	}
 }
 
+// setupTestEnvironmentVars sets up environment variables for a test and returns a cleanup function
+func setupTestEnvironmentVars(t *testing.T, envVars map[string]string) func() {
+	if len(envVars) == 0 {
+		return func() {}
+	}
+
+	originalEnv := make(map[string]string)
+	for k, v := range envVars {
+		originalEnv[k] = os.Getenv(k) // Store original value
+		err := os.Setenv(k, v)
+		require.NoErrorf(t, err, "failed to set environment variable %s=%s", k, v)
+	}
+
+	// Return cleanup function that restores original environment
+	return func() {
+		for k, originalValue := range originalEnv {
+			if originalValue == "" {
+				if err := os.Unsetenv(k); err != nil {
+					t.Logf("Warning: Failed to unset environment variable %s: %v", k, err)
+				}
+			} else {
+				if err := os.Setenv(k, originalValue); err != nil {
+					t.Logf("Warning: Failed to restore environment variable %s: %v", k, err)
+				}
+			}
+		}
+	}
+}
+
+// setupTestMockGenerator sets up a mock generator for tests
+func setupTestMockGenerator(t *testing.T, mockGeneratorFunc func() (*override.File, error)) func() {
+	if mockGeneratorFunc == nil {
+		return func() {}
+	}
+
+	mockGen := &mockGenerator{}
+	result, err := mockGeneratorFunc()
+	mockGen.On("Generate").Return(result, err)
+
+	originalFactory := currentGeneratorFactory // Store original to restore later
+	currentGeneratorFactory = func(
+		chartPath, targetRegistry string,
+		sourceRegistries, excludeRegistries []string,
+		pathStrategy strategy.PathStrategy,
+		mappings *registry.Mappings,
+		strict bool,
+		threshold int,
+		loader analysis.ChartLoader,
+		includePatterns, excludePatterns, knownPaths []string,
+	) GeneratorInterface {
+		return mockGen
+	}
+
+	// Return cleanup function that restores original factory
+	return func() {
+		currentGeneratorFactory = originalFactory
+	}
+}
+
 // setupOverrideTestEnvironment encapsulates the common setup logic for override command tests.
 // It returns the test directory path, the potentially modified arguments, and a cleanup function.
 func setupOverrideTestEnvironment(t *testing.T, tt struct {
@@ -265,55 +324,16 @@ func setupOverrideTestEnvironment(t *testing.T, tt struct {
 		currentArgs = append(currentArgs, "-o", outputPath)
 	}
 
-	// Setup mock generator
-	if tt.mockGeneratorFunc != nil {
-		mockGen := &mockGenerator{}
-		result, err := tt.mockGeneratorFunc()
-		// Handle potential error from the mock setup itself
-		mockGen.On("Generate").Return(result, err)
-		originalFactory := currentGeneratorFactory // Store original to restore later
-		currentGeneratorFactory = func(
-			chartPath, targetRegistry string,
-			sourceRegistries, excludeRegistries []string,
-			pathStrategy strategy.PathStrategy,
-			mappings *registry.Mappings,
-			strict bool,
-			threshold int,
-			loader analysis.ChartLoader,
-			includePatterns, excludePatterns, knownPaths []string,
-		) GeneratorInterface {
-			return mockGen
-		}
-		// Ensure factory is restored even if test panics
-		t.Cleanup(func() { currentGeneratorFactory = originalFactory })
-	}
+	// Setup mock generator and get cleanup function
+	generatorCleanup := setupTestMockGenerator(t, tt.mockGeneratorFunc)
 
-	// Setup environment variables
-	if tt.setupEnv != nil {
-		originalEnv := make(map[string]string)
-		for k, v := range tt.setupEnv {
-			originalEnv[k] = os.Getenv(k) // Store original value
-			err := os.Setenv(k, v)
-			require.NoErrorf(t, err, "failed to set environment variable %s=%s", k, v)
-		}
-		// Ensure env vars are restored even if test panics
-		t.Cleanup(func() {
-			for k, originalValue := range originalEnv {
-				if originalValue == "" {
-					if err := os.Unsetenv(k); err != nil {
-						t.Logf("Warning: Failed to unset environment variable %s: %v", k, err)
-					}
-				} else {
-					if err := os.Setenv(k, originalValue); err != nil {
-						t.Logf("Warning: Failed to restore environment variable %s: %v", k, err)
-					}
-				}
-			}
-		})
-	}
+	// Setup environment variables and get cleanup function
+	envCleanup := setupTestEnvironmentVars(t, tt.setupEnv)
 
-	// Cleanup function for the test directory
+	// Create combined cleanup function
 	cleanup := func() {
+		generatorCleanup()
+		envCleanup()
 		if err := os.RemoveAll(testDir); err != nil {
 			t.Logf("Warning: Failed to cleanup test directory %s: %v", testDir, err)
 		}
