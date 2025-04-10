@@ -47,57 +47,45 @@
 **Goal:** Address all remaining linter issues to improve code quality while maintaining functionality.
 
 **Current Status:**
-- All tests are passing
-- Funlen issues resolved with appropriate thresholds
-- Significant progress on fixing lint issues
+- [✓] All tests are now passing successfully
+- [✓] Fixed error-wrapping directive issues (`%w` → `%v` in t.Fatalf calls)
+- [✓] Fixed non-constant format string in fmt.Errorf calls
+- [✓] Down to only 9 remaining lint issues from 30+
 
-**Current Lint Issues (Completed/In Progress):**
-1. **High Priority Issues:**
-   - **goconst (0/1 completed):**
-     - [✓] Extracted "latest" string to constants in pkg/image/normalization.go
-   - **Package Documentation (2/2 completed):**
-     - [✓] Added package comments to internal/helm
-     - [✓] Added package comments to pkg/analyzer
-   - **Stuttering Types (1/1 completed):**
-     - [✓] Renamed AnalyzerConfig to Config to avoid analyzer.AnalyzerConfig stutter 
-   - **Octal Literals (5/5 completed):**
-     - [✓] Updated all octal literals to modern 0o prefix syntax
-   - **Magic Numbers (10/10 in progress):**
-     - [✓] Added constants for file permission modes (0o755, 0o644)
-     - [✓] Added constants for percentage calculations
-     - [✓] Added constant for image path component splitting
-     - [✓] Added constant for tag length validation
+**Completed Items:**
+- [✓] Extracted "latest" string to constants in pkg/image/normalization.go
+- [✓] Added package comments to internal/helm and pkg/analyzer
+- [✓] Renamed AnalyzerConfig to Config to avoid analyzer.AnalyzerConfig stutter
+- [✓] Updated all octal literals to modern 0o prefix syntax
+- [✓] Added constants for file permission modes, percentages, and other magic numbers
+- [✓] Fixed all gocritic issues in test/integration package
 
-2. **Remaining Issues (For Next Wave):**
-   - **revive (30+ issues):** 
-     - Exported items missing proper comments
-     - Unused parameters in functions
-     - Code flow issues (if-else structure, etc.)
-   - **gocritic (20+ issues):**
-     - [✓] Fixed all gocritic issues in test/integration package (10 issues resolved)
-     - Commented out code blocks
-     - if-else chains that should be switch statements
-     - Functions with too many results
-     - Unnamed return values
-   - **Lower Priority Issues:** 
-     - Long lines (lll)
-     - Security issues in test code (gosec)
+**Remaining Issues (9 total):**
+1. **Function Length (1 issue):**
+   - `ValidateOverrides()` in test/integration/harness.go has 80 statements (limit: 65)
+
+2. **Functions with Too Many Results (2 issues):**
+   - `setupGeneratorConfig()` in cmd/irr/override.go
+   - `validateMapStructure()` in pkg/image/detector.go
+
+3. **Commented-Out Code (6 issues):**
+   - cmd/irr/root.go:295
+   - Four instances in pkg/chart/generator_test.go
+   - pkg/strategy/path_strategy.go:122
 
 **Implementation Plan:**
 
-1. **Next Wave - Code Structure Improvements (1-2 days):**
-   - [ ] Convert remaining if-else chains to switch statements
-   - [ ] Remove or replace commented-out code
-   - [ ] Add names to return values where appropriate
-   - [ ] Refactor functions with too many results
-   - [ ] Add proper comments to exported items
+1. **Next Wave - Address Remaining Issues (1 day):**
+   - [ ] Remove or replace commented-out code (6 issues)
+   - [ ] Refactor functions with too many results (2 issues)
+   - [ ] Consider exempting test harness function from funlen check (1 issue)
 
-2. **Final Wave - Code Cleanup (1 day):**
+2. **Final Wave - Documentation Cleanup (1 day):**
+   - [ ] Add proper comments to remaining exported items
    - [ ] Fix unused parameters by using _ prefix
-   - [ ] Fix long lines by breaking into multiple lines
-   - [ ] Address security issues in test harness
+   - [ ] Finalize and run full test suite
 
 **General Approach:**
-- Continue focusing on one linter category at a time 
-- Run tests after each significant change to verify functionality
-- Address issues package by package for consistency
+- Focus on high-impact issues first (commented-out code, functions with too many results)
+- Keep running tests after each change
+- Maintain consistent code style across the codebase
