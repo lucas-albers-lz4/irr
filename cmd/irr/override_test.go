@@ -39,6 +39,8 @@ import (
 // mockGenerator implements Generator interface for testing
 type mockGenerator struct {
 	mock.Mock
+	OverrideFileToReturn *override.File
+	ErrToReturn          error
 }
 
 func (m *mockGenerator) Generate() (*override.File, error) {
@@ -72,18 +74,18 @@ type ChartMetadata struct {
 
 // setupDryRunTestEnvironment sets up a test environment for dry run tests
 func setupDryRunTestEnvironment(t *testing.T, args []string) (updatedArgs []string, cleanup func()) {
-	// Create test filesystem and chart directory
-	fs, chartDir := setupTestFS(t)
-	AppFs = fs // Set global FS for the command execution
+	// Create a test chart directory
+	chartDir := t.TempDir()
 
-	// Create a dummy chart for testing
-	require.NoError(t, createDummyChart(fs, chartDir))
+	// Set up an in-memory file system
+	AppFs = afero.NewMemMapFs()
 
-	// Set up a mock generator to avoid relying on chart loading
-	mockGen := &mockGenerator{}
+	// Create a mock override file
 	overrideFile := &override.File{
-		ChartPath: chartDir,
 		Overrides: map[string]interface{}{
+			"global": map[string]interface{}{
+				"imageRegistry": "target.io",
+			},
 			"image": map[string]interface{}{
 				"registry":   "target.io",
 				"repository": "library/nginx",
@@ -91,15 +93,21 @@ func setupDryRunTestEnvironment(t *testing.T, args []string) (updatedArgs []stri
 			},
 		},
 	}
+	mockGen := &mockGenerator{}
 	mockGen.On("Generate").Return(overrideFile, nil)
 
 	// Save original factory and set up mock
 	origFactory := currentGeneratorFactory
 	currentGeneratorFactory = func(
-		_ string, _ string, _ []string, _ []string,
-		_ strategy.PathStrategy, _ *registry.Mappings, _ bool, _ int,
-		_ analysis.ChartLoader,
-		_ []string, _ []string, _ []string,
+		chartPath, targetRegistry string,
+		sourceRegistries, excludeRegistries []string,
+		pathStrategy strategy.PathStrategy,
+		mappings *registry.Mappings,
+		configMappings map[string]string,
+		strict bool,
+		threshold int,
+		loader analysis.ChartLoader,
+		includePatterns, excludePatterns, knownPaths []string,
 	) GeneratorInterface {
 		return mockGen
 	}
@@ -220,7 +228,17 @@ func TestOverrideCommand_GeneratorError(t *testing.T) {
 	oldFactory := currentGeneratorFactory
 	defer func() { currentGeneratorFactory = oldFactory }()
 
-	currentGeneratorFactory = func(_, _ string, _, _ []string, _ strategy.PathStrategy, _ *registry.Mappings, _ bool, _ int, _ analysis.ChartLoader, _, _, _ []string) GeneratorInterface {
+	currentGeneratorFactory = func(
+		_, _ string,
+		_, _ []string,
+		_ strategy.PathStrategy,
+		_ *registry.Mappings,
+		_ map[string]string,
+		_ bool,
+		_ int,
+		_ analysis.ChartLoader,
+		_, _, _ []string,
+	) GeneratorInterface {
 		return mockGen
 	}
 
@@ -282,7 +300,17 @@ func setupTestMockGenerator(_ *testing.T, mockGeneratorFunc func() (*override.Fi
 	mockGen.On("Generate").Return(result, err)
 
 	originalFactory := currentGeneratorFactory // Store original to restore later
-	currentGeneratorFactory = func(_, _ string, _, _ []string, _ strategy.PathStrategy, _ *registry.Mappings, _ bool, _ int, _ analysis.ChartLoader, _, _, _ []string) GeneratorInterface {
+	currentGeneratorFactory = func(
+		_, _ string,
+		_, _ []string,
+		_ strategy.PathStrategy,
+		_ *registry.Mappings,
+		_ map[string]string,
+		_ bool,
+		_ int,
+		_ analysis.ChartLoader,
+		_, _, _ []string,
+	) GeneratorInterface {
 		return mockGen
 	}
 
@@ -670,32 +698,31 @@ func TestOverrideCommand_Success(t *testing.T) {
 
 // setupDryRunTest prepares the test environment for dry run testing
 func setupDryRunTest(t *testing.T) (fs afero.Fs, chartDir string, cleanup func(), overrideFile *override.File) {
-	// Set up memory filesystem with proper cleanup
-	fs, chartDir, cleanup = setupMemoryFSContext(t)
+	fs = afero.NewMemMapFs()
+	AppFs = fs
+	chartDir = t.TempDir()
+	require.NoError(t, fs.MkdirAll(chartDir, 0o755), "Failed to create chart directory")
 
-	// Create the test chart
-	require.NoError(t, createDummyChart(fs, chartDir))
-
-	// Create override file for testing
+	// Create test override file
 	overrideFile = &override.File{
-		ChartPath: chartDir,
 		Overrides: map[string]interface{}{
+			"global": map[string]interface{}{
+				"imageRegistry": "target.io",
+			},
 			"image": map[string]interface{}{
 				"registry":   "target.io",
 				"repository": "library/nginx",
 				"tag":        "latest",
 			},
-			"sidecar": map[string]interface{}{
-				"image": "target.io/library/busybox:latest",
-			},
-			"initContainer": map[string]interface{}{
-				"image": map[string]interface{}{
-					"registry":   "target.io",
-					"repository": "library/alpine",
-					"tag":        "3.14",
-				},
-			},
 		},
+	}
+
+	// Save original factory
+	originalFactory := currentGeneratorFactory
+
+	// Create cleanup function
+	cleanup = func() {
+		currentGeneratorFactory = originalFactory
 	}
 
 	return fs, chartDir, cleanup, overrideFile
@@ -703,14 +730,22 @@ func setupDryRunTest(t *testing.T) (fs afero.Fs, chartDir string, cleanup func()
 
 // setupMockGenerator sets up the mock generator and returns a cleanup function
 func setupMockGenerator(_ *testing.T, overrideFile *override.File) func() {
-	mockGen := &mockGenerator{}
-	mockGen.On("Generate").Return(overrideFile, nil)
-
 	originalFactory := currentGeneratorFactory
-	currentGeneratorFactory = func(_, _ string, _, _ []string, _ strategy.PathStrategy, _ *registry.Mappings, _ bool, _ int, _ analysis.ChartLoader, _, _, _ []string) GeneratorInterface {
-		return mockGen
+	currentGeneratorFactory = func(
+		_ string, _ string,
+		_ []string, _ []string,
+		_ strategy.PathStrategy,
+		_ *registry.Mappings,
+		_ map[string]string,
+		_ bool,
+		_ int,
+		_ analysis.ChartLoader,
+		_ []string, _ []string, _ []string,
+	) GeneratorInterface {
+		mock := &mockGenerator{}
+		mock.On("Generate").Return(&override.File{Overrides: map[string]interface{}{}}, nil)
+		return mock
 	}
-
 	return func() { currentGeneratorFactory = originalFactory }
 }
 
