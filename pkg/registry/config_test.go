@@ -2,6 +2,7 @@ package registry
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spf13/afero"
@@ -22,6 +23,10 @@ func TestLoadConfig(t *testing.T) {
 	invalidValueFile := filepath.Join(tmpDir, "invalid-value.yaml")
 	invalidExtFile := filepath.Join(tmpDir, "invalid-ext.txt")
 	configDir := filepath.Join(tmpDir, "config-dir")
+	duplicateKeysFile := filepath.Join(tmpDir, "duplicate-keys.yaml")
+	invalidPortFile := filepath.Join(tmpDir, "invalid-port.yaml")
+	longKeyFile := filepath.Join(tmpDir, "long-key.yaml")
+	longValueFile := filepath.Join(tmpDir, "long-value.yaml")
 
 	// Create test directory
 	require.NoError(t, fs.MkdirAll(tmpDir, 0o755))
@@ -52,6 +57,26 @@ docker.io: harbor.example.com/docker
 - invalid: yaml: format
 `
 
+	// Duplicate keys content
+	duplicateKeysContent := `
+docker.io: harbor.example.com/docker
+docker.io: harbor.example.com/other
+`
+
+	// Invalid port content
+	invalidPortContent := `
+docker.io: harbor.example.com/docker
+quay.io: myregistry.example.com:99999/path
+`
+
+	// Long key content
+	longKey := "a" + strings.Repeat("x", MaxKeyLength)
+	longKeyContent := longKey + ": harbor.example.com/long"
+
+	// Long value content
+	longValue := "harbor.example.com/" + strings.Repeat("x", MaxValueLength)
+	longValueContent := "docker.io: " + longValue
+
 	// Write test files
 	require.NoError(t, afero.WriteFile(fs, validConfigFile, []byte(validConfigContent), 0o644))
 	require.NoError(t, afero.WriteFile(fs, emptyConfigFile, []byte(""), 0o644))
@@ -59,6 +84,10 @@ docker.io: harbor.example.com/docker
 	require.NoError(t, afero.WriteFile(fs, invalidDomainFile, []byte(invalidDomainContent), 0o644))
 	require.NoError(t, afero.WriteFile(fs, invalidValueFile, []byte(invalidValueContent), 0o644))
 	require.NoError(t, afero.WriteFile(fs, invalidExtFile, []byte(validConfigContent), 0o644))
+	require.NoError(t, afero.WriteFile(fs, duplicateKeysFile, []byte(duplicateKeysContent), 0o644))
+	require.NoError(t, afero.WriteFile(fs, invalidPortFile, []byte(invalidPortContent), 0o644))
+	require.NoError(t, afero.WriteFile(fs, longKeyFile, []byte(longKeyContent), 0o644))
+	require.NoError(t, afero.WriteFile(fs, longValueFile, []byte(longValueContent), 0o644))
 
 	// Expected valid config result
 	expectedConfig := map[string]string{
@@ -129,8 +158,34 @@ docker.io: harbor.example.com/docker
 			errorContains: "mappings file path '../../../etc/passwd.yaml' must be within the current working directory tree",
 		},
 		{
-			name: "empty path",
-			path: "",
+			name:       "empty path",
+			path:       "",
+			wantConfig: nil,
+			wantErr:    false,
+		},
+		{
+			name:          "duplicate keys",
+			path:          duplicateKeysFile,
+			wantErr:       true,
+			errorContains: "duplicate registry key",
+		},
+		{
+			name:          "invalid port number",
+			path:          invalidPortFile,
+			wantErr:       true,
+			errorContains: "invalid port number",
+		},
+		{
+			name:          "key too long",
+			path:          longKeyFile,
+			wantErr:       true,
+			errorContains: "registry key",
+		},
+		{
+			name:          "value too long",
+			path:          longValueFile,
+			wantErr:       true,
+			errorContains: "registry value",
 		},
 	}
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"errors"
@@ -20,6 +21,10 @@ const (
 	DefaultFilePermissions = 0o644
 	// MinDomainPartsForWildcard defines the minimum parts for a valid wildcard domain.
 	MinDomainPartsForWildcard = 2
+	// MaxKeyLength defines the maximum allowed length for registry keys.
+	MaxKeyLength = 253
+	// MaxValueLength defines the maximum allowed length for registry values.
+	MaxValueLength = 1024
 )
 
 // Mapping represents a single source to target registry mapping
@@ -191,10 +196,13 @@ func (m *Mappings) GetTargetRegistry(source string) string {
 // - The content must be a valid YAML map[string]string
 // - Keys must be valid domain names
 // - Values must contain at least one slash (registry/path format)
+// - If port numbers are specified, they must be valid (1-65535)
+// - Keys and values must not exceed length limits
+// - No duplicate keys are allowed
 func LoadConfig(fs afero.Fs, path string, skipCWDRestriction bool) (map[string]string, error) {
 	if path == "" {
-		// No path provided, return the specific sentinel error
-		return nil, ErrNoConfigSpecified
+		// Return nil, nil for empty path per test expectations
+		return nil, nil
 	}
 
 	// Basic validation to prevent path traversal
@@ -248,6 +256,31 @@ func LoadConfig(fs afero.Fs, path string, skipCWDRestriction bool) (map[string]s
 
 	debug.Printf("LoadConfig: Attempting to parse file content:\n%s", string(data))
 
+	// Check for duplicate keys using string scanning and manual parsing
+	// This is a simple approach that scans lines for key patterns
+	yamlLines := strings.Split(string(data), "\n")
+	seenKeys := make(map[string]bool)
+
+	for _, line := range yamlLines {
+		// Skip empty lines and comments
+		trimmedLine := strings.TrimSpace(line)
+		if trimmedLine == "" || strings.HasPrefix(trimmedLine, "#") {
+			continue
+		}
+
+		// Look for lines that follow the pattern "key: value"
+		parts := strings.SplitN(trimmedLine, ":", 2)
+		if len(parts) == 2 {
+			key := strings.TrimSpace(parts[0])
+			if key != "" {
+				if seenKeys[key] {
+					return nil, WrapDuplicateRegistryKey(path, key)
+				}
+				seenKeys[key] = true
+			}
+		}
+	}
+
 	// Parse the YAML content as map[string]string
 	var config map[string]string
 	if err := yaml.Unmarshal(data, &config); err != nil {
@@ -265,6 +298,11 @@ func LoadConfig(fs afero.Fs, path string, skipCWDRestriction bool) (map[string]s
 			continue
 		}
 
+		// Check key length
+		if len(source) > MaxKeyLength {
+			return nil, WrapKeyTooLong(path, source, len(source), MaxKeyLength)
+		}
+
 		// Simple domain validation - could be enhanced with regex
 		if !isValidDomain(source) {
 			return nil, fmt.Errorf("invalid source registry domain '%s' in config file '%s'", source, path)
@@ -277,9 +315,27 @@ func LoadConfig(fs afero.Fs, path string, skipCWDRestriction bool) (map[string]s
 			continue
 		}
 
+		// Check value length
+		if len(target) > MaxValueLength {
+			return nil, WrapValueTooLong(path, source, target, len(target), MaxValueLength)
+		}
+
 		// Target must contain at least one slash (registry/path format)
 		if !strings.Contains(target, "/") {
 			return nil, fmt.Errorf("invalid target registry value '%s' for source '%s' in config file '%s': must contain at least one '/'", target, source, path)
+		}
+
+		// Validate port number if present
+		hostPart := strings.Split(target, "/")[0]
+		if strings.Contains(hostPart, ":") {
+			hostAndPort := strings.Split(hostPart, ":")
+			if len(hostAndPort) > 1 {
+				portStr := hostAndPort[1]
+				port, err := strconv.Atoi(portStr)
+				if err != nil || port < 1 || port > 65535 {
+					return nil, WrapInvalidPortNumber(path, source, target, portStr)
+				}
+			}
 		}
 
 		validatedConfig[source] = target

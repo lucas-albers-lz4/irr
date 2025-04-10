@@ -106,3 +106,70 @@ func (e *ErrMappingFileParse) Unwrap() error {
 func WrapMappingFileParse(path string, err error) error {
 	return &ErrMappingFileParse{Path: path, Err: err}
 }
+
+// ErrDuplicateRegistryKey indicates a duplicate registry key was found.
+type ErrDuplicateRegistryKey struct {
+	Path string
+	Key  string
+}
+
+func (e *ErrDuplicateRegistryKey) Error() string {
+	return fmt.Sprintf("duplicate registry key '%s' found in mappings file '%s'", e.Key, e.Path)
+}
+
+// WrapDuplicateRegistryKey creates a new ErrDuplicateRegistryKey error.
+func WrapDuplicateRegistryKey(path string, key string) error {
+	return &ErrDuplicateRegistryKey{Path: path, Key: key}
+}
+
+// ErrInvalidPortNumber indicates an invalid port number in the registry mapping.
+type ErrInvalidPortNumber struct {
+	Path  string
+	Key   string
+	Value string
+	Port  string
+}
+
+func (e *ErrInvalidPortNumber) Error() string {
+	return fmt.Sprintf("invalid port number '%s' in target registry value '%s' for source '%s' in mappings file '%s': port must be between 1 and 65535", e.Port, e.Value, e.Key, e.Path)
+}
+
+// WrapInvalidPortNumber creates a new ErrInvalidPortNumber error.
+func WrapInvalidPortNumber(path, key, value, port string) error {
+	return &ErrInvalidPortNumber{Path: path, Key: key, Value: value, Port: port}
+}
+
+// ErrKeyTooLong indicates a registry key exceeds the maximum allowed length.
+type ErrKeyTooLong struct {
+	Path   string
+	Key    string
+	Length int
+	Max    int
+}
+
+func (e *ErrKeyTooLong) Error() string {
+	return fmt.Sprintf("registry key '%s' exceeds maximum length of %d characters in mappings file '%s'", e.Key, e.Max, e.Path)
+}
+
+// WrapKeyTooLong creates a new ErrKeyTooLong error.
+func WrapKeyTooLong(path string, key string, length int, max int) error {
+	return &ErrKeyTooLong{Path: path, Key: key, Length: length, Max: max}
+}
+
+// ErrValueTooLong indicates a registry value exceeds the maximum allowed length.
+type ErrValueTooLong struct {
+	Path   string
+	Key    string
+	Value  string
+	Length int
+	Max    int
+}
+
+func (e *ErrValueTooLong) Error() string {
+	return fmt.Sprintf("registry value '%s' for key '%s' exceeds maximum length of %d characters in mappings file '%s'", e.Value, e.Key, e.Max, e.Path)
+}
+
+// WrapValueTooLong creates a new ErrValueTooLong error.
+func WrapValueTooLong(path string, key string, value string, length int, max int) error {
+	return &ErrValueTooLong{Path: path, Key: key, Value: value, Length: length, Max: max}
+}
