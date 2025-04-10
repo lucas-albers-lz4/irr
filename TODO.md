@@ -2,15 +2,15 @@
 
 ## Phase 1: Core Implementation & Stabilization (Completed)
 
-## Phase 2 Configuration file support
-- [ ] Add configuration file support (`--config`)  # Critical for user-defined registry mappings (e.g., Harbor pull-through cache paths)
+## Phase 2 Configuration file support (80% Complete)
+- [x] Add configuration file support (`--config`)  # Critical for user-defined registry mappings (e.g., Harbor pull-through cache paths)
     - **Goal:** Allow users to specify exact target registry paths for each source registry via a YAML configuration file, overriding the default path strategy for mapped registries.
     - **Implementation Steps:**
-        1.  **Update CLI Parsing:**
+        1.  **Update CLI Parsing:** ✓
             -   **Action:** Modify the CLI argument handling (e.g., using Cobra/Viper) to accept the `--config` flag, taking a file path as its value. Make `--target-registry` mandatory, even when `--config` is used. Error clearly if `--target-registry` is missing.
             -   **Validation:** Ensure the `--config` path is valid, file exists, and is readable. Handle file read/permission errors gracefully with distinct messages.
             -   **Error Handling:** Follow existing error code conventions (Exit Code 2 for input/configuration errors - e.g., missing `--target-registry`, file not found, permission denied).
-        2.  **Implement Mapping Loader:**
+        2.  **Implement Mapping Loader:** ✓
             -   **Action:** Create a function to parse the YAML file specified by `--config`.
             -   **Format:** Expect a simple `map[string]string` YAML format where keys are source registry domains (e.g., `docker.io`) and values are the *full target registry and repository prefix* (e.g., `harbor.home.arpa/docker`).
             -   **Validation:** Implement **strict** validation:
@@ -21,7 +21,7 @@
                 -   Error out clearly if any validation fails with appropriate exit codes (Exit Code 2 for configuration errors).
             -   **Data Structure:** Use `map[string]string` to store the validated mappings.
             -   **Library:** Use `sigs.k8s.io/yaml` for parsing.
-        3.  **Integrate Mappings into Core Logic:**
+        3.  **Integrate Mappings into Core Logic:** ✓
             -   **Action:** Modify the image processing logic (`DetectImages` or similar function). When processing an image reference:
                 -   Normalize the image reference first (e.g., expand `nginx:latest` to `docker.io/library/nginx:latest`).
                 -   Check if the image's source registry exists as a key in the loaded mappings.
@@ -29,22 +29,22 @@
                 -   If no mapping exists, fall back to using the mandatory `--target-registry` and the default `--path-strategy`.
             -   **Interaction:** `--config` mappings override default behavior for listed sources. `--target-registry` is the **required** fallback.
             -   **Docker Hub Library Handling:** For implicit Docker Hub images (e.g., `nginx:latest`), normalize to `docker.io/library/nginx:latest` before checking for mappings. This ensures correct path construction for Harbor's pull-through cache.
-        4.  **Update Override Generation:**
+        4.  **Update Override Generation:** ✓
             -   **Action:** Implement logic to split the validated config value (e.g., `harbor.home.arpa:5000/docker`) at the first slash: registry part (`harbor.home.arpa:5000`) and repository prefix (`docker/`).
             -   **Action:** Ensure the override generation correctly uses the mapped target registry and repository prefix when a mapping was applied. The override structure should set the `registry` and `repository` fields accordingly.
-        5.  **Add Unit Tests:**
+        5.  **Add Unit Tests:** ✓
             -   **Action:** Create unit tests for the mapping loader function covering: valid YAML, invalid YAML format, file not found, permission errors, empty file, invalid keys/values. Verify strict validation errors.
             -   **Action:** Create unit tests for the image processing logic: verify mappings applied, fallbacks work, config value splitting logic.
             -   **Action:** Test Docker Hub library image normalization and mapping.
             -   **Action:** Test registry paths with port numbers.
             -   **Action:** Test CLI validation: mandatory `--target-registry`, config file permissions.
             -   **Framework:** Use `afero.MemMapFs` for filesystem/permission interactions.
-        6.  **Add Integration Tests:**
+        6.  **Add Integration Tests:** ✓
             -   **Action:** Create integration tests using sample charts and valid/invalid `registry-mappings.yaml` files.
             -   **Action:** Add integration tests that omit the mandatory `--target-registry` flag.
             -   **Action:** Add tests specifically for Docker Hub library images to verify correct normalization.
             -   **Validation:** Verify `override.yaml` generation based on config/fallback. Verify expected errors for invalid configs/missing flags.
-        7.  **Update Documentation:**
+        7.  **Update Documentation:** ✓
             -   **Action:** Update `README.md`, `DEVELOPMENT.md`, and `TESTING.md` to document:
                 -   The `--config` flag.
                 -   The **strict** expected YAML format (`map[string]string`).
@@ -53,18 +53,18 @@
                 -   Docker Hub library image handling.
                 -   All relevant validation errors and conditions with their exit codes.
     - **Verification Points:**
-        -   [ ] Run `bin/irr override --config registry-mappings.yaml --target-registry fallback.registry ...` successfully maps sources from config and uses `fallback.registry` for others.
-        -   [ ] Run `bin/irr override --config registry-mappings.yaml` (no `--target-registry`) fails with Exit Code 2 and a clear error message.
-        -   [ ] Run `bin/irr override --config registry-mappings.yaml --target-registry fallback.registry ...` correctly handles Docker Hub library images (e.g., `nginx:latest` → `harbor.home.arpa/docker/library/nginx:latest`).
-        -   [ ] Run `bin/irr override --config registry-mappings.yaml --target-registry fallback.registry ...` correctly processes registry paths with port numbers (e.g., `harbor.home.arpa:5000/docker`).
-        -   [ ] Run `bin/irr override --config non_existent_file.yaml --target-registry fallback.registry ...` fails with Exit Code 2 and a clear "file not found" error.
-        -   [ ] Run `bin/irr override --config unreadable_file.yaml --target-registry fallback.registry ...` fails with Exit Code 2 and a clear "permission denied" error.
-        -   [ ] Run `bin/irr override --config malformed_yaml_file.yaml --target-registry fallback.registry ...` fails with appropriate exit code and a clear YAML parsing error.
-        -   [ ] Run `bin/irr override --config wrong_format_file.yaml --target-registry fallback.registry ...` (e.g., list, invalid keys/values, values missing '/') fails with Exit Code 2 and a clear "invalid format" error.
-        -   [ ] Run `bin/irr override --config empty.yaml --target-registry fallback.registry ...` runs successfully, applying only fallback logic.
-        -   [ ] Unit tests for loader, validation, logic, CLI pass.
-        -   [ ] Integration tests (valid/invalid configs, missing flags, Docker Hub library) pass/fail as expected.
-        -   [ ] Documentation accurately reflects the mandatory flags, strict format, and validation.
+        -   [x] Run `bin/irr override --config registry-mappings.yaml --target-registry fallback.registry ...` successfully maps sources from config and uses `fallback.registry` for others.
+        -   [x] Run `bin/irr override --config registry-mappings.yaml` (no `--target-registry`) fails with Exit Code 2 and a clear error message.
+        -   [x] Run `bin/irr override --config registry-mappings.yaml --target-registry fallback.registry ...` correctly handles Docker Hub library images (e.g., `nginx:latest` → `harbor.home.arpa/docker/library/nginx:latest`).
+        -   [x] Run `bin/irr override --config registry-mappings.yaml --target-registry fallback.registry ...` correctly processes registry paths with port numbers (e.g., `harbor.home.arpa:5000/docker`).
+        -   [x] Run `bin/irr override --config non_existent_file.yaml --target-registry fallback.registry ...` fails with Exit Code 2 and a clear "file not found" error.
+        -   [x] Run `bin/irr override --config unreadable_file.yaml --target-registry fallback.registry ...` fails with Exit Code 2 and a clear "permission denied" error.
+        -   [x] Run `bin/irr override --config malformed_yaml_file.yaml --target-registry fallback.registry ...` fails with appropriate exit code and a clear YAML parsing error.
+        -   [x] Run `bin/irr override --config wrong_format_file.yaml --target-registry fallback.registry ...` (e.g., list, invalid keys/values, values missing '/') fails with Exit Code 2 and a clear "invalid format" error.
+        -   [x] Run `bin/irr override --config empty.yaml --target-registry fallback.registry ...` runs successfully, applying only fallback logic.
+        -   [x] Unit tests for loader, validation, logic, CLI pass.
+        -   [x] Integration tests (valid/invalid configs, missing flags, Docker Hub library) pass/fail as expected.
+        -   [x] Documentation accurately reflects the mandatory flags, strict format, and validation.
 
     - **Test Cases to Implement:**
         1. **Unit Tests:**
@@ -131,10 +131,16 @@
              (Expected: Proper handling of implicit library paths)
 - [ ] Enhance image identification heuristics (config-based patterns)
 - [ ] Improve digest-based reference handling
-- [ ] Add comprehensive private registry exclusion patterns
-- [ ] Implement target URL validation
+- [x] Add comprehensive private registry exclusion patterns
+- [x] Implement target URL validation
 - [ ] Explore support for additional target registries (Quay, ECR, GCR, ACR, GHCR)
-- [ ] Enhance strategy validation and error handling
+- [x] Enhance strategy validation and error handling
+- [x] Improve testing infrastructure and documentation
+  - [x] Add proper Makefile targets for integration tests (`test-integration`, `test-integration-specific`, etc.)
+  - [x] Update documentation with clear instructions for running integration tests
+  - [x] Add debug logging options for tests
+  - [x] Implement consistent test harness for integration tests
+  - [x] Provide detailed help information in Makefile
 
 ## Phase 3.0: Component-Group Testing for Complex Charts
 - [ ] **Implement Component-Group Testing for Complex Charts:**
