@@ -201,3 +201,8 @@
      - Run targeted linting to confirm specific issues are resolved
      - Run full test suite: `go test ./...`
      - Run full linting: `golangci-lint run`
+  
+  5. **Git Commit:**
+     - Stop after completing a logical portion of a feature to make well reasoned git commits with changes and comments
+     - Request suggested git commands for committing the changes
+     - Review and execute the git commit commands yourself
