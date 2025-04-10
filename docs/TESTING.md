@@ -612,6 +612,47 @@ These tests run as part of the standard Go test suite and include:
   - Registry mapping file handling with in-memory filesystem
 These tests are fast, deterministic, and suitable for CI/CD pipelines.
 
+### Running Integration Tests
+
+Integration tests validate the application's behavior through the full command execution path. Here's how to run them:
+
+```bash
+# Build the binary (required for integration tests)
+make build
+
+# Run all integration tests
+make test-integration
+
+# Run integration tests with debug logging
+make test-integration-debug
+
+# Run a specific integration test
+make test-integration-specific TEST_NAME=TestConfigFileMappings
+
+# Run only cert-manager tests
+make test-cert-manager
+
+# Directly using Go's test command
+IRR_TESTING=true go test -v ./test/integration/... -run TestConfigFileMappings
+```
+
+The integration tests create temporary directories, files, and execute the actual `irr` binary to validate end-to-end behavior. The `IRR_TESTING=true` environment variable is used to bypass certain restrictions during testing.
+
+### Debug Logging in Tests
+
+For detailed debug logging during test execution, you can use these environment variables:
+
+```bash
+# High-level debug flow messages
+LOG_LEVEL=DEBUG go test -v ./test/integration/... -run TestName
+
+# Detailed function tracing and value dumps
+IRR_DEBUG=1 go test -v ./test/integration/... -run TestName
+
+# All debug output
+LOG_LEVEL=DEBUG IRR_DEBUG=1 go test -v ./test/integration/... -run TestName
+```
+
 ### Test Environment Best Practices
 
 #### Using In-Memory Filesystem

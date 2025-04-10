@@ -80,6 +80,8 @@ helm install my-release ./my-chart -f overrides.yaml
   --strict                       Fail on unrecognized image structures
   --exclude-registries string    Comma-separated list of registries to exclude from processing
   --threshold int                Success threshold percentage (0-100) (default 100)
+  --registry-file string         Path to a YAML file containing registry mappings (source: target)
+  --config string                Path to a YAML configuration file for precise image mappings
 ```
 
 ### Example: Redirecting Images to Harbor
@@ -136,6 +138,46 @@ To enable the flat strategy, use the `--strategy` flag:
 irr override --chart my-chart --strategy flat --target-registry target-registry.com
 ```
 
+## Advanced Registry Mapping
+
+For cases where you need precise control over specific image mappings, irr provides a `--config` flag that accepts a YAML file with exact image-to-target mappings.
+
+### Using the Config File
+
+The config file uses a simple map format where:
+- Keys are source image references (e.g., `docker.io/library/nginx`)
+- Values are target image locations including registry and path (e.g., `my-registry.io/custom/nginx-mirror`)
+
+Example config file (`mappings.yaml`):
+```yaml
+docker.io/library/nginx: my-registry.io/custom/nginx-mirror
+quay.io/prometheus/prometheus: my-registry.io/monitoring/prometheus
+k8s.gcr.io/etcd: my-registry.io/kubernetes/etcd
+```
+
+To use this config file:
+
+```bash
+irr override \
+  --chart-path ./my-chart \
+  --target-registry fallback.registry.com \
+  --source-registries docker.io,quay.io,k8s.gcr.io \
+  --config mappings.yaml \
+  --output-file overrides.yaml
+```
+
+### How Config Mappings Work
+
+1. The `--config` mappings have higher priority than the path strategy
+2. Any image that matches a key in the config file will use the exact target specified
+3. Images not matched in the config will fall back to using `--target-registry` with the selected path strategy
+4. The `--target-registry` flag is still required as a fallback for unmapped images
+
+This feature is particularly useful for:
+- Handling special cases where the standard path strategy doesn't produce the desired result
+- Working with registries that have specific naming requirements for certain images
+- Setting up custom paths for pull-through cache configurations
+
 ## Supported Image Reference Formats
 
 The tool detects the following image reference patterns in Helm chart values:
@@ -182,11 +224,32 @@ make test-unit
 # Run only integration tests
 make test-integration
 
+# Run integration tests with debug output
+make test-integration-debug
+
+# Run a specific integration test by name
+make test-integration-specific TEST_NAME=TestConfigFileMappings
+
 # Run specific integration test (e.g., cert-manager)
 make test-cert-manager
 ```
 
 For detailed testing instructions, test architecture, and test coverage information, see [TESTING.md](TESTING.md).
+
+### Direct Go Test Commands
+
+If you prefer to run tests directly with Go's test command:
+
+```bash
+# Run all integration tests
+go test -v ./test/integration/...
+
+# Run a specific integration test
+go test -v ./test/integration/... -run TestConfigFileMappings
+
+# Run with debug logging
+IRR_TESTING=true LOG_LEVEL=DEBUG IRR_DEBUG=1 go test -v ./test/integration/... -run TestConfigFileMappings
+```
 
 ### Test Coverage
 
@@ -279,8 +342,3 @@ irr \
 
 When no mappings file is provided, the tool will use the default behavior of prefixing the sanitized source registry name:
 - `docker.io/nginx:1.23` -> `my-registry.example.com/dockerio/nginx:1.23`
-- `quay.io/prometheus/node-exporter:v1.3.1` -> `my-registry.example.com/quayio/prometheus/node-exporter:v1.3.1`
-
-With a mappings file, you can customize the target paths:
-- `docker.io/nginx:1.23` -> `my-registry.example.com/docker-mirror/nginx:1.23`
-- `quay.io/prometheus/node-exporter:v1.3.1` -> `my-registry.example.com/quay-mirror/prometheus/node-exporter:v1.3.1`
