@@ -92,23 +92,6 @@
   - [ ] Test length limit enforcement for keys and values.
   - [ ] Test a sample malformed YAML file to verify error message clarity.
 
-## Phase 5: Testing Framework Debug Control Verification (Completed)
-- [x] **Goal:** Ensure the test framework reliably controls the application's debug state via flags and environment variables, preventing unexpected behavior during test runs.
-- [x] **Add Unit Test for Debug Control:** Implemented `TestDebugFlagAndEnvVarInteraction` in `cmd/irr/root_test.go` with comprehensive test scenarios.
-- [x] **Verify Integration Test Behavior:** Confirmed proper debug flag propagation, formatted output, and environment variable handling.
-- [x] **Documentation Updates:** Added dedicated debug control sections to both `DEVELOPMENT.md` and `TESTING.md`.
-- [x] **All verification tests passed** for both debug-enabled and standard test runs.
-
-## Phase 6: Code Quality & Maintenance (Completed)
-- [x] **Linter Issues Fixed:**
-  - [x] **Code Structure:** Refactored `Generator.Generate()` method to reduce function length, extracting `processAndGenerateOverride` and `determineTargetPathAndRegistry` helper methods for better maintainability.
-  - [x] **Magic Numbers:** Replaced magic numbers with named constants in `pkg/chart/generator.go` and `pkg/registry/mappings.go`.
-  - [x] **nil/nil Returns:** Fixed anti-pattern of returning both `nil` value and `nil` error by introducing proper sentinel errors.
-  - [x] **Unused Code:** Removed or properly commented out unused functions and variables.
-  - [x] **Boolean Logic:** Simplified complex boolean expressions using De Morgan's laws.
-  - [x] **Octal Literals:** Updated to modern syntax (`0o644` instead of `0644`).
-- [x] **Error Handling:** Fixed `errcheck` errors and improved empty if statements with proper error messages.
-- [x] **Code Documentation:** Added/improved comments for helper methods and constants.
 
 ## Implementation Process:  DONT" REMOVE THIS SECTION as these hints are important to remember.
 - For each change:
