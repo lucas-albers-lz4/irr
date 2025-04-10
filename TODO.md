@@ -70,7 +70,6 @@
         - [ ] **Debug Context:** Execute a subtest with `-debug` (e.g., `go test ./... -run TestCertManager/core_controllers -debug`) and manually inspect logs for `[DEBUG] core_controllers:` prefixes.
         - [ ] **Error Message Format:** Introduce a validation error within a subtest and verify `t.Errorf` output includes the group name and follows the structured format from `TESTING.md`.
 
-## Phase 4: Enhanced Configuration Validation & Testing (Small Scope)
 - **Goal:** Improve robustness by adding specific validation rules for configuration files and corresponding tests. Scope is limited to syntactic checks and hard limits, not deep semantic validation.
 
 - [x] **Implement Enhanced Validation Logic:**
