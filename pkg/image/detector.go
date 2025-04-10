@@ -22,6 +22,23 @@ const (
 	MaxComponents = 2
 )
 
+// MapStructureResult holds the result of validating an image map structure.
+// It contains the parsed components of an image reference and validation status.
+type MapStructureResult struct {
+	// Repository is the repository component of the image reference
+	Repository string
+	// Registry is the registry component of the image reference (if present)
+	Registry string
+	// Tag is the tag component of the image reference (if present)
+	Tag string
+	// Digest is the digest component of the image reference (if present)
+	Digest string
+	// IsImageMap indicates whether the map structure matches an image pattern
+	IsImageMap bool
+	// TemplateErr contains any template-related error encountered during validation
+	TemplateErr error
+}
+
 // Detector handles the discovery of image references within chart values.
 //
 // NOTE: The accuracy of image detection heavily relies on the pkg/image/parser module.
@@ -309,7 +326,11 @@ func (d *Detector) processStringValueStrict(v string, path []string, isKnownImag
 }
 
 // validateMapStructure checks if a map has the required image structure
-func (d *Detector) validateMapStructure(m map[string]interface{}, path []string) (string, string, string, string, bool, error) {
+func (d *Detector) validateMapStructure(m map[string]interface{}, path []string) MapStructureResult {
+	result := MapStructureResult{
+		IsImageMap: false,
+	}
+
 	// Extract values and validate types
 	repoVal, repoOk := m["repository"]
 	regVal, regOk := m["registry"]
@@ -319,7 +340,7 @@ func (d *Detector) validateMapStructure(m map[string]interface{}, path []string)
 	// Check repository key presence
 	if !repoOk {
 		debug.Printf("Path [%s] missing required 'repository' key.\n", pathToString(path))
-		return "", "", "", "", false, nil
+		return result
 	}
 
 	// Type assertions and handling templates
@@ -327,56 +348,72 @@ func (d *Detector) validateMapStructure(m map[string]interface{}, path []string)
 	if !repoIsString {
 		// If not a string, it can't be valid unless it's a template detected elsewhere.
 		// We don't check for templates here, as it's not a string.
-		return "", "", "", "", false, nil
+		return result
 	}
+
 	// Check if the string repoStr contains a template
 	if containsTemplate(repoStr) {
-		return repoStr, "", "", "", true, ErrTemplateVariableDetected // Return extracted repoStr with error
+		result.Repository = repoStr
+		result.IsImageMap = true
+		result.TemplateErr = ErrTemplateVariableDetected
+		return result
 	}
 
 	// Process Registry (optional)
-	regStr := ""
 	if regOk {
-		var regIsString bool
-		regStr, regIsString = regVal.(string)
+		regStr, regIsString := regVal.(string)
 		if !regIsString {
 			// Not a string - invalid structure
 			debug.Printf("[validateMapStructure] Invalid non-string registry value at path %v.", path)
-			return "", "", "", "", false, nil
-		} else if containsTemplate(regStr) { // Check string value for template
-			return repoStr, regStr, "", "", true, ErrTemplateVariableDetected // Return extracted values with error
+			return result
+		} else if containsTemplate(regStr) {
+			result.Repository = repoStr
+			result.Registry = regStr
+			result.IsImageMap = true
+			result.TemplateErr = ErrTemplateVariableDetected
+			return result
 		}
+		result.Registry = regStr
 	}
 
 	// Process Tag (optional)
-	tagStr := ""
 	if tagOk {
-		var tagIsString bool
-		tagStr, tagIsString = tagVal.(string)
+		tagStr, tagIsString := tagVal.(string)
 		if !tagIsString {
 			// Not a string - invalid structure
 			debug.Printf("[validateMapStructure] Invalid non-string tag value at path %v.", path)
-			return "", "", "", "", false, nil
-		} else if containsTemplate(tagStr) { // Check string value for template
-			return repoStr, regStr, tagStr, "", true, ErrTemplateVariableDetected // Return extracted values with error
+			return result
+		} else if containsTemplate(tagStr) {
+			result.Repository = repoStr
+			result.Tag = tagStr
+			result.IsImageMap = true
+			result.TemplateErr = ErrTemplateVariableDetected
+			return result
 		}
+		result.Tag = tagStr
 	}
 
 	// Process Digest (optional)
-	digestStr := ""
 	if digestOk {
-		var digestIsString bool
-		digestStr, digestIsString = digestVal.(string)
+		digestStr, digestIsString := digestVal.(string)
 		if !digestIsString {
 			// Not a string - invalid structure
 			debug.Printf("[validateMapStructure] Invalid non-string digest value at path %v.", path)
-			return "", "", "", "", false, nil
-		} else if containsTemplate(digestStr) { // Check string value for template
-			return repoStr, regStr, tagStr, digestStr, true, ErrTemplateVariableDetected // Return extracted values with error
+			return result
+		} else if containsTemplate(digestStr) {
+			result.Repository = repoStr
+			result.Digest = digestStr
+			result.IsImageMap = true
+			result.TemplateErr = ErrTemplateVariableDetected
+			return result
 		}
+		result.Digest = digestStr
 	}
 
-	return repoStr, regStr, tagStr, digestStr, true, nil
+	// All validation passed
+	result.Repository = repoStr
+	result.IsImageMap = true
+	return result
 }
 
 // createImageReference attempts to create a valid image Reference object from components extracted from a map.
@@ -472,17 +509,17 @@ func (d *Detector) tryExtractImageFromMap(m map[string]interface{}, path []strin
 	debug.DumpValue("Input map", m)
 
 	// Validate basic structure
-	repoStr, regStr, tagStr, digestStr, isImageMap, err := d.validateMapStructure(m, path)
+	result := d.validateMapStructure(m, path)
 
 	// If validation returned an error (like template detected) or it's not an image map structure,
 	// return immediately with the results from validateMapStructure.
-	if err != nil || !isImageMap {
-		debug.Printf("[tryExtractImageFromMap] Validation failed or template detected. isImageMap: %t, err: %v", isImageMap, err)
-		return nil, isImageMap, err
+	if result.TemplateErr != nil || !result.IsImageMap {
+		debug.Printf("[tryExtractImageFromMap] Validation failed or template detected. isImageMap: %t, err: %v", result.IsImageMap, result.TemplateErr)
+		return nil, result.IsImageMap, result.TemplateErr
 	}
 
 	// Handle empty repository in strict mode
-	if repoStr == "" {
+	if result.Repository == "" {
 		if d.context.Strict {
 			return nil, true, fmt.Errorf("image map validation failed: repository cannot be empty at path %v", path)
 		}
@@ -490,21 +527,22 @@ func (d *Detector) tryExtractImageFromMap(m map[string]interface{}, path []strin
 	}
 
 	// Handle registry prefix that might be part of the repo string
-	if repoStr != "" {
+	if result.Repository != "" {
 		// Check if repo string might have registry prefix (contains '/')
-		if repoParts := strings.SplitN(repoStr, "/", MaxComponents); len(repoParts) > 1 {
+		if repoParts := strings.SplitN(result.Repository, "/", MaxComponents); len(repoParts) > 1 {
 			// The first part looks like a registry hostname if it contains dots or ':'
 			// e.g., "docker.io/nginx" or "localhost:5000/myapp"
 			if strings.Contains(repoParts[0], ".") || strings.Contains(repoParts[0], ":") {
-				regStr = repoParts[0]
-				repoStr = repoParts[1]
+				result.Registry = repoParts[0]
+				result.Repository = repoParts[1]
 			}
 		}
 	}
 
 	// 4. Construct the image reference using createImageReference
-	debug.Printf("[DEBUG tryExtractImageFromMap] Calling createImageReference with: Repo=%q, Reg=%q, Tag=%q, Digest=%q, Path=%v", repoStr, regStr, tagStr, digestStr, path)
-	imgRef, err := d.createImageReference(repoStr, regStr, tagStr, digestStr, path)
+	debug.Printf("[DEBUG tryExtractImageFromMap] Calling createImageReference with: Repo=%q, Reg=%q, Tag=%q, Digest=%q, Path=%v",
+		result.Repository, result.Registry, result.Tag, result.Digest, path)
+	imgRef, err := d.createImageReference(result.Repository, result.Registry, result.Tag, result.Digest, path)
 
 	// Log the result of createImageReference
 	switch {

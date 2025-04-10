@@ -119,11 +119,9 @@ func (s *FlatStrategy) GeneratePath(originalRef *image.Reference, targetRegistry
 	// NOTE: This function now ONLY returns the repository part (e.g., "library/nginx")
 	// The caller (generator) is responsible for prepending the actual target registry.
 
-	// finalPath := path.Join(mappedTargetRegistry, baseRepoPath) // Remove this
 	finalRepoPathPart := baseRepoPath // Return only the repo part
 
 	// Remove logic that adds tag/digest here, caller handles it.
-	// ... tag/digest logic removed ...
 
 	debug.Printf("FlatStrategy: Generated final repo path part: %s", finalRepoPathPart)
 	return finalRepoPathPart, nil

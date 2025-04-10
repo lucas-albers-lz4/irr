@@ -292,8 +292,6 @@ func init() {
 	// Add subcommands
 	rootCmd.AddCommand(newAnalyzeCmd())
 	rootCmd.AddCommand(newOverrideCmd()) // Re-enable the override command
-	// rootCmd.AddCommand(newLintCmd())
-	// rootCmd.AddCommand(newVersionCmd())
 
 	// REMOVED Redundant Persistent Flags - These are defined locally in subcommands now.
 	// rootCmd.PersistentFlags().StringVarP(&chartPath, "chart-path", "p", "", "Path to the Helm chart directory or archive")

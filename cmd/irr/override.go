@@ -24,6 +24,32 @@ const (
 	FilePermissions = 0o644
 )
 
+// GeneratorConfig holds all configuration for the generator
+type GeneratorConfig struct {
+	// ChartPath is the path to the Helm chart directory or archive
+	ChartPath string
+	// TargetRegistry is the target container registry URL
+	TargetRegistry string
+	// SourceRegistries is a list of source container registry URLs to relocate
+	SourceRegistries []string
+	// ExcludeRegistries is a list of container registry URLs to exclude from relocation
+	ExcludeRegistries []string
+	// Strategy is the path generation strategy to use for image paths
+	Strategy strategy.PathStrategy
+	// Mappings contains registry mapping configurations
+	Mappings *registry.Mappings
+	// StrictMode enables strict validation (fails on any error)
+	StrictMode bool
+	// Threshold is the minimum percentage of images that must be processed successfully
+	Threshold int
+	// IncludePatterns contains glob patterns for values paths to include
+	IncludePatterns []string
+	// ExcludePatterns contains glob patterns for values paths to exclude
+	ExcludePatterns []string
+	// KnownImagePaths contains specific dot-notation paths known to contain images
+	KnownImagePaths []string
+}
+
 // newOverrideCmd creates the cobra command for the 'override' operation.
 // This command uses centralized exit codes from pkg/exitcodes for consistent error handling:
 // - Input validation failures return codes 1-9 (e.g., ExitMissingRequiredFlag)
@@ -299,22 +325,9 @@ func outputOverrides(cmd *cobra.Command, yamlBytes []byte, outputFile string, dr
 }
 
 // setupGeneratorConfig collects all the necessary configuration for the generator
-func setupGeneratorConfig(cmd *cobra.Command) (
-	chartPath string,
-	targetRegistry string,
-	sourceRegistries []string,
-	excludeRegistries []string,
-	selectedStrategy strategy.PathStrategy,
-	mappings *registry.Mappings,
-	strictMode bool,
-	threshold int,
-	includePattern []string,
-	excludePattern []string,
-	knownPathsVal []string,
-	err error,
-) {
+func setupGeneratorConfig(cmd *cobra.Command) (config GeneratorConfig, err error) {
 	// Get required flags
-	chartPath, targetRegistry, sourceRegistries, err = getRequiredFlags(cmd)
+	config.ChartPath, config.TargetRegistry, config.SourceRegistries, err = getRequiredFlags(cmd)
 	if err != nil {
 		return
 	}
@@ -327,13 +340,13 @@ func setupGeneratorConfig(cmd *cobra.Command) (
 
 	// Load registry mappings
 	if registryFile != "" {
-		mappings, err = registry.LoadMappings(AppFs, registryFile, integrationTestMode)
+		config.Mappings, err = registry.LoadMappings(AppFs, registryFile, integrationTestMode)
 		if err != nil {
 			debug.Printf("Failed to load mappings: %v", err)
 			err = fmt.Errorf("failed to load registry mappings from %s: %w", registryFile, err)
 			return
 		}
-		debug.Printf("Successfully loaded %d mappings from %s", len(mappings.Entries), registryFile)
+		debug.Printf("Successfully loaded %d mappings from %s", len(config.Mappings.Entries), registryFile)
 	}
 
 	// Get and validate path strategy
@@ -343,7 +356,7 @@ func setupGeneratorConfig(cmd *cobra.Command) (
 	}
 
 	// Validate strategy
-	selectedStrategy, err = strategy.GetStrategy(pathStrategyString, mappings)
+	config.Strategy, err = strategy.GetStrategy(pathStrategyString, config.Mappings)
 	if err != nil {
 		err = &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitCodeInvalidStrategy,
@@ -353,33 +366,33 @@ func setupGeneratorConfig(cmd *cobra.Command) (
 	}
 
 	// Get remaining flags
-	excludeRegistries, err = getStringSliceFlag(cmd, "exclude-registries")
+	config.ExcludeRegistries, err = getStringSliceFlag(cmd, "exclude-registries")
 	if err != nil {
 		return
 	}
 
-	threshold, err = getThresholdFlag(cmd)
+	config.Threshold, err = getThresholdFlag(cmd)
 	if err != nil {
 		return
 	}
 
-	strictMode, err = getBoolFlag(cmd, "strict")
+	config.StrictMode, err = getBoolFlag(cmd, "strict")
 	if err != nil {
 		return
 	}
 
 	// Get analysis control flags
-	includePattern, err = getStringSliceFlag(cmd, "include-pattern")
+	config.IncludePatterns, err = getStringSliceFlag(cmd, "include-pattern")
 	if err != nil {
 		return
 	}
 
-	excludePattern, err = getStringSliceFlag(cmd, "exclude-pattern")
+	config.ExcludePatterns, err = getStringSliceFlag(cmd, "exclude-pattern")
 	if err != nil {
 		return
 	}
 
-	knownPathsVal, err = getStringSliceFlag(cmd, "known-image-paths")
+	config.KnownImagePaths, err = getStringSliceFlag(cmd, "known-image-paths")
 	if err != nil {
 		return
 	}
@@ -406,9 +419,7 @@ func runOverride(cmd *cobra.Command, _ []string) error {
 	}
 
 	// Set up all generator configuration
-	chartPath, targetRegistry, sourceRegistries, excludeRegistries,
-		selectedStrategy, mappings, strictMode, threshold,
-		includePattern, excludePattern, knownPathsVal, err := setupGeneratorConfig(cmd)
+	config, err := setupGeneratorConfig(cmd)
 	if err != nil {
 		return err
 	}
@@ -416,15 +427,15 @@ func runOverride(cmd *cobra.Command, _ []string) error {
 	// Create generator
 	var loader analysis.ChartLoader = &chart.HelmLoader{}
 	generator := currentGeneratorFactory(
-		chartPath, targetRegistry,
-		sourceRegistries, excludeRegistries,
-		selectedStrategy, mappings,
-		strictMode,
-		threshold,
+		config.ChartPath, config.TargetRegistry,
+		config.SourceRegistries, config.ExcludeRegistries,
+		config.Strategy, config.Mappings,
+		config.StrictMode,
+		config.Threshold,
 		loader,
-		includePattern,
-		excludePattern,
-		knownPathsVal,
+		config.IncludePatterns,
+		config.ExcludePatterns,
+		config.KnownImagePaths,
 	)
 
 	// Generate overrides

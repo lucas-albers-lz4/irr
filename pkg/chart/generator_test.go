@@ -260,10 +260,6 @@ func TestGenerator_Generate_Mappings(t *testing.T) {
 			{Source: "another.source.com", Target: "another-mapped.example.com"},
 		},
 	}
-	// err := mappings.AddMapping("source.registry.com", "mapped-target.example.com") // Remove AddMapping calls
-	// require.NoError(t, err)
-	// err = mappings.AddMapping("another.source.com", "another-mapped.example.com") // Remove AddMapping calls
-	// require.NoError(t, err)
 
 	// Mock loader returns chart with images from different source registries
 	mockLoader := &MockChartLoader{
@@ -318,76 +314,16 @@ func TestGenerator_Generate_Mappings(t *testing.T) {
 }
 
 // Remove tests for deleted functions
-/*
-func TestProcessChartForOverrides(t *testing.T) {
+func TestProcessChartForOverrides_Removed(t *testing.T) {
 	t.Skip("Test for removed function processChartForOverrides")
-	// ... existing test code ...
 }
-*/
 
-/*
 func TestMergeOverrides(t *testing.T) {
 	t.Skip("Test for removed function mergeOverrides")
-	// ... existing test code ...
 }
-*/
 
 func TestExtractSubtree(t *testing.T) {
 	t.Skip("Functionality removed or under refactoring")
-	// Define test cases - commented out as function is skipped
-	/*
-		tests := []struct {
-			name     string
-			data     map[string]interface{}
-			path     string
-			expected interface{}
-			wantErr  bool
-		}{
-			// Add test cases here
-		}
-
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				// got, err := extractSubtree(tt.data, tt.path)
-				// if (err != nil) != tt.wantErr {
-				// 	t.Errorf("extractSubtree() error = %v, wantErr %v", err, tt.wantErr)
-				// 	return
-				// }
-				// if !reflect.DeepEqual(got, tt.expected) {
-				// 	t.Errorf("extractSubtree() = %v, want %v", got, tt.expected)
-				// }
-			})
-		}
-	*/
-}
-
-func TestMergeOverrides(t *testing.T) {
-	t.Skip("Functionality removed or under refactoring")
-	// Test cases for merging overrides - commented out as function is skipped
-	/*
-		tests := []struct {
-			name          string
-			currentValues map[string]interface{}
-			newOverrides  map[string]interface{}
-			expected      map[string]interface{}
-			wantErr       bool
-		}{
-			// Add test cases here
-		}
-
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				// err := mergeOverrides(tt.currentValues, tt.newOverrides)
-				// if (err != nil) != tt.wantErr {
-				// 	t.Errorf("mergeOverrides() error = %v, wantErr %v", err, tt.wantErr)
-				// 	return
-				// }
-				// if !reflect.DeepEqual(tt.currentValues, tt.expected) {
-				// 	t.Errorf("mergeOverrides() = %v, want %v", tt.currentValues, tt.expected)
-				// }
-			})
-		}
-	*/
 }
 
 // MockImageDetector for testing
@@ -403,41 +339,6 @@ func (m *MockImageDetector) DetectImages(_ interface{}, _ []string) ([]image.Det
 
 func TestProcessChartForOverrides(t *testing.T) {
 	t.Skip("Functionality removed or under refactoring")
-	// Test cases for processing chart for overrides - commented out as function is skipped
-	/*
-		tests := []struct {
-			name          string
-			chartPath     string
-			loader        analysis.ChartLoader // Keep type for reference if needed later
-			targetPath    string
-			registries    []string
-			strategy      strategy.PathStrategy // Keep type for reference
-			mappings      *registry.Mappings   // Keep type for reference
-			strict        bool
-			threshold     int
-			outputOptions analysis.OutputOptions // Keep type for reference
-			expected      *analysis.OverrideFile // Keep type for reference
-			wantErr       bool
-		}{
-			// Add test cases here
-		}
-
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				// got, err := processChartForOverrides(
-				// 	tt.chartPath, tt.loader, tt.targetPath, tt.registries,
-				// 	tt.strategy, tt.mappings, tt.strict, tt.threshold, tt.outputOptions,
-				// )
-				// if (err != nil) != tt.wantErr {
-				// 	t.Errorf("processChartForOverrides() error = %v, wantErr %v", err, tt.wantErr)
-				// 	return
-				// }
-				// if !reflect.DeepEqual(got, tt.expected) {
-				// 	t.Errorf("processChartForOverrides() = %v, want %v", got, tt.expected)
-				// }
-			})
-		}
-	*/
 }
 
 func TestGenerateOverrides_Integration(t *testing.T) {

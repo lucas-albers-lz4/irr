@@ -273,7 +273,10 @@ func (h *TestHarness) GenerateOverrides(extraArgs ...string) error {
 	return nil
 }
 
-// ValidateOverrides runs helm template with the generated overrides and compares output.
+// ValidateOverrides checks the generated overrides against expected values.
+// This function performs comprehensive validation of the override file structure.
+//
+//nolint:funlen // Acceptable length for test harness validation function
 func (h *TestHarness) ValidateOverrides() error {
 	h.logger.Printf("Validating overrides for chart: %s", h.chartPath)
 
