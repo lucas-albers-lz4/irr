@@ -133,10 +133,14 @@ linters:
       locale: US # Default is US. Use 'UK' for British English.
       # ignore-words: # Add list of custom words to ignore if needed
       #   - mycustomword
+    funlen:
+      lines: 150
+      statements: 50
 
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
+      
   exclude:
     # Regex for paths to exclude from analysis
     - "zz_generated.*\\.go" # Exclude auto-generated files
