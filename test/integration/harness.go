@@ -768,10 +768,10 @@ func (h *TestHarness) BuildIRR() {
 		switch {
 		case errors.As(err, &exitErr):
 			// Include exit code in the error message for better context
-			h.t.Fatalf("BuildIRR failed with exit code %d: %w\nOutput:\n%s", exitErr.ExitCode(), err, string(output))
+			h.t.Fatalf("BuildIRR failed with exit code %d: %v\nOutput:\n%s", exitErr.ExitCode(), err, string(output))
 		default:
 			// Generic build failure
-			h.t.Fatalf("BuildIRR failed: %w\nOutput:\n%s", err, string(output))
+			h.t.Fatalf("BuildIRR failed: %v\nOutput:\n%s", err, string(output))
 		}
 	}
 	h.t.Logf("BuildIRR successful.")

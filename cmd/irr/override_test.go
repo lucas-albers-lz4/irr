@@ -402,7 +402,7 @@ func createErrorTestCase(args []string, errorMsg string) struct {
 		name: "generator returns error",
 		args: args,
 		mockGeneratorFunc: func() (*override.File, error) {
-			return nil, fmt.Errorf(errorMsg)
+			return nil, fmt.Errorf("%s", errorMsg)
 		},
 		expectErr:      true,
 		stdErrContains: "failed to process chart: " + errorMsg,
