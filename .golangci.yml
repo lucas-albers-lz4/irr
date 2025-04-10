@@ -134,8 +134,8 @@ linters:
       # ignore-words: # Add list of custom words to ignore if needed
       #   - mycustomword
     funlen:
-      lines: 150
-      statements: 50
+      lines: 200
+      statements: 65
 
 issues:
   max-issues-per-linter: 0
