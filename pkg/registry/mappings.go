@@ -172,3 +172,152 @@ func (m *Mappings) GetTargetRegistry(source string) string {
 	debug.Printf("GetTargetRegistry: No match found for source '%s'", source)
 	return ""
 }
+
+// LoadConfig loads registry mappings from a YAML file specified by the --config flag.
+// It enforces strict validation on the format and content of the file:
+// - The file must exist and be readable
+// - The content must be a valid YAML map[string]string
+// - Keys must be valid domain names
+// - Values must contain at least one slash (registry/path format)
+func LoadConfig(fs afero.Fs, path string, skipCWDRestriction bool) (map[string]string, error) {
+	if path == "" {
+		return nil, nil // Empty path means no config loaded, not an error
+	}
+
+	// Basic validation to prevent path traversal
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get absolute path for config file '%s': %w", path, err)
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get working directory: %w", err)
+	}
+
+	// Only skip path traversal check if explicitly allowed in test or via parameter
+	if !skipCWDRestriction {
+		if !strings.HasPrefix(absPath, wd) {
+			debug.Printf("Path traversal detected. Path: %s, WorkDir: %s", absPath, wd)
+			return nil, WrapMappingPathNotInWD(path)
+		}
+	}
+
+	// Check if path is a directory using the provided filesystem
+	fileInfo, err := fs.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, WrapMappingFileNotExist(path, err)
+		}
+		return nil, WrapMappingFileRead(path, err)
+	}
+	if fileInfo.IsDir() {
+		return nil, fmt.Errorf("failed to read config file '%s': is a directory", path)
+	}
+
+	// Check file extension
+	if !strings.HasSuffix(absPath, ".yaml") && !strings.HasSuffix(absPath, ".yml") {
+		return nil, WrapMappingExtension(path)
+	}
+
+	// Read the file content using the provided filesystem
+	data, err := afero.ReadFile(fs, path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, WrapMappingFileNotExist(path, err)
+		}
+		return nil, WrapMappingFileRead(path, err)
+	}
+
+	// Check for empty file content
+	if len(data) == 0 {
+		return nil, WrapMappingFileEmpty(path)
+	}
+
+	debug.Printf("LoadConfig: Attempting to parse file content:\n%s", string(data))
+
+	// Parse the YAML content as map[string]string
+	var config map[string]string
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		debug.Printf("LoadConfig: Failed to parse as map[string]string: %v", err)
+		return nil, WrapMappingFileParse(path, err)
+	}
+
+	// Strict validation of the config content
+	validatedConfig := make(map[string]string)
+	for source, target := range config {
+		// Validate source (key) - must be a valid domain name
+		source = strings.TrimSpace(source)
+		if source == "" {
+			debug.Printf("LoadConfig: Empty source key found, skipping entry")
+			continue
+		}
+
+		// Simple domain validation - could be enhanced with regex
+		if !isValidDomain(source) {
+			return nil, fmt.Errorf("invalid source registry domain '%s' in config file '%s'", source, path)
+		}
+
+		// Validate target (value) - must contain at least one slash
+		target = strings.TrimSpace(target)
+		if target == "" {
+			debug.Printf("LoadConfig: Empty target value for source '%s', skipping entry", source)
+			continue
+		}
+
+		// Target must contain at least one slash (registry/path format)
+		if !strings.Contains(target, "/") {
+			return nil, fmt.Errorf("invalid target registry value '%s' for source '%s' in config file '%s': must contain at least one '/'", target, source, path)
+		}
+
+		validatedConfig[source] = target
+	}
+
+	// Check if we have any valid entries
+	if len(validatedConfig) == 0 {
+		debug.Printf("LoadConfig: No valid entries found after parsing")
+		return nil, WrapMappingFileEmpty(path)
+	}
+
+	debug.Printf("LoadConfig: Successfully loaded %d mappings from %s", len(validatedConfig), path)
+	return validatedConfig, nil
+}
+
+// isValidDomain performs a simple validation on a domain string
+func isValidDomain(domain string) bool {
+	// Simple validation: Allow alphanumeric, hyphens, dots, and wildcards
+	// This is a basic check, could be enhanced with a proper regex for domains
+	if domain == "" {
+		return false
+	}
+
+	// Check for wildcards that would be valid for registry domains
+	if strings.HasPrefix(domain, "*.") {
+		domain = domain[2:] // Remove the *. prefix
+	}
+
+	parts := strings.Split(domain, ".")
+	if len(parts) < 2 {
+		return false
+	}
+
+	for _, part := range parts {
+		if part == "" {
+			return false
+		}
+
+		for _, char := range part {
+			if !((char >= 'a' && char <= 'z') ||
+				(char >= 'A' && char <= 'Z') ||
+				(char >= '0' && char <= '9') ||
+				char == '-') {
+				return false
+			}
+		}
+
+		if strings.HasPrefix(part, "-") || strings.HasSuffix(part, "-") {
+			return false
+		}
+	}
+
+	return true
+}

@@ -137,6 +137,7 @@ type generatorFactoryFunc func(
 	sourceRegistries, excludeRegistries []string,
 	pathStrategy strategy.PathStrategy,
 	mappings *registry.Mappings,
+	configMappings map[string]string,
 	strict bool,
 	threshold int,
 	loader analysis.ChartLoader,
@@ -149,6 +150,7 @@ var defaultGeneratorFactory generatorFactoryFunc = func(
 	sourceRegistries, excludeRegistries []string,
 	pathStrategy strategy.PathStrategy,
 	mappings *registry.Mappings,
+	configMappings map[string]string,
 	strict bool,
 	threshold int,
 	loader analysis.ChartLoader,
@@ -157,7 +159,7 @@ var defaultGeneratorFactory generatorFactoryFunc = func(
 	return chart.NewGenerator(
 		chartPath, targetRegistry,
 		sourceRegistries, excludeRegistries,
-		pathStrategy, mappings, strict, threshold, loader,
+		pathStrategy, mappings, configMappings, strict, threshold, loader,
 		includePatterns, excludePatterns, knownPaths,
 	)
 }

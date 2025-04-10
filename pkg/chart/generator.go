@@ -122,6 +122,7 @@ type Generator struct {
 	excludeRegistries []string
 	pathStrategy      strategy.PathStrategy
 	mappings          *registry.Mappings
+	configMappings    map[string]string
 	strict            bool
 	includePatterns   []string // Passed to detector context
 	excludePatterns   []string // Passed to detector context
@@ -136,6 +137,7 @@ func NewGenerator(
 	sourceRegistries, excludeRegistries []string,
 	pathStrategy strategy.PathStrategy,
 	mappings *registry.Mappings,
+	configMappings map[string]string,
 	strict bool,
 	threshold int,
 	loader analysis.ChartLoader,
@@ -151,6 +153,7 @@ func NewGenerator(
 		excludeRegistries: excludeRegistries,
 		pathStrategy:      pathStrategy,
 		mappings:          mappings,
+		configMappings:    configMappings,
 		strict:            strict,
 		includePatterns:   includePatterns,
 		excludePatterns:   excludePatterns,
@@ -407,8 +410,61 @@ func (g *Generator) Generate() (*override.File, error) {
 			continue
 		}
 
-		// Determine the target registry, prioritizing mappings
-		targetReg := g.targetRegistry // Default
+		// Determine the target registry, prioritizing config mappings over registry mappings
+		targetReg := g.targetRegistry // Default fallback
+
+		// First check configMappings from --config flag
+		if g.configMappings != nil {
+			// Normalize the registry name for lookup
+			normalizedRegistry := image.NormalizeRegistry(imgRef.Registry)
+
+			// Special case for Docker Hub library images
+			if normalizedRegistry == "docker.io" && strings.HasPrefix(imgRef.Repository, "library/") {
+				debug.Printf("[GENERATE LOOP] Docker Hub library image detected: %s", imgRef.String())
+			}
+
+			if mappedValue, ok := g.configMappings[normalizedRegistry]; ok {
+				debug.Printf("[GENERATE LOOP] Found config mapping for %s: %s", normalizedRegistry, mappedValue)
+
+				// Split the mappedValue at the first slash to get registry and repository prefix
+				parts := strings.SplitN(mappedValue, "/", 2)
+				if len(parts) == 2 {
+					targetReg = parts[0]
+					// Update the path to include the repository prefix from the mapped value
+					// The strategy will handle the full path generation
+					newPath, err := g.pathStrategy.GeneratePath(imgRef, targetReg)
+					if err != nil {
+						log.Warnf("Path generation failed for '%s': %v", imgRef.Original, err)
+						processErrors = append(processErrors, fmt.Errorf("path generation failed for '%s': %w", imgRef.String(), err))
+						debug.Printf("[GENERATE LOOP ERROR] Error in GeneratePath for %s: %v", pattern.Path, err)
+						continue
+					}
+
+					// Prepend the repository prefix from the config mapping
+					newPath = parts[1] + "/" + newPath
+
+					processedCount++
+					debug.Printf("[GENERATE LOOP] Generated new path '%s' for original '%s' using config mapping", newPath, imgRef.Original)
+
+					// Create the override value (string or map)
+					overrideValue := g.createOverride(pattern, imgRef, targetReg, newPath)
+
+					// Set the override in the result map
+					if err := g.setOverridePath(overrides, pattern, overrideValue); err != nil {
+						log.Warnf("Failed to set override for path '%s': %v", pattern.Path, err)
+						processErrors = append(processErrors, err)
+						debug.Printf("[GENERATE LOOP ERROR] Error in setOverridePath for %s: %v", pattern.Path, err)
+						processedCount-- // Decrement as the override wasn't successfully set
+						continue
+					}
+
+					// Skip to next pattern since we've processed this one
+					continue
+				}
+			}
+		}
+
+		// If no config mapping was found or applied, check regular mappings
 		if g.mappings != nil {
 			if mappedTarget := g.mappings.GetTargetRegistry(imgRef.Registry); mappedTarget != "" {
 				targetReg = mappedTarget // Use mapped target if found

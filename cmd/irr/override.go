@@ -38,6 +38,8 @@ type GeneratorConfig struct {
 	Strategy strategy.PathStrategy
 	// Mappings contains registry mapping configurations
 	Mappings *registry.Mappings
+	// ConfigMappings contains registry mappings from the --config flag
+	ConfigMappings map[string]string
 	// StrictMode enables strict validation (fails on any error)
 	StrictMode bool
 	// Threshold is the minimum percentage of images that must be processed successfully
@@ -86,6 +88,12 @@ func newOverrideCmd() *cobra.Command {
 				missingFlags = append(missingFlags, "source-registries")
 			}
 
+			// Ensure --target-registry is provided even when --config is used
+			configPath, _ := cmd.Flags().GetString("config")
+			if configPath != "" && (err != nil || targetRegistry == "") {
+				missingFlags = append(missingFlags, "target-registry")
+			}
+
 			if len(missingFlags) > 0 {
 				sort.Strings(missingFlags) // Sort for consistent error message
 				return &exitcodes.ExitCodeError{
@@ -129,6 +137,7 @@ func setupOverrideFlags(cmd *cobra.Command) {
 	)
 	cmd.Flags().Int("threshold", 0, "Minimum percentage of images successfully processed for the command to succeed (0-100, 0 disables)")
 	cmd.Flags().String("registry-file", "", "Path to a YAML file containing registry mappings (source: target)")
+	cmd.Flags().String("config", "", "Path to a YAML configuration file for registry mappings (map[string]string format)")
 	cmd.Flags().Bool("validate", false, "Run 'helm template' with generated overrides to validate chart renderability")
 
 	// Analysis control flags
@@ -349,6 +358,29 @@ func setupGeneratorConfig(cmd *cobra.Command) (config GeneratorConfig, err error
 		debug.Printf("Successfully loaded %d mappings from %s", len(config.Mappings.Entries), registryFile)
 	}
 
+	// Get config file path
+	configFile, err := getStringFlag(cmd, "config")
+	if err != nil {
+		return
+	}
+
+	// Load config mappings
+	if configFile != "" {
+		config.ConfigMappings, err = registry.LoadConfig(AppFs, configFile, integrationTestMode)
+		if err != nil {
+			debug.Printf("Failed to load config: %v", err)
+			err = &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitInputConfigurationError,
+				Err:  fmt.Errorf("failed to load registry config from %s: %w", configFile, err),
+			}
+			return
+		}
+
+		if config.ConfigMappings != nil {
+			debug.Printf("Successfully loaded %d config mappings from %s", len(config.ConfigMappings), configFile)
+		}
+	}
+
 	// Get and validate path strategy
 	pathStrategyString, err := getStringFlag(cmd, "strategy")
 	if err != nil {
@@ -430,6 +462,7 @@ func runOverride(cmd *cobra.Command, _ []string) error {
 		config.ChartPath, config.TargetRegistry,
 		config.SourceRegistries, config.ExcludeRegistries,
 		config.Strategy, config.Mappings,
+		config.ConfigMappings,
 		config.StrictMode,
 		config.Threshold,
 		loader,
