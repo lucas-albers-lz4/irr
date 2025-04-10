@@ -1,4 +1,4 @@
-.PHONY: build test lint clean run helm-lint test-charts
+.PHONY: build test lint clean run helm-lint test-charts test-integration test-cert-manager test-integration-specific test-integration-debug help
 
 BINARY_NAME=irr
 BUILD_DIR=bin
@@ -8,7 +8,7 @@ TEST_RESULTS_DIR=test/results
 TEST_OVERRIDES_DIR=test/overrides
 TARGET_REGISTRY?=harbor.home.arpa
 
-all: lint helm-lint test build
+all: lint helm-lint test test-integration build
 
 build:
 	@echo "Building..."
@@ -38,6 +38,24 @@ test-pkg-override: build
 test-pkg-strategy: build
 	@echo "Running strategy package tests..."
 	@IRR_TESTING=true go test -v ./pkg/strategy/...
+
+test-integration: build
+	@echo "Running integration tests..."
+	@IRR_TESTING=true go test -v ./test/integration/...
+
+test-cert-manager: build
+	@echo "Running cert-manager integration tests..."
+	@IRR_TESTING=true go test -v ./test/integration/... -run TestCertManagerComponents
+
+# You can run a specific integration test with:
+# make test-integration-specific TEST_NAME=TestConfigFileMappings
+test-integration-specific: build
+	@echo "Running specific integration test: $(TEST_NAME)"
+	@IRR_TESTING=true go test -v ./test/integration/... -run $(TEST_NAME)
+
+test-integration-debug: build
+	@echo "Running integration tests with debug output..."
+	@IRR_TESTING=true LOG_LEVEL=DEBUG IRR_DEBUG=1 go test -v ./test/integration/...
 
 test-charts: build
 	@echo "Running chart tests..."
@@ -77,3 +95,24 @@ clean:
 run: build
 	@echo "Running..."
 	@$(BUILD_DIR)/$(BINARY_NAME) $(ARGS) 
+
+help:
+	@echo "Available targets:"
+	@echo "  all                Build and run all tests"
+	@echo "  build              Build the irr binary"
+	@echo "  test               Run all unit tests"
+	@echo "  test-json          Run unit tests with JSON output"
+	@echo "  test-packages      Run package tests (skipping cmd/irr)"
+	@echo "  test-pkg-image     Run image package tests"
+	@echo "  test-pkg-override  Run override package tests"
+	@echo "  test-pkg-strategy  Run strategy package tests"
+	@echo "  test-integration   Run all integration tests"
+	@echo "  test-integration-specific TEST_NAME=TestName  Run a specific integration test"
+	@echo "  test-integration-debug  Run integration tests with debug output"
+	@echo "  test-cert-manager  Run cert-manager integration tests"
+	@echo "  test-charts        Run chart tests"
+	@echo "  lint               Run linter"
+	@echo "  helm-lint          Run Helm lint and template validation"
+	@echo "  clean              Clean up build artifacts"
+	@echo "  run ARGS=\"...\"     Run the irr binary with the specified arguments"
+	@echo "  help               Show this help message"
