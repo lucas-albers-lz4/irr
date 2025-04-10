@@ -248,11 +248,133 @@ Test all CLI options individually and in combination:
 - `--strict` (ensure failure on unsupported structures vs. warning)
 - `--exclude-registries` (verify specified registries are skipped)
 - `--threshold` (test behavior with different percentages)
-- `--debug` (enable debug logging during test execution)
 
-### 10. Debug Mode Testing
+### 10. Debug Control in Tests
 
-The `--debug` flag can be used during testing to enable detailed debug logging. This is particularly useful for:
+The IRR tool provides robust debugging capabilities that are especially useful during test development and troubleshooting. This section explains how debug logging works in tests and how to use it effectively.
+
+#### 10.1. Debug Control Mechanisms
+
+Debug logging in IRR is controlled through two primary mechanisms:
+
+1. **Command-line flag**: `--debug` 
+2. **Environment variable**: `IRR_DEBUG`
+
+These mechanisms interact in specific ways:
+
+- The `--debug` flag always enables debugging when present, regardless of environment variables
+- The `IRR_DEBUG` environment variable enables debug logging when set to `true`
+- The `IRR_DEBUG` environment variable disables debug logging when set to `false`
+- Invalid or empty values for `IRR_DEBUG` default to `false` (debug disabled)
+- The command-line flag takes precedence over the environment variable
+
+#### 10.2. Enabling Debug Logging in Tests
+
+To enable debug logging at different levels:
+
+1. **For all tests**:
+   ```bash
+   go test -v ./... -args --debug
+   ```
+
+2. **For specific test packages**:
+   ```bash
+   go test -v ./pkg/specific -args --debug
+   ```
+
+3. **For specific test functions**:
+   ```bash
+   go test -v ./pkg/specific -run TestSpecific -args --debug
+   ```
+
+4. **Using environment variables**:
+   ```bash
+   IRR_DEBUG=true go test -v ./...
+   ```
+
+#### 10.3. Capturing Debug Output in Tests
+
+When writing tests that need to verify debug output:
+
+1. **Capturing both command output and debug logs**:
+   ```go
+   // Use executeCommandWithStderrCapture to capture both command output and stderr debug logs
+   cmdOutput, stderrOutput, err := executeCommandWithStderrCapture(cmd, args...)
+   
+   // Check for debug logs in stderr
+   if strings.Contains(stderrOutput, "[DEBUG") {
+       // Debug logs were emitted
+   }
+   ```
+
+2. **Directly testing debug package**:
+   ```go
+   // Set up stderr capture
+   oldStderr := os.Stderr
+   r, w, _ := os.Pipe()
+   os.Stderr = w
+   
+   // Call debug functions
+   debug.Init(false)
+   debug.Printf("Test debug message")
+   
+   // Restore stderr and capture output
+   w.Close()
+   os.Stderr = oldStderr
+   buf := new(bytes.Buffer)
+   io.Copy(buf, r)
+   output := buf.String()
+   
+   // Check debug output
+   if strings.Contains(output, "Test debug message") {
+       // Debug message was emitted
+   }
+   ```
+
+#### 10.4. Testing Debug Behavior
+
+The `TestDebugFlagAndEnvVarInteraction` test in `cmd/irr/root_test.go` provides a comprehensive verification of debug control mechanisms, including:
+
+1. Default behavior without flag or environment variable
+2. Effect of the `--debug` flag
+3. Effect of the `IRR_DEBUG` environment variable with different values
+4. Flag precedence over environment variable
+5. Warning behavior with invalid environment values
+
+When troubleshooting debug behavior, refer to this test for examples of proper debug state verification.
+
+#### 10.5. Best Practices for Debug in Tests
+
+1. **Reset state between tests**:
+   ```go
+   // Save original state
+   origDebugEnabled := debug.Enabled
+   defer func() { debug.Enabled = origDebugEnabled }()
+   
+   // Reset for this test
+   debug.Enabled = false
+   ```
+
+2. **Use explicit environment control**:
+   ```go
+   // Save and restore environment
+   origEnv := os.Getenv("IRR_DEBUG")
+   defer os.Setenv("IRR_DEBUG", origEnv)
+   
+   // Set for this test
+   os.Setenv("IRR_DEBUG", "true")
+   ```
+
+3. **Check debug logs without depending on exact format**:
+   ```go
+   // Check for debug log presence without depending on exact format
+   assert.True(t, strings.Contains(output, "[DEBUG"), "Debug logs should be present")
+   ```
+
+4. **Use proper output separation**:
+   Remember that debug logs go to stderr, while command output typically goes to stdout. Capture both separately when testing debug behavior.
+
+## Test Environment
 
 - Troubleshooting test failures
 - Understanding image detection paths

@@ -12,17 +12,52 @@ import (
 
 // Constants
 const (
-	// LatestTag is the default tag used when no tag is specified
+	// DefaultTag is the default tag used when no tag is specified
+	DefaultTag = "latest"
+	// DefaultRegistry is the default registry used when no registry is specified
+	DefaultRegistry = "docker.io"
+	// LegacyDefaultRegistry is the legacy default registry domain
+	LegacyDefaultRegistry = "index.docker.io"
+	// OfficialRepositoryName is the repository name for official Docker images
+	OfficialRepositoryName = "library"
+	// DefaultSeparator is the default separator used in image names
+	DefaultSeparator = "/"
+	// TagSeparator is the character used to separate the name and tag
+	TagSeparator = ":"
+	// DigestSeparator is the character used to separate the name and digest
+	DigestSeparator = "@"
+	// MaxLength is the maximum length of a Docker image reference
+	MaxLength = 255
+	// MaxTagLength is the maximum length of a tag
+	MaxTagLength = 128
+	// LatestTag represents the latest tag
 	LatestTag = "latest"
 )
 
+// Constants for validation (Currently unused, kept for potential future reference)
+/*
+const (
+	alphaNumericRegexString = `[a-z0-9]+`
+	separatorRegexString    = `(?:[._]|__|[-]+)`
+	domainComponentRegexString = `(?:[a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9])`
+	domainRegexString       = domainComponentRegexString + `(?:\.` + domainComponentRegexString + `)*` + `(?:` + portRegexString + `)?`
+	portRegexString         = `:[0-9]+`
+	nameComponentRegexString = alphaNumericRegexString + `(?:` + separatorRegexString + alphaNumericRegexString + `)*`
+)
+*/
+
 // Regular expression patterns for image reference parsing
 var (
-	digestPattern      = regexp.MustCompile(`^(.+)@(.+)$`)
-	tagPattern         = regexp.MustCompile(`^(.+):([^/]+)$`)
-	repositoryPattern  = regexp.MustCompile(`^(.+)$`)
+	// Removed unused patterns: digestPattern, tagPattern
+	// Removed unused regex constants: alphaNumericRegexString, separatorRegexString, domainComponentRegexString, domainRegexString, portRegexString, nameComponentRegexString
+	// Removed unused var: nameRegex
+
+	// repositoryPattern extracts the repository part of an image reference.
+	repositoryPattern = regexp.MustCompile(`^(.+)$`)
+	// registryRepPattern extracts the registry and repository parts.
 	registryRepPattern = regexp.MustCompile(`^(.+)/(.+)$`)
-	referencePattern   = regexp.MustCompile(`^(.+)/(.+)(@(.+))?(:([^/]+))?$`)
+	// referencePattern is the comprehensive pattern for image references
+	referencePattern = regexp.MustCompile(`^(.+)/(.+)(@(.+))?(:([^/]+))?$`)
 )
 
 // ParseImageReference parses an image reference string into its components.
@@ -225,37 +260,6 @@ func parseWithRegex(imageRef string) (*Reference, error) {
 
 	debug.Printf("Failed to match reference against any pattern")
 	return nil, ErrInvalidImageReference
-}
-
-// isValidRepositoryName validates repository name format
-func isValidRepositoryName(name string) bool {
-	// Simple validation - repository name must not be empty
-	// and should not contain invalid characters
-	if name == "" {
-		return false
-	}
-
-	// Check for invalid characters (simplified validation)
-	invalidChars := []string{" ", "\\", "$", "?", "#"}
-	for _, char := range invalidChars {
-		if strings.Contains(name, char) {
-			return false
-		}
-	}
-
-	return true
-}
-
-// isValidTag validates tag format
-func isValidTag(tag string) bool {
-	// Simple validation - tag must not be empty and should match the tag pattern
-	if tag == "" {
-		return false
-	}
-
-	// Tag should only contain alphanumeric characters, periods, dashes, and underscores
-	validTagPattern := regexp.MustCompile(`^[a-zA-Z0-9_][a-zA-Z0-9_.-]*$`)
-	return validTagPattern.MatchString(tag)
 }
 
 // // parseImageReferenceCustom is deprecated. // REMOVED UNUSED

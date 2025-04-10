@@ -11,15 +11,19 @@ import (
 
 // This file contains helper functions for testing Cobra commands, especially those needing file system interaction.
 
-// setupTestFS creates a test filesystem with a temporary directory
+// setupTestFS creates a temporary in-memory filesystem for testing purposes.
+// It returns the afero.Fs instance and the path to the temporary directory.
+// Note: This function is currently unused but kept for potential future use.
+/*
 func setupTestFS(t *testing.T) (fs afero.Fs, tempDir string) {
 	fs = afero.NewMemMapFs()
-	// Create a directory for the chart
-	tempDir = "/test/chart"
-	err := fs.MkdirAll(tempDir, 0o755)
-	require.NoError(t, err, "Failed to create test chart directory")
+	tempDir, err := afero.TempDir(fs, "", "testfs")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir in memory filesystem: %v", err)
+	}
 	return fs, tempDir
 }
+*/
 
 // createDummyChart creates basic Chart.yaml and values.yaml in the specified directory on the given FS.
 func createDummyChart(fs afero.Fs, dir string) error {

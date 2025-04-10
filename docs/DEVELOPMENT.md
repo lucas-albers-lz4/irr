@@ -248,151 +248,44 @@ quay.io: target.registry/quay-mirror
 The tool's sole output is the generated override file. It does *not* directly interact with `helm install/upgrade`. This design choice enables:
 
 * **Review:** Users inspect changes before application.
-* **Auditing/VCS:** Override files can be committed.
-* **Repeatability:** Consistent re-application of overrides.
-* **Verification:** Easy comparison via `helm template diff` or similar methods.
+* **Integration:** The tool fits cleanly into any workflow that already uses Helm.
+* **Verification:** Generated overrides can be tested via `helm template` before live application.
 
-### 6.3.1. Parallel Processing
+### 6.4. Debugging Tests
 
-The chart testing process supports parallel execution to improve performance when processing large numbers of charts:
+The IRR tool provides comprehensive debug logging capabilities that are especially useful during test development and troubleshooting. For detailed information about debugging tests, refer to the [Debug Control section in TESTING.md](docs/TESTING.md#10-debug-control-in-tests).
 
-* **Default Behavior:** Automatically uses parallel processing with GNU Parallel
-* **Scaling:** Automatically scales to system capabilities
-  * Uses half of available CPU cores
-  * Minimum of 4 parallel jobs
-  * Maximum of 16 parallel jobs
-* **Sequential Fallback:** Supports `--no-parallel` flag for sequential processing
-* **Requirements:** GNU Parallel must be installed for parallel execution
-* **Implementation:** Each chart is processed in isolation with its own temporary directory to prevent conflicts
+Key points about debug control in tests:
 
-Example usage:
+1. **Enabling debug output in tests**:
+   ```bash
+   # For all tests
+   go test -v ./... -args --debug
+   
+   # For specific test packages
+   go test -v ./pkg/specific -args --debug
+   
+   # For specific test functions
+   go test -v ./pkg/specific -run TestSpecific -args --debug
+   ```
+
+2. **Environment variable control**:
+   ```bash
+   IRR_DEBUG=true go test -v ./...
+   ```
+
+3. **Debug state interaction**:
+   The `--debug` flag takes precedence over the `IRR_DEBUG` environment variable, allowing tests to override environment settings.
+
+Refer to the comprehensive Debug Control section in [TESTING.md](docs/TESTING.md#10-debug-control-in-tests) for more detailed information about capturing debug output, testing debug behavior, and best practices for debug testing.
+
+## 7. Command-Line Interface
+
 ```bash
-# Run with parallel processing (default)
-./test/tools/test-charts.sh harbor.home.arpa
-
-# Run sequentially
-./test/tools/test-charts.sh harbor.home.arpa --no-parallel
+helm-image-override [options]
 ```
 
-### 6.4. CLI Interface (Proposed)
-
-```bash
-helm-image-override \
-    --chart-path <path/to/chart_or_chart.tgz> \
-    --target-registry <registry.example.com[:port]> \
-    --source-registries <docker.io,quay.io,...> \
-    [--output-file <path/to/override.yaml>] \ # Default: stdout
-    [--path-strategy <prefix-source-registry|flat|...>] \ # Default: prefix-source-registry
-    [--verbose] \ # Show detailed processing information
-    [--dry-run] \ # Preview changes without writing file
-    [--strict] \ # Fail on unrecognized image structures
-    [--exclude-registries <internal-registry.example.com,cr.private-domain.io>] \ # Registries to exclude from processing
-    [--threshold <percentage>] \ # Success threshold (default: 100)
-```
-
-**Detailed Flag Behavior:**
-
-*   **`--dry-run`:**
-    *   Performs all chart loading, value parsing, image identification, and override generation logic.
-    *   Prints the generated overrides YAML (or a summary/confirmation message) to standard output.
-    *   Does *not* write to the file specified by `--output-file`. If `--output-file` is omitted, it still prints the preview to standard output but does *not* behave like the default non-dry-run mode (which would print the final YAML to stdout).
-    *   Exits with code 0 if the dry run completes without processing errors.
-    *   Exits with relevant non-zero codes (1-4) for parsing/processing errors encountered *during* the dry run simulation.
-
-*   **`--strict`:**
-    *   When enabled, if an image value structure is encountered that is not explicitly supported (as defined in section 6.1.1), the tool immediately stops processing.
-    *   Prints an informative error message indicating the unsupported structure and its location (value path).
-    *   Exits with a specific error code (Exit Code 5).
-    *   If *no* unsupported structures are found, the tool proceeds normally.
-
-## 7. Verification & Testing Strategy
-
-* **Unit Tests:** Cover parsing, URL generation, path manipulation logic.
-* **Integration Tests:**
-  * Utilize a diverse set of popular Helm charts (e.g., top ~50 from Artifact Hub).
-  * For each test chart:
-    1. Generate `override.yaml` using the tool.
-    2. Render manifests with `helm template <chart> --output-dir original`.
-    3. Render manifests with `helm template <chart> -f override.yaml --output-dir overridden`.
-    4. Programmatically compare `image:` fields in corresponding Kubernetes resources (Deployments, StatefulSets, etc.) between `original` and `overridden` directories.
-    5. Assert that only images from specified `--source-registries` are rewritten to the `--target-registry` according to the `--path-strategy`.
-* **Negative Test Cases:**
-  * Test with malformed charts, invalid image references, and charts with no values.yaml.
-  * Verify error messages are informative and specific.
-* **Subchart Depth Testing:**
-  * Verify recursive processing works for deeply nested subcharts (e.g., parent → child → grandchild).
-
-### 7.1. Success Criteria and Thresholds
-
-The tool implements configurable success thresholds to balance strictness with practicality:
-
-| Metric          | Critical Threshold | Warning Threshold |
-|-----------------|--------------------|-------------------|
-| Image Match Rate| 100%               | 98%               |
-| Chart Install   | 100%               | N/A               |
-
-The default behavior is to fail if any image cannot be successfully processed, but this can be adjusted using the `--threshold` flag for testing or special cases.
-
-### 7.2. Testing Matrix
-
-Below is a test matrix for various image reference patterns:
-
-| Input Type | Original Reference | Expected Output (`prefix-source-registry`) |
-|------------|-------------------|------------------------------------------|
-| Standard | docker.io/nginx:1.23 | myharbor.internal:5000/dockerio/nginx:1.23 |
-| Nested Path | quay.io/project/img:v4.2 | myharbor.internal:5000/quayio/project/img:v4.2 |
-| Implicit Registry | alpine:3.18 | myharbor.internal:5000/dockerio/library/alpine:3.18 |
-| Digest-based | quay.io/prometheus/prometheus@sha256:1234... | myharbor.internal:5000/quayio/prometheus/prometheus@sha256:1234... |
-| Docker Library | postgres:14 | myharbor.internal:5000/dockerio/library/postgres:14 |
-
-### 7.2.1 Complex Chart Testing Strategy
-
-When testing particularly complex charts (such as cert-manager, kube-prometheus-stack), we use a component-group approach to balance maintainability with comprehensive coverage:
-
-#### Component Group Methodology
-- Group related components based on functionality (e.g., controllers, webhooks, CRDs)
-- Apply appropriate threshold levels for each component group
-- Use table-driven subtests to isolate failures while maintaining overall chart cohesion
-- Implement structured error reporting consistent with our established formats
-
-#### Implementation Example
-```go
-func TestComplexChart(t *testing.T) {
-    componentGroups := []struct {
-        name       string
-        components []string
-        threshold  int // Success threshold percentage
-    }{
-        {
-            name:       "core_components",
-            components: []string{"main-controller", "webhook"},
-            threshold:  100,
-        },
-        {
-            name:       "auxiliary_components",
-            components: []string{"cainjector", "startupapicheck"},
-            threshold:  95, // Slightly lower threshold for more complex components
-        },
-    }
-
-    for _, group := range componentGroups {
-        t.Run(group.name, func(t *testing.T) {
-            // Test-specific setup with appropriate threshold
-            // Component-specific testing logic
-            // Structured error reporting
-        })
-    }
-}
-```
-
-#### Benefits of this Approach
-- Maintains a single test function for the chart, preserving integration testing benefits
-- Provides better error isolation and debugging capabilities
-- Allows selective test runs for specific component groups
-- Supports different threshold levels for components with varying complexity
-- Remains compatible with existing test infrastructure and reporting
-
-This approach is particularly valuable for charts with multiple components or subcharts that may have different detection complexity levels. It prevents test brittleness while still providing meaningful component isolation for troubleshooting.
+### 7.1. Required Arguments
 
 ## 8. Target Registry Path Strategy
 

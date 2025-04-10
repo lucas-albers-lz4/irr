@@ -32,6 +32,8 @@ const (
 	PrivateFilePermissions = 0o600
 	// FilePermissions defines the permission mode for temporary override files
 	FilePermissions = 0o600
+	// ExpectedMappingParts defines the number of parts expected after splitting a config mapping value.
+	ExpectedMappingParts = 2
 )
 
 // --- Local Error Definitions ---
@@ -353,10 +355,97 @@ func (g *Generator) processImagePattern(pattern analysis.ImagePattern) (*image.R
 	return ref, nil
 }
 
-// Generate performs the chart analysis and generates overrides.
-// The function returns appropriate exit codes through pkg/exitcodes.ExitCodeError:
-// - ExitChartParsingError (10) for chart loading/parsing failures
-// - ExitImageProcessingError (11) for image reference processing issues
+// determineTargetPathAndRegistry determines the target registry and path for an image reference
+// It first checks for config mappings, then falls back to registry mappings if needed
+func (g *Generator) determineTargetPathAndRegistry(imgRef *image.Reference) (targetReg, newPath string, err error) {
+	// Default to configured target registry
+	targetReg = g.targetRegistry
+
+	// First check configMappings from --config flag
+	if g.configMappings != nil {
+		// Normalize the registry name for lookup
+		normalizedRegistry := image.NormalizeRegistry(imgRef.Registry)
+
+		// Special case for Docker Hub library images
+		if normalizedRegistry == "docker.io" && strings.HasPrefix(imgRef.Repository, "library/") {
+			debug.Printf("[GENERATE LOOP] Docker Hub library image detected: %s", imgRef.String())
+		}
+
+		if mappedValue, ok := g.configMappings[normalizedRegistry]; ok {
+			debug.Printf("[GENERATE LOOP] Found config mapping for %s: %s", normalizedRegistry, mappedValue)
+
+			// Split the mappedValue at the first slash to get registry and repository prefix
+			// We expect exactly two parts: the target registry and the prefix path
+			parts := strings.SplitN(mappedValue, "/", ExpectedMappingParts)
+			if len(parts) == ExpectedMappingParts {
+				targetReg = parts[0]
+
+				// Update the path to include the repository prefix from the mapped value
+				// The strategy will handle the full path generation
+				pathOnly, err := g.pathStrategy.GeneratePath(imgRef, targetReg)
+				if err != nil {
+					return "", "", fmt.Errorf("path generation failed for '%s': %w", imgRef.String(), err)
+				}
+
+				// Prepend the repository prefix from the config mapping
+				newPath = parts[1] + "/" + pathOnly
+				debug.Printf("[GENERATE LOOP] Generated new path '%s' for original '%s' using config mapping", newPath, imgRef.Original)
+				return targetReg, newPath, nil
+			}
+		}
+	}
+
+	// If no config mapping was found or applied, check regular mappings
+	if g.mappings != nil {
+		if mappedTarget := g.mappings.GetTargetRegistry(imgRef.Registry); mappedTarget != "" {
+			targetReg = mappedTarget // Use mapped target if found
+		}
+	}
+
+	// Generate the new repository path using the strategy
+	newPath, err = g.pathStrategy.GeneratePath(imgRef, targetReg)
+	if err != nil {
+		return "", "", fmt.Errorf("path generation failed for '%s': %w", imgRef.String(), err)
+	}
+
+	debug.Printf("[GENERATE LOOP] Generated new path '%s' for original '%s'", newPath, imgRef.Original)
+	return targetReg, newPath, nil
+}
+
+// processAndGenerateOverride processes a single image pattern and generates an override for it
+// It returns a boolean indicating success and an error if one occurred
+func (g *Generator) processAndGenerateOverride(
+	pattern analysis.ImagePattern,
+	imgRef *image.Reference,
+	overrides map[string]interface{},
+) (bool, error) {
+	debug.Printf("[GENERATE LOOP] Processing pattern with Path: %s, Type: %s", pattern.Path, pattern.Type)
+
+	// Determine target registry and path
+	targetReg, newPath, err := g.determineTargetPathAndRegistry(imgRef)
+	if err != nil {
+		log.Warnf("Path generation failed for '%s': %v", imgRef.Original, err)
+		debug.Printf("[GENERATE LOOP ERROR] Error in determineTargetPathAndRegistry for %s: %v", pattern.Path, err)
+		return false, err
+	}
+
+	// Create the override value (string or map)
+	overrideValue := g.createOverride(pattern, imgRef, targetReg, newPath)
+
+	// Set the override in the result map
+	if err := g.setOverridePath(overrides, pattern, overrideValue); err != nil {
+		log.Warnf("Failed to set override for path '%s': %v", pattern.Path, err)
+		debug.Printf("[GENERATE LOOP ERROR] Error in setOverridePath for %s: %v", pattern.Path, err)
+		return false, err
+	}
+
+	return true, nil
+}
+
+// Generate creates Helm override values by analyzing the chart
+// and remapping image references according to configuration.
+// It returns an override.File with the generated values.
+// Exit code documentation:
 // - ExitUnsupportedStructure (12) when strict mode validation fails
 // - ExitThresholdError (13) when success rate is below threshold
 // - ExitGeneralRuntimeError (20) for system/runtime errors
@@ -400,7 +489,6 @@ func (g *Generator) Generate() (*override.File, error) {
 	processedCount := 0
 
 	for _, pattern := range eligibleImages {
-		debug.Printf("[GENERATE LOOP] Processing pattern with Path: %s, Type: %s", pattern.Path, pattern.Type)
 		imgRef, err := g.processImagePattern(pattern)
 		if err != nil {
 			// Log the error from processImagePattern
@@ -410,90 +498,14 @@ func (g *Generator) Generate() (*override.File, error) {
 			continue
 		}
 
-		// Determine the target registry, prioritizing config mappings over registry mappings
-		targetReg := g.targetRegistry // Default fallback
-
-		// First check configMappings from --config flag
-		if g.configMappings != nil {
-			// Normalize the registry name for lookup
-			normalizedRegistry := image.NormalizeRegistry(imgRef.Registry)
-
-			// Special case for Docker Hub library images
-			if normalizedRegistry == "docker.io" && strings.HasPrefix(imgRef.Repository, "library/") {
-				debug.Printf("[GENERATE LOOP] Docker Hub library image detected: %s", imgRef.String())
-			}
-
-			if mappedValue, ok := g.configMappings[normalizedRegistry]; ok {
-				debug.Printf("[GENERATE LOOP] Found config mapping for %s: %s", normalizedRegistry, mappedValue)
-
-				// Split the mappedValue at the first slash to get registry and repository prefix
-				parts := strings.SplitN(mappedValue, "/", 2)
-				if len(parts) == 2 {
-					targetReg = parts[0]
-					// Update the path to include the repository prefix from the mapped value
-					// The strategy will handle the full path generation
-					newPath, err := g.pathStrategy.GeneratePath(imgRef, targetReg)
-					if err != nil {
-						log.Warnf("Path generation failed for '%s': %v", imgRef.Original, err)
-						processErrors = append(processErrors, fmt.Errorf("path generation failed for '%s': %w", imgRef.String(), err))
-						debug.Printf("[GENERATE LOOP ERROR] Error in GeneratePath for %s: %v", pattern.Path, err)
-						continue
-					}
-
-					// Prepend the repository prefix from the config mapping
-					newPath = parts[1] + "/" + newPath
-
-					processedCount++
-					debug.Printf("[GENERATE LOOP] Generated new path '%s' for original '%s' using config mapping", newPath, imgRef.Original)
-
-					// Create the override value (string or map)
-					overrideValue := g.createOverride(pattern, imgRef, targetReg, newPath)
-
-					// Set the override in the result map
-					if err := g.setOverridePath(overrides, pattern, overrideValue); err != nil {
-						log.Warnf("Failed to set override for path '%s': %v", pattern.Path, err)
-						processErrors = append(processErrors, err)
-						debug.Printf("[GENERATE LOOP ERROR] Error in setOverridePath for %s: %v", pattern.Path, err)
-						processedCount-- // Decrement as the override wasn't successfully set
-						continue
-					}
-
-					// Skip to next pattern since we've processed this one
-					continue
-				}
-			}
-		}
-
-		// If no config mapping was found or applied, check regular mappings
-		if g.mappings != nil {
-			if mappedTarget := g.mappings.GetTargetRegistry(imgRef.Registry); mappedTarget != "" {
-				targetReg = mappedTarget // Use mapped target if found
-			}
-		}
-
-		// Generate the new repository path using the strategy
-		newPath, err := g.pathStrategy.GeneratePath(imgRef, targetReg)
+		success, err := g.processAndGenerateOverride(pattern, imgRef, overrides)
 		if err != nil {
-			log.Warnf("Path generation failed for '%s': %v", imgRef.Original, err)
-			processErrors = append(processErrors, fmt.Errorf("path generation failed for '%s': %w", imgRef.String(), err))
-			debug.Printf("[GENERATE LOOP ERROR] Error in GeneratePath for %s: %v", pattern.Path, err)
+			processErrors = append(processErrors, err)
 			continue
 		}
 
-		processedCount++
-		debug.Printf("[GENERATE LOOP] Generated new path '%s' for original '%s'", newPath, imgRef.Original)
-		// Create the override value (string or map)
-		overrideValue := g.createOverride(pattern, imgRef, targetReg, newPath)
-
-		// Set the override in the result map
-		if err := g.setOverridePath(overrides, pattern, overrideValue); err != nil {
-			log.Warnf("Failed to set override for path '%s': %v", pattern.Path, err)
-			processErrors = append(processErrors, err)
-			debug.Printf("[GENERATE LOOP ERROR] Error in setOverridePath for %s: %v", pattern.Path, err)
-			// Decide if this should prevent further processing or just be logged.
-			// For now, log and continue, but decrement processedCount as it failed.
-			processedCount-- // Decrement as the override wasn't successfully set
-			continue
+		if success {
+			processedCount++
 		}
 	}
 

@@ -2,145 +2,29 @@
 
 ## Phase 1: Core Implementation & Stabilization (Completed)
 
-## Phase 2 Configuration file support (80% Complete)
-- [x] Add configuration file support (`--config`)  # Critical for user-defined registry mappings (e.g., Harbor pull-through cache paths)
-    - **Goal:** Allow users to specify exact target registry paths for each source registry via a YAML configuration file, overriding the default path strategy for mapped registries.
-    - **Implementation Steps:**
-        1.  **Update CLI Parsing:** ✓
-            -   **Action:** Modify the CLI argument handling (e.g., using Cobra/Viper) to accept the `--config` flag, taking a file path as its value. Make `--target-registry` mandatory, even when `--config` is used. Error clearly if `--target-registry` is missing.
-            -   **Validation:** Ensure the `--config` path is valid, file exists, and is readable. Handle file read/permission errors gracefully with distinct messages.
-            -   **Error Handling:** Follow existing error code conventions (Exit Code 2 for input/configuration errors - e.g., missing `--target-registry`, file not found, permission denied).
-        2.  **Implement Mapping Loader:** ✓
-            -   **Action:** Create a function to parse the YAML file specified by `--config`.
-            -   **Format:** Expect a simple `map[string]string` YAML format where keys are source registry domains (e.g., `docker.io`) and values are the *full target registry and repository prefix* (e.g., `harbor.home.arpa/docker`).
-            -   **Validation:** Implement **strict** validation:
-                -   Ensure the YAML parses correctly *and* conforms exactly to the `map[string]string` structure.
-                -   Validate keys: Must be valid domain names (allowing for complex regional domains like `*.amazonaws.com` or compound domains like `k8s.gcr.io`).
-                -   Validate values: Must contain at least one `/`, look like a valid registry/path with optional port (e.g., `harbor.home.arpa:5000/docker`).
-                -   Reject files with incorrect types, invalid keys/values, or malformed content.
-                -   Error out clearly if any validation fails with appropriate exit codes (Exit Code 2 for configuration errors).
-            -   **Data Structure:** Use `map[string]string` to store the validated mappings.
-            -   **Library:** Use `sigs.k8s.io/yaml` for parsing.
-        3.  **Integrate Mappings into Core Logic:** ✓
-            -   **Action:** Modify the image processing logic (`DetectImages` or similar function). When processing an image reference:
-                -   Normalize the image reference first (e.g., expand `nginx:latest` to `docker.io/library/nginx:latest`).
-                -   Check if the image's source registry exists as a key in the loaded mappings.
-                -   If a mapping exists, use the mapped value (split into registry and repo prefix) for the target, ignoring the default path strategy for this image.
-                -   If no mapping exists, fall back to using the mandatory `--target-registry` and the default `--path-strategy`.
-            -   **Interaction:** `--config` mappings override default behavior for listed sources. `--target-registry` is the **required** fallback.
-            -   **Docker Hub Library Handling:** For implicit Docker Hub images (e.g., `nginx:latest`), normalize to `docker.io/library/nginx:latest` before checking for mappings. This ensures correct path construction for Harbor's pull-through cache.
-        4.  **Update Override Generation:** ✓
-            -   **Action:** Implement logic to split the validated config value (e.g., `harbor.home.arpa:5000/docker`) at the first slash: registry part (`harbor.home.arpa:5000`) and repository prefix (`docker/`).
-            -   **Action:** Ensure the override generation correctly uses the mapped target registry and repository prefix when a mapping was applied. The override structure should set the `registry` and `repository` fields accordingly.
-        5.  **Add Unit Tests:** ✓
-            -   **Action:** Create unit tests for the mapping loader function covering: valid YAML, invalid YAML format, file not found, permission errors, empty file, invalid keys/values. Verify strict validation errors.
-            -   **Action:** Create unit tests for the image processing logic: verify mappings applied, fallbacks work, config value splitting logic.
-            -   **Action:** Test Docker Hub library image normalization and mapping.
-            -   **Action:** Test registry paths with port numbers.
-            -   **Action:** Test CLI validation: mandatory `--target-registry`, config file permissions.
-            -   **Framework:** Use `afero.MemMapFs` for filesystem/permission interactions.
-        6.  **Add Integration Tests:** ✓
-            -   **Action:** Create integration tests using sample charts and valid/invalid `registry-mappings.yaml` files.
-            -   **Action:** Add integration tests that omit the mandatory `--target-registry` flag.
-            -   **Action:** Add tests specifically for Docker Hub library images to verify correct normalization.
-            -   **Validation:** Verify `override.yaml` generation based on config/fallback. Verify expected errors for invalid configs/missing flags.
-        7.  **Update Documentation:** ✓
-            -   **Action:** Update `README.md`, `DEVELOPMENT.md`, and `TESTING.md` to document:
-                -   The `--config` flag.
-                -   The **strict** expected YAML format (`map[string]string`).
-                -   The **required** format for values (`<registry_host>[:<port>]/<path_prefix>`).
-                -   The **mandatory** nature of `--target-registry` as the fallback.
-                -   Docker Hub library image handling.
-                -   All relevant validation errors and conditions with their exit codes.
-    - **Verification Points:**
-        -   [x] Run `bin/irr override --config registry-mappings.yaml --target-registry fallback.registry ...` successfully maps sources from config and uses `fallback.registry` for others.
-        -   [x] Run `bin/irr override --config registry-mappings.yaml` (no `--target-registry`) fails with Exit Code 2 and a clear error message.
-        -   [x] Run `bin/irr override --config registry-mappings.yaml --target-registry fallback.registry ...` correctly handles Docker Hub library images (e.g., `nginx:latest` → `harbor.home.arpa/docker/library/nginx:latest`).
-        -   [x] Run `bin/irr override --config registry-mappings.yaml --target-registry fallback.registry ...` correctly processes registry paths with port numbers (e.g., `harbor.home.arpa:5000/docker`).
-        -   [x] Run `bin/irr override --config non_existent_file.yaml --target-registry fallback.registry ...` fails with Exit Code 2 and a clear "file not found" error.
-        -   [x] Run `bin/irr override --config unreadable_file.yaml --target-registry fallback.registry ...` fails with Exit Code 2 and a clear "permission denied" error.
-        -   [x] Run `bin/irr override --config malformed_yaml_file.yaml --target-registry fallback.registry ...` fails with appropriate exit code and a clear YAML parsing error.
-        -   [x] Run `bin/irr override --config wrong_format_file.yaml --target-registry fallback.registry ...` (e.g., list, invalid keys/values, values missing '/') fails with Exit Code 2 and a clear "invalid format" error.
-        -   [x] Run `bin/irr override --config empty.yaml --target-registry fallback.registry ...` runs successfully, applying only fallback logic.
-        -   [x] Unit tests for loader, validation, logic, CLI pass.
-        -   [x] Integration tests (valid/invalid configs, missing flags, Docker Hub library) pass/fail as expected.
-        -   [x] Documentation accurately reflects the mandatory flags, strict format, and validation.
+## Phase 2: Configuration & Support Features (80% Complete)
+### Completed Features:
+- [x] Core configuration and validation features implemented
+  - Configuration file support with YAML registry mapping
+  - Private registry exclusion patterns
+  - Target URL validation
+  - Enhanced error handling and test infrastructure
 
-    - **Test Cases to Implement:**
-        1. **Unit Tests:**
-           - **Configuration File Loading:**
-             - ✓ Parse valid YAML mapping file
-             - ✓ Reject malformed YAML
-             - ✓ Handle empty file
-             - ✓ Handle file not found
-             - ✓ Handle permission denied (using `afero.MemMapFs` permissions)
-             
-           - **Mapping Validation:**
-             - ✓ Validate correct map[string]string format
-             - ✓ Reject list instead of map
-             - ✓ Reject nested maps
-             - ✓ Validate domain-like keys
-             - ✓ Validate complex domains (e.g., `k8s.gcr.io`, `us-east1.gcr.io`)
-             - ✓ Validate registry/path in values
-             - ✓ Validate registry with port in values
-             - ✓ Reject values missing slash separator
-             
-           - **Image Processing:**
-             - ✓ Normalize Docker Hub library images
-             - ✓ Apply mapping for matched source registry
-             - ✓ Fall back to target-registry for unmatched sources
-             - ✓ Split registry value into registry and path parts
-             - ✓ Correctly handle registries with ports
-             - ✓ Test with both tag and digest-based images
-             
-           - **CLI Handling:**
-             - ✓ Require `--target-registry` even with `--config`
-             - ✓ Produce correct error code (2) for missing required flags
-             - ✓ Produce correct error codes for various validation failures
-        
-        2. **Integration Tests:**
-           - **Basic Functionality:**
-             - ✓ Generate overrides for chart with `--config` and `--target-registry`
-             - ✓ Verify Docker Hub library images correctly mapped
-             - ✓ Test fallback to target-registry for unmapped sources
-             - ✓ Test parent/child chart with images from multiple registries
-             - ✓ Test with empty but valid config file (should apply fallback only)
-           
-           - **Error Handling:**
-             - ✓ Missing `--target-registry` flag produces correct error
-             - ✓ Malformed config file produces correct error
-             - ✓ File not found produces correct error
-             - ✓ Verify expected failure messages and exit codes
-           
-           - **Real-World Test:**
-             - ✓ Create test chart with images from docker.io, quay.io, gcr.io
-             - ✓ Configure mapping to Harbor pull-through cache paths
-             - ✓ Verify generated override correctly maps all images
-             - ✓ Render Helm chart with override and validate image references
-
-        3. **Command-Line Test Cases:**
-           - ✓ `bin/irr override --chart-path ./test-chart --target-registry fallback.registry --config valid-mappings.yaml`
-             (Expected: Success, images mapped per config or fallback)
-           - ✓ `bin/irr override --chart-path ./test-chart --config valid-mappings.yaml`
-             (Expected: Error code 2, missing required --target-registry)
-           - ✓ `bin/irr override --chart-path ./test-chart --target-registry fallback.registry --config nonexistent.yaml`
-             (Expected: Error code 2, file not found)
-           - ✓ `bin/irr override --chart-path ./test-chart --target-registry fallback.registry --config malformed.yaml`
-             (Expected: Error with clear parsing failure)
-           - ✓ Test with specially crafted chart containing Docker Hub images (both explicit and library)
-             (Expected: Proper handling of implicit library paths)
+### Pending Work:
 - [ ] Enhance image identification heuristics (config-based patterns)
+  - Design pattern-based identification system for complex charts
+  - Implement configurable heuristics for non-standard image references
+  - Add tests for edge cases and unusual image formats
+
 - [ ] Improve digest-based reference handling
-- [x] Add comprehensive private registry exclusion patterns
-- [x] Implement target URL validation
-- [ ] Explore support for additional target registries (Quay, ECR, GCR, ACR, GHCR)
-- [x] Enhance strategy validation and error handling
-- [x] Improve testing infrastructure and documentation
-  - [x] Add proper Makefile targets for integration tests (`test-integration`, `test-integration-specific`, etc.)
-  - [x] Update documentation with clear instructions for running integration tests
-  - [x] Add debug logging options for tests
-  - [x] Implement consistent test harness for integration tests
-  - [x] Provide detailed help information in Makefile
+  - Enhance support for SHA-based image references 
+  - Add validation for digest format integrity
+  - Implement proper digest preservation during remapping
+
+- [ ] Explore support for additional target registries
+  - Add explicit support for Quay, ECR, GCR, ACR, GHCR
+  - Implement registry-specific authentication mechanisms if needed
+  - Document usage patterns for each supported registry
 
 ## Phase 3.0: Component-Group Testing for Complex Charts
 - [ ] **Implement Component-Group Testing for Complex Charts:**
@@ -185,6 +69,79 @@
         - [ ] **Framework Compatibility:** Run the full test suite (`go test ./...` or `make test`) and potentially `make test-charts` (if adapted) to check for regressions and ensure output format is preserved/enhanced.
         - [ ] **Debug Context:** Execute a subtest with `-debug` (e.g., `go test ./... -run TestCertManager/core_controllers -debug`) and manually inspect logs for `[DEBUG] core_controllers:` prefixes.
         - [ ] **Error Message Format:** Introduce a validation error within a subtest and verify `t.Errorf` output includes the group name and follows the structured format from `TESTING.md`.
+
+## Phase 4: Enhanced Configuration Validation & Testing (Small Scope)
+- **Goal:** Improve robustness by adding specific validation rules for configuration files and corresponding tests. Scope is limited to syntactic checks and hard limits, not deep semantic validation.
+
+- [ ] **Implement Enhanced Validation Logic:**
+  - [ ] **Reject Duplicate Keys:** Validate that no source registry key appears more than once in the `registry-mappings.yaml`.
+    - *Detail:* Error message should clearly state which key is duplicated.
+  - [ ] **Enforce Value Format (Slash Separator):** Validate that each mapping *value* contains at least one `/` to separate the target registry/host from the path prefix.
+    - *Detail:* This confirms basic structure; semantic validation of hostname or path is out of scope.
+  - [ ] **Validate Explicit Port Numbers:** If a port is specified in a mapping value (e.g., `host:port/path`), validate it's an integer between 1 and 65535 (inclusive).
+    - *Detail:* Validation only applies if a colon `:` indicating a port is present after the host part and before the first slash.
+  - [ ] **Implement Length Limits:** Add hard-coded length limits for configuration entries:
+    - *Detail:* Source Registry Key (e.g., max 253 chars).
+    - *Detail:* Target Mapping Value (e.g., max 1024 chars total).
+  - [ ] **Verify Clear YAML Errors:** Ensure that underlying YAML parsing errors (e.g., syntax issues) are surfaced clearly to the user, ideally with line number context (confirm library behavior).
+
+- [ ] **Add Corresponding Unit Tests:**
+  - [ ] Test rejection of config with duplicate keys.
+  - [ ] Test rejection of values missing the required `/` separator.
+  - [ ] Test port validation: valid ports (1, 80, 443, 5000, 65535), invalid ports (0, -1, 65536, non-numeric).
+  - [ ] Test length limit enforcement for keys and values.
+  - [ ] Test a sample malformed YAML file to verify error message clarity.
+
+## Phase 5: Testing Framework Debug Control Verification
+- [x] **Goal:** Ensure the test framework reliably controls the application's debug state (`debug.Enabled` and log level) via flags and environment variables, preventing unexpected behavior during test runs and troubleshooting sessions.
+
+- [x] **Add Unit Test for Debug Control (`TestDebugFlagAndEnvVarInteraction` in `cmd/irr/root_test.go`):**
+  - **Implementation Details:**
+    - Utilize the existing `executeCommand` test helper or a similar setup that properly invokes the root command's `PersistentPreRunE` logic.
+    - Use `t.Setenv("IRR_DEBUG", "...")` to manipulate the environment variable within subtests (`t.Run`). Remember `t.Setenv` automatically handles cleanup.
+    - Capture the log output during test execution using a custom buffer or log hook (possibly via `log.SetOutput()` in setup and restore in teardown).
+    - Create a helper function to check if debug logs were emitted (e.g., `hasDebugLogs(output string) bool`).
+    - For direct state verification, consider exposing `debug.Enabled` or implementing a `debug.IsEnabled()` helper function.
+    - Implement the following subtest scenarios:
+      - `Default_NoFlagNoEnv`: Run `irr` with no debug flag or env var. *Assert:* `debug.Enabled` is `false`, no debug logs, log level is INFO.
+      - `FlagEnabled_DebugTrue`: Run `irr --debug`. *Assert:* `debug.Enabled` is `true`, debug logs present, log level is DEBUG.
+      - `EnvVarEnabled_DebugTrue`: Set `IRR_DEBUG=true`, run `irr`. *Assert:* `debug.Enabled` is `true`, debug logs present, log level is DEBUG.
+      - `EnvVarDisabled_DebugFalse`: Set `IRR_DEBUG=false`, run `irr`. *Assert:* `debug.Enabled` is `false`, no debug logs, log level is INFO.
+      - `EnvVarInvalid_DefaultsFalse`: Set `IRR_DEBUG=notabool`, run `irr`. *Assert:* `debug.Enabled` is `false`, no debug logs, specific warning about invalid value is present.
+      - `FlagOverridesEnv_DebugTrue`: Set `IRR_DEBUG=false`, run `irr --debug`. *Assert:* `debug.Enabled` is `true` (flag takes precedence), debug logs present, log level is DEBUG.
+      - `EmptyEnvVar_NoWarning`: Set `IRR_DEBUG=""`, run `irr`. *Assert:* No warning about invalid boolean value is produced (verifies fix for original issue).
+    - Implementation strategy notes:
+      - May need to use reflection or exported test helpers to access internal state.
+      - Consider using a custom log hook or buffer to capture and analyze log output.
+      - Reset `debug.Enabled` and log levels between tests to ensure isolation.
+
+- [x] **Verify Integration Test Behavior:**
+  - Modify or add a simple integration test that explicitly tests `--debug` flag propagation.
+  - Verify the debug log format in the integration test output includes timestamps, source file/line numbers, and other expected context.
+  - Confirm the `make test-integration` target correctly handles and propagates the debug flag.
+
+- [x] **Documentation Updates:**
+  - **Update `TESTING.md`:**
+    - Add a dedicated "Debug Control" section explaining how debug logging works in tests.
+    - Clearly document how to enable debug logging at different levels:
+      1. For all tests: `go test -v ./... -args --debug`
+      2. For specific test packages: `go test -v ./pkg/specific -args --debug`
+      3. For specific test functions: `go test -v ./pkg/specific -run TestSpecific -args --debug`
+    - Document how the test framework handles `IRR_DEBUG` environment variable vs. `--debug` flag.
+    - Include examples showing debug log output format in test environments.
+  
+  - **Update `DEVELOPMENT.md`:**
+    - Add a "Debugging Tests" section referencing the more detailed content in `TESTING.md`.
+    - Include troubleshooting tips for common issues related to debug state.
+
+- [x] **Verification Checklist:**
+  - [x] Run unit test with no debug: `go test ./cmd/irr -run TestDebugFlagAndEnvVarInteraction`
+  - [x] Run unit test with debug: `go test ./cmd/irr -run TestDebugFlagAndEnvVarInteraction -args --debug`
+  - [x] Verify all subtests pass under both conditions.
+  - [x] Verify test does not modify global debug state after completion.
+  - [x] Verify test passes with our CI environment variables if any.
+  - [x] Verify warning message no longer appears when `IRR_DEBUG` isn't set.
+  - [x] Confirm that the fix works consistently across different operating systems (particularly important for Windows tests if applicable).
 
 ## Implementation Process:  DONT" REMOVE THIS SECTION as these hints are important to remember.
 - For each change:

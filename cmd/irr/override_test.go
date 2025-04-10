@@ -72,42 +72,42 @@ type ChartMetadata struct {
 	Version string
 }
 
-// setupDryRunTestEnvironment sets up a test environment for dry run tests
+// setupDryRunTestEnvironment configures the environment for dry-run tests
 func setupDryRunTestEnvironment(t *testing.T, args []string) (updatedArgs []string, cleanup func()) {
-	// Create a test chart directory
-	chartDir := t.TempDir()
+	// Create a temporary directory using afero in-memory FS
+	AppFs = afero.NewMemMapFs() // Use MemMapFs for this test
+	chartDir, err := afero.TempDir(AppFs, "", "dryrun-chart-")
+	require.NoError(t, err, "Failed to create temp chart directory")
 
-	// Set up an in-memory file system
-	AppFs = afero.NewMemMapFs()
+	// Create dummy chart files and check for errors
+	err = createDummyChart(AppFs, chartDir)
+	require.NoError(t, err, "Failed to create dummy chart files")
 
-	// Create a mock override file
+	// Create a mock Generator that returns a simple override file
 	overrideFile := &override.File{
-		Overrides: map[string]interface{}{
-			"global": map[string]interface{}{
-				"imageRegistry": "target.io",
-			},
-			"image": map[string]interface{}{
-				"registry":   "target.io",
-				"repository": "library/nginx",
-				"tag":        "latest",
-			},
-		},
+		Overrides: map[string]interface{}{"image": map[string]interface{}{"repository": "target.io/repo", "tag": "newtag"}},
 	}
 	mockGen := &mockGenerator{}
 	mockGen.On("Generate").Return(overrideFile, nil)
 
 	// Save original factory and set up mock
 	origFactory := currentGeneratorFactory
+	// Define the factory function with only the necessary parameters
+	// The parameters are unused because we always return the mock.
 	currentGeneratorFactory = func(
-		chartPath, targetRegistry string,
-		sourceRegistries, excludeRegistries []string,
-		pathStrategy strategy.PathStrategy,
-		mappings *registry.Mappings,
-		configMappings map[string]string,
-		strict bool,
-		threshold int,
-		loader analysis.ChartLoader,
-		includePatterns, excludePatterns, knownPaths []string,
+		_ string, // chartPath
+		_ string, // targetRegistry
+		_ []string, // sourceRegistries
+		_ []string, // excludeRegistries
+		_ strategy.PathStrategy,
+		_ *registry.Mappings,
+		_ map[string]string, // configMappings
+		_ bool, // strict
+		_ int, // threshold
+		_ analysis.ChartLoader,
+		_ []string, // includePatterns
+		_ []string, // excludePatterns
+		_ []string, // knownPaths
 	) GeneratorInterface {
 		return mockGen
 	}
@@ -228,16 +228,22 @@ func TestOverrideCommand_GeneratorError(t *testing.T) {
 	oldFactory := currentGeneratorFactory
 	defer func() { currentGeneratorFactory = oldFactory }()
 
+	// Define the factory function with only the necessary parameters
+	// The parameters are unused because we always return the mock.
 	currentGeneratorFactory = func(
-		_, _ string,
-		_, _ []string,
+		_ string, // chartPath
+		_ string, // targetRegistry
+		_ []string, // sourceRegistries
+		_ []string, // excludeRegistries
 		_ strategy.PathStrategy,
 		_ *registry.Mappings,
-		_ map[string]string,
-		_ bool,
-		_ int,
+		_ map[string]string, // configMappings
+		_ bool, // strict
+		_ int, // threshold
 		_ analysis.ChartLoader,
-		_, _, _ []string,
+		_ []string, // includePatterns
+		_ []string, // excludePatterns
+		_ []string, // knownPaths
 	) GeneratorInterface {
 		return mockGen
 	}
@@ -300,16 +306,22 @@ func setupTestMockGenerator(_ *testing.T, mockGeneratorFunc func() (*override.Fi
 	mockGen.On("Generate").Return(result, err)
 
 	originalFactory := currentGeneratorFactory // Store original to restore later
+	// Define the factory function with only the necessary parameters
+	// The parameters are unused because we always return the mock.
 	currentGeneratorFactory = func(
-		_, _ string,
-		_, _ []string,
+		_ string, // chartPath
+		_ string, // targetRegistry
+		_ []string, // sourceRegistries
+		_ []string, // excludeRegistries
 		_ strategy.PathStrategy,
 		_ *registry.Mappings,
-		_ map[string]string,
-		_ bool,
-		_ int,
+		_ map[string]string, // configMappings
+		_ bool, // strict
+		_ int, // threshold
 		_ analysis.ChartLoader,
-		_, _, _ []string,
+		_ []string, // includePatterns
+		_ []string, // excludePatterns
+		_ []string, // knownPaths
 	) GeneratorInterface {
 		return mockGen
 	}

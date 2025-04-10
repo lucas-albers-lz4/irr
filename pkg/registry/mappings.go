@@ -7,10 +7,19 @@ import (
 	"path/filepath"
 	"strings"
 
+	"errors"
+
 	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/image"
 	"github.com/spf13/afero"
 	"sigs.k8s.io/yaml"
+)
+
+const (
+	// DefaultFilePermissions defines the permission mode for new files using modern octal literal style.
+	DefaultFilePermissions = 0o644
+	// MinDomainPartsForWildcard defines the minimum parts for a valid wildcard domain.
+	MinDomainPartsForWildcard = 2
 )
 
 // Mapping represents a single source to target registry mapping
@@ -23,6 +32,9 @@ type Mapping struct {
 type Mappings struct {
 	Entries []Mapping `yaml:"mappings"`
 }
+
+// ErrNoConfigSpecified indicates that no configuration file path was provided.
+var ErrNoConfigSpecified = errors.New("no configuration file specified")
 
 // LoadMappings loads registry mappings from a YAML file using the provided filesystem.
 // skipCWDRestriction allows bypassing the check that the path must be within the CWD tree.
@@ -181,7 +193,8 @@ func (m *Mappings) GetTargetRegistry(source string) string {
 // - Values must contain at least one slash (registry/path format)
 func LoadConfig(fs afero.Fs, path string, skipCWDRestriction bool) (map[string]string, error) {
 	if path == "" {
-		return nil, nil // Empty path means no config loaded, not an error
+		// No path provided, return the specific sentinel error
+		return nil, ErrNoConfigSpecified
 	}
 
 	// Basic validation to prevent path traversal
@@ -291,12 +304,11 @@ func isValidDomain(domain string) bool {
 	}
 
 	// Check for wildcards that would be valid for registry domains
-	if strings.HasPrefix(domain, "*.") {
-		domain = domain[2:] // Remove the *. prefix
-	}
+	// Use TrimPrefix as suggested by staticcheck (S1017)
+	domain = strings.TrimPrefix(domain, "*.")
 
 	parts := strings.Split(domain, ".")
-	if len(parts) < 2 {
+	if len(parts) < MinDomainPartsForWildcard {
 		return false
 	}
 
@@ -306,10 +318,13 @@ func isValidDomain(domain string) bool {
 		}
 
 		for _, char := range part {
-			if !((char >= 'a' && char <= 'z') ||
-				(char >= 'A' && char <= 'Z') ||
-				(char >= '0' && char <= '9') ||
-				char == '-') {
+			// Validate character is alphanumeric or hyphen.
+			isLower := char >= 'a' && char <= 'z'
+			isUpper := char >= 'A' && char <= 'Z'
+			isDigit := char >= '0' && char <= '9'
+			isHyphen := char == '-'
+			// Explicit De Morgan's law application for staticcheck
+			if !isLower && !isUpper && !isDigit && !isHyphen {
 				return false
 			}
 		}
