@@ -342,6 +342,62 @@ It can output in text or JSON format and supports filtering by source registry.`
 	return cmd
 }
 
+// formatJSONOutput formats the analysis result as JSON
+func formatJSONOutput(result *analysis.ChartAnalysis) (string, error) {
+	jsonBytes, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return "", wrapExitCodeError(err, exitcodes.ExitGeneralRuntimeError)
+	}
+	return string(jsonBytes) + "\n", nil // Add newline for JSON output
+}
+
+// formatTextOutput formats the analysis result as human-readable text
+func formatTextOutput(result *analysis.ChartAnalysis) string {
+	var sb strings.Builder
+	sb.WriteString("Chart Analysis\n\n")
+	sb.WriteString(fmt.Sprintf("Total image patterns found: %d\n", len(result.ImagePatterns)))
+	sb.WriteString(fmt.Sprintf("Total global patterns found: %d\n\n", len(result.GlobalPatterns)))
+
+	if len(result.ImagePatterns) > 0 {
+		sb.WriteString("Detected Image Patterns:\n")
+		for _, pattern := range result.ImagePatterns {
+			sb.WriteString(fmt.Sprintf("  - Path: %s\n", pattern.Path))
+			sb.WriteString(fmt.Sprintf("    Type: %s\n", pattern.Type))
+			// Use %+v for potentially complex values like maps
+			formattedValue := fmt.Sprintf("%+v", pattern.Value)
+			sb.WriteString(fmt.Sprintf("    Value: %s\n", formattedValue))
+		}
+		sb.WriteString("\n")
+	}
+
+	if len(result.GlobalPatterns) > 0 {
+		sb.WriteString("Detected Global Patterns:\n")
+		for _, pattern := range result.GlobalPatterns {
+			sb.WriteString(fmt.Sprintf("  - Path: %s\n", pattern.Path))
+		}
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
+// writeAnalysisOutput writes the analysis output to a file or stdout
+func writeAnalysisOutput(cmd *cobra.Command, output string, outputFile string) error {
+	if outputFile != "" {
+		debug.Printf("Writing analysis output to file: %s", outputFile)
+		if err := afero.WriteFile(AppFs, outputFile, []byte(output), defaultOutputFilePerm); err != nil {
+			return wrapExitCodeError(err, exitcodes.ExitGeneralRuntimeError)
+		}
+		return nil
+	}
+
+	debug.Println("Writing analysis output to stdout")
+	_, err := cmd.OutOrStdout().Write([]byte(output))
+	if err != nil {
+		return fmt.Errorf("writing analysis output: %w", err)
+	}
+	return nil
+}
+
 // runAnalyze implements the analyze command functionality
 func runAnalyze(cmd *cobra.Command, args []string) error {
 	chartPath := args[0]
@@ -378,61 +434,17 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	// Format output
 	var output string
 	if outputFormat == "json" {
-		jsonBytes, err := json.MarshalIndent(result, "", "  ")
+		output, err = formatJSONOutput(result)
 		if err != nil {
-			return wrapExitCodeError(err, exitcodes.ExitGeneralRuntimeError)
+			return err
 		}
-		output = string(jsonBytes) + "\n" // Add newline for JSON output
 	} else {
-		// Text output format matching test expectations
-		var sb strings.Builder
-		sb.WriteString("Chart Analysis\n\n")
-		sb.WriteString(fmt.Sprintf("Total image patterns found: %d\n", len(result.ImagePatterns)))
-		sb.WriteString(fmt.Sprintf("Total global patterns found: %d\n\n", len(result.GlobalPatterns)))
-
-		if len(result.ImagePatterns) > 0 {
-			sb.WriteString("Detected Image Patterns:\n")
-			for _, pattern := range result.ImagePatterns {
-				sb.WriteString(fmt.Sprintf("  - Path: %s\n", pattern.Path))
-				sb.WriteString(fmt.Sprintf("    Type: %s\n", pattern.Type))
-				// Use %+v for potentially complex values like maps
-				formattedValue := fmt.Sprintf("%+v", pattern.Value)
-				sb.WriteString(fmt.Sprintf("    Value: %s\n", formattedValue))
-			}
-			sb.WriteString("\n")
-		}
-
-		if len(result.GlobalPatterns) > 0 {
-			sb.WriteString("Detected Global Patterns:\n")
-			for _, pattern := range result.GlobalPatterns {
-				sb.WriteString(fmt.Sprintf("  - Path: %s\n", pattern.Path))
-			}
-			sb.WriteString("\n")
-		}
-		output = sb.String()
+		output = formatTextOutput(result)
 	}
 
 	// Write output
-	if outputFile != "" {
-		debug.Printf("Writing analysis output to file: %s", outputFile)
-		if err := afero.WriteFile(AppFs, outputFile, []byte(output), defaultOutputFilePerm); err != nil {
-			return wrapExitCodeError(err, exitcodes.ExitGeneralRuntimeError)
-		}
-	} else {
-		debug.Println("Writing analysis output to stdout")
-		_, err = cmd.OutOrStdout().Write([]byte(output))
-		if err != nil {
-			return fmt.Errorf("writing analysis output: %w", err)
-		}
-	}
-
-	return nil
+	return writeAnalysisOutput(cmd, output, outputFile)
 }
-
-// formatTextOutput needs to be moved here from analyze.go
-// func formatTextOutput(analysis *analysis.ChartAnalysis) string {
-// ... implementation ...
-// }
 
 // initConfig reads in config file and ENV variables if set.
 // NOTE: We are not currently using a config file or environment variables beyond LOG_LEVEL/IRR_DEBUG (handled in packages).

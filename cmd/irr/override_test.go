@@ -70,6 +70,67 @@ type ChartMetadata struct {
 	Version string
 }
 
+// setupDryRunTestEnvironment sets up a test environment for dry run tests
+func setupDryRunTestEnvironment(t *testing.T, args []string) ([]string, func()) {
+	// Create test filesystem and chart directory
+	fs, chartDir := setupTestFS(t)
+	AppFs = fs // Set global FS for the command execution
+
+	// Create a dummy chart for testing
+	require.NoError(t, createDummyChart(fs, chartDir))
+
+	// Set up a mock generator to avoid relying on chart loading
+	mockGen := &mockGenerator{}
+	overrideFile := &override.File{
+		ChartPath: chartDir,
+		Overrides: map[string]interface{}{
+			"image": map[string]interface{}{
+				"registry":   "target.io",
+				"repository": "library/nginx",
+				"tag":        "latest",
+			},
+		},
+	}
+	mockGen.On("Generate").Return(overrideFile, nil)
+
+	// Save original factory and set up mock
+	origFactory := currentGeneratorFactory
+	currentGeneratorFactory = func(
+		_ string, _ string, _ []string, _ []string,
+		_ strategy.PathStrategy, _ *registry.Mappings, _ bool, _ int,
+		_ analysis.ChartLoader,
+		_ []string, _ []string, _ []string,
+	) GeneratorInterface {
+		return mockGen
+	}
+
+	// Prepend the chart path argument dynamically
+	updatedArgs := append([]string{"--chart-path", chartDir}, args...)
+
+	// Create cleanup function
+	cleanupFunc := func() {
+		AppFs = afero.NewOsFs()               // Restore global FS
+		currentGeneratorFactory = origFactory // Restore original factory
+	}
+
+	return updatedArgs, cleanupFunc
+}
+
+// assertExitCodeError checks if an error matches the expected ExitCodeError
+func assertExitCodeError(t *testing.T, err error, expectedError *exitcodes.ExitCodeError) {
+	if expectedError == nil {
+		assert.NoError(t, err)
+		return
+	}
+
+	var exitErr *exitcodes.ExitCodeError
+	if assert.ErrorAs(t, err, &exitErr) {
+		assert.Equal(t, expectedError.Code, exitErr.Code)
+		// Use Contains because the actual error might have more wrapping
+		assert.Contains(t, exitErr.Error(), expectedError.Error())
+	}
+}
+
 func TestOverrideCmdArgs(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -109,59 +170,14 @@ func TestOverrideCmdArgs(t *testing.T) {
 			// Special setup for dry run test to avoid path issues
 			var cleanupFunc func()
 			if tt.name == "valid flags with dry run" {
-				var fs afero.Fs
-				var chartDir string
-				fs, chartDir = setupTestFS(t) // Use helper
-				AppFs = fs                    // Set global FS for the command execution
-				require.NoError(t, createDummyChart(fs, chartDir))
-
-				// Set up a mock generator to avoid relying on chart loading
-				mockGen := &mockGenerator{}
-				overrideFile := &override.File{
-					ChartPath: chartDir,
-					Overrides: map[string]interface{}{
-						"image": map[string]interface{}{
-							"registry":   "target.io",
-							"repository": "library/nginx",
-							"tag":        "latest",
-						},
-					},
-				}
-				mockGen.On("Generate").Return(overrideFile, nil)
-
-				// Save original factory and set up mock
-				origFactory := currentGeneratorFactory
-				currentGeneratorFactory = func(
-					_ string, _ string, _ []string, _ []string,
-					_ strategy.PathStrategy, _ *registry.Mappings, _ bool, _ int,
-					_ analysis.ChartLoader,
-					_ []string, _ []string, _ []string,
-				) GeneratorInterface {
-					return mockGen
-				}
-
-				// Prepend the chart path argument dynamically
-				currentArgs = append([]string{"--chart-path", chartDir}, currentArgs...)
-				cleanupFunc = func() {
-					AppFs = afero.NewOsFs()               // Restore global FS
-					currentGeneratorFactory = origFactory // Restore original factory
-				}
+				currentArgs, cleanupFunc = setupDryRunTestEnvironment(t, tt.args)
 				defer cleanupFunc()
 			}
 
 			cmd.SetArgs(currentArgs)
 			err := cmd.Execute()
 
-			if tt.expectedError == nil {
-				assert.NoError(t, err)
-			} else {
-				var exitErr *exitcodes.ExitCodeError
-				if assert.ErrorAs(t, err, &exitErr) {
-					assert.Equal(t, tt.expectedError.Code, exitErr.Code)
-					// Use Contains because the actual error might have more wrapping
-					assert.Contains(t, exitErr.Error(), tt.expectedError.Error())
-				}
-			}
+			assertExitCodeError(t, err, tt.expectedError)
 		})
 	}
 }
