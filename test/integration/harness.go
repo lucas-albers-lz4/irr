@@ -21,10 +21,7 @@ import (
 )
 
 // Constants
-//
-//nolint:goerr113 // Simple error for testing
 const (
-	// defaultDirPerm = 0o750 // REMOVED UNUSED
 	// defaultFilePerm defines the default file permissions (rw-------)
 	defaultFilePerm = 0o600
 	// DefaultTargetRegistry is the registry used in tests when not specified.
@@ -34,8 +31,6 @@ const (
 )
 
 // Global variables for build optimization
-// var buildOnce sync.Once // REMOVED UNUSED
-// var buildErr error      // REMOVED UNUSED
 
 // TestHarness provides a structure for setting up and running integration tests.
 type TestHarness struct {
@@ -72,13 +67,6 @@ func NewTestHarness(t *testing.T) *TestHarness {
 	// Determine project root directory
 	rootDir, err := getProjectRoot()
 	require.NoError(t, err, "Failed to get project root in NewTestHarness")
-
-	// Ensure overrides directory exists with correct permissions (using a fixed relative path)
-	// G301 fix
-	// REMOVED: Creation of test-data/overrides is handled elsewhere if needed.
-	// if err := os.MkdirAll("../test-data/overrides", defaultDirPerm); err != nil {
-	// 	require.NoError(t, err, "Failed to create test overrides directory: %v", err)
-	// }
 
 	// Set an environment variable to indicate testing mode if needed by the core logic
 	if err := os.Setenv("IRR_TESTING", "true"); err != nil {
@@ -134,7 +122,7 @@ func (h *TestHarness) Cleanup() {
 }
 
 // createDefaultRegistryMappingFile creates a default mapping file in the harness temp dir.
-func (h *TestHarness) createDefaultRegistryMappingFile() (string, error) {
+func (h *TestHarness) createDefaultRegistryMappingFile() (mappingsPath string, err error) {
 	mappings := map[string]string{
 		"docker.io":          "quay.io/instrumenta",
 		"k8s.gcr.io":         "quay.io/instrumenta",
@@ -148,8 +136,8 @@ func (h *TestHarness) createDefaultRegistryMappingFile() (string, error) {
 		return "", fmt.Errorf("failed to marshal default registry mappings: %w", err)
 	}
 
-	mappingsPath := filepath.Join(h.tempDir, "default-registry-mappings.yaml")
-	// G306 fix: Use secure file permissions (0600)
+	mappingsPath = filepath.Join(h.tempDir, "default-registry-mappings.yaml")
+	// #nosec G306 -- Using secure file permissions (0600) for test-generated file
 	if err := os.WriteFile(mappingsPath, mappingsData, defaultFilePerm); err != nil {
 		return "", fmt.Errorf("failed to write default registry mappings file: %w", err)
 	}
@@ -157,7 +145,7 @@ func (h *TestHarness) createDefaultRegistryMappingFile() (string, error) {
 }
 
 // getProjectRoot finds the project root directory by searching upwards for go.mod
-func getProjectRoot() (string, error) {
+func getProjectRoot() (rootDir string, err error) {
 	wd, err := os.Getwd()
 	if err != nil {
 		return "", fmt.Errorf("failed to get working directory: %w", err)
@@ -245,7 +233,7 @@ func (h *TestHarness) SetRegistries(target string, sources []string) {
 		h.t.Fatalf("Failed to marshal registry mappings: %v", err)
 	}
 
-	// G306 fix: Use secure file permissions
+	// #nosec G306 -- Using secure file permissions (0600) for test-generated file
 	if err := os.WriteFile(mappingsPath, mappingsData, defaultFilePerm); err != nil {
 		h.t.Fatalf("Failed to write registry mappings to %s: %v", mappingsPath, err)
 	}
@@ -294,38 +282,32 @@ func (h *TestHarness) ValidateOverrides() error {
 	// was potentially parsed incorrectly later using a simple map[string]string.
 	// Loading here ensures the correct structure (registry.Mappings) is used
 	// and avoids redundant file reads.
-	// Use the absolute path stored in h.mappingsPath
 	mappings := &registry.Mappings{} // Initialize as non-nil
 	if h.mappingsPath != "" {
 		// Ensure the file exists before attempting to load
-		if _, statErr := os.Stat(h.mappingsPath); statErr == nil {
-			// // Temporarily allow path traversal for harness loading - REMOVED ENV VAR LOGIC
-			// origEnvVal := os.Getenv("IRR_ALLOW_PATH_TRAVERSAL")
-			// if err := os.Setenv("IRR_ALLOW_PATH_TRAVERSAL", "true"); err != nil {
-			// 	// Log or handle error setting env var, but proceed cautiously
-			// 	h.logger.Printf("Warning: Failed to set IRR_ALLOW_PATH_TRAVERSAL for validation: %v", err)
-			// }
-			// defer func() {
-			// 	// Restore original value after loading
-			// 	if err := os.Setenv("IRR_ALLOW_PATH_TRAVERSAL", origEnvVal); err != nil {
-			// 		h.logger.Printf("Warning: Failed to restore IRR_ALLOW_PATH_TRAVERSAL after validation: %v", err)
-			// 	}
-			// }()
+		_, statErr := os.Stat(h.mappingsPath)
+		switch {
+		case statErr == nil:
+			// Path traversal for harness loading is now handled via skipCWDRestriction parameter
 
 			// Load using afero.NewOsFs() and the absolute path, skipping CWD check
 			loadedMappings, loadErr := registry.LoadMappings(afero.NewOsFs(), h.mappingsPath, true) // Pass true for skipCWDRestriction
 			if loadErr != nil {
 				// Propagate error if mappings file specified but cannot be loaded
-				return fmt.Errorf("failed to load mappings file %s for validation: %w", h.mappingsPath, loadErr)
+				return fmt.Errorf(
+					"failed to load mappings file %s for validation: %w",
+					h.mappingsPath,
+					loadErr,
+				)
 			}
 			mappings = loadedMappings
 			h.logger.Printf("Successfully loaded mappings from %s", h.mappingsPath)
-		} else if !os.IsNotExist(statErr) {
-			// Log other errors encountered during stat
-			h.logger.Printf("Warning: Error stating mappings file %s: %v", h.mappingsPath, statErr)
-		} else {
+		case os.IsNotExist(statErr):
 			// File doesn't exist, proceed without mappings
 			h.logger.Printf("Mappings file %s does not exist, proceeding without mappings.", h.mappingsPath)
+		default:
+			// Log other errors encountered during stat
+			h.logger.Printf("Warning: Error stating mappings file %s: %v", h.mappingsPath, statErr)
 		}
 	} else {
 		h.logger.Printf("No mappings file path specified for harness.")
@@ -333,7 +315,9 @@ func (h *TestHarness) ValidateOverrides() error {
 
 	// Determine expected target registries based on mapping file or default target
 	expectedTargets := []string{}
-	if mappings != nil && len(mappings.Entries) > 0 {
+
+	switch {
+	case mappings != nil && len(mappings.Entries) > 0:
 		// Use targets from mappings if available
 		uniqueTargets := make(map[string]struct{})
 		for _, entry := range mappings.Entries {
@@ -345,13 +329,13 @@ func (h *TestHarness) ValidateOverrides() error {
 				}
 			}
 		}
+
+		// If mappings exist but have no targets, fall back to default
 		if len(expectedTargets) == 0 {
-			// If mappings exist but have no targets, fall back to default? Or is this an error?
-			// For now, let's assume fallback to default is desired if no explicit targets. Consider refining later.
 			h.logger.Printf("Mappings file loaded but contains no target registries. Falling back to default.")
 			expectedTargets = append(expectedTargets, image.NormalizeRegistry(h.targetReg))
 		}
-	} else {
+	default:
 		// No mappings file or empty mappings, use the default target registry
 		expectedTargets = append(expectedTargets, image.NormalizeRegistry(h.targetReg))
 	}
@@ -369,21 +353,27 @@ func (h *TestHarness) ValidateOverrides() error {
 
 	h.logger.Printf("Expecting images to use target registries: %v", expectedTargets)
 
-	// Read the generated overrides file content
-	currentOverrides, err := os.ReadFile(h.overridePath)
+	// Read the generated overrides file content for validation
+	// #nosec G304 -- Reading a test-generated file from the test's temp directory is safe.
+	currentOverridesBytes, err := os.ReadFile(h.overridePath)
 	if err != nil {
 		h.t.Logf("Warning: failed to read overrides file %s locally for modification: %v", h.overridePath, err)
-		currentOverrides = []byte{}
+		currentOverridesBytes = []byte{}
 	} else {
-		h.t.Logf("Read %d bytes from overrides file: %s", len(currentOverrides), h.overridePath)
+		h.t.Logf("Read %d bytes from overrides file: %s", len(currentOverridesBytes), h.overridePath)
 	}
 
 	// Write the potentially modified overrides to a *temporary* file for helm template validation
 	tempValidationOverridesPath := filepath.Join(h.tempDir, "validation-overrides.yaml")
-	if err := os.WriteFile(tempValidationOverridesPath, currentOverrides, defaultFilePerm); err != nil {
-		return fmt.Errorf("failed to write temporary validation overrides file %s: %w", tempValidationOverridesPath, err)
+	// #nosec G306 -- Using secure permissions (0600) for test-generated file
+	if err := os.WriteFile(tempValidationOverridesPath, currentOverridesBytes, defaultFilePerm); err != nil {
+		return fmt.Errorf(
+			"failed to write temporary validation overrides file %s: %w",
+			tempValidationOverridesPath,
+			err,
+		)
 	}
-	h.t.Logf("Wrote %d bytes to temporary validation file: %s", len(currentOverrides), tempValidationOverridesPath)
+	h.t.Logf("Wrote %d bytes to temporary validation file: %s", len(currentOverridesBytes), tempValidationOverridesPath)
 
 	// Helm template command for validation (using tempValidationOverridesPath)
 	args := []string{"template", "test-release", h.chartPath, "-f", tempValidationOverridesPath}
@@ -407,7 +397,8 @@ func (h *TestHarness) ValidateOverrides() error {
 	actualOverrides, getOverridesErr := h.getOverrides()
 	actualTargetsUsed := make(map[string]bool)
 
-	if getOverridesErr != nil {
+	switch {
+	case getOverridesErr != nil:
 		h.t.Logf("Warning: Could not read overrides file (%s) for validation: %v. Falling back to checking configured targets.", h.overridePath, getOverridesErr)
 
 		// -- Fallback Check Logic --
@@ -430,13 +421,19 @@ func (h *TestHarness) ValidateOverrides() error {
 			}
 		}
 		if !foundExpectedTarget {
-			return fmt.Errorf("[Fallback Check] no configured target registry (default: %s or mapped: %v) found in validated helm template output", h.targetReg, expectedTargets)
+			return fmt.Errorf(
+				"[Fallback Check] no configured target registry "+
+					"(default: %s or mapped: %v) found in validated helm template output",
+				h.targetReg,
+				expectedTargets,
+			)
 		}
 		// -- End Fallback Check --
 
-	} else if len(actualOverrides) == 0 {
+	case len(actualOverrides) == 0:
 		h.t.Log("Overrides file is empty. Skipping registry validation in Helm output.")
-	} else {
+
+	default:
 		// Successfully read overrides, find actual targets used.
 		h.WalkImageFields(actualOverrides, func(_ []string, value interface{}) { // Fix: Mark path as unused with _
 			if imageMap, ok := value.(map[string]interface{}); ok {
@@ -468,7 +465,11 @@ func (h *TestHarness) ValidateOverrides() error {
 				for target := range actualTargetsUsed {
 					targetsSlice = append(targetsSlice, target)
 				}
-				return fmt.Errorf("no actual target registry used in overrides (%v) found in validated helm template output", targetsSlice)
+				return fmt.Errorf(
+					"no actual target registry used in overrides (%v) "+
+						"found in validated helm template output",
+					targetsSlice,
+				)
 			}
 		}
 	}
@@ -478,14 +479,14 @@ func (h *TestHarness) ValidateOverrides() error {
 }
 
 // getOverrides reads and unmarshals the generated overrides file.
-func (h *TestHarness) getOverrides() (map[string]interface{}, error) {
+func (h *TestHarness) getOverrides() (overrides map[string]interface{}, err error) {
 	// #nosec G304 -- Reading a test-generated file from the test's temp directory is safe.
 	overridesBytes, err := os.ReadFile(h.overridePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read overrides file %s: %w", h.overridePath, err)
 	}
 
-	overrides := make(map[string]interface{})
+	overrides = make(map[string]interface{})
 	if err := yaml.Unmarshal(overridesBytes, &overrides); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal overrides YAML from %s: %w", h.overridePath, err)
 	}
@@ -499,6 +500,8 @@ func (h *TestHarness) WalkImageFields(data interface{}, visitor func(path []stri
 	h.walkImageFieldsRecursive(data, []string{}, visitor)
 }
 
+// walkImageFieldsRecursive traverses the data structure and calls the visitor function when it finds
+// elements that appear to be image references or image configuration maps.
 func (h *TestHarness) walkImageFieldsRecursive(data interface{}, currentPath []string, visitor func(path []string, value interface{})) {
 	switch v := data.(type) {
 	case map[string]interface{}:
@@ -526,26 +529,18 @@ func (h *TestHarness) walkImageFieldsRecursive(data interface{}, currentPath []s
 		if len(currentPath) > 0 {
 			lastKey := currentPath[len(currentPath)-1]
 			// Simple check: if the key is "image" or ends with "Image", treat the string as an image override.
-			// This aligns better with how overrides might be structured.
-			if lastKey == "image" || strings.HasSuffix(lastKey, "Image") {
+			switch {
+			case lastKey == "image" || strings.HasSuffix(lastKey, "Image"):
 				visitor(currentPath, v)
 			}
 		}
-		// Optional: Could add back the content heuristic as a fallback if needed,
-		// but path-based checking is generally preferred for overrides.
-		/*
-			hasSeparator := strings.Contains(v, ":") || strings.Contains(v, "@")
-			isNotPathOrURL := !strings.HasPrefix(v, "/") && !strings.HasPrefix(v, "./") && !strings.HasPrefix(v, "../") && !strings.HasPrefix(v, "http")
-			if hasSeparator && isNotPathOrURL {
-				visitor(currentPath, v)
-			}
-		*/
+		// Path-based checking is preferred for overrides
 	}
 }
 
 // ExecuteIRR runs the irr command with the given arguments.
 // It returns the combined stdout/stderr and any error.
-func (h *TestHarness) ExecuteIRR(args ...string) (string, error) {
+func (h *TestHarness) ExecuteIRR(args ...string) (output string, err error) {
 	// Get the binary path
 	irrBinaryPath := h.getBinaryPath()
 
@@ -553,12 +548,11 @@ func (h *TestHarness) ExecuteIRR(args ...string) (string, error) {
 	finalArgs := []string{"--debug", "--integration-test-mode"}
 	finalArgs = append(finalArgs, args...)
 
-	h.logger.Printf("[HARNESS EXECUTE_IRR] Command: %s %v", irrBinaryPath, finalArgs)
 	// Show the full command for debugging
 	h.logger.Printf("[HARNESS EXECUTE_IRR] Command: %s %s", irrBinaryPath, strings.Join(finalArgs, " "))
 
-	cmd := exec.Command(irrBinaryPath, finalArgs...)
-	cmd.Dir = h.rootDir // Ensure command runs from project root for consistency
+	cmd := exec.Command(irrBinaryPath, finalArgs...) // #nosec G204 -- Running controlled irr binary in test code
+	cmd.Dir = h.rootDir                              // Ensure command runs from project root for consistency
 
 	// Capture combined output
 	var out bytes.Buffer
@@ -566,33 +560,37 @@ func (h *TestHarness) ExecuteIRR(args ...string) (string, error) {
 	cmd.Stdout = &out
 	cmd.Stderr = &stderr
 
-	// ALWAYS log the full command for debugging purposes
-	h.logger.Printf("[HARNESS EXECUTE_IRR] Command: %s %s", irrBinaryPath, strings.Join(finalArgs, " "))
-
 	// errcheck: Capture error, but test might focus on stderr content, so don't require.NoError here.
-	err := cmd.Run()
+	err = cmd.Run()
 	outputStr := out.String()
 	stderrStr := stderr.String()
 
 	// ALWAYS log the full output for debugging purposes
-	if outputStr != "" {
+	switch {
+	case outputStr != "":
 		h.logger.Printf("[HARNESS EXECUTE_IRR] Stdout:\n%s", outputStr)
 	}
-	if stderrStr != "" {
+
+	switch {
+	case stderrStr != "":
 		h.logger.Printf("[HARNESS EXECUTE_IRR] Stderr:\n%s", stderrStr)
 	}
 
 	if err != nil {
 		// Return error along with the combined output for context
 		combinedOutput := outputStr + stderrStr
-		return combinedOutput, fmt.Errorf("irr command execution failed: %w\nOutput:\n%s", err, combinedOutput)
+		return combinedOutput, fmt.Errorf(
+			"irr command execution failed: %w\nOutput:\n%s",
+			err,
+			combinedOutput,
+		)
 	}
 
 	return outputStr, nil
 }
 
 // ExecuteHelm runs the helm binary with the given arguments.
-func (h *TestHarness) ExecuteHelm(args ...string) (string, error) {
+func (h *TestHarness) ExecuteHelm(args ...string) (output string, err error) {
 	// #nosec G204 // Test harness executes helm with test-controlled arguments
 	cmd := exec.Command("helm", args...)
 	cmd.Dir = h.tempDir // Run in the temp directory context
@@ -610,18 +608,7 @@ func (h *TestHarness) ExecuteHelm(args ...string) (string, error) {
 
 // init ensures the binary path is determined early.
 func init() {
-	// Build is now handled lazily by buildOnce.Do in NewTestHarness
-	// to avoid redundant builds and potential issues with init-phase failures.
-	/*
-		// Ensure the binary path is determined early, potentially building it.
-		// We need this available before individual tests run.
-		var err error
-		irrBinaryPath, err = buildIrrBinary(nil) // Pass nil testing.T for init phase
-		if err != nil {
-			// Log the error and potentially panic if the build is critical for all tests
-			log.Fatalf("FATAL: Failed to build irr binary during init: %v", err)
-		}
-	*/
+	// Binary building is now handled in NewTestHarness
 }
 
 // SetChartPath sets the chart path for the test harness.
@@ -661,19 +648,45 @@ func (h *TestHarness) AssertExitCode(expected int, args ...string) {
 	// Check exit code using exec.ExitError
 	// errorlint: Use errors.As for checking the type
 	var exitErr *exec.ExitError
-	if errors.As(runErr, &exitErr) {
+
+	switch {
+	case errors.As(runErr, &exitErr):
 		// It's an ExitError, check the code
-		assert.Equal(h.t, expected, exitErr.ExitCode(),
-			"Expected exit code %d but got %d\nArgs: %v\nOutput:\n%s", expected, exitErr.ExitCode(), args, outputStr)
-	} else if runErr != nil && expected != 0 {
+		assert.Equal(
+			h.t,
+			expected,
+			exitErr.ExitCode(),
+			"Expected exit code %d but got %d\nArgs: %v\nOutput:\n%s",
+			expected,
+			exitErr.ExitCode(),
+			args,
+			outputStr,
+		)
+	case runErr != nil && expected != 0:
 		// Command failed in a way other than ExitError (e.g., couldn't start)
-		h.t.Fatalf("Command failed unexpectedly (expected exit code %d): %v\nArgs: %v\nOutput:\n%s", expected, runErr, args, outputStr)
-	} else if runErr == nil && expected != 0 {
+		h.t.Fatalf(
+			"Command failed unexpectedly (expected exit code %d): %v\nArgs: %v\nOutput:\n%s",
+			expected,
+			runErr,
+			args,
+			outputStr,
+		)
+	case runErr == nil && expected != 0:
 		// Command succeeded but an error code was expected
-		h.t.Fatalf("Expected exit code %d but command succeeded.\nArgs: %v\nOutput:\n%s", expected, args, outputStr)
-	} else if runErr != nil && expected == 0 {
+		h.t.Fatalf(
+			"Expected exit code %d but command succeeded.\nArgs: %v\nOutput:\n%s",
+			expected,
+			args,
+			outputStr,
+		)
+	case runErr != nil && expected == 0:
 		// Command failed but success (0) was expected
-		h.t.Fatalf("Expected exit code 0 but command failed: %v\nArgs: %v\nOutput:\n%s", runErr, args, outputStr)
+		h.t.Fatalf(
+			"Expected exit code 0 but command failed: %v\nArgs: %v\nOutput:\n%s",
+			runErr,
+			args,
+			outputStr,
+		)
 	}
 	// If expected is 0 and err is nil, it's a pass, do nothing.
 }
@@ -701,18 +714,26 @@ func (h *TestHarness) AssertErrorContains(substring string, args ...string) {
 	cmd.Stdout = &stdout
 	// Explicitly ignore error return value from cmd.Run().
 	// This function's purpose is to assert content in stderr, regardless of exit code.
-	_ = cmd.Run() //nolint:errcheck
+	_ = cmd.Run() //nolint:errcheck // We intentionally ignore the error as we're only checking stderr contents
 
 	stderrStr := stderr.String()
 	stdoutStr := stdout.String() // Log stdout too for debugging context
 
 	h.logger.Printf("[ASSERT_ERROR_CONTAINS] Stderr:\n%s", stderrStr)
-	if stdoutStr != "" {
+	switch {
+	case stdoutStr != "":
 		h.logger.Printf("[ASSERT_ERROR_CONTAINS] Stdout:\n%s", stdoutStr)
 	}
 
-	assert.Contains(h.t, stderrStr, substring,
-		"Expected stderr to contain '%s'\nArgs: %v\nActual stderr:\n%s", substring, args, stderrStr)
+	assert.Contains(
+		h.t,
+		stderrStr,
+		substring,
+		"Expected stderr to contain '%s'\nArgs: %v\nActual stderr:\n%s",
+		substring,
+		args,
+		stderrStr,
+	)
 }
 
 // getBinaryPath determines the path to the compiled irr binary.
@@ -742,14 +763,15 @@ func (h *TestHarness) BuildIRR() {
 	cmd.Dir = projectRoot // Run build from project root
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		// errorlint: Use errors.As instead of type assertion
+		// Check if it's an ExitError using errors.As
 		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			// If it's an ExitError, log stderr for detailed Go build failure info
-			h.t.Fatalf("BuildIRR failed with exit code %d: %v\nStderr:\n%s", exitErr.ExitCode(), err, string(output))
-		} else {
-			// For other errors, just log the error
-			h.t.Fatalf("BuildIRR failed: %v\nStderr:\n%s", err, string(output))
+		switch {
+		case errors.As(err, &exitErr):
+			// Include exit code in the error message for better context
+			h.t.Fatalf("BuildIRR failed with exit code %d: %w\nOutput:\n%s", exitErr.ExitCode(), err, string(output))
+		default:
+			// Generic build failure
+			h.t.Fatalf("BuildIRR failed: %w\nOutput:\n%s", err, string(output))
 		}
 	}
 	h.t.Logf("BuildIRR successful.")
@@ -781,10 +803,11 @@ func buildIrrBinary() error { // Removed t *testing.T argument
 	if err != nil {
 		// Check if it's an ExitError using errors.As
 		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
+		switch {
+		case errors.As(err, &exitErr):
 			// Include exit code in the error message for better context
 			return fmt.Errorf("go build failed with exit code %d: %w\nOutput:\n%s", exitErr.ExitCode(), err, string(output))
-		} else {
+		default:
 			// Generic build failure
 			return fmt.Errorf("go build failed: %w\nOutput:\n%s", err, string(output))
 		}

@@ -103,13 +103,17 @@ func (a *Analyzer) normalizeImageValues(val map[string]interface{}) (registry, r
 
 	// Default to docker.io if registry is missing or empty
 	isDockerRegistry := false
-	if !hasRegistry || registryVal == "" {
-		registry = "docker.io"
-		isDockerRegistry = true
-	} else if registryVal == "docker.io" {
+
+	switch registryVal {
+	case "":
+		if !hasRegistry {
+			registry = "docker.io"
+			isDockerRegistry = true
+		}
+	case "docker.io":
 		registry = registryVal
 		isDockerRegistry = true
-	} else {
+	default:
 		registry = registryVal
 	}
 

@@ -400,38 +400,38 @@ func (d *Detector) createImageReference(repoStr, regStr, tagStr, digestStr strin
 	builder := strings.Builder{}
 	registryApplied := "none"
 
-	if regStr != "" {
-		// Explicit registry always wins.
+	// Determine which registry to apply using a switch statement instead of if-else chain
+	hasRegistryPrefix := false
+	if regStr == "" && len(strings.SplitN(repoStr, "/", MaxComponents)) > 1 {
+		firstPart := strings.SplitN(repoStr, "/", MaxComponents)[0]
+		hasRegistryPrefix = strings.ContainsAny(firstPart, ".:") || firstPart == "localhost"
+	}
+
+	switch {
+	case regStr != "":
+		// Case 1: Explicit registry provided
 		builder.WriteString(regStr)
 		builder.WriteByte('/')
 		registryApplied = regStr + " (explicit)"
 		debug.Printf("Using explicit registry: %s", regStr)
-	} else {
-		// No explicit registry. Check if repoStr contains a potential registry prefix.
-		hasRegistryPrefix := false
-		if repoParts := strings.SplitN(repoStr, "/", MaxComponents); len(repoParts) > 1 {
-			firstPart := repoParts[0]
-			if strings.ContainsAny(firstPart, ".:") || firstPart == "localhost" {
-				hasRegistryPrefix = true
-				debug.Printf("Detected potential registry prefix ('%s') in repoStr ('%s'). Skipping global registry.", firstPart, repoStr)
-				registryApplied = firstPart + " (in repoStr)"
-			}
-		}
 
-		if !hasRegistryPrefix && d.context.GlobalRegistry != "" {
-			// Use global registry only if repoStr doesn't have its own prefix.
-			builder.WriteString(d.context.GlobalRegistry)
-			builder.WriteByte('/')
-			registryApplied = d.context.GlobalRegistry + " (global)"
-			debug.Printf("Applying global registry: %s", d.context.GlobalRegistry)
-		} else if hasRegistryPrefix {
-			// repoStr contains registry, do nothing here for the registry part, it's part of repoStr.
-			debug.Printf("Using registry implicitly included in repoStr: %s", repoStr)
-		} else {
-			// No explicit registry, no global registry, repoStr has no prefix.
-			// The ParseImageReference call later will handle normalization (e.g., adding docker.io/library).
-			debug.Printf("No explicit or global registry provided, and repoStr ('%s') has no prefix.", repoStr)
-		}
+	case hasRegistryPrefix:
+		// Case 2: No explicit registry, but repoStr contains registry prefix
+		// Don't add anything to builder here, as registry is part of repoStr
+		firstPart := strings.SplitN(repoStr, "/", MaxComponents)[0]
+		registryApplied = firstPart + " (in repoStr)"
+		debug.Printf("Detected potential registry prefix ('%s') in repoStr ('%s'). Skipping global registry.", firstPart, repoStr)
+
+	case d.context.GlobalRegistry != "":
+		// Case 3: Use global registry
+		builder.WriteString(d.context.GlobalRegistry)
+		builder.WriteByte('/')
+		registryApplied = d.context.GlobalRegistry + " (global)"
+		debug.Printf("Applying global registry: %s", d.context.GlobalRegistry)
+
+	default:
+		// Case 4: No registry information available
+		debug.Printf("No explicit or global registry provided, and repoStr ('%s') has no prefix.", repoStr)
 	}
 
 	// Add the repository string itself.

@@ -77,15 +77,16 @@ func validateExpectedImages(t *testing.T, expectedImages []string, foundImages m
 			expectedRepo = strings.TrimPrefix(expectedImage, targetReg+"/")
 			expectedRepo = strings.Split(expectedRepo, ":")[0]
 		} else {
-			if strings.HasPrefix(expectedImage, "docker.io/") {
+			switch {
+			case strings.HasPrefix(expectedImage, "docker.io/"):
 				imgPart := strings.TrimPrefix(expectedImage, "docker.io/")
 				if !strings.Contains(imgPart, "/") {
 					imgPart = "library/" + imgPart
 				}
 				expectedRepo = fmt.Sprintf("dockerio/%s", imgPart)
-			} else if strings.HasPrefix(expectedImage, "registry.k8s.io/") {
+			case strings.HasPrefix(expectedImage, "registry.k8s.io/"):
 				expectedRepo = fmt.Sprintf("registryk8sio/%s", strings.TrimPrefix(expectedImage, "registry.k8s.io/"))
-			} else if strings.HasPrefix(expectedImage, "quay.io/") {
+			case strings.HasPrefix(expectedImage, "quay.io/"):
 				expectedRepo = fmt.Sprintf("quayio/%s", strings.TrimPrefix(expectedImage, "quay.io/"))
 			}
 		}
@@ -108,19 +109,21 @@ func validateExpectedImages(t *testing.T, expectedImages []string, foundImages m
 }
 
 // collectImageInfo populates maps of found image repositories and string values from overrides
-func collectImageInfo(t *testing.T, harness *TestHarness, overrides map[string]interface{}) (map[string]bool, map[string]bool) {
+func collectImageInfo(t *testing.T, harness *TestHarness, overrides map[string]interface{}) (repos, stringVals map[string]bool) {
 	foundImageRepos := make(map[string]bool)
 	foundImageStrings := make(map[string]bool)
 
 	// Walk the image fields in the overrides object and collect info
 	harness.WalkImageFields(overrides, func(path []string, imageValue interface{}) {
 		t.Logf("DEBUG: Found image at %s: %#v", strings.Join(path, "."), imageValue)
-		if imageMap, ok := imageValue.(map[string]interface{}); ok {
-			if repo, ok := imageMap["repository"].(string); ok {
+
+		switch typedValue := imageValue.(type) {
+		case map[string]interface{}:
+			if repo, ok := typedValue["repository"].(string); ok {
 				foundImageRepos[repo] = true
 			}
-		} else if imgStr, ok := imageValue.(string); ok {
-			foundImageStrings[imgStr] = true
+		case string:
+			foundImageStrings[typedValue] = true
 		}
 	})
 
@@ -220,16 +223,17 @@ func TestComplexChartFeatures(t *testing.T) {
 
 				for _, expectedImage := range tc.expectedImages {
 					expectedRepo := ""
-					if strings.HasPrefix(expectedImage, "docker.io/") {
+					switch {
+					case strings.HasPrefix(expectedImage, "docker.io/"):
 						imgPart := strings.TrimPrefix(expectedImage, "docker.io/")
 						if !strings.Contains(imgPart, "/") {
 							imgPart = "library/" + imgPart
 						}
 						expectedRepo = "dockerio/" + imgPart
-					} else if strings.HasPrefix(expectedImage, "registry.k8s.io/") {
+					case strings.HasPrefix(expectedImage, "registry.k8s.io/"):
 						imgPart := strings.TrimPrefix(expectedImage, "registry.k8s.io/")
 						expectedRepo = "registryk8sio/" + imgPart
-					} else {
+					default:
 						t.Fatalf("Unhandled source registry prefix in expected image: %s", expectedImage)
 					}
 					foundInExplicit := false
