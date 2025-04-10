@@ -206,7 +206,7 @@ quay.io: myregistry.example.com:99999/path
 
 			require.NoError(t, err)
 			if tt.path == "" {
-				assert.Nil(t, got)
+				assert.Equal(t, EmptyPathResult, got)
 			} else {
 				assert.Equal(t, tt.wantConfig, got)
 			}

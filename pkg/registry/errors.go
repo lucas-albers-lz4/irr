@@ -118,7 +118,7 @@ func (e *ErrDuplicateRegistryKey) Error() string {
 }
 
 // WrapDuplicateRegistryKey creates a new ErrDuplicateRegistryKey error.
-func WrapDuplicateRegistryKey(path string, key string) error {
+func WrapDuplicateRegistryKey(path, key string) error {
 	return &ErrDuplicateRegistryKey{Path: path, Key: key}
 }
 
@@ -152,8 +152,8 @@ func (e *ErrKeyTooLong) Error() string {
 }
 
 // WrapKeyTooLong creates a new ErrKeyTooLong error.
-func WrapKeyTooLong(path string, key string, length int, max int) error {
-	return &ErrKeyTooLong{Path: path, Key: key, Length: length, Max: max}
+func WrapKeyTooLong(path, key string, length, maxLength int) error {
+	return &ErrKeyTooLong{Path: path, Key: key, Length: length, Max: maxLength}
 }
 
 // ErrValueTooLong indicates a registry value exceeds the maximum allowed length.
@@ -170,6 +170,6 @@ func (e *ErrValueTooLong) Error() string {
 }
 
 // WrapValueTooLong creates a new ErrValueTooLong error.
-func WrapValueTooLong(path string, key string, value string, length int, max int) error {
-	return &ErrValueTooLong{Path: path, Key: key, Value: value, Length: length, Max: max}
+func WrapValueTooLong(path, key, value string, length, maxLength int) error {
+	return &ErrValueTooLong{Path: path, Key: key, Value: value, Length: length, Max: maxLength}
 }

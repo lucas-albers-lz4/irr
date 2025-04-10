@@ -73,24 +73,24 @@
 ## Phase 4: Enhanced Configuration Validation & Testing (Small Scope)
 - **Goal:** Improve robustness by adding specific validation rules for configuration files and corresponding tests. Scope is limited to syntactic checks and hard limits, not deep semantic validation.
 
-- [ ] **Implement Enhanced Validation Logic:**
-  - [ ] **Reject Duplicate Keys:** Validate that no source registry key appears more than once in the `registry-mappings.yaml`.
+- [x] **Implement Enhanced Validation Logic:**
+  - [x] **Reject Duplicate Keys:** Validate that no source registry key appears more than once in the `registry-mappings.yaml`.
     - *Detail:* Error message should clearly state which key is duplicated.
-  - [ ] **Enforce Value Format (Slash Separator):** Validate that each mapping *value* contains at least one `/` to separate the target registry/host from the path prefix.
+  - [x] **Enforce Value Format (Slash Separator):** Validate that each mapping *value* contains at least one `/` to separate the target registry/host from the path prefix.
     - *Detail:* This confirms basic structure; semantic validation of hostname or path is out of scope.
-  - [ ] **Validate Explicit Port Numbers:** If a port is specified in a mapping value (e.g., `host:port/path`), validate it's an integer between 1 and 65535 (inclusive).
+  - [x] **Validate Explicit Port Numbers:** If a port is specified in a mapping value (e.g., `host:port/path`), validate it's an integer between 1 and 65535 (inclusive).
     - *Detail:* Validation only applies if a colon `:` indicating a port is present after the host part and before the first slash.
-  - [ ] **Implement Length Limits:** Add hard-coded length limits for configuration entries:
+  - [x] **Implement Length Limits:** Add hard-coded length limits for configuration entries:
     - *Detail:* Source Registry Key (e.g., max 253 chars).
     - *Detail:* Target Mapping Value (e.g., max 1024 chars total).
-  - [ ] **Verify Clear YAML Errors:** Ensure that underlying YAML parsing errors (e.g., syntax issues) are surfaced clearly to the user, ideally with line number context (confirm library behavior).
+  - [x] **Verify Clear YAML Errors:** Ensure that underlying YAML parsing errors (e.g., syntax issues) are surfaced clearly to the user, ideally with line number context (confirm library behavior).
 
-- [ ] **Add Corresponding Unit Tests:**
-  - [ ] Test rejection of config with duplicate keys.
-  - [ ] Test rejection of values missing the required `/` separator.
-  - [ ] Test port validation: valid ports (1, 80, 443, 5000, 65535), invalid ports (0, -1, 65536, non-numeric).
-  - [ ] Test length limit enforcement for keys and values.
-  - [ ] Test a sample malformed YAML file to verify error message clarity.
+- [x] **Add Corresponding Unit Tests:**
+  - [x] Test rejection of config with duplicate keys.
+  - [x] Test rejection of values missing the required `/` separator.
+  - [x] Test port validation: valid ports (1, 80, 443, 5000, 65535), invalid ports (0, -1, 65536, non-numeric).
+  - [x] Test length limit enforcement for keys and values.
+  - [x] Test a sample malformed YAML file to verify error message clarity.
 
 
 ## Implementation Process:  DONT" REMOVE THIS SECTION as these hints are important to remember.

@@ -25,7 +25,12 @@ const (
 	MaxKeyLength = 253
 	// MaxValueLength defines the maximum allowed length for registry values.
 	MaxValueLength = 1024
+	// SplitKeyValueParts defines the number of parts expected when splitting a key:value pair.
+	SplitKeyValueParts = 2
 )
+
+// EmptyPathResult is a sentinel value returned when path is empty
+var EmptyPathResult = map[string]string{}
 
 // Mapping represents a single source to target registry mapping
 type Mapping struct {
@@ -190,36 +195,23 @@ func (m *Mappings) GetTargetRegistry(source string) string {
 	return ""
 }
 
-// LoadConfig loads registry mappings from a YAML file specified by the --config flag.
-// It enforces strict validation on the format and content of the file:
-// - The file must exist and be readable
-// - The content must be a valid YAML map[string]string
-// - Keys must be valid domain names
-// - Values must contain at least one slash (registry/path format)
-// - If port numbers are specified, they must be valid (1-65535)
-// - Keys and values must not exceed length limits
-// - No duplicate keys are allowed
-func LoadConfig(fs afero.Fs, path string, skipCWDRestriction bool) (map[string]string, error) {
-	if path == "" {
-		// Return nil, nil for empty path per test expectations
-		return nil, nil
-	}
-
+// validateConfigFilePath validates path and performs basic integrity checks
+func validateConfigFilePath(fs afero.Fs, path string, skipCWDRestriction bool) error {
 	// Basic validation to prevent path traversal
 	absPath, err := filepath.Abs(path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get absolute path for config file '%s': %w", path, err)
+		return fmt.Errorf("failed to get absolute path for config file '%s': %w", path, err)
 	}
 	wd, err := os.Getwd()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get working directory: %w", err)
+		return fmt.Errorf("failed to get working directory: %w", err)
 	}
 
 	// Only skip path traversal check if explicitly allowed in test or via parameter
 	if !skipCWDRestriction {
 		if !strings.HasPrefix(absPath, wd) {
 			debug.Printf("Path traversal detected. Path: %s, WorkDir: %s", absPath, wd)
-			return nil, WrapMappingPathNotInWD(path)
+			return WrapMappingPathNotInWD(path)
 		}
 	}
 
@@ -227,19 +219,24 @@ func LoadConfig(fs afero.Fs, path string, skipCWDRestriction bool) (map[string]s
 	fileInfo, err := fs.Stat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, WrapMappingFileNotExist(path, err)
+			return WrapMappingFileNotExist(path, err)
 		}
-		return nil, WrapMappingFileRead(path, err)
+		return WrapMappingFileRead(path, err)
 	}
 	if fileInfo.IsDir() {
-		return nil, fmt.Errorf("failed to read config file '%s': is a directory", path)
+		return fmt.Errorf("failed to read config file '%s': is a directory", path)
 	}
 
 	// Check file extension
 	if !strings.HasSuffix(absPath, ".yaml") && !strings.HasSuffix(absPath, ".yml") {
-		return nil, WrapMappingExtension(path)
+		return WrapMappingExtension(path)
 	}
 
+	return nil
+}
+
+// readConfigFileContent reads and performs basic validation on file content
+func readConfigFileContent(fs afero.Fs, path string) ([]byte, error) {
 	// Read the file content using the provided filesystem
 	data, err := afero.ReadFile(fs, path)
 	if err != nil {
@@ -254,11 +251,12 @@ func LoadConfig(fs afero.Fs, path string, skipCWDRestriction bool) (map[string]s
 		return nil, WrapMappingFileEmpty(path)
 	}
 
-	debug.Printf("LoadConfig: Attempting to parse file content:\n%s", string(data))
+	return data, nil
+}
 
-	// Check for duplicate keys using string scanning and manual parsing
-	// This is a simple approach that scans lines for key patterns
-	yamlLines := strings.Split(string(data), "\n")
+// checkForDuplicateKeys scans YAML content for duplicate keys
+func checkForDuplicateKeys(content []byte, path string) error {
+	yamlLines := strings.Split(string(content), "\n")
 	seenKeys := make(map[string]bool)
 
 	for _, line := range yamlLines {
@@ -269,16 +267,81 @@ func LoadConfig(fs afero.Fs, path string, skipCWDRestriction bool) (map[string]s
 		}
 
 		// Look for lines that follow the pattern "key: value"
-		parts := strings.SplitN(trimmedLine, ":", 2)
-		if len(parts) == 2 {
+		parts := strings.SplitN(trimmedLine, ":", SplitKeyValueParts)
+		if len(parts) == SplitKeyValueParts {
 			key := strings.TrimSpace(parts[0])
 			if key != "" {
 				if seenKeys[key] {
-					return nil, WrapDuplicateRegistryKey(path, key)
+					return WrapDuplicateRegistryKey(path, key)
 				}
 				seenKeys[key] = true
 			}
 		}
+	}
+
+	return nil
+}
+
+// validateMappingValue validates format and constraints for a target value
+func validateMappingValue(source, target, path string) error {
+	// Check value length
+	if len(target) > MaxValueLength {
+		return WrapValueTooLong(path, source, target, len(target), MaxValueLength)
+	}
+
+	// Target must contain at least one slash (registry/path format)
+	if !strings.Contains(target, "/") {
+		return fmt.Errorf("invalid target registry value '%s' for source '%s' in config file '%s': must contain at least one '/'",
+			target, source, path)
+	}
+
+	// Validate port number if present
+	hostPart := strings.Split(target, "/")[0]
+	if strings.Contains(hostPart, ":") {
+		hostAndPort := strings.Split(hostPart, ":")
+		if len(hostAndPort) > 1 {
+			portStr := hostAndPort[1]
+			port, err := strconv.Atoi(portStr)
+			if err != nil || port < 1 || port > 65535 {
+				return WrapInvalidPortNumber(path, source, target, portStr)
+			}
+		}
+	}
+
+	return nil
+}
+
+// LoadConfig loads registry mappings from a YAML file specified by the --config flag.
+// It enforces strict validation on the format and content of the file:
+// - The file must exist and be readable
+// - The content must be a valid YAML map[string]string
+// - Keys must be valid domain names
+// - Values must contain at least one slash (registry/path format)
+// - If port numbers are specified, they must be valid (1-65535)
+// - Keys and values must not exceed length limits
+// - No duplicate keys are allowed
+func LoadConfig(fs afero.Fs, path string, skipCWDRestriction bool) (map[string]string, error) {
+	if path == "" {
+		// Return empty map for empty path per test expectations
+		return EmptyPathResult, nil
+	}
+
+	// Validate the config file path
+	if err := validateConfigFilePath(fs, path, skipCWDRestriction); err != nil {
+		return nil, err
+	}
+
+	// Read and validate file content
+	data, err := readConfigFileContent(fs, path)
+	if err != nil {
+		return nil, err
+	}
+
+	debug.Printf("LoadConfig: Attempting to parse file content:\n%s", string(data))
+
+	// Check for duplicate keys
+	if err := checkForDuplicateKeys(data, path); err != nil {
+		return nil, err
 	}
 
 	// Parse the YAML content as map[string]string
@@ -315,27 +378,9 @@ func LoadConfig(fs afero.Fs, path string, skipCWDRestriction bool) (map[string]s
 			continue
 		}
 
-		// Check value length
-		if len(target) > MaxValueLength {
-			return nil, WrapValueTooLong(path, source, target, len(target), MaxValueLength)
-		}
-
-		// Target must contain at least one slash (registry/path format)
-		if !strings.Contains(target, "/") {
-			return nil, fmt.Errorf("invalid target registry value '%s' for source '%s' in config file '%s': must contain at least one '/'", target, source, path)
-		}
-
-		// Validate port number if present
-		hostPart := strings.Split(target, "/")[0]
-		if strings.Contains(hostPart, ":") {
-			hostAndPort := strings.Split(hostPart, ":")
-			if len(hostAndPort) > 1 {
-				portStr := hostAndPort[1]
-				port, err := strconv.Atoi(portStr)
-				if err != nil || port < 1 || port > 65535 {
-					return nil, WrapInvalidPortNumber(path, source, target, portStr)
-				}
-			}
+		// Validate target value format and constraints
+		if err := validateMappingValue(source, target, path); err != nil {
+			return nil, err
 		}
 
 		validatedConfig[source] = target
