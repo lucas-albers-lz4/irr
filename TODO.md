@@ -92,56 +92,23 @@
   - [ ] Test length limit enforcement for keys and values.
   - [ ] Test a sample malformed YAML file to verify error message clarity.
 
-## Phase 5: Testing Framework Debug Control Verification
-- [x] **Goal:** Ensure the test framework reliably controls the application's debug state (`debug.Enabled` and log level) via flags and environment variables, preventing unexpected behavior during test runs and troubleshooting sessions.
+## Phase 5: Testing Framework Debug Control Verification (Completed)
+- [x] **Goal:** Ensure the test framework reliably controls the application's debug state via flags and environment variables, preventing unexpected behavior during test runs.
+- [x] **Add Unit Test for Debug Control:** Implemented `TestDebugFlagAndEnvVarInteraction` in `cmd/irr/root_test.go` with comprehensive test scenarios.
+- [x] **Verify Integration Test Behavior:** Confirmed proper debug flag propagation, formatted output, and environment variable handling.
+- [x] **Documentation Updates:** Added dedicated debug control sections to both `DEVELOPMENT.md` and `TESTING.md`.
+- [x] **All verification tests passed** for both debug-enabled and standard test runs.
 
-- [x] **Add Unit Test for Debug Control (`TestDebugFlagAndEnvVarInteraction` in `cmd/irr/root_test.go`):**
-  - **Implementation Details:**
-    - Utilize the existing `executeCommand` test helper or a similar setup that properly invokes the root command's `PersistentPreRunE` logic.
-    - Use `t.Setenv("IRR_DEBUG", "...")` to manipulate the environment variable within subtests (`t.Run`). Remember `t.Setenv` automatically handles cleanup.
-    - Capture the log output during test execution using a custom buffer or log hook (possibly via `log.SetOutput()` in setup and restore in teardown).
-    - Create a helper function to check if debug logs were emitted (e.g., `hasDebugLogs(output string) bool`).
-    - For direct state verification, consider exposing `debug.Enabled` or implementing a `debug.IsEnabled()` helper function.
-    - Implement the following subtest scenarios:
-      - `Default_NoFlagNoEnv`: Run `irr` with no debug flag or env var. *Assert:* `debug.Enabled` is `false`, no debug logs, log level is INFO.
-      - `FlagEnabled_DebugTrue`: Run `irr --debug`. *Assert:* `debug.Enabled` is `true`, debug logs present, log level is DEBUG.
-      - `EnvVarEnabled_DebugTrue`: Set `IRR_DEBUG=true`, run `irr`. *Assert:* `debug.Enabled` is `true`, debug logs present, log level is DEBUG.
-      - `EnvVarDisabled_DebugFalse`: Set `IRR_DEBUG=false`, run `irr`. *Assert:* `debug.Enabled` is `false`, no debug logs, log level is INFO.
-      - `EnvVarInvalid_DefaultsFalse`: Set `IRR_DEBUG=notabool`, run `irr`. *Assert:* `debug.Enabled` is `false`, no debug logs, specific warning about invalid value is present.
-      - `FlagOverridesEnv_DebugTrue`: Set `IRR_DEBUG=false`, run `irr --debug`. *Assert:* `debug.Enabled` is `true` (flag takes precedence), debug logs present, log level is DEBUG.
-      - `EmptyEnvVar_NoWarning`: Set `IRR_DEBUG=""`, run `irr`. *Assert:* No warning about invalid boolean value is produced (verifies fix for original issue).
-    - Implementation strategy notes:
-      - May need to use reflection or exported test helpers to access internal state.
-      - Consider using a custom log hook or buffer to capture and analyze log output.
-      - Reset `debug.Enabled` and log levels between tests to ensure isolation.
-
-- [x] **Verify Integration Test Behavior:**
-  - Modify or add a simple integration test that explicitly tests `--debug` flag propagation.
-  - Verify the debug log format in the integration test output includes timestamps, source file/line numbers, and other expected context.
-  - Confirm the `make test-integration` target correctly handles and propagates the debug flag.
-
-- [x] **Documentation Updates:**
-  - **Update `TESTING.md`:**
-    - Add a dedicated "Debug Control" section explaining how debug logging works in tests.
-    - Clearly document how to enable debug logging at different levels:
-      1. For all tests: `go test -v ./... -args --debug`
-      2. For specific test packages: `go test -v ./pkg/specific -args --debug`
-      3. For specific test functions: `go test -v ./pkg/specific -run TestSpecific -args --debug`
-    - Document how the test framework handles `IRR_DEBUG` environment variable vs. `--debug` flag.
-    - Include examples showing debug log output format in test environments.
-  
-  - **Update `DEVELOPMENT.md`:**
-    - Add a "Debugging Tests" section referencing the more detailed content in `TESTING.md`.
-    - Include troubleshooting tips for common issues related to debug state.
-
-- [x] **Verification Checklist:**
-  - [x] Run unit test with no debug: `go test ./cmd/irr -run TestDebugFlagAndEnvVarInteraction`
-  - [x] Run unit test with debug: `go test ./cmd/irr -run TestDebugFlagAndEnvVarInteraction -args --debug`
-  - [x] Verify all subtests pass under both conditions.
-  - [x] Verify test does not modify global debug state after completion.
-  - [x] Verify test passes with our CI environment variables if any.
-  - [x] Verify warning message no longer appears when `IRR_DEBUG` isn't set.
-  - [x] Confirm that the fix works consistently across different operating systems (particularly important for Windows tests if applicable).
+## Phase 6: Code Quality & Maintenance (Completed)
+- [x] **Linter Issues Fixed:**
+  - [x] **Code Structure:** Refactored `Generator.Generate()` method to reduce function length, extracting `processAndGenerateOverride` and `determineTargetPathAndRegistry` helper methods for better maintainability.
+  - [x] **Magic Numbers:** Replaced magic numbers with named constants in `pkg/chart/generator.go` and `pkg/registry/mappings.go`.
+  - [x] **nil/nil Returns:** Fixed anti-pattern of returning both `nil` value and `nil` error by introducing proper sentinel errors.
+  - [x] **Unused Code:** Removed or properly commented out unused functions and variables.
+  - [x] **Boolean Logic:** Simplified complex boolean expressions using De Morgan's laws.
+  - [x] **Octal Literals:** Updated to modern syntax (`0o644` instead of `0644`).
+- [x] **Error Handling:** Fixed `errcheck` errors and improved empty if statements with proper error messages.
+- [x] **Code Documentation:** Added/improved comments for helper methods and constants.
 
 ## Implementation Process:  DONT" REMOVE THIS SECTION as these hints are important to remember.
 - For each change:
