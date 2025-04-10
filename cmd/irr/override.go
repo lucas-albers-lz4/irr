@@ -89,7 +89,13 @@ func newOverrideCmd() *cobra.Command {
 			}
 
 			// Ensure --target-registry is provided even when --config is used
-			configPath, _ := cmd.Flags().GetString("config")
+			configPath, configErr := cmd.Flags().GetString("config")
+			if configErr != nil {
+				return &exitcodes.ExitCodeError{
+					Code: exitcodes.ExitInputConfigurationError,
+					Err:  fmt.Errorf("failed to get config flag: %w", configErr),
+				}
+			}
 			if configPath != "" && (err != nil || targetRegistry == "") {
 				missingFlags = append(missingFlags, "target-registry")
 			}

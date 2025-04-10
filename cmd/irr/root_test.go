@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -37,21 +38,31 @@ func executeCommandWithStderrCapture(root *cobra.Command, args ...string) (cmdOu
 
 	// Set up stderr capture
 	oldStderr := os.Stderr
-	stderrReader, stderrWriter, _ := os.Pipe()
+	stderrReader, stderrWriter, pipeErr := os.Pipe()
+	if pipeErr != nil {
+		return "", "", fmt.Errorf("failed to create pipe: %w", pipeErr)
+	}
 	os.Stderr = stderrWriter
 
 	// Execute command
 	err = root.Execute()
 
 	// Close writer to release pipe
-	stderrWriter.Close()
+	closeErr := stderrWriter.Close()
+	if closeErr != nil {
+		// Log but continue, as we still want to restore stderr
+		fmt.Fprintf(os.Stderr, "Warning: Error closing stderr pipe: %v\n", closeErr)
+	}
 
 	// Restore original stderr
 	os.Stderr = oldStderr
 
 	// Read stderr from pipe into buffer
 	stderrBuf := new(bytes.Buffer)
-	io.Copy(stderrBuf, stderrReader)
+	_, copyErr := io.Copy(stderrBuf, stderrReader)
+	if copyErr != nil {
+		return cmdBuf.String(), stderrBuf.String(), fmt.Errorf("error reading from stderr pipe: %w", copyErr)
+	}
 
 	return cmdBuf.String(), stderrBuf.String(), err
 }
@@ -60,20 +71,32 @@ func executeCommandWithStderrCapture(root *cobra.Command, args ...string) (cmdOu
 func TestDebugFlagAndEnvVarInteraction(t *testing.T) {
 	// Save and restore original state
 	origEnv := os.Getenv("IRR_DEBUG")
-	defer os.Setenv("IRR_DEBUG", origEnv)
+	defer func() {
+		err := os.Setenv("IRR_DEBUG", origEnv)
+		if err != nil {
+			t.Logf("Warning: failed to restore IRR_DEBUG environment variable: %v", err)
+		}
+	}()
 
 	// Part 1: Test command-line flags (simpler, less dependent on environment)
 	t.Run("FlagTests", func(t *testing.T) {
 		t.Run("NoFlag_DebugDisabled", func(t *testing.T) {
 			// Unset environment variable to avoid interference
-			os.Unsetenv("IRR_DEBUG")
+			err := os.Unsetenv("IRR_DEBUG")
+			if err != nil {
+				t.Fatalf("Failed to unset IRR_DEBUG environment variable: %v", err)
+			}
 
 			// Reset debug state
 			debug.Enabled = false
 
 			// Execute command without debug flag
 			cmd := getRootCmd()
-			_, stderr, _ := executeCommandWithStderrCapture(cmd, "help")
+			_, stderr, cmdErr := executeCommandWithStderrCapture(cmd, "help")
+			if cmdErr != nil {
+				t.Logf("Command execution returned error (expected for subcommand check): %v", cmdErr)
+				// Not failing the test as this might be expected behavior
+			}
 
 			// Verify debug is disabled and no debug logs are present
 			assert.False(t, debug.Enabled, "debug.Enabled should be false without --debug flag")
@@ -82,14 +105,21 @@ func TestDebugFlagAndEnvVarInteraction(t *testing.T) {
 
 		t.Run("WithFlag_DebugEnabled", func(t *testing.T) {
 			// Unset environment variable to avoid interference
-			os.Unsetenv("IRR_DEBUG")
+			err := os.Unsetenv("IRR_DEBUG")
+			if err != nil {
+				t.Fatalf("Failed to unset IRR_DEBUG environment variable: %v", err)
+			}
 
 			// Reset debug state
 			debug.Enabled = false
 
 			// Execute command with debug flag
 			cmd := getRootCmd()
-			_, stderr, _ := executeCommandWithStderrCapture(cmd, "--debug", "help")
+			_, stderr, cmdErr := executeCommandWithStderrCapture(cmd, "--debug", "help")
+			if cmdErr != nil {
+				t.Logf("Command execution returned error (expected for subcommand check): %v", cmdErr)
+				// Not failing the test as this might be expected behavior
+			}
 
 			// Verify debug is enabled and debug logs are present
 			assert.True(t, debug.Enabled, "debug.Enabled should be true with --debug flag")
@@ -98,14 +128,21 @@ func TestDebugFlagAndEnvVarInteraction(t *testing.T) {
 
 		t.Run("FlagOverridesEnv", func(t *testing.T) {
 			// Set environment variable to disabled
-			os.Setenv("IRR_DEBUG", "false")
+			err := os.Setenv("IRR_DEBUG", "false")
+			if err != nil {
+				t.Fatalf("Failed to set IRR_DEBUG environment variable: %v", err)
+			}
 
 			// Reset debug state
 			debug.Enabled = false
 
 			// Execute command with debug flag (should override env var)
 			cmd := getRootCmd()
-			_, stderr, _ := executeCommandWithStderrCapture(cmd, "--debug", "help")
+			_, stderr, cmdErr := executeCommandWithStderrCapture(cmd, "--debug", "help")
+			if cmdErr != nil {
+				t.Logf("Command execution returned error (expected for subcommand check): %v", cmdErr)
+				// Not failing the test as this might be expected behavior
+			}
 
 			// Verify debug is enabled (flag overrides env) and debug logs are present
 			assert.True(t, debug.Enabled, "debug.Enabled should be true (flag overrides env)")
@@ -120,25 +157,39 @@ func TestDebugFlagAndEnvVarInteraction(t *testing.T) {
 		captureDebugInit := func(forceEnable bool) string {
 			// Set up stderr capture
 			oldStderr := os.Stderr
-			r, w, _ := os.Pipe()
+			r, w, pipeErr := os.Pipe()
+			if pipeErr != nil {
+				t.Fatalf("Failed to create pipe: %v", pipeErr)
+				return "" // Unreachable, but needed for compiler
+			}
 			os.Stderr = w
 
 			// Call debug.Init
 			debug.Init(forceEnable)
 
 			// Restore stderr
-			w.Close()
+			closeErr := w.Close()
+			if closeErr != nil {
+				t.Logf("Warning: Error closing stderr pipe: %v", closeErr)
+			}
 			os.Stderr = oldStderr
 
 			// Read captured output
 			buf := new(bytes.Buffer)
-			io.Copy(buf, r)
+			_, copyErr := io.Copy(buf, r)
+			if copyErr != nil {
+				t.Fatalf("Error reading from stderr pipe: %v", copyErr)
+				return "" // Unreachable, but needed for compiler
+			}
 			return buf.String()
 		}
 
 		t.Run("EnvVar_True", func(t *testing.T) {
 			// Setup: Set env var to true
-			os.Setenv("IRR_DEBUG", "true")
+			err := os.Setenv("IRR_DEBUG", "true")
+			if err != nil {
+				t.Fatalf("Failed to set IRR_DEBUG environment variable: %v", err)
+			}
 
 			// Reset debug state to ensure clean test
 			debug.Enabled = false
@@ -153,7 +204,10 @@ func TestDebugFlagAndEnvVarInteraction(t *testing.T) {
 
 		t.Run("EnvVar_False", func(t *testing.T) {
 			// Setup: Set env var to false
-			os.Setenv("IRR_DEBUG", "false")
+			err := os.Setenv("IRR_DEBUG", "false")
+			if err != nil {
+				t.Fatalf("Failed to set IRR_DEBUG environment variable: %v", err)
+			}
 
 			// Set debug state to true to verify it gets disabled
 			debug.Enabled = true
@@ -168,7 +222,10 @@ func TestDebugFlagAndEnvVarInteraction(t *testing.T) {
 
 		t.Run("EnvVar_Invalid", func(t *testing.T) {
 			// Setup: Set env var to invalid value
-			os.Setenv("IRR_DEBUG", "notabool")
+			err := os.Setenv("IRR_DEBUG", "notabool")
+			if err != nil {
+				t.Fatalf("Failed to set IRR_DEBUG environment variable: %v", err)
+			}
 
 			// Set debug state to true to verify it gets disabled
 			debug.Enabled = true
@@ -183,7 +240,10 @@ func TestDebugFlagAndEnvVarInteraction(t *testing.T) {
 
 		t.Run("EnvVar_Empty", func(t *testing.T) {
 			// Setup: Set env var to empty string
-			os.Setenv("IRR_DEBUG", "")
+			err := os.Setenv("IRR_DEBUG", "")
+			if err != nil {
+				t.Fatalf("Failed to set IRR_DEBUG environment variable: %v", err)
+			}
 
 			// Set debug state to true to verify it gets disabled
 			debug.Enabled = true
@@ -201,7 +261,10 @@ func TestDebugFlagAndEnvVarInteraction(t *testing.T) {
 
 		t.Run("ForceEnable_OverridesEnvVar", func(t *testing.T) {
 			// Setup: Set env var to false
-			os.Setenv("IRR_DEBUG", "false")
+			err := os.Setenv("IRR_DEBUG", "false")
+			if err != nil {
+				t.Fatalf("Failed to set IRR_DEBUG environment variable: %v", err)
+			}
 
 			// Reset debug state to ensure clean test
 			debug.Enabled = false

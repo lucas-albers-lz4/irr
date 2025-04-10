@@ -207,10 +207,12 @@ It also supports linting image references for potential issues.`,
 			debug.Printf("--debug flag enabled debug logging.") // Use debug.Printf
 		} else { // If flag is not set, check the environment variable
 			debugEnv := os.Getenv("IRR_DEBUG")
+			// Only attempt to parse if the environment variable is actually set
 			if debugEnv != "" {
 				debugVal, err := strconv.ParseBool(debugEnv)
 				if err != nil {
-					log.Warnf("Warning: Invalid boolean value for IRR_DEBUG: %s. Defaulting to false.", debugEnv)
+					// Log the warning only if parsing fails for a non-empty value
+					log.Warnf("Invalid boolean value for IRR_DEBUG environment variable: '%s'. Defaulting to false.", debugEnv)
 					debug.Enabled = false
 				} else {
 					debug.Enabled = debugVal
@@ -220,7 +222,7 @@ It also supports linting image references for potential issues.`,
 					}
 				}
 			} else {
-				// Default to false if neither flag nor env var is set
+				// Default to false if neither flag nor env var is set and non-empty
 				debug.Enabled = false
 			}
 		}

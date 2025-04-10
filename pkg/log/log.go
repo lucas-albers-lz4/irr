@@ -63,6 +63,11 @@ func IsDebugEnabled() bool {
 	return currentLevel <= LevelDebug
 }
 
+// CurrentLevel returns the current logging level
+func CurrentLevel() Level {
+	return currentLevel
+}
+
 // SetLevel sets the logging level
 func SetLevel(level Level) {
 	currentLevel = level
