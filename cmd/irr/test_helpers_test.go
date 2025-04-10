@@ -11,14 +11,14 @@ import (
 
 // This file contains helper functions for testing Cobra commands, especially those needing file system interaction.
 
-// setupTestFS creates an in-memory file system and a directory for testing.
-func setupTestFS(t *testing.T) (afero.Fs, string) {
-	fs := afero.NewMemMapFs()
+// setupTestFS creates a test filesystem with a temporary directory
+func setupTestFS(t *testing.T) (fs afero.Fs, tempDir string) {
+	fs = afero.NewMemMapFs()
 	// Create a directory for the chart
-	chartDir := "/test/chart"
-	err := fs.MkdirAll(chartDir, 0o755)
+	tempDir = "/test/chart"
+	err := fs.MkdirAll(tempDir, 0o755)
 	require.NoError(t, err, "Failed to create test chart directory")
-	return fs, chartDir
+	return fs, tempDir
 }
 
 // createDummyChart creates basic Chart.yaml and values.yaml in the specified directory on the given FS.
@@ -39,10 +39,8 @@ version: 0.1.0`
 	return nil
 }
 
-// setupMemoryFSContext sets up a memory filesystem for a test and returns
-// a cleanup function that restores the original filesystem state.
-// It also ensures DEBUG=1 is set to enable detailed logging.
-func setupMemoryFSContext(t *testing.T) (afero.Fs, string, func()) {
+// setupMemoryFSContext sets up an in-memory filesystem with a temporary directory
+func setupMemoryFSContext(t *testing.T) (fs afero.Fs, tempDir string, cleanup func()) {
 	// Save original state
 	originalFS := AppFs
 	originalDebug := os.Getenv("DEBUG")
@@ -51,16 +49,16 @@ func setupMemoryFSContext(t *testing.T) (afero.Fs, string, func()) {
 	err := os.Setenv("DEBUG", "1")
 	require.NoError(t, err, "Failed to set DEBUG environment variable")
 
-	fs := afero.NewMemMapFs()
-	chartDir := "/test/chart"
-	err = fs.MkdirAll(chartDir, 0o755)
+	fs = afero.NewMemMapFs()
+	tempDir = "/test/chart"
+	err = fs.MkdirAll(tempDir, 0o755)
 	require.NoError(t, err, "Failed to create test chart directory")
 
 	// Replace global AppFs
 	AppFs = fs
 
 	// Create cleanup function
-	cleanup := func() {
+	cleanup = func() {
 		// Restore original state
 		AppFs = originalFS
 		err := os.Setenv("DEBUG", originalDebug)
@@ -69,7 +67,7 @@ func setupMemoryFSContext(t *testing.T) (afero.Fs, string, func()) {
 		}
 	}
 
-	return fs, chartDir, cleanup
+	return fs, tempDir, cleanup
 }
 
 // End of file

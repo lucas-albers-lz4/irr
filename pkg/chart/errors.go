@@ -33,6 +33,7 @@ func (e *UnsupportedStructureError) Error() string {
 	return fmt.Sprintf("unsupported structure at path %s (type: %s)", strings.Join(e.Path, "."), e.Type)
 }
 
+// Is implements the errors.Is interface to allow checking if an error is of type UnsupportedStructureError
 func (e *UnsupportedStructureError) Is(target error) bool {
 	return target == ErrStrictValidationFailed
 }
@@ -48,6 +49,7 @@ func (e *ThresholdNotMetError) Error() string {
 	return fmt.Sprintf("processing threshold not met: required %d%%, actual %d%%", e.Required, e.Actual)
 }
 
+// Is implements the errors.Is interface to allow checking if an error is of type ThresholdNotMetError
 func (e *ThresholdNotMetError) Is(target error) bool {
 	return target == strategy.ErrThresholdExceeded
 }
@@ -63,6 +65,7 @@ func (e *ParsingError) Error() string {
 	return fmt.Sprintf("error parsing chart: %s", e.Err)
 }
 
+// Is implements the errors.Is interface to allow checking if an error is of type ParsingError
 func (e *ParsingError) Is(target error) bool {
 	return target == ErrChartNotFound || target == ErrChartLoadFailed
 }

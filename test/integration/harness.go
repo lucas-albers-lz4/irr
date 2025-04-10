@@ -529,8 +529,7 @@ func (h *TestHarness) walkImageFieldsRecursive(data interface{}, currentPath []s
 		if len(currentPath) > 0 {
 			lastKey := currentPath[len(currentPath)-1]
 			// Simple check: if the key is "image" or ends with "Image", treat the string as an image override.
-			switch {
-			case lastKey == "image" || strings.HasSuffix(lastKey, "Image"):
+			if lastKey == "image" || strings.HasSuffix(lastKey, "Image") {
 				visitor(currentPath, v)
 			}
 		}
@@ -566,13 +565,11 @@ func (h *TestHarness) ExecuteIRR(args ...string) (output string, err error) {
 	stderrStr := stderr.String()
 
 	// ALWAYS log the full output for debugging purposes
-	switch {
-	case outputStr != "":
+	if outputStr != "" {
 		h.logger.Printf("[HARNESS EXECUTE_IRR] Stdout:\n%s", outputStr)
 	}
 
-	switch {
-	case stderrStr != "":
+	if stderrStr != "" {
 		h.logger.Printf("[HARNESS EXECUTE_IRR] Stderr:\n%s", stderrStr)
 	}
 
@@ -688,7 +685,6 @@ func (h *TestHarness) AssertExitCode(expected int, args ...string) {
 			outputStr,
 		)
 	}
-	// If expected is 0 and err is nil, it's a pass, do nothing.
 }
 
 // AssertErrorContains checks if the stderr output contains the specified substring.
@@ -720,8 +716,7 @@ func (h *TestHarness) AssertErrorContains(substring string, args ...string) {
 	stdoutStr := stdout.String() // Log stdout too for debugging context
 
 	h.logger.Printf("[ASSERT_ERROR_CONTAINS] Stderr:\n%s", stderrStr)
-	switch {
-	case stdoutStr != "":
+	if stdoutStr != "" {
 		h.logger.Printf("[ASSERT_ERROR_CONTAINS] Stdout:\n%s", stdoutStr)
 	}
 

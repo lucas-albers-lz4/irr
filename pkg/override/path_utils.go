@@ -218,7 +218,8 @@ func parsePathPart(part string) (key string, index int, isArray bool, err error)
 	hasLeftBracket := strings.Contains(part, "[")
 	hasRightBracket := strings.HasSuffix(part, "]")
 
-	if hasLeftBracket && hasRightBracket {
+	switch {
+	case hasLeftBracket && hasRightBracket:
 		// Potential array access, validate structure
 		leftBracketPos := strings.LastIndex(part, "[")
 		// Ensure brackets are ordered correctly and not adjacent
@@ -239,12 +240,12 @@ func parsePathPart(part string) (key string, index int, isArray bool, err error)
 			return
 		}
 		isArray = true
-	} else if !hasLeftBracket && !hasRightBracket {
+	case !hasLeftBracket && !hasRightBracket:
 		// Simple key, no brackets
 		key = part
 		isArray = false
 		index = -1 // Convention for non-array parts
-	} else {
+	default:
 		// Mismatched brackets (e.g., "key[" or "key]") - treat as error
 		err = fmt.Errorf("invalid array access format in %s: mismatched brackets", part)
 		// Explicitly set return values for clarity, though error is primary

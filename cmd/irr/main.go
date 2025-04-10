@@ -11,7 +11,7 @@ import (
 	// Removed cmd import to break cycle
 )
 
-var version string = "DEBUG v1"
+var version = "DEBUG v1"
 
 // main is the entry point of the application.
 // It calls the Execute function defined locally (likely in root.go) to set up and run the commands.
@@ -38,9 +38,8 @@ func main() {
 		if code, ok := exitcodes.IsExitCodeError(err); ok {
 			// Use the specific exit code from the error
 			os.Exit(code)
-		} else {
-			// Cobra likely printed the error already, use a generic failure code
-			os.Exit(1)
 		}
+		// Cobra likely printed the error already, use a generic failure code
+		os.Exit(1)
 	}
 }

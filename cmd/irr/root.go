@@ -85,6 +85,7 @@ func (e *ExitCodeError) Error() string {
 	return e.err.Error()
 }
 
+// ExitCode returns the exit code stored in the error
 func (e *ExitCodeError) ExitCode() int {
 	return e.exitCode
 }
@@ -177,7 +178,7 @@ that redirect container image references from public registries to a private reg
 It can analyze Helm charts to identify image references and generate override values 
 files compatible with Helm, pointing images to a new registry according to specified strategies.
 It also supports linting image references for potential issues.`,
-	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+	PersistentPreRunE: func(_ *cobra.Command, _ []string) error {
 		// Setup logging before any command logic runs
 		logLevelStr := logLevel      // Use the global variable
 		debugEnabled := debugEnabled // Use the global variable
@@ -254,7 +255,7 @@ It also supports linting image references for potential issues.`,
 
 		return nil // PersistentPreRunE should return error
 	},
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(_ *cobra.Command, args []string) error {
 		// If no arguments (subcommand) are provided, return an error.
 		if len(args) == 0 {
 			// Use Errorf for consistency
@@ -381,7 +382,7 @@ func formatTextOutput(result *analysis.ChartAnalysis) string {
 }
 
 // writeAnalysisOutput writes the analysis output to a file or stdout
-func writeAnalysisOutput(cmd *cobra.Command, output string, outputFile string) error {
+func writeAnalysisOutput(cmd *cobra.Command, output, outputFile string) error {
 	if outputFile != "" {
 		debug.Printf("Writing analysis output to file: %s", outputFile)
 		if err := afero.WriteFile(AppFs, outputFile, []byte(output), defaultOutputFilePerm); err != nil {

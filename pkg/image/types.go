@@ -101,7 +101,7 @@ const (
 	UnsupportedTypeMapTagAndDigest
 )
 
-// Basic error type for unsupported image structures
+// UnsupportedImageError represents an error for unsupported image structures
 type UnsupportedImageError struct {
 	Path []string
 	Type UnsupportedType
@@ -115,7 +115,7 @@ func (e *UnsupportedImageError) Error() string {
 	return fmt.Sprintf("unsupported image structure at path %v (type %d)", e.Path, e.Type)
 }
 
-// Basic constructor for UnsupportedImageError
+// NewUnsupportedImageError creates a new UnsupportedImageError with the specified path, type, and error
 func NewUnsupportedImageError(path []string, uType UnsupportedType, err error) error {
 	return &UnsupportedImageError{Path: path, Type: uType, Err: err}
 }

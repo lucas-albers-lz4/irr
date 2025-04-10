@@ -133,11 +133,13 @@ func (d *Detector) handleImageMap(detectedImage *DetectedImage, isPotentialMap b
 		debug.Printf("Handling error from map processing at path %v: %v", path, err)
 		// Determine the type of unsupported image based on the error
 		var unsupportedType UnsupportedType
-		if errors.Is(err, ErrTemplateVariableDetected) {
+
+		switch {
+		case errors.Is(err, ErrTemplateVariableDetected):
 			unsupportedType = UnsupportedTypeTemplateMap // Use specific code for map templates
-		} else if errors.Is(err, ErrTagAndDigestPresent) {
+		case errors.Is(err, ErrTagAndDigestPresent):
 			unsupportedType = UnsupportedTypeMapTagAndDigest
-		} else {
+		default:
 			unsupportedType = UnsupportedTypeMapError // General map error
 		}
 
@@ -290,18 +292,16 @@ func (d *Detector) processStringValueStrict(v string, path []string, isKnownImag
 				Error:    fmt.Errorf("strict mode: string at path %v is not from a configured source registry", path),
 			})
 		}
-	} else {
+	} else if isKnownImagePath {
 		// Handle the case where err is nil but imgRefDetected is also nil
 		// This happens if tryExtractImageFromString heuristic skips the parse (e.g., "invalid-string")
 		// In strict mode, if this happened at a known image path, it's an error.
-		if isKnownImagePath {
-			debug.Printf("Strict mode: String at known image path %v was skipped by heuristic or returned nil ref unexpectedly.", path)
-			unsupportedMatches = append(unsupportedMatches, UnsupportedImage{
-				Location: path,
-				Type:     UnsupportedTypeStringParseError, // Treat heuristic skip at known path as parse error
-				Error:    fmt.Errorf("strict mode: string at known image path %v was skipped (likely invalid format)", path),
-			})
-		}
+		debug.Printf("Strict mode: String at known image path %v was skipped by heuristic or returned nil ref unexpectedly.", path)
+		unsupportedMatches = append(unsupportedMatches, UnsupportedImage{
+			Location: path,
+			Type:     UnsupportedTypeStringParseError, // Treat heuristic skip at known path as parse error
+			Error:    fmt.Errorf("strict mode: string at known image path %v was skipped (likely invalid format)", path),
+		})
 		// If not a known image path, returning nil, nil implicitly skips it, which is fine.
 	}
 
@@ -507,11 +507,12 @@ func (d *Detector) tryExtractImageFromMap(m map[string]interface{}, path []strin
 	imgRef, err := d.createImageReference(repoStr, regStr, tagStr, digestStr, path)
 
 	// Log the result of createImageReference
-	if err != nil {
+	switch {
+	case err != nil:
 		debug.Printf("[DEBUG tryExtractImageFromMap] createImageReference returned error: %v", err)
-	} else if imgRef == nil {
+	case imgRef == nil:
 		debug.Printf("[DEBUG tryExtractImageFromMap] createImageReference returned nil image ref and nil error")
-	} else {
+	default:
 		debug.Printf("[DEBUG tryExtractImageFromMap] createImageReference returned image ref: %s", imgRef.String())
 	}
 

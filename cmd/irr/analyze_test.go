@@ -40,7 +40,7 @@ func executeAnalyzeCommand(cmd *cobra.Command, args ...string) (string, error) {
 }
 
 // setupAnalyzeTestFS creates a temporary filesystem for tests
-func setupAnalyzeTestFS(t *testing.T) afero.Fs {
+func setupAnalyzeTestFS(_ *testing.T) afero.Fs {
 	fs := afero.NewMemMapFs()
 	return fs
 }
@@ -150,8 +150,8 @@ func createSuccessTextOutputTestCase() analyzeTestCase {
 	}
 }
 
-// createSuccessJsonOutputTestCase creates a test case for successful JSON output
-func createSuccessJsonOutputTestCase() analyzeTestCase {
+// createSuccessJSONOutputTestCase creates a test case for successful JSON output
+func createSuccessJSONOutputTestCase() analyzeTestCase {
 	return analyzeTestCase{
 		name: "success with json output",
 		args: []string{"analyze", "./fake/chart", "--source-registries", "source.io", "--output", "json"},
@@ -224,7 +224,7 @@ func defineAnalyzeTestCases() []analyzeTestCase {
 
 	// Create success test cases
 	textOutputCase := createSuccessTextOutputTestCase()
-	jsonOutputCase := createSuccessJsonOutputTestCase()
+	jsonOutputCase := createSuccessJSONOutputTestCase()
 	fileOutputCase := createSuccessFileOutputTestCase()
 
 	// Create analyzer error test case

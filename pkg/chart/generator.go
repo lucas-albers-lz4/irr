@@ -30,6 +30,8 @@ const (
 	PercentMultiplier = 100
 	// PrivateFilePermissions represents secure file permissions (rw-------)
 	PrivateFilePermissions = 0o600
+	// FilePermissions defines the permission mode for temporary override files
+	FilePermissions = 0o600
 )
 
 // --- Local Error Definitions ---
@@ -37,7 +39,7 @@ var (
 	ErrUnsupportedStructure = errors.New("unsupported structure found")
 )
 
-// Keep LoadingError defined locally as it wraps errors from this package's perspective
+// LoadingError wraps errors from the chart loading perspective
 type LoadingError struct {
 	ChartPath string
 	Err       error
@@ -50,7 +52,7 @@ func (e *LoadingError) Unwrap() error { return e.Err }
 
 // Assuming ParsingError and ImageProcessingError are defined elsewhere (e.g., analysis package or pkg/errors)
 
-// Keep ThresholdError defined locally as it's specific to the generator's threshold logic
+// ThresholdError represents errors related to the generator's threshold logic
 type ThresholdError struct {
 	Threshold   int
 	ActualRate  int
@@ -79,6 +81,7 @@ func (e *ThresholdError) Unwrap() error { return e.Err }
 // Ensure HelmLoader implements analysis.ChartLoader
 var _ analysis.ChartLoader = (*HelmLoader)(nil)
 
+// HelmLoader provides functionality to load Helm charts
 type HelmLoader struct{}
 
 // Load implements analysis.ChartLoader interface, returning helmchart.Chart
@@ -127,6 +130,7 @@ type Generator struct {
 	loader            analysis.ChartLoader // Use analysis.ChartLoader interface
 }
 
+// NewGenerator creates a new Generator with the provided configuration
 func NewGenerator(
 	chartPath, targetRegistry string,
 	sourceRegistries, excludeRegistries []string,
@@ -198,21 +202,22 @@ func (g *Generator) filterEligibleImages(detectedImages []analysis.ImagePattern)
 	for _, pattern := range detectedImages {
 		var registry string
 
-		if pattern.Type == analysis.PatternTypeString {
+		switch pattern.Type {
+		case analysis.PatternTypeString:
 			imgRef, err := image.ParseImageReference(pattern.Value)
 			if err != nil {
 				debug.Printf("Skipping pattern at path %s due to parse error on value '%s': %v", pattern.Path, pattern.Value, err)
 				continue
 			}
 			registry = imgRef.Registry
-		} else if pattern.Type == analysis.PatternTypeMap {
+		case analysis.PatternTypeMap:
 			if regVal, ok := pattern.Structure["registry"].(string); ok {
 				registry = regVal
 			} else {
 				debug.Printf("Skipping map pattern at path %s due to missing registry in structure: %+v", pattern.Path, pattern.Structure)
 				continue
 			}
-		} else {
+		default:
 			debug.Printf("Skipping pattern at path %s due to unknown pattern type: %v", pattern.Path, pattern.Type)
 			continue
 		}
@@ -499,7 +504,7 @@ func ValidateHelmTemplate(runner CommandRunner, chartPath string, overrides []by
 	}()
 
 	overrideFilePath := filepath.Join(tempDir, "temp-overrides.yaml")
-	if err := os.WriteFile(overrideFilePath, overrides, 0o600); err != nil {
+	if err := os.WriteFile(overrideFilePath, overrides, FilePermissions); err != nil {
 		return fmt.Errorf("failed to write temp overrides file: %w", err)
 	}
 	debug.Printf("Temporary override file written to: %s", overrideFilePath)

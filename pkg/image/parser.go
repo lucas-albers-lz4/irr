@@ -11,7 +11,8 @@ import (
 
 // Constants
 const (
-// maxSplitTwo = 2 // REMOVED UNUSED
+	// LatestTag is the default tag used when no tag is specified
+	LatestTag = "latest"
 )
 
 // Errors

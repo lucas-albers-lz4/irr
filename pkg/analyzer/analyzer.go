@@ -49,7 +49,7 @@ type PatternMatcher struct {
 
 // Match checks if the given path matches the pattern.
 // Placeholder implementation.
-func (pm *PatternMatcher) Match(path string) bool {
+func (pm *PatternMatcher) Match(_ string) bool {
 	// Placeholder logic - replace with actual regex matching
 	return true // Default to true for now
 }
@@ -321,7 +321,13 @@ func analyzeInterfaceValue(path string, val reflect.Value, patterns *[]ImagePatt
 // It uses simple glob matching with path.Match.
 func matchAny(path string, patterns []string) bool {
 	for _, pattern := range patterns {
-		if match, _ := filepath.Match(pattern, path); match {
+		match, err := filepath.Match(pattern, path)
+		// If there's an error with the pattern, consider it non-matching and log the issue
+		if err != nil {
+			log.Warnf("Invalid glob pattern '%s': %v", pattern, err)
+			continue
+		}
+		if match {
 			return true
 		}
 	}

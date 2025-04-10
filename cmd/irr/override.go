@@ -278,7 +278,11 @@ func outputOverrides(cmd *cobra.Command, yamlBytes []byte, outputFile string, dr
 			}
 		}
 
-		fmt.Fprintf(cmd.OutOrStdout(), "Successfully wrote overrides to %s\n", outputFile)
+		// Check error from Fprintf to satisfy the linter
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Successfully wrote overrides to %s\n", outputFile); err != nil {
+			// We've already written the file successfully, so just log this error
+			debug.Printf("Warning: Error printing success message: %v", err)
+		}
 		return nil
 	}
 

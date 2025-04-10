@@ -71,7 +71,7 @@ type ChartMetadata struct {
 }
 
 // setupDryRunTestEnvironment sets up a test environment for dry run tests
-func setupDryRunTestEnvironment(t *testing.T, args []string) ([]string, func()) {
+func setupDryRunTestEnvironment(t *testing.T, args []string) (updatedArgs []string, cleanup func()) {
 	// Create test filesystem and chart directory
 	fs, chartDir := setupTestFS(t)
 	AppFs = fs // Set global FS for the command execution
@@ -105,15 +105,15 @@ func setupDryRunTestEnvironment(t *testing.T, args []string) ([]string, func()) 
 	}
 
 	// Prepend the chart path argument dynamically
-	updatedArgs := append([]string{"--chart-path", chartDir}, args...)
+	updatedArgs = append([]string{"--chart-path", chartDir}, args...)
 
 	// Create cleanup function
-	cleanupFunc := func() {
+	cleanup = func() {
 		AppFs = afero.NewOsFs()               // Restore global FS
 		currentGeneratorFactory = origFactory // Restore original factory
 	}
 
-	return updatedArgs, cleanupFunc
+	return updatedArgs, cleanup
 }
 
 // assertExitCodeError checks if an error matches the expected ExitCodeError
@@ -220,7 +220,7 @@ func TestOverrideCommand_GeneratorError(t *testing.T) {
 	oldFactory := currentGeneratorFactory
 	defer func() { currentGeneratorFactory = oldFactory }()
 
-	currentGeneratorFactory = func(chartPath, targetRegistry string, sourceRegistries, excludeRegistries []string, pathStrategy strategy.PathStrategy, mappings *registry.Mappings, strict bool, threshold int, loader analysis.ChartLoader, includePatterns, excludePatterns, knownPaths []string) GeneratorInterface {
+	currentGeneratorFactory = func(_, _ string, _, _ []string, _ strategy.PathStrategy, _ *registry.Mappings, _ bool, _ int, _ analysis.ChartLoader, _, _, _ []string) GeneratorInterface {
 		return mockGen
 	}
 
@@ -272,7 +272,7 @@ func setupTestEnvironmentVars(t *testing.T, envVars map[string]string) func() {
 }
 
 // setupTestMockGenerator sets up a mock generator for tests
-func setupTestMockGenerator(t *testing.T, mockGeneratorFunc func() (*override.File, error)) func() {
+func setupTestMockGenerator(_ *testing.T, mockGeneratorFunc func() (*override.File, error)) func() {
 	if mockGeneratorFunc == nil {
 		return func() {}
 	}
@@ -282,16 +282,7 @@ func setupTestMockGenerator(t *testing.T, mockGeneratorFunc func() (*override.Fi
 	mockGen.On("Generate").Return(result, err)
 
 	originalFactory := currentGeneratorFactory // Store original to restore later
-	currentGeneratorFactory = func(
-		chartPath, targetRegistry string,
-		sourceRegistries, excludeRegistries []string,
-		pathStrategy strategy.PathStrategy,
-		mappings *registry.Mappings,
-		strict bool,
-		threshold int,
-		loader analysis.ChartLoader,
-		includePatterns, excludePatterns, knownPaths []string,
-	) GeneratorInterface {
+	currentGeneratorFactory = func(_, _ string, _, _ []string, _ strategy.PathStrategy, _ *registry.Mappings, _ bool, _ int, _ analysis.ChartLoader, _, _, _ []string) GeneratorInterface {
 		return mockGen
 	}
 
@@ -303,7 +294,7 @@ func setupTestMockGenerator(t *testing.T, mockGeneratorFunc func() (*override.Fi
 
 // setupOverrideTestEnvironment encapsulates the common setup logic for override command tests.
 // It returns the test directory path, the potentially modified arguments, and a cleanup function.
-func setupOverrideTestEnvironment(t *testing.T, tt struct {
+func setupOverrideTestEnvironment(t *testing.T, tt *struct {
 	name              string
 	args              []string
 	mockGeneratorFunc func() (*override.File, error)
@@ -312,10 +303,10 @@ func setupOverrideTestEnvironment(t *testing.T, tt struct {
 	stdErrContains    string
 	setupEnv          map[string]string
 	postCheck         func(t *testing.T, testDir string)
-}) (string, []string, func()) {
-	testDir := t.TempDir()
+}) (testDir string, currentArgs []string, cleanup func()) {
+	testDir = t.TempDir()
 	AppFs = afero.NewOsFs() // Use real FS for file operations
-	currentArgs := make([]string, len(tt.args))
+	currentArgs = make([]string, len(tt.args))
 	copy(currentArgs, tt.args)
 
 	// If test case has output file, modify args to use testDir
@@ -331,7 +322,7 @@ func setupOverrideTestEnvironment(t *testing.T, tt struct {
 	envCleanup := setupTestEnvironmentVars(t, tt.setupEnv)
 
 	// Create combined cleanup function
-	cleanup := func() {
+	cleanup = func() {
 		generatorCleanup()
 		envCleanup()
 		if err := os.RemoveAll(testDir); err != nil {
@@ -522,7 +513,25 @@ func TestOverrideCmdExecution(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup test environment using the helper
-			testDir, currentArgs, cleanup := setupOverrideTestEnvironment(t, tt)
+			testDir, currentArgs, cleanup := setupOverrideTestEnvironment(t, &struct {
+				name              string
+				args              []string
+				mockGeneratorFunc func() (*override.File, error)
+				expectErr         bool
+				stdOutContains    string
+				stdErrContains    string
+				setupEnv          map[string]string
+				postCheck         func(t *testing.T, testDir string)
+			}{
+				name:              tt.name,
+				args:              tt.args,
+				mockGeneratorFunc: tt.mockGeneratorFunc,
+				expectErr:         tt.expectErr,
+				stdOutContains:    tt.stdOutContains,
+				stdErrContains:    tt.stdErrContains,
+				setupEnv:          tt.setupEnv,
+				postCheck:         tt.postCheck,
+			})
 			defer cleanup() // Ensure test directory is cleaned up
 
 			// Execute command
@@ -591,12 +600,7 @@ func TestOverrideCommand_Success(t *testing.T) {
 	defer func() { currentGeneratorFactory = originalFactory }()
 
 	// Replace the generator factory with our mock
-	currentGeneratorFactory = func(
-		_ string, _ string, _ []string, _ []string,
-		_ strategy.PathStrategy, _ *registry.Mappings, _ bool, _ int,
-		_ analysis.ChartLoader,
-		_ []string, _ []string, _ []string,
-	) GeneratorInterface {
+	currentGeneratorFactory = func(_, _ string, _, _ []string, _ strategy.PathStrategy, _ *registry.Mappings, _ bool, _ int, _ analysis.ChartLoader, _, _, _ []string) GeneratorInterface {
 		return mockGen
 	}
 
@@ -665,15 +669,15 @@ func TestOverrideCommand_Success(t *testing.T) {
 }
 
 // setupDryRunTest prepares the test environment for dry run testing
-func setupDryRunTest(t *testing.T) (afero.Fs, string, func(), *override.File) {
+func setupDryRunTest(t *testing.T) (fs afero.Fs, chartDir string, cleanup func(), overrideFile *override.File) {
 	// Set up memory filesystem with proper cleanup
-	fs, chartDir, cleanup := setupMemoryFSContext(t)
+	fs, chartDir, cleanup = setupMemoryFSContext(t)
 
 	// Create the test chart
 	require.NoError(t, createDummyChart(fs, chartDir))
 
 	// Create override file for testing
-	overrideFile := &override.File{
+	overrideFile = &override.File{
 		ChartPath: chartDir,
 		Overrides: map[string]interface{}{
 			"image": map[string]interface{}{
@@ -698,17 +702,12 @@ func setupDryRunTest(t *testing.T) (afero.Fs, string, func(), *override.File) {
 }
 
 // setupMockGenerator sets up the mock generator and returns a cleanup function
-func setupMockGenerator(t *testing.T, overrideFile *override.File) func() {
+func setupMockGenerator(_ *testing.T, overrideFile *override.File) func() {
 	mockGen := &mockGenerator{}
 	mockGen.On("Generate").Return(overrideFile, nil)
 
 	originalFactory := currentGeneratorFactory
-	currentGeneratorFactory = func(
-		_ string, _ string, _ []string, _ []string,
-		_ strategy.PathStrategy, _ *registry.Mappings, _ bool, _ int,
-		_ analysis.ChartLoader,
-		_ []string, _ []string, _ []string,
-	) GeneratorInterface {
+	currentGeneratorFactory = func(_, _ string, _, _ []string, _ strategy.PathStrategy, _ *registry.Mappings, _ bool, _ int, _ analysis.ChartLoader, _, _, _ []string) GeneratorInterface {
 		return mockGen
 	}
 
