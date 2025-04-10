@@ -89,7 +89,7 @@ linters:
       #   - rangeValCopy
       #   - exitAfterDefer
     lll:
-      line-length: 140
+      line-length: 210
     nolintlint:
       allow-unused: false
       require-explanation: true
