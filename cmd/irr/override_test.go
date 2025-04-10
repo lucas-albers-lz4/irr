@@ -628,7 +628,7 @@ func TestOverrideCommand_Success(t *testing.T) {
 	defer func() { currentGeneratorFactory = originalFactory }()
 
 	// Replace the generator factory with our mock
-	currentGeneratorFactory = func(_, _ string, _, _ []string, _ strategy.PathStrategy, _ *registry.Mappings, _ bool, _ int, _ analysis.ChartLoader, _, _, _ []string) GeneratorInterface {
+	currentGeneratorFactory = func(_, _ string, _, _ []string, _ strategy.PathStrategy, _ *registry.Mappings, _ map[string]string, _ bool, _ int, _ analysis.ChartLoader, _, _, _ []string) GeneratorInterface {
 		return mockGen
 	}
 
@@ -743,7 +743,7 @@ func setupMockGenerator(_ *testing.T, overrideFile *override.File) func() {
 		_ []string, _ []string, _ []string,
 	) GeneratorInterface {
 		mock := &mockGenerator{}
-		mock.On("Generate").Return(&override.File{Overrides: map[string]interface{}{}}, nil)
+		mock.On("Generate").Return(overrideFile, nil)
 		return mock
 	}
 	return func() { currentGeneratorFactory = originalFactory }

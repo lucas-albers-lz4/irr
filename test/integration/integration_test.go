@@ -391,6 +391,55 @@ quay.io: quaycustom
 	// NOTE: Removed assert.Contains checks on stdout as they contradicted the expected override values.
 }
 
+func TestConfigFileMappings(t *testing.T) {
+	harness := NewTestHarness(t)
+	defer harness.Cleanup()
+
+	// Create a test config file with mappings
+	configContent := `
+docker.io: my-registry.io/custom/nginx-mirror
+quay.io: my-registry.io/monitoring/prometheus
+`
+	configFilePath := filepath.Join(harness.tempDir, "test-config.yaml")
+	err := os.WriteFile(configFilePath, []byte(configContent), 0o600)
+	require.NoError(t, err, "Failed to write temp config file")
+
+	harness.SetupChart(testutil.GetChartPath("minimal-test"))
+	harness.SetRegistries("target.registry.com", []string{"docker.io", "quay.io"})
+
+	args := []string{
+		"override",
+		"--chart-path", harness.chartPath,
+		"--target-registry", harness.targetReg,
+		"--source-registries", strings.Join(harness.sourceRegs, ","),
+		"--config", configFilePath,
+		"--output-file", harness.overridePath,
+	}
+
+	output, err := harness.ExecuteIRR(args...)
+	require.NoError(t, err, "irr command with config file failed. Output: %s", output)
+
+	overrides, err := harness.getOverrides()
+	require.NoError(t, err, "Failed to read/parse generated overrides file")
+
+	// Check that the specific image mappings from the config file were applied
+	imageData, ok := overrides["image"].(map[string]interface{})
+	require.True(t, ok, "Failed to find map for overrides[\"image\"]")
+
+	// The config mapping should override the normal processing for nginx
+	// Instead of converting to target.registry.com/dockerio/library/nginx
+	// It should use the mapping specified in the config file for docker.io
+	fullImageValue, ok := imageData["repository"].(string)
+	assert.True(t, ok, "Failed to find repository for image")
+	// Since we're now mapping the entire registry 'docker.io', the repository path will
+	// include the 'library/nginx' part from the original image
+	assert.Equal(t, "custom/nginx-mirror/dockerio/library/nginx", fullImageValue, "Repository should include mapping plus image path")
+
+	registryValue, ok := imageData["registry"].(string)
+	assert.True(t, ok, "Failed to find registry for image")
+	assert.Equal(t, "my-registry.io", registryValue, "Registry should match the config mapping")
+}
+
 func TestMinimalGitImageOverride(t *testing.T) {
 	harness := NewTestHarness(t)
 	defer harness.Cleanup()
@@ -800,7 +849,6 @@ func TestCertManagerComponents(t *testing.T) {
 				found := false
 				for actualRepo := range foundImageRepos {
 					if actualRepo == expectedRepo {
-						found = true
 						t.Logf("SUCCESS: Found expected image %s", expectedRepo)
 						break
 					}
