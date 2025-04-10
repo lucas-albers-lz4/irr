@@ -342,6 +342,120 @@ func setupOverrideTestEnvironment(t *testing.T, tt struct {
 	return testDir, currentArgs, cleanup
 }
 
+// createSuccessTestCase creates a test case for successful command execution
+func createSuccessTestCase(args []string, overrideValues map[string]interface{}, expectedOutput string) struct {
+	name              string
+	args              []string
+	mockGeneratorFunc func() (*override.File, error)
+	expectErr         bool
+	stdOutContains    string
+	stdErrContains    string
+	setupEnv          map[string]string
+	postCheck         func(t *testing.T, testDir string)
+} {
+	return struct {
+		name              string
+		args              []string
+		mockGeneratorFunc func() (*override.File, error)
+		expectErr         bool
+		stdOutContains    string
+		stdErrContains    string
+		setupEnv          map[string]string
+		postCheck         func(t *testing.T, testDir string)
+	}{
+		name: "success execution to stdout",
+		args: args,
+		mockGeneratorFunc: func() (*override.File, error) {
+			return &override.File{
+				Overrides: overrideValues,
+			}, nil
+		},
+		expectErr:      false,
+		stdOutContains: expectedOutput,
+		stdErrContains: "",
+		setupEnv:       map[string]string{"IRR_SKIP_HELM_VALIDATION": "true"},
+		postCheck:      nil,
+	}
+}
+
+// createErrorTestCase creates a test case for command execution that should result in an error
+func createErrorTestCase(args []string, errorMsg string) struct {
+	name              string
+	args              []string
+	mockGeneratorFunc func() (*override.File, error)
+	expectErr         bool
+	stdOutContains    string
+	stdErrContains    string
+	setupEnv          map[string]string
+	postCheck         func(t *testing.T, testDir string)
+} {
+	return struct {
+		name              string
+		args              []string
+		mockGeneratorFunc func() (*override.File, error)
+		expectErr         bool
+		stdOutContains    string
+		stdErrContains    string
+		setupEnv          map[string]string
+		postCheck         func(t *testing.T, testDir string)
+	}{
+		name: "generator returns error",
+		args: args,
+		mockGeneratorFunc: func() (*override.File, error) {
+			return nil, fmt.Errorf(errorMsg)
+		},
+		expectErr:      true,
+		stdErrContains: "failed to process chart: " + errorMsg,
+		setupEnv:       map[string]string{"IRR_SKIP_HELM_VALIDATION": "true"},
+		postCheck:      nil,
+	}
+}
+
+// createOutputFileTestCase creates a test case for checking dry run behavior with output file
+func createOutputFileTestCase(args []string) struct {
+	name              string
+	args              []string
+	mockGeneratorFunc func() (*override.File, error)
+	expectErr         bool
+	stdOutContains    string
+	stdErrContains    string
+	setupEnv          map[string]string
+	postCheck         func(t *testing.T, testDir string)
+} {
+	return struct {
+		name              string
+		args              []string
+		mockGeneratorFunc func() (*override.File, error)
+		expectErr         bool
+		stdOutContains    string
+		stdErrContains    string
+		setupEnv          map[string]string
+		postCheck         func(t *testing.T, testDir string)
+	}{
+		name: "success with output file (flow check)",
+		args: args,
+		mockGeneratorFunc: func() (*override.File, error) {
+			return &override.File{
+				Overrides: map[string]interface{}{
+					"image": map[string]interface{}{
+						"repository": "mock-target.com/dockerio/nginx",
+					},
+				},
+			}, nil
+		},
+		expectErr:      false,
+		stdOutContains: "--- Dry Run: Generated Overrides ---",
+		stdErrContains: "",
+		setupEnv:       map[string]string{"IRR_SKIP_HELM_VALIDATION": "true"},
+		postCheck: func(t *testing.T, testDir string) {
+			outputPath := filepath.Join(testDir, "test-output.yaml")
+			t.Logf("Checking if override file exists: %s", outputPath)
+			_, err := os.Stat(outputPath)
+			assert.True(t, os.IsNotExist(err), "Override file should NOT exist in dry run mode")
+		},
+	}
+}
+
 // defineOverrideCmdExecutionTests returns test cases for TestOverrideCmdExecution
 func defineOverrideCmdExecutionTests() []struct {
 	name              string
@@ -360,6 +474,30 @@ func defineOverrideCmdExecutionTests() []struct {
 		"--source-registries", "docker.io",
 	}
 
+	// Create test cases using helper functions
+	successCase := createSuccessTestCase(
+		defaultArgs,
+		map[string]interface{}{
+			"image": map[string]interface{}{
+				"repository": "mock-target.com/dockerio/nginx",
+			},
+		},
+		"repository: mock-target.com/dockerio/nginx",
+	)
+
+	dryRunCase := createSuccessTestCase(
+		append(defaultArgs, "--dry-run"),
+		map[string]interface{}{
+			"image": "dry-run-image",
+		},
+		"image: dry-run-image",
+	)
+	dryRunCase.name = "success with dry run"
+
+	errorCase := createErrorTestCase(defaultArgs, "mock generator error")
+
+	outputFileCase := createOutputFileTestCase(defaultArgs)
+
 	return []struct {
 		name              string
 		args              []string
@@ -370,64 +508,10 @@ func defineOverrideCmdExecutionTests() []struct {
 		setupEnv          map[string]string
 		postCheck         func(t *testing.T, testDir string)
 	}{
-		{
-			name: "success execution to stdout",
-			args: defaultArgs,
-			mockGeneratorFunc: func() (*override.File, error) {
-				return &override.File{
-					Overrides: map[string]interface{}{"image": map[string]interface{}{"repository": "mock-target.com/dockerio/nginx"}},
-				}, nil
-			},
-			expectErr:      false,
-			stdOutContains: "repository: mock-target.com/dockerio/nginx",
-			stdErrContains: "",
-			setupEnv:       map[string]string{"IRR_SKIP_HELM_VALIDATION": "true"},
-			postCheck:      nil,
-		},
-		{
-			name: "success with dry run",
-			args: append(defaultArgs, "--dry-run"),
-			mockGeneratorFunc: func() (*override.File, error) {
-				return &override.File{
-					Overrides: map[string]interface{}{"image": "dry-run-image"},
-				}, nil
-			},
-			expectErr:      false,
-			stdOutContains: "image: dry-run-image",
-			stdErrContains: "",
-			setupEnv:       map[string]string{"IRR_SKIP_HELM_VALIDATION": "true"},
-			postCheck:      nil,
-		},
-		{
-			name: "generator returns error",
-			args: defaultArgs,
-			mockGeneratorFunc: func() (*override.File, error) {
-				return nil, fmt.Errorf("mock generator error")
-			},
-			expectErr:      true,
-			stdErrContains: "failed to process chart: mock generator error",
-			setupEnv:       map[string]string{"IRR_SKIP_HELM_VALIDATION": "true"},
-			postCheck:      nil,
-		},
-		{
-			name: "success with output file (flow check)",
-			args: defaultArgs,
-			mockGeneratorFunc: func() (*override.File, error) {
-				return &override.File{
-					Overrides: map[string]interface{}{"image": map[string]interface{}{"repository": "mock-target.com/dockerio/nginx"}},
-				}, nil
-			},
-			expectErr:      false,
-			stdOutContains: "--- Dry Run: Generated Overrides ---",
-			stdErrContains: "",
-			setupEnv:       map[string]string{"IRR_SKIP_HELM_VALIDATION": "true"},
-			postCheck: func(t *testing.T, testDir string) {
-				outputPath := filepath.Join(testDir, "test-output.yaml")
-				t.Logf("Checking if override file exists: %s", outputPath)
-				_, err := os.Stat(outputPath)
-				assert.True(t, os.IsNotExist(err), "Override file should NOT exist in dry run mode")
-			},
-		},
+		successCase,
+		dryRunCase,
+		errorCase,
+		outputFileCase,
 	}
 }
 

@@ -82,7 +82,7 @@
 **Current Status:**
 - All tests are now passing
 - Making steady progress on `funlen` issues by refactoring test functions and core code
-- Reduced remaining `funlen` issues in cmd/irr package from 7 to 4
+- Reduced remaining `funlen` issues in cmd/irr package from 7 to 3
 
 **Linting Plan:**
 1. **Medium Priority Issues (Current Focus):**
@@ -102,6 +102,9 @@
       - [✓] Refactored `TestOverrideCmdArgs` in `cmd/irr/override_test.go` by extracting helper functions:
          - Added `setupDryRunTestEnvironment` for test environment setup
          - Added `assertExitCodeError` for error checking
+      - [✓] Refactored `setupOverrideTestEnvironment` in `cmd/irr/override_test.go` by extracting helper functions:
+         - Added `setupTestEnvironmentVars` for environment variable setup
+         - Added `setupTestMockGenerator` for mock generator setup
       - [ ] Continue refactoring remaining long test functions
       - [ ] Refactor complex functions exceeding 40 statements
    - [ ] `gocritic`: Fix style issues including commented-out code and if-else chains
@@ -120,6 +123,5 @@
 
 **Next Implementation:**
 - Continue refactoring remaining test functions with funlen issues:
-  - `setupOverrideTestEnvironment` in `cmd/irr/override_test.go`
   - `defineOverrideCmdExecutionTests` in `cmd/irr/override_test.go`
   - `TestOverrideCommand_Success` in `cmd/irr/override_test.go`
