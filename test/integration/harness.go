@@ -20,15 +20,17 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-//nolint:goerr113 // Simple error for testing
-
 // Constants
+//
+//nolint:goerr113 // Simple error for testing
 const (
 	// defaultDirPerm = 0o750 // REMOVED UNUSED
 	// defaultFilePerm defines the default file permissions (rw-------)
 	defaultFilePerm = 0o600
 	// DefaultTargetRegistry is the registry used in tests when not specified.
 	DefaultTargetRegistry = "test-target.local"
+	// TestDirPermissions represents directory permissions (rwxr-xr-x)
+	TestDirPermissions = 0o755 // Used for bin directories
 )
 
 // Global variables for build optimization
@@ -728,7 +730,7 @@ func (h *TestHarness) BuildIRR() {
 	h.t.Logf("Building irr binary at %s", binPath)
 
 	// Ensure bin directory exists
-	err := os.MkdirAll(filepath.Join(rootDir, "bin"), 0755) // #nosec G301 -- Test code creating temp build dir, 0755 is acceptable here.
+	err := os.MkdirAll(filepath.Join(rootDir, "bin"), TestDirPermissions) // #nosec G301 -- Test code creating temp build dir, 0755 is acceptable here.
 	require.NoError(h.t, err)
 
 	// #nosec G204 -- Building the project's own binary is safe.
@@ -765,7 +767,7 @@ func buildIrrBinary() error { // Removed t *testing.T argument
 
 	binDir := filepath.Join(rootDir, "bin")
 	// Use 0755 for bin directory as it needs execute permissions
-	err = os.MkdirAll(binDir, 0755) // #nosec G301
+	err = os.MkdirAll(binDir, TestDirPermissions) // #nosec G301
 	if err != nil {
 		return fmt.Errorf("failed to create bin directory %s: %w", binDir, err)
 	}

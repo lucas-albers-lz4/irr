@@ -119,10 +119,15 @@ func IsValidRepository(repo string) bool {
 // Tags are limited to 128 characters and can contain alphanumeric characters,
 // underscores, periods, and hyphens.
 func IsValidTag(tag string) bool {
+	const (
+		// MaxTagLength is the maximum allowed length for a container image tag
+		MaxTagLength = 128
+	)
+
 	if tag == "" {
 		return false // Tag cannot be empty
 	}
-	if len(tag) > 128 {
+	if len(tag) > MaxTagLength {
 		return false // Tag length exceeds limit
 	}
 	// Pattern for valid tags: word characters (alphanumeric + underscore) plus period and hyphen.

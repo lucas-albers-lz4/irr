@@ -25,6 +25,13 @@ import (
 
 // Constants
 
+const (
+	// PercentMultiplier is used for percentage calculations
+	PercentMultiplier = 100
+	// PrivateFilePermissions represents secure file permissions (rw-------)
+	PrivateFilePermissions = 0o600
+)
+
 // --- Local Error Definitions ---
 var (
 	ErrUnsupportedStructure = errors.New("unsupported structure found")
@@ -429,10 +436,14 @@ func (g *Generator) Generate() (*override.File, error) {
 		}
 	}
 
-	// Check threshold
+	// Calculate success rate if eligible images were found
 	if eligibleCount > 0 {
-		successRate := (processedCount * 100) / eligibleCount
-		if successRate < g.threshold {
+		successRate := (processedCount * PercentMultiplier) / eligibleCount
+		debug.Printf("Success Rate: %d%% of eligible images processed successfully (%d of %d)",
+			successRate, processedCount, eligibleCount)
+
+		// Check threshold if set
+		if g.threshold > 0 && successRate < g.threshold {
 			return nil, &ThresholdError{
 				Threshold:   g.threshold,
 				ActualRate:  successRate,

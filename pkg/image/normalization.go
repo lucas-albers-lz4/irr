@@ -11,6 +11,7 @@ import (
 const (
 	defaultRegistry  = "docker.io"
 	libraryNamespace = "library"
+	defaultTag       = "latest"
 )
 
 // Define a simple regex to check if a string looks like a potential port number
@@ -153,7 +154,7 @@ func NormalizeImageReference(ref *Reference) {
 
 	// 2. Default Tag (only if no digest)
 	if ref.Tag == "" && ref.Digest == "" {
-		ref.Tag = "latest"
+		ref.Tag = defaultTag
 		debug.Printf("Normalized: Tag defaulted to latest")
 	}
 

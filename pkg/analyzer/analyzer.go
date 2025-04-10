@@ -1,7 +1,12 @@
+// Package analyzer provides functionality for analyzing Helm charts
+// and identifying container image references within them.
+// It supports both structured and unstructured image references,
+// with a focus on identifying and classifying patterns.
 package analyzer
 
 import (
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"strings"
 
@@ -25,10 +30,15 @@ type ImageStructure struct {
 	Tag        string `json:"tag,omitempty"`
 }
 
-// AnalyzerConfig holds configuration for the analysis process.
-type AnalyzerConfig struct {
-	IncludePatternMatcher *PatternMatcher // Optional: Regex for paths to include
-	ExcludePatternMatcher *PatternMatcher // Optional: Regex for paths to exclude
+// Config holds configuration options for the Analyzer.
+// It allows customizing the analysis process through configuration settings.
+type Config struct {
+	// IncludePatterns are glob patterns for paths to include during analysis
+	IncludePatterns []string
+	// ExcludePatterns are glob patterns for paths to exclude from analysis
+	ExcludePatterns []string
+	// KnownPaths are specific dot-notation paths known to contain images
+	KnownPaths []string
 }
 
 // PatternMatcher wraps a compiled regex for matching paths.
@@ -45,7 +55,7 @@ func (pm *PatternMatcher) Match(path string) bool {
 }
 
 // AnalyzeHelmValues analyzes Helm values content for image patterns.
-func AnalyzeHelmValues(values map[string]interface{}, config *AnalyzerConfig) ([]ImagePattern, error) {
+func AnalyzeHelmValues(values map[string]interface{}, config *Config) ([]ImagePattern, error) {
 	log.Debugf("Starting Helm values analysis")
 	patterns := []ImagePattern{}
 	analyzeValuesRecursive("", values, &patterns, config) // Start recursion with root path ""
@@ -79,7 +89,7 @@ func aggregatePatterns(patterns []ImagePattern) []ImagePattern {
 }
 
 // analyzeValuesRecursive performs a deep traversal of the values structure.
-func analyzeValuesRecursive(path string, value interface{}, patterns *[]ImagePattern, config *AnalyzerConfig) {
+func analyzeValuesRecursive(path string, value interface{}, patterns *[]ImagePattern, config *Config) {
 	// Handle nil values gracefully
 	if value == nil {
 		log.Debugf("Skipping nil value at path '%s'", path)
@@ -119,7 +129,7 @@ func analyzeValuesRecursive(path string, value interface{}, patterns *[]ImagePat
 }
 
 // analyzeMapValue handles the analysis logic for map values.
-func analyzeMapValue(path string, val reflect.Value, patterns *[]ImagePattern, config *AnalyzerConfig) {
+func analyzeMapValue(path string, val reflect.Value, patterns *[]ImagePattern, config *Config) {
 	// Check if the map key type is string, required for Helm values traversal.
 	if val.Type().Key().Kind() != reflect.String {
 		log.Warnf("Skipping map with non-string keys at path '%s'. Key type: %s", path, val.Type().Key().Kind())
@@ -213,7 +223,7 @@ func analyzeMapValue(path string, val reflect.Value, patterns *[]ImagePattern, c
 }
 
 // analyzeSliceValue handles the analysis logic for slice and array values.
-func analyzeSliceValue(path string, val reflect.Value, patterns *[]ImagePattern, config *AnalyzerConfig) {
+func analyzeSliceValue(path string, val reflect.Value, patterns *[]ImagePattern, config *Config) {
 	log.Debugf("Traversing slice/array at path '%s' (Length: %d)", path, val.Len())
 	for i := 0; i < val.Len(); i++ {
 		// Generate path with index, e.g., "ports[0]"
@@ -223,7 +233,7 @@ func analyzeSliceValue(path string, val reflect.Value, patterns *[]ImagePattern,
 }
 
 // analyzeStringValue handles the analysis logic for string values.
-func analyzeStringValue(path string, val reflect.Value, patterns *[]ImagePattern, config *AnalyzerConfig) {
+func analyzeStringValue(path string, val reflect.Value, patterns *[]ImagePattern, config *Config) {
 	strValue := val.String()
 	log.Debugf("Analyzing string at path '%s'. Value: '%s'", path, strValue)
 
@@ -253,8 +263,8 @@ func analyzeStringValue(path string, val reflect.Value, patterns *[]ImagePattern
 	isTemplate := strings.Contains(strValue, "{{") && strings.Contains(strValue, "}}")
 
 	// Check explicit include/exclude patterns
-	isIncluded := config == nil || config.IncludePatternMatcher == nil || config.IncludePatternMatcher.Match(path)
-	isExcluded := config != nil && config.ExcludePatternMatcher != nil && config.ExcludePatternMatcher.Match(path)
+	isIncluded := config == nil || config.IncludePatterns == nil || len(config.IncludePatterns) == 0 || matchAny(path, config.IncludePatterns)
+	isExcluded := config != nil && config.ExcludePatterns != nil && len(config.ExcludePatterns) > 0 && matchAny(path, config.ExcludePatterns)
 
 	log.Debugf("String Check - Path: '%s', isImagePathHeuristic: %t, isTemplate: %t, isIncluded: %t, isExcluded: %t", path, isImagePathHeuristic, isTemplate, isIncluded, isExcluded)
 
@@ -276,7 +286,7 @@ func analyzeStringValue(path string, val reflect.Value, patterns *[]ImagePattern
 }
 
 // analyzeInterfaceValue handles the analysis logic for interface values.
-func analyzeInterfaceValue(path string, val reflect.Value, patterns *[]ImagePattern, config *AnalyzerConfig) {
+func analyzeInterfaceValue(path string, val reflect.Value, patterns *[]ImagePattern, config *Config) {
 	if val.IsValid() && !val.IsNil() {
 		innerValue := val.Interface()
 		innerReflectValue := reflect.ValueOf(innerValue)
@@ -306,3 +316,14 @@ func analyzeInterfaceValue(path string, val reflect.Value, patterns *[]ImagePatt
 // For example, pattern matching logic implementation.
 
 // Consider adding functions to load/compile regex patterns for Include/Exclude config.
+
+// matchAny checks if a path matches any of the provided patterns.
+// It uses simple glob matching with path.Match.
+func matchAny(path string, patterns []string) bool {
+	for _, pattern := range patterns {
+		if match, _ := filepath.Match(pattern, path); match {
+			return true
+		}
+	}
+	return false
+}

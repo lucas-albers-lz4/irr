@@ -17,6 +17,11 @@ var (
 	ErrNotImageString = errors.New("string does not appear to be an image reference")
 )
 
+const (
+	// MaxComponents is the maximum number of components to split an image path into
+	MaxComponents = 2
+)
+
 // Detector handles the discovery of image references within chart values.
 //
 // NOTE: The accuracy of image detection heavily relies on the pkg/image/parser module.
@@ -404,7 +409,7 @@ func (d *Detector) createImageReference(repoStr, regStr, tagStr, digestStr strin
 	} else {
 		// No explicit registry. Check if repoStr contains a potential registry prefix.
 		hasRegistryPrefix := false
-		if repoParts := strings.SplitN(repoStr, "/", 2); len(repoParts) > 1 {
+		if repoParts := strings.SplitN(repoStr, "/", MaxComponents); len(repoParts) > 1 {
 			firstPart := repoParts[0]
 			if strings.ContainsAny(firstPart, ".:") || firstPart == "localhost" {
 				hasRegistryPrefix = true
@@ -482,6 +487,19 @@ func (d *Detector) tryExtractImageFromMap(m map[string]interface{}, path []strin
 			return nil, true, fmt.Errorf("image map validation failed: repository cannot be empty at path %v", path)
 		}
 		return nil, true, nil
+	}
+
+	// Handle registry prefix that might be part of the repo string
+	if repoStr != "" {
+		// Check if repo string might have registry prefix (contains '/')
+		if repoParts := strings.SplitN(repoStr, "/", MaxComponents); len(repoParts) > 1 {
+			// The first part looks like a registry hostname if it contains dots or ':'
+			// e.g., "docker.io/nginx" or "localhost:5000/myapp"
+			if strings.Contains(repoParts[0], ".") || strings.Contains(repoParts[0], ":") {
+				regStr = repoParts[0]
+				repoStr = repoParts[1]
+			}
+		}
 	}
 
 	// 4. Construct the image reference using createImageReference

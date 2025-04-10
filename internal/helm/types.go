@@ -1,3 +1,5 @@
+// Package helm provides internal utility functions and types for interacting with Helm charts.
+// It serves as a thin wrapper over the upstream Helm libraries.
 package helm
 
 // Values represents the hierarchical structure of Helm values, typically loaded

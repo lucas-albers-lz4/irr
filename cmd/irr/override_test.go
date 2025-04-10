@@ -557,6 +557,7 @@ func assertOverrideTestOutcome(t *testing.T, err error, output string, expectErr
 	}
 }
 
+// TestOverrideCommand_Success tests the successful execution of the override command
 func TestOverrideCommand_Success(t *testing.T) {
 	// Print test identifier to help debug
 	fmt.Println("=== Starting TestOverrideCommand_Success ===")
@@ -621,7 +622,7 @@ func TestOverrideCommand_Success(t *testing.T) {
 	// Direct file write test
 	testContent := []byte("test content")
 	testFile := filepath.Join(chartDir, "test-direct.txt")
-	err := afero.WriteFile(AppFs, testFile, testContent, 0644)
+	err := afero.WriteFile(AppFs, testFile, testContent, FilePermissions)
 	require.NoError(t, err)
 	exists, err := afero.Exists(fs, testFile)
 	require.NoError(t, err, "Failed to check if test file exists")

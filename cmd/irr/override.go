@@ -17,6 +17,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const (
+	// DirPermissions represents directory permissions (rwxr-xr-x)
+	DirPermissions = 0o755
+	// FilePermissions represents file permissions (rw-r--r--)
+	FilePermissions = 0o644
+)
+
 // newOverrideCmd creates the cobra command for the 'override' operation.
 // This command uses centralized exit codes from pkg/exitcodes for consistent error handling:
 // - Input validation failures return codes 1-9 (e.g., ExitMissingRequiredFlag)
@@ -248,13 +255,13 @@ func outputOverrides(cmd *cobra.Command, yamlBytes []byte, outputFile string, dr
 			}
 		}
 
-		// In dry-run mode, don't actually write the file
 		return nil
 	}
 
-	// Normal mode - write to file if specified, otherwise stdout
+	// Output mode - write to a file
 	if outputFile != "" {
-		err := AppFs.MkdirAll(filepath.Dir(outputFile), 0755)
+		// Create the directory if it doesn't exist
+		err := AppFs.MkdirAll(filepath.Dir(outputFile), DirPermissions)
 		if err != nil {
 			return &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitGeneralRuntimeError,
@@ -262,21 +269,25 @@ func outputOverrides(cmd *cobra.Command, yamlBytes []byte, outputFile string, dr
 			}
 		}
 
-		err = afero.WriteFile(AppFs, outputFile, yamlBytes, 0644)
+		// Write the file
+		err = afero.WriteFile(AppFs, outputFile, yamlBytes, FilePermissions)
 		if err != nil {
 			return &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitGeneralRuntimeError,
-				Err:  fmt.Errorf("failed to write overrides to file: %w", err),
+				Err:  fmt.Errorf("failed to write override file: %w", err),
 			}
 		}
-		debug.Printf("Successfully wrote overrides to file: %s", outputFile)
-	} else {
-		// Write to stdout
-		if _, err := fmt.Fprintln(cmd.OutOrStdout(), string(yamlBytes)); err != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitGeneralRuntimeError,
-				Err:  fmt.Errorf("failed to write overrides to stdout: %w", err),
-			}
+
+		fmt.Fprintf(cmd.OutOrStdout(), "Successfully wrote overrides to %s\n", outputFile)
+		return nil
+	}
+
+	// Just output to stdout
+	_, err := fmt.Fprintln(cmd.OutOrStdout(), string(yamlBytes))
+	if err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitGeneralRuntimeError,
+			Err:  fmt.Errorf("failed to write overrides to stdout: %w", err),
 		}
 	}
 

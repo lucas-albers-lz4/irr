@@ -46,17 +46,7 @@ func setupAnalyzeTestFS(t *testing.T) afero.Fs {
 }
 
 // runAnalyzeTestCase executes a single test case for the analyze command.
-func runAnalyzeTestCase(t *testing.T, tt *struct {
-	name              string
-	args              []string
-	mockAnalyzeFunc   func() (*analysis.ChartAnalysis, error)
-	expectErr         bool
-	expectErrArgs     bool
-	stdOutContains    string
-	stdErrContains    string
-	expectFile        string
-	expectFileContent string
-}) {
+func runAnalyzeTestCase(t *testing.T, tt *analyzeTestCase) {
 	// Setup mock for this test case if needed
 	if tt.mockAnalyzeFunc != nil {
 		// Set up mock analyzer
@@ -117,8 +107,8 @@ func runAnalyzeTestCase(t *testing.T, tt *struct {
 	}
 }
 
-// defineAnalyzeTestCases creates and returns test cases for the analyze command tests
-func defineAnalyzeTestCases() []struct {
+// analyzeTestCase defines the structure of a test case for analyze command
+type analyzeTestCase struct {
 	name              string
 	args              []string
 	mockAnalyzeFunc   func() (*analysis.ChartAnalysis, error)
@@ -128,90 +118,127 @@ func defineAnalyzeTestCases() []struct {
 	stdErrContains    string
 	expectFile        string
 	expectFileContent string
-} {
-	return []struct {
-		name              string
-		args              []string
-		mockAnalyzeFunc   func() (*analysis.ChartAnalysis, error)
-		expectErr         bool
-		expectErrArgs     bool
-		stdOutContains    string
-		stdErrContains    string
-		expectFile        string
-		expectFileContent string
-	}{
-		{
-			name:           "no arguments",
-			args:           []string{"analyze"},
-			expectErr:      true,
-			expectErrArgs:  true,
-			stdErrContains: "accepts 1 arg(s), received 0",
+}
+
+// createAnalyzeErrorTestCase creates a test case that expects an argument error
+func createAnalyzeErrorTestCase(name, errorMsg string, args []string, isArgError bool) analyzeTestCase {
+	return analyzeTestCase{
+		name:           name,
+		args:           args,
+		expectErr:      true,
+		expectErrArgs:  isArgError,
+		stdErrContains: errorMsg,
+	}
+}
+
+// createSuccessTextOutputTestCase creates a test case for successful text output
+func createSuccessTextOutputTestCase() analyzeTestCase {
+	return analyzeTestCase{
+		name: "success with text output",
+		args: []string{"analyze", "./fake/chart", "--source-registries", "source.io"},
+		mockAnalyzeFunc: func() (*analysis.ChartAnalysis, error) {
+			return &analysis.ChartAnalysis{
+				ImagePatterns: []analysis.ImagePattern{
+					{Path: "image", Type: analysis.PatternTypeString, Value: "nginx:latest", Count: 1},
+				},
+				GlobalPatterns: []analysis.GlobalPattern{},
+			}, nil
 		},
-		{
-			name:           "missing required flag source-registries",
-			args:           []string{"analyze", "./fake/chart"},
-			expectErr:      true,
-			expectErrArgs:  true,
-			stdErrContains: "required flag(s) \"source-registries\" not set",
+		expectErr:      false,
+		stdOutContains: "Chart Analysis",
+		stdErrContains: "",
+	}
+}
+
+// createSuccessJsonOutputTestCase creates a test case for successful JSON output
+func createSuccessJsonOutputTestCase() analyzeTestCase {
+	return analyzeTestCase{
+		name: "success with json output",
+		args: []string{"analyze", "./fake/chart", "--source-registries", "source.io", "--output", "json"},
+		mockAnalyzeFunc: func() (*analysis.ChartAnalysis, error) {
+			return &analysis.ChartAnalysis{
+				ImagePatterns: []analysis.ImagePattern{
+					{Path: "image", Type: analysis.PatternTypeString, Value: "nginx:latest", Count: 1},
+				},
+			}, nil
 		},
-		{
-			name:           "too many arguments",
-			args:           []string{"analyze", "path1", "path2", "--source-registries", "source.io"},
-			expectErr:      true,
-			expectErrArgs:  true,
-			stdErrContains: "accepts 1 arg(s), received 2",
+		expectErr:      false,
+		stdOutContains: `"Path": "image"`,
+	}
+}
+
+// createSuccessFileOutputTestCase creates a test case for successful file output
+func createSuccessFileOutputTestCase() analyzeTestCase {
+	return analyzeTestCase{
+		name: "success with output file",
+		args: []string{"analyze", "../../test-data/charts/basic", "--source-registries", "source.io", "--output-file", "analyze_test_output.txt"},
+		mockAnalyzeFunc: func() (*analysis.ChartAnalysis, error) {
+			// Provide a simple mock result for the file output test
+			result := analysis.NewChartAnalysis()
+			result.ImagePatterns = append(result.ImagePatterns, analysis.ImagePattern{Path: "some.image", Value: "source.io/test:1.0"})
+			return result, nil
 		},
-		{
-			name: "success with text output",
-			args: []string{"analyze", "./fake/chart", "--source-registries", "source.io"},
-			mockAnalyzeFunc: func() (*analysis.ChartAnalysis, error) {
-				return &analysis.ChartAnalysis{
-					ImagePatterns: []analysis.ImagePattern{
-						{Path: "image", Type: analysis.PatternTypeString, Value: "nginx:latest", Count: 1},
-					},
-					GlobalPatterns: []analysis.GlobalPattern{},
-				}, nil
-			},
-			expectErr:      false,
-			stdOutContains: "Chart Analysis",
-			stdErrContains: "",
+		expectErr:         false,
+		expectFile:        "analyze_test_output.txt",
+		expectFileContent: "{", // Check for start of JSON output
+	}
+}
+
+// createAnalyzerErrorTestCase creates a test case that expects an analyzer error
+func createAnalyzerErrorTestCase() analyzeTestCase {
+	return analyzeTestCase{
+		name: "analyzer returns error",
+		args: []string{"analyze", "./bad/chart", "--source-registries", "source.io"},
+		mockAnalyzeFunc: func() (*analysis.ChartAnalysis, error) {
+			return nil, fmt.Errorf("mock analyze error: chart not found")
 		},
-		{
-			name: "success with json output",
-			args: []string{"analyze", "./fake/chart", "--source-registries", "source.io", "--output", "json"},
-			mockAnalyzeFunc: func() (*analysis.ChartAnalysis, error) {
-				return &analysis.ChartAnalysis{
-					ImagePatterns: []analysis.ImagePattern{
-						{Path: "image", Type: analysis.PatternTypeString, Value: "nginx:latest", Count: 1},
-					},
-				}, nil
-			},
-			expectErr:      false,
-			stdOutContains: `"Path": "image"`,
-		},
-		{
-			name: "success with output file",
-			args: []string{"analyze", "../../test-data/charts/basic", "--source-registries", "source.io", "--output-file", "analyze_test_output.txt"},
-			mockAnalyzeFunc: func() (*analysis.ChartAnalysis, error) {
-				// Provide a simple mock result for the file output test
-				result := analysis.NewChartAnalysis()
-				result.ImagePatterns = append(result.ImagePatterns, analysis.ImagePattern{Path: "some.image", Value: "source.io/test:1.0"})
-				return result, nil
-			},
-			expectErr:         false,
-			expectFile:        "analyze_test_output.txt",
-			expectFileContent: "{", // Check for start of JSON output
-		},
-		{
-			name: "analyzer returns error",
-			args: []string{"analyze", "./bad/chart", "--source-registries", "source.io"},
-			mockAnalyzeFunc: func() (*analysis.ChartAnalysis, error) {
-				return nil, fmt.Errorf("mock analyze error: chart not found")
-			},
-			expectErr:      true,
-			expectErrArgs:  false,
-			stdErrContains: "mock analyze error: chart not found",
-		},
+		expectErr:      true,
+		expectErrArgs:  false,
+		stdErrContains: "mock analyze error: chart not found",
+	}
+}
+
+// defineAnalyzeTestCases creates and returns test cases for the analyze command tests
+func defineAnalyzeTestCases() []analyzeTestCase {
+	// Create error test cases
+	noArgsCase := createAnalyzeErrorTestCase(
+		"no arguments",
+		"accepts 1 arg(s), received 0",
+		[]string{"analyze"},
+		true,
+	)
+
+	missingFlagCase := createAnalyzeErrorTestCase(
+		"missing required flag source-registries",
+		"required flag(s) \"source-registries\" not set",
+		[]string{"analyze", "./fake/chart"},
+		true,
+	)
+
+	tooManyArgsCase := createAnalyzeErrorTestCase(
+		"too many arguments",
+		"accepts 1 arg(s), received 2",
+		[]string{"analyze", "path1", "path2", "--source-registries", "source.io"},
+		true,
+	)
+
+	// Create success test cases
+	textOutputCase := createSuccessTextOutputTestCase()
+	jsonOutputCase := createSuccessJsonOutputTestCase()
+	fileOutputCase := createSuccessFileOutputTestCase()
+
+	// Create analyzer error test case
+	analyzerErrorCase := createAnalyzerErrorTestCase()
+
+	// Return all test cases
+	return []analyzeTestCase{
+		noArgsCase,
+		missingFlagCase,
+		tooManyArgsCase,
+		textOutputCase,
+		jsonOutputCase,
+		fileOutputCase,
+		analyzerErrorCase,
 	}
 }
 
