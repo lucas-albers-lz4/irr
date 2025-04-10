@@ -2,6 +2,7 @@
 package strategy
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/lalbers/irr/pkg/image"
@@ -228,6 +229,131 @@ func TestPrefixSourceRegistryStrategy_GeneratePath_InputVariations(t *testing.T)
 			got, err := s.GeneratePath(tt.imgRef, tt.targetRegistry)
 			assert.NoError(t, err)
 			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// TestFlatStrategy_GeneratePath tests the GeneratePath method of the FlatStrategy
+func TestFlatStrategy_GeneratePath(t *testing.T) {
+	tests := []struct {
+		name           string
+		targetRegistry string
+		imgRef         *image.Reference
+		want           string
+	}{
+		{
+			name:           "simple_repository",
+			targetRegistry: "",
+			imgRef: &image.Reference{
+				Registry:   "quay.io",
+				Repository: "org/repo",
+				Tag:        "latest",
+			},
+			want: "quayio-org-repo",
+		},
+		{
+			name:           "nested_path",
+			targetRegistry: "",
+			imgRef: &image.Reference{
+				Registry:   "docker.io",
+				Repository: "library/nginx/stable",
+				Tag:        "1.21",
+			},
+			want: "dockerio-library-nginx-stable",
+		},
+		{
+			name:           "docker_hub_official_image",
+			targetRegistry: "",
+			imgRef: &image.Reference{
+				Registry:   "docker.io",
+				Repository: "nginx",
+				Tag:        "latest",
+			},
+			want: "dockerio-library-nginx",
+		},
+		{
+			name:           "repository_with_dots",
+			targetRegistry: "",
+			imgRef: &image.Reference{
+				Registry:   "registry.k8s.io",
+				Repository: "ingress-nginx/controller",
+				Tag:        "v1.2.0",
+			},
+			want: "registryk8sio-ingress-nginx-controller",
+		},
+		{
+			name:           "repository_with_port",
+			targetRegistry: "",
+			imgRef: &image.Reference{
+				Registry:   "localhost:5000",
+				Repository: "my/local/image",
+				Tag:        "dev",
+			},
+			want: "localhost-my-local-image",
+		},
+		{
+			name:           "deeply_nested_path",
+			targetRegistry: "",
+			imgRef: &image.Reference{
+				Registry:   "gcr.io",
+				Repository: "google-containers/kubernetes/dashboard",
+				Tag:        "v2.0.0",
+			},
+			want: "gcrio-google-containers-kubernetes-dashboard",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &FlatStrategy{}
+			got, err := s.GeneratePath(tt.imgRef, tt.targetRegistry)
+			assert.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestGetStrategy_WithFlatStrategy(t *testing.T) {
+	tests := []struct {
+		name         string
+		strategyName string
+		mappings     *registry.Mappings
+		wantErr      bool
+		strategyType string
+	}{
+		{
+			name:         "prefix-source-registry strategy",
+			strategyName: "prefix-source-registry",
+			mappings:     nil,
+			wantErr:      false,
+			strategyType: "*strategy.PrefixSourceRegistryStrategy",
+		},
+		{
+			name:         "flat strategy",
+			strategyName: "flat",
+			mappings:     nil,
+			wantErr:      false,
+			strategyType: "*strategy.FlatStrategy",
+		},
+		{
+			name:         "unknown strategy",
+			strategyName: "unknown",
+			mappings:     nil,
+			wantErr:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			strategy, err := GetStrategy(tt.strategyName, tt.mappings)
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Nil(t, strategy)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, strategy)
+				assert.Equal(t, tt.strategyType, fmt.Sprintf("%T", strategy))
+			}
 		})
 	}
 }

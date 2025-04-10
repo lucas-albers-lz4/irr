@@ -106,6 +106,8 @@ Harbor is a commonly used private registry with pull-through cache capabilities.
 
 ## Path Strategies
 
+The tool supports different strategies for structuring the repository paths in the target registry.
+
 ### prefix-source-registry (Default)
 
 This strategy places images under a subdirectory named after the source registry:
@@ -115,7 +117,24 @@ This strategy places images under a subdirectory named after the source registry
 | docker.io/nginx:1.23 | harbor.example.com/dockerio/nginx:1.23 |
 | quay.io/prometheus/node-exporter:v1.3.1 | harbor.example.com/quayio/prometheus/node-exporter:v1.3.1 |
 
-This strategy helps avoid naming conflicts and maintains registry origin information.
+This strategy maintains the hierarchical structure with slashes and helps avoid naming conflicts while preserving registry origin information.
+
+### flat
+
+This strategy flattens the repository path by replacing slashes with dashes:
+
+| Original Image | Transformed Image |
+|----------------|-------------------|
+| docker.io/library/nginx:1.21 | harbor.example.com/dockerio-library-nginx:1.21 |
+| quay.io/prometheus/node-exporter:v1.3.1 | harbor.example.com/quayio-prometheus-node-exporter:v1.3.1 |
+
+This is useful for registries or environments that prefer flat namespaces without slashes.
+
+To enable the flat strategy, use the `--strategy` flag:
+
+```bash
+irr override --chart my-chart --strategy flat --target-registry target-registry.com
+```
 
 ## Supported Image Reference Formats
 

@@ -5,6 +5,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/distribution/reference"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -52,6 +53,40 @@ func SortUnsupportedImages(images []UnsupportedImage) {
 	})
 }
 
+// validateReferenceWithDistribution validates a Reference against the distribution/reference library
+// ensuring that it complies with Docker image naming standards
+func validateReferenceWithDistribution(t *testing.T, ref *Reference) {
+	t.Helper()
+
+	if ref == nil {
+		return // Skip validation for nil references
+	}
+
+	// Reconstruct a fully-qualified reference string
+	var refStr string
+	if ref.Digest != "" {
+		refStr = ref.Registry + "/" + ref.Repository + "@" + ref.Digest
+	} else {
+		refStr = ref.Registry + "/" + ref.Repository + ":" + ref.Tag
+	}
+
+	// Parse with the official library
+	named, err := reference.ParseNormalizedNamed(refStr)
+	require.NoError(t, err, "Reconstructed reference %q should be valid", refStr)
+
+	// Verify components match
+	assert.Equal(t, reference.Domain(named), ref.Registry, "Registry should match distribution/reference parsing")
+	assert.Equal(t, reference.Path(named), ref.Repository, "Repository should match distribution/reference parsing")
+
+	if tagged, ok := named.(reference.Tagged); ok && ref.Tag != "" {
+		assert.Equal(t, tagged.Tag(), ref.Tag, "Tag should match distribution/reference parsing")
+	}
+
+	if digested, ok := named.(reference.Digested); ok && ref.Digest != "" {
+		assert.Equal(t, digested.Digest().String(), ref.Digest, "Digest should match distribution/reference parsing")
+	}
+}
+
 // assertDetectedImages compares two slices of DetectedImage field by field.
 // It assumes the slices have been sorted beforehand.
 func assertDetectedImages(t *testing.T, expected, actual []DetectedImage, checkOriginal bool) {
@@ -73,6 +108,9 @@ func assertDetectedImages(t *testing.T, expected, actual []DetectedImage, checkO
 			if checkOriginal {
 				assert.Equal(t, expected[i].Original, actual[i].Original, fmt.Sprintf("detected[%d] original mismatch", i))
 			}
+
+			// Validate reference against distribution/reference library
+			validateReferenceWithDistribution(t, actual[i].Reference)
 		}
 	} else {
 		assert.Equal(t, expected, actual, "Detected images mismatch (fallback diff)") // Fallback for detailed diff on length mismatch

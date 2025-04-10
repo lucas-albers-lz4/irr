@@ -1,8 +1,9 @@
 package image
 
 import (
-	"fmt"
-	"net"     // Need this for port stripping
+	// Need this for port stripping
+	"net"
+	"regexp"
 	"strings" // Need this for normalization checks
 
 	"github.com/distribution/reference"
@@ -15,112 +16,246 @@ const (
 	LatestTag = "latest"
 )
 
-// Errors
-// var ( // REMOVED - Defined in errors.go
-// 	ErrEmptyImageReference   = errors.New("image reference string cannot be empty") // REMOVED
-// 	ErrTagAndDigestPresent = errors.New("image reference cannot contain both a tag and a digest") // REMOVED
-// ) // REMOVED
+// Regular expression patterns for image reference parsing
+var (
+	digestPattern      = regexp.MustCompile(`^(.+)@(.+)$`)
+	tagPattern         = regexp.MustCompile(`^(.+):([^/]+)$`)
+	repositoryPattern  = regexp.MustCompile(`^(.+)$`)
+	registryRepPattern = regexp.MustCompile(`^(.+)/(.+)$`)
+	referencePattern   = regexp.MustCompile(`^(.+)/(.+)(@(.+))?(:([^/]+))?$`)
+)
 
-// ParseImageReference attempts to parse a raw image string into a structured Reference.
-// It uses the distribution/reference library for the core parsing logic.
-//
-// NOTE: This function currently has known limitations (See TODO.md Phase 3):
-//   - It does not perform necessary pre-normalization (e.g., adding docker.io/library/, latest tag).
-//   - It does not perform post-processing (e.g., stripping :port from registry/domain).
-//   - These omissions cause failures in tests expecting normalized references or specific error types.
-//   - The underlying distribution/reference.ParseNamed function has stricter requirements than
-//     simple string splitting might imply (e.g., canonical repository names).
-func ParseImageReference(imageStr string) (*Reference, error) {
+// ParseImageReference parses an image reference string into its components.
+// It returns a Reference struct or error if the image reference is invalid.
+func ParseImageReference(imageRef string) (*Reference, error) {
 	debug.FunctionEnter("ParseImageReference")
 	defer debug.FunctionExit("ParseImageReference")
-	debug.Printf("Parsing image string: '%s'", imageStr)
 
-	if imageStr == "" {
-		debug.Println("Error: Input string is empty.")
+	if imageRef == "" {
+		debug.Printf("Empty image reference")
 		return nil, ErrEmptyImageReference
 	}
 
-	// --- Parsing using distribution/reference ---
-	// Use ParseNormalizedNamed which handles adding defaults like docker.io/library/ and 'latest' tag implicitly.
-	parsed, err := reference.ParseNormalizedNamed(imageStr)
-	if err != nil {
-		debug.Printf("ParseNormalizedNamed failed for '%s': %v", imageStr, err)
-		// Check for specific known error types if needed, otherwise return a wrapped generic error.
-		// The library might return ErrReferenceInvalidFormat or other specific errors.
-		// Wrapping provides context while allowing checks via errors.Is or errors.As if necessary downstream.
-		// Using fmt.Errorf with %v preserves the original error message details.
-		return nil, fmt.Errorf("failed to parse image reference '%s' using distribution/reference: %w", imageStr, err)
+	debug.Printf("Parsing image reference: %s", imageRef)
+
+	// Try to parse with distribution/reference library first
+	named, err := reference.ParseAnyReference(imageRef)
+	if err == nil {
+		debug.Printf("Successfully parsed with distribution/reference library")
+		result := &Reference{
+			Original: imageRef,
+		}
+
+		// Extract domain and path
+		if namedRef, ok := named.(reference.Named); ok {
+			result.Registry = reference.Domain(namedRef)
+			result.Repository = reference.Path(namedRef)
+		}
+
+		// Extract tag if present
+		var hasTag, hasDigest bool
+		if taggedRef, ok := named.(reference.Tagged); ok {
+			result.Tag = taggedRef.Tag()
+			debug.Printf("Extracted tag: %s", result.Tag)
+			hasTag = true
+		}
+
+		// Extract digest if present
+		if digestedRef, ok := named.(reference.Digested); ok {
+			result.Digest = digestedRef.Digest().String()
+			debug.Printf("Extracted digest: %s", result.Digest)
+			hasDigest = true
+		}
+
+		// Check if both tag and digest are present (conflicting)
+		if hasTag && hasDigest {
+			debug.Printf("Warning: Reference has both tag (%s) and digest (%s)", result.Tag, result.Digest)
+			return nil, ErrTagAndDigestPresent
+		}
+
+		// Strip port from registry domain if present
+		if strings.Contains(result.Registry, ":") {
+			host, _, err := net.SplitHostPort(result.Registry)
+			if err == nil {
+				debug.Printf("Stripping port from registry domain: %s → %s", result.Registry, host)
+				result.Registry = host
+			}
+		}
+
+		// Default tag to latest for repository-only references
+		if result.Tag == "" && result.Digest == "" {
+			result.Tag = LatestTag
+			debug.Printf("Setting default tag: %s", result.Tag)
+		}
+
+		debug.Printf("Parsed reference: %+v", result)
+		return result, nil
 	}
-	debug.Printf("Successfully parsed '%s' with ParseNormalizedNamed: %s", imageStr, parsed.String())
 
-	// --- Build Reference struct ---
-	// Start with the original string and detected status
-	ref := Reference{
-		Original: imageStr,
-		Detected: true,
+	debug.Printf("Distribution/reference library failed to parse: %v. Falling back to regex parsing.", err)
+
+	// Fall back to our regex-based parser for better error messages or special cases
+	return parseWithRegex(imageRef)
+}
+
+// parseWithRegex parses an image reference using regular expressions.
+// This is used as a fallback when the distribution library parser fails.
+func parseWithRegex(imageRef string) (*Reference, error) {
+	debug.Printf("Using regex parser for: %s", imageRef)
+
+	// Quick validation for common invalid formats
+	if strings.Contains(imageRef, "///") || strings.Contains(imageRef, "::") {
+		debug.Printf("Invalid image reference format detected: %s", imageRef)
+		return nil, ErrInvalidImageReference
 	}
 
-	// Extract components using library functions AFTER successful parsing
-	ref.Registry = reference.Domain(parsed)
-	ref.Repository = reference.Path(parsed)
-	debug.Printf("Extracted Domain: %s, Path: %s", ref.Registry, ref.Repository)
-
-	// --- Post-processing: Strip port from registry (Domain) ---
-	// The Domain() function should return the registry *without* the port.
-	// However, let's double-check and handle potential edge cases or library behavior changes.
-	if strings.Contains(ref.Registry, ":") {
-		registryHost, _, errPort := net.SplitHostPort(ref.Registry)
-		if errPort == nil {
-			debug.Printf("Registry '%s' contains a port. Stripping to '%s'.", ref.Registry, registryHost)
-			ref.Registry = registryHost
-		} else {
-			// This case should ideally not happen if Domain() works as expected. Log a warning.
-			debug.Printf("Warning: Could not split host/port for registry '%s' after successful parse: %v. Using original domain value.", ref.Registry, errPort)
+	// Check for invalid repository name characters
+	invalidChars := []string{" ", "@", "$", "?", "#", "\\"}
+	for _, char := range invalidChars {
+		if strings.Contains(imageRef, char) {
+			debug.Printf("Invalid repository name character detected in: %s", imageRef)
+			return nil, ErrInvalidImageReference
 		}
 	}
 
-	// --- Extract Tag and Digest ---
-	var hasTag, hasDigest bool
-	if tagged, ok := parsed.(reference.Tagged); ok {
-		ref.Tag = tagged.Tag()
-		hasTag = true
-		debug.Printf("Extracted Tag: %s", ref.Tag)
-	}
-	if digested, ok := parsed.(reference.Digested); ok {
-		// Important: Digest() returns a digest.Digest object. Use String() for the string representation.
-		ref.Digest = digested.Digest().String()
-		hasDigest = true
-		debug.Printf("Extracted Digest: %s", ref.Digest)
-	}
-
-	// --- Validation: Ensure Tag and Digest are not both present ---
-	// ParseNormalizedNamed might technically allow parsing strings with both,
-	// but semantically, a reference usually shouldn't have both specified this way.
-	if hasTag && hasDigest {
-		debug.Printf("Validation Fail: Both Tag ('%s') and Digest ('%s') are present after parsing '%s'", ref.Tag, ref.Digest, imageStr)
-		// Return the specific exported error for this condition for clear identification.
-		// Pass the conflicting parts for a more informative error message.
-		return nil, fmt.Errorf("%w: reference '%s' contained both tag (%s) and digest (%s)",
-			ErrTagAndDigestPresent, imageStr, ref.Tag, ref.Digest)
+	// Check for invalid digest format
+	if strings.Contains(imageRef, "@") {
+		digestParts := strings.Split(imageRef, "@")
+		if len(digestParts) > 1 {
+			digest := digestParts[1]
+			// Valid digest should be algo:hex where algo is usually sha256
+			if !strings.Contains(digest, ":") || !strings.HasPrefix(digest, "sha256:") {
+				debug.Printf("Invalid digest format detected: %s", digest)
+				return nil, ErrInvalidImageReference
+			}
+		}
 	}
 
-	// --- Post-processing: Add 'latest' tag if missing ---
-	// reference.ParseNormalizedNamed *should* add 'latest' if no tag/digest is present.
-	// However, let's explicitly ensure ref.Tag is set if neither was found.
-	if !hasTag && !hasDigest {
-		// This might occur if ParseNormalizedNamed logic changes or for unusual inputs.
-		debug.Printf("Neither tag nor digest was extracted for '%s' (parsed: %s). Ensuring 'latest' tag.", imageStr, parsed.String())
-		ref.Tag = "latest"
-	} else if hasTag && ref.Tag == "" {
-		// Handle case where it's Tagged, but the tag is empty (shouldn't happen with valid refs)
-		debug.Printf("Warning: Parsed reference '%s' was Tagged but has an empty tag. Setting to 'latest'.", parsed.String())
-		ref.Tag = "latest"
+	// Check for invalid tag format
+	if strings.Contains(imageRef, ":") && !strings.Contains(imageRef, "@") {
+		tagParts := strings.Split(imageRef, ":")
+		if len(tagParts) > 1 {
+			tag := tagParts[len(tagParts)-1]
+			// Quick validation for obviously invalid tag formats
+			if strings.Contains(tag, "/") || strings.Contains(tag, "\\") {
+				debug.Printf("Invalid tag format detected: %s", tag)
+				return nil, ErrInvalidImageReference
+			}
+		}
 	}
 
-	// Repository name validation is handled by reference.ParseNamed.
+	// Special case for repository-only references (no tag or digest)
+	if match := repositoryPattern.FindStringSubmatch(imageRef); match != nil && strings.Count(imageRef, "/") == 0 {
+		debug.Printf("Matched repository-only pattern")
+		return &Reference{
+			Original:   imageRef,
+			Repository: match[1],
+			Tag:        LatestTag,
+		}, nil
+	}
 
-	debug.Printf("Successfully parsed and processed reference: %+v", ref)
-	return &ref, nil
+	// Special case for registry/repository format (no tag or digest)
+	if match := registryRepPattern.FindStringSubmatch(imageRef); match != nil && !strings.Contains(imageRef, ":") && !strings.Contains(imageRef, "@") {
+		debug.Printf("Matched registry/repository pattern")
+		registry := match[1]
+		repository := match[2]
+
+		// Strip port from registry domain if present
+		if strings.Contains(registry, ":") {
+			host, _, err := net.SplitHostPort(registry)
+			if err == nil {
+				debug.Printf("Stripping port from registry domain: %s → %s", registry, host)
+				registry = host
+			}
+		}
+
+		return &Reference{
+			Original:   imageRef,
+			Registry:   registry,
+			Repository: repository,
+			Tag:        LatestTag,
+		}, nil
+	}
+
+	// Try matching against the comprehensive reference pattern
+	if match := referencePattern.FindStringSubmatch(imageRef); match != nil {
+		debug.Printf("Matched comprehensive reference pattern")
+		result := &Reference{
+			Original:   imageRef,
+			Registry:   match[1],
+			Repository: match[2],
+		}
+
+		// Check if both tag and digest are present (conflicting)
+		if match[3] != "" && match[5] != "" {
+			debug.Printf("Both tag and digest present in reference")
+			return nil, ErrTagAndDigestPresent
+		}
+
+		// Extract tag if present
+		if match[3] != "" {
+			result.Tag = match[4]
+			debug.Printf("Extracted tag: %s", result.Tag)
+		}
+
+		// Extract digest if present
+		if match[5] != "" {
+			result.Digest = match[6]
+			debug.Printf("Extracted digest: %s", result.Digest)
+		}
+
+		// Strip port from registry domain if present
+		if strings.Contains(result.Registry, ":") {
+			host, _, err := net.SplitHostPort(result.Registry)
+			if err == nil {
+				debug.Printf("Stripping port from registry domain: %s → %s", result.Registry, host)
+				result.Registry = host
+			}
+		}
+
+		// Default tag to latest for repository-only references if neither tag nor digest is present
+		if result.Tag == "" && result.Digest == "" {
+			result.Tag = LatestTag
+			debug.Printf("Setting default tag: %s", result.Tag)
+		}
+
+		debug.Printf("Regex parsed reference: %+v", result)
+		return result, nil
+	}
+
+	debug.Printf("Failed to match reference against any pattern")
+	return nil, ErrInvalidImageReference
+}
+
+// isValidRepositoryName validates repository name format
+func isValidRepositoryName(name string) bool {
+	// Simple validation - repository name must not be empty
+	// and should not contain invalid characters
+	if name == "" {
+		return false
+	}
+
+	// Check for invalid characters (simplified validation)
+	invalidChars := []string{" ", "\\", "$", "?", "#"}
+	for _, char := range invalidChars {
+		if strings.Contains(name, char) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// isValidTag validates tag format
+func isValidTag(tag string) bool {
+	// Simple validation - tag must not be empty and should match the tag pattern
+	if tag == "" {
+		return false
+	}
+
+	// Tag should only contain alphanumeric characters, periods, dashes, and underscores
+	validTagPattern := regexp.MustCompile(`^[a-zA-Z0-9_][a-zA-Z0-9_.-]*$`)
+	return validTagPattern.MatchString(tag)
 }
 
 // // parseImageReferenceCustom is deprecated. // REMOVED UNUSED

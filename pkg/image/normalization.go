@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/distribution/reference"
 	"github.com/lalbers/irr/pkg/debug"
 )
 
@@ -133,7 +134,7 @@ func IsSourceRegistry(ref *Reference, sourceRegistries, excludeRegistries []stri
 }
 
 // NormalizeImageReference applies normalization rules (default registry, default tag, library namespace)
-// to a parsed ImageReference in place.
+// to a parsed ImageReference in place, leveraging the distribution/reference library.
 func NormalizeImageReference(ref *Reference) {
 	if ref == nil {
 		return
@@ -142,26 +143,73 @@ func NormalizeImageReference(ref *Reference) {
 	debug.FunctionEnter("NormalizeImageReference")
 	defer debug.FunctionExit("NormalizeImageReference")
 
-	// 1. Default Registry
-	if ref.Registry == "" {
-		ref.Registry = defaultRegistry
-		debug.Printf("Normalized: Registry defaulted to %s", defaultRegistry)
+	// We'll use the distribution/reference library for normalization
+	// First, construct a reference string based on current values
+	var refStr string
+	if ref.Digest != "" {
+		refStr = ref.Registry + "/" + ref.Repository + "@" + ref.Digest
+		debug.Printf("Constructed digest-based ref string: %s", refStr)
 	} else {
-		// Normalize existing registry name (lowercase, handle index.docker.io, strip port/suffix)
-		ref.Registry = NormalizeRegistry(ref.Registry)
-		debug.Printf("Normalized: Registry processed to %s", ref.Registry)
+		// If tag is empty, we'll let ParseNormalizedNamed add the default
+		if ref.Tag == "" {
+			refStr = ref.Registry + "/" + ref.Repository
+			debug.Printf("Constructed ref string without tag (for implicit latest): %s", refStr)
+		} else {
+			refStr = ref.Registry + "/" + ref.Repository + ":" + ref.Tag
+			debug.Printf("Constructed tag-based ref string: %s", refStr)
+		}
 	}
 
-	// 2. Default Tag (only if no digest)
-	if ref.Tag == "" && ref.Digest == "" {
-		ref.Tag = defaultTag
-		debug.Printf("Normalized: Tag defaulted to latest")
-	}
+	// Parse using the library's normalization function
+	named, err := reference.ParseNormalizedNamed(refStr)
+	if err != nil {
+		// If there's a parsing error, fall back to manual normalization
+		debug.Printf("Warning: ParseNormalizedNamed failed for '%s': %v", refStr, err)
+		debug.Printf("Falling back to manual normalization")
 
-	// 3. Add "library/" namespace for docker.io if repository has no slashes
-	if ref.Registry == defaultRegistry && !strings.Contains(ref.Repository, "/") {
-		ref.Repository = libraryNamespace + "/" + ref.Repository
-		debug.Printf("Normalized: Added '%s/' prefix to repository: %s", libraryNamespace, ref.Repository)
+		// 1. Default Registry
+		if ref.Registry == "" {
+			ref.Registry = defaultRegistry
+			debug.Printf("Normalized: Registry defaulted to %s", defaultRegistry)
+		} else {
+			// Normalize existing registry name (lowercase, handle index.docker.io, strip port/suffix)
+			ref.Registry = NormalizeRegistry(ref.Registry)
+			debug.Printf("Normalized: Registry processed to %s", ref.Registry)
+		}
+
+		// 2. Default Tag (only if no digest)
+		if ref.Tag == "" && ref.Digest == "" {
+			ref.Tag = defaultTag
+			debug.Printf("Normalized: Tag defaulted to latest")
+		}
+
+		// 3. Add "library/" namespace for docker.io if repository has no slashes
+		if ref.Registry == defaultRegistry && !strings.Contains(ref.Repository, "/") {
+			ref.Repository = libraryNamespace + "/" + ref.Repository
+			debug.Printf("Normalized: Added '%s/' prefix to repository: %s", libraryNamespace, ref.Repository)
+		}
+	} else {
+		// Successful parsing - use the normalized components from the library
+		debug.Printf("Successfully normalized to: %s", named.String())
+
+		// Extract normalized components
+		ref.Registry = reference.Domain(named)
+		ref.Repository = reference.Path(named)
+
+		// Extract tag/digest
+		if taggedRef, isTagged := named.(reference.Tagged); isTagged {
+			ref.Tag = taggedRef.Tag()
+			debug.Printf("Normalized tag: %s", ref.Tag)
+		} else if ref.Digest == "" {
+			// If neither tag nor digest, set default tag
+			ref.Tag = defaultTag
+			debug.Printf("No tag or digest after normalization, defaulting to %s", defaultTag)
+		}
+
+		if digestedRef, isDigested := named.(reference.Digested); isDigested {
+			ref.Digest = digestedRef.Digest().String()
+			debug.Printf("Normalized digest: %s", ref.Digest)
+		}
 	}
 
 	// Ensure Original is set if not already (should be set by parser, but safeguard)

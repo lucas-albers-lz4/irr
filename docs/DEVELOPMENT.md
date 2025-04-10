@@ -345,6 +345,55 @@ Below is a test matrix for various image reference patterns:
 | Digest-based | quay.io/prometheus/prometheus@sha256:1234... | myharbor.internal:5000/quayio/prometheus/prometheus@sha256:1234... |
 | Docker Library | postgres:14 | myharbor.internal:5000/dockerio/library/postgres:14 |
 
+### 7.2.1 Complex Chart Testing Strategy
+
+When testing particularly complex charts (such as cert-manager, kube-prometheus-stack), we use a component-group approach to balance maintainability with comprehensive coverage:
+
+#### Component Group Methodology
+- Group related components based on functionality (e.g., controllers, webhooks, CRDs)
+- Apply appropriate threshold levels for each component group
+- Use table-driven subtests to isolate failures while maintaining overall chart cohesion
+- Implement structured error reporting consistent with our established formats
+
+#### Implementation Example
+```go
+func TestComplexChart(t *testing.T) {
+    componentGroups := []struct {
+        name       string
+        components []string
+        threshold  int // Success threshold percentage
+    }{
+        {
+            name:       "core_components",
+            components: []string{"main-controller", "webhook"},
+            threshold:  100,
+        },
+        {
+            name:       "auxiliary_components",
+            components: []string{"cainjector", "startupapicheck"},
+            threshold:  95, // Slightly lower threshold for more complex components
+        },
+    }
+
+    for _, group := range componentGroups {
+        t.Run(group.name, func(t *testing.T) {
+            // Test-specific setup with appropriate threshold
+            // Component-specific testing logic
+            // Structured error reporting
+        })
+    }
+}
+```
+
+#### Benefits of this Approach
+- Maintains a single test function for the chart, preserving integration testing benefits
+- Provides better error isolation and debugging capabilities
+- Allows selective test runs for specific component groups
+- Supports different threshold levels for components with varying complexity
+- Remains compatible with existing test infrastructure and reporting
+
+This approach is particularly valuable for charts with multiple components or subcharts that may have different detection complexity levels. It prevents test brittleness while still providing meaningful component isolation for troubleshooting.
+
 ## 8. Target Registry Path Strategy
 
 Defines how the original image path is mapped within the target registry.

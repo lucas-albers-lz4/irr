@@ -115,26 +115,96 @@ Test each supported path strategy (`prefix-source-registry`, potentially others)
     - Images nested within lists or multiple levels deep in maps.
     - Charts utilizing CRDs where image references might be less direct (though primary focus remains `values.yaml`).
     - StatefulSets or Deployments referencing multiple distinct images within the same resource block in `values.yaml`.
-```yaml
-# Example Complex Structure for Testing
-global:
-  registry: docker.io
-someApp:
-  image:
-    primary:
-      repository: myapp/server
-      tag: 1.2.3
-      # registry: # Uses global
-    secondary:
-      image: quay.io/utility/helper:latest # Full override needed
-  sidecars:
-    - name: agent
-      image: gcr.io/monitoring/agent:v5
-    - name: proxy
-      repository: istio/proxyv2 # Implicit docker.io/library
-      tag: 1.19.0
-      registry: docker.io # Explicit docker.io
+
+### 7.1. Complex Chart Testing Framework
+
+For particularly complex charts like cert-manager, kube-prometheus-stack, and others with multiple distinct components, we use a specialized testing approach that maintains comprehensive coverage while providing better troubleshooting capabilities:
+
+#### 7.1.1. Component-Group Testing Strategy
+
+The strategy divides complex charts into logical component groups and tests each group as a subtest:
+
+```go
+// Example for cert-manager components
+componentGroups := []struct {
+    name               string    // Group name
+    components         []string  // Components in this group
+    threshold          int       // Success threshold percentage 
+    expectedImages     int       // Expected number of images to find
+    criticalComponents bool      // Whether this group contains critical components
+}{
+    {
+        name:               "core_controllers",
+        components:         []string{"cert-manager-controller", "cert-manager-webhook"},
+        threshold:          100,
+        expectedImages:     4,
+        criticalComponents: true,
+    },
+    {
+        name:               "supporting_services",
+        components:         []string{"cert-manager-cainjector", "cert-manager-startupapicheck"},
+        threshold:          95,
+        expectedImages:     2,
+        criticalComponents: false,
+    },
+}
 ```
+
+#### 7.1.2. Testing Framework Integration
+
+This approach integrates with our existing testing framework:
+
+- **Run Method**: Each component group runs as a subtest (`t.Run()`)
+- **Failure Handling**: Core/critical component failures can trigger test failure
+- **Reporting**: Results are aggregated into the standard reporting format
+- **Thresholds**: Different thresholds can be applied per component group
+- **Debugging**: Debug logs segregated by component group
+
+#### 7.1.3. Verification Points for Each Component Group
+
+For each component group, we verify:
+
+1. **Image Detection**: All expected images are found and correctly processed
+2. **Path Generation**: Proper path strategy application across all components
+3. **Version Integrity**: Tags/digests preserved across all components
+4. **Registry Handling**: Correct source registry filtering (including exclusions)
+5. **Error Reporting**: Structured error messages for any issues
+
+#### 7.1.4. Selective Testing
+
+This structure allows for selective testing during development:
+
+```bash
+# Test only the core controllers component group
+go test -v ./... -run TestCertManager/core_controllers
+
+# Test with debug logging for a specific component group
+go test -v ./... -run TestCertManager/supporting_services -debug
+```
+
+#### 7.1.5. Implementation Guidelines
+
+When implementing tests for complex charts:
+
+1. **Group Definition**:
+   - Group components based on functional relationship
+   - Keep groups small enough to be manageable (2-4 components per group)
+   - Define appropriate thresholds for each group
+   - Document expected image counts for validation
+
+2. **Test Structure**:
+   - Use table-driven subtests with consistent structure
+   - Implement proper test setup and teardown for each group
+   - Use shared utilities for common verification tasks
+   - Maintain thorough error context for debugging
+
+3. **Failure Criteria**:
+   - Define clear success/failure criteria for each component group
+   - Differentiate between critical and non-critical failures
+   - Apply appropriate thresholds based on component complexity
+   - Include summary of all failures in test output
+
+This approach balances the thoroughness of testing each component with the efficiency of maintaining a cohesive test structure.
 
 ### 8. Path Strategy and Registry Mapping Testing
 

@@ -26,6 +26,7 @@ type PathStrategy interface {
 // nolint:unused // Kept for potential future uses
 var strategyRegistry = map[string]PathStrategy{
 	"prefix-source-registry": NewPrefixSourceRegistryStrategy(),
+	"flat":                   NewFlatStrategy(),
 }
 
 // GetStrategy returns a path strategy based on the name
@@ -36,6 +37,9 @@ func GetStrategy(name string, _ *registry.Mappings) (PathStrategy, error) {
 	case "prefix-source-registry":
 		debug.Printf("GetStrategy: Using PrefixSourceRegistryStrategy")
 		return NewPrefixSourceRegistryStrategy(), nil
+	case "flat":
+		debug.Printf("GetStrategy: Using FlatStrategy")
+		return NewFlatStrategy(), nil
 	default:
 		debug.Printf("GetStrategy: Unknown strategy name: %s", name)
 		return nil, fmt.Errorf("unknown path strategy: %s", name)
@@ -112,17 +116,24 @@ func (s *FlatStrategy) GeneratePath(originalRef *image.Reference, targetRegistry
 	debug.Printf("FlatStrategy: Generating path for original reference: %+v", originalRef)
 	debug.Printf("FlatStrategy: Target registry: %s", targetRegistry)
 
-	// Use the original repository path directly
+	// Use the original repository path
 	baseRepoPath := originalRef.Repository
 	debug.Printf("FlatStrategy: Using base repository path: %s", baseRepoPath)
 
-	// NOTE: This function now ONLY returns the repository part (e.g., "library/nginx")
-	// The caller (generator) is responsible for prepending the actual target registry.
+	// Handle Docker Hub official images (add library prefix if needed)
+	if (image.NormalizeRegistry(originalRef.Registry) == "docker.io") && !strings.Contains(baseRepoPath, "/") {
+		debug.Printf("FlatStrategy: Prepending 'library-' to Docker Hub image path: %s", baseRepoPath)
+		baseRepoPath = "library-" + baseRepoPath
+	} else {
+		// Replace all slashes with dashes to flatten the path
+		baseRepoPath = strings.ReplaceAll(baseRepoPath, "/", "-")
+		debug.Printf("FlatStrategy: Flattened path: %s", baseRepoPath)
+	}
 
-	finalRepoPathPart := baseRepoPath // Return only the repo part
+	// Add registry prefix for better organization (optional but recommended)
+	registryPrefix := image.SanitizeRegistryForPath(originalRef.Registry)
+	finalRepoPathPart := registryPrefix + "-" + baseRepoPath
+	debug.Printf("FlatStrategy: Final flattened path: %s", finalRepoPathPart)
 
-	// Remove logic that adds tag/digest here, caller handles it.
-
-	debug.Printf("FlatStrategy: Generated final repo path part: %s", finalRepoPathPart)
 	return finalRepoPathPart, nil
 }

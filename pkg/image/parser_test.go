@@ -4,9 +4,42 @@ package image_test
 import (
 	"testing"
 
+	"github.com/distribution/reference"
 	image "github.com/lalbers/irr/pkg/image"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+// validateWithDistributionLib uses the distribution/reference library to validate
+// the parsed reference against the canonical implementation
+func validateWithDistributionLib(t *testing.T, ref *image.Reference) {
+	t.Helper()
+	require.NotNil(t, ref, "Reference should not be nil")
+
+	// Reconstruct the canonical reference string
+	var refStr string
+	if ref.Digest != "" {
+		refStr = ref.Registry + "/" + ref.Repository + "@" + ref.Digest
+	} else {
+		refStr = ref.Registry + "/" + ref.Repository + ":" + ref.Tag
+	}
+
+	// Parse with the distribution library for validation
+	parsed, err := reference.ParseNormalizedNamed(refStr)
+	require.NoError(t, err, "Reconstructed reference should be valid")
+
+	// Verify components match
+	assert.Equal(t, reference.Domain(parsed), ref.Registry, "Registry should match")
+	assert.Equal(t, reference.Path(parsed), ref.Repository, "Repository should match")
+
+	if tagged, ok := parsed.(reference.Tagged); ok {
+		assert.Equal(t, tagged.Tag(), ref.Tag, "Tag should match")
+	}
+
+	if digested, ok := parsed.(reference.Digested); ok {
+		assert.Equal(t, digested.Digest().String(), ref.Digest, "Digest should match")
+	}
+}
 
 func TestParseImageReference(t *testing.T) {
 	tests := []struct {
@@ -82,7 +115,7 @@ func TestParseImageReference(t *testing.T) {
 			name:          "invalid image reference",
 			input:         "invalid///image::ref",
 			wantErr:       true,
-			errorContains: "invalid reference format",
+			errorContains: image.ErrInvalidImageReference.Error(),
 		},
 		{
 			name:          "empty string",
@@ -105,19 +138,19 @@ func TestParseImageReference(t *testing.T) {
 			name:          "invalid digest format",
 			input:         "gcr.io/project/image@invalid-digest",
 			wantErr:       true,
-			errorContains: "invalid reference format",
+			errorContains: image.ErrInvalidImageReference.Error(),
 		},
 		{
 			name:          "invalid tag format",
 			input:         "gcr.io/project/image:invalid/tag",
 			wantErr:       true,
-			errorContains: "invalid reference format",
+			errorContains: image.ErrInvalidImageReference.Error(),
 		},
 		{
 			name:          "invalid repository name",
 			input:         "docker.io/Inv@lid Repo/image:tag",
 			wantErr:       true,
-			errorContains: "invalid reference format",
+			errorContains: image.ErrInvalidImageReference.Error(),
 		},
 		{
 			name:  "repository only (implicit latest)",
@@ -154,15 +187,20 @@ func TestParseImageReference(t *testing.T) {
 				}
 				assert.Nil(t, ref, "Reference should be nil on error")
 			} else {
-				assert.NoError(t, err)
-				assert.NotNil(t, ref, "Reference should not be nil on success")
-				if tt.expected != nil && ref != nil {
+				require.NoError(t, err)
+				require.NotNil(t, ref, "Reference should not be nil on success")
+
+				// Check fields
+				if tt.expected != nil {
 					assert.Equal(t, tt.expected.Registry, ref.Registry, "Registry mismatch")
 					assert.Equal(t, tt.expected.Repository, ref.Repository, "Repository mismatch")
 					assert.Equal(t, tt.expected.Tag, ref.Tag, "Tag mismatch")
 					assert.Equal(t, tt.expected.Digest, ref.Digest, "Digest mismatch")
 					assert.Equal(t, tt.expected.Original, ref.Original, "Original mismatch")
 				}
+
+				// Also validate with the distribution/reference library
+				validateWithDistributionLib(t, ref)
 			}
 		})
 	}
