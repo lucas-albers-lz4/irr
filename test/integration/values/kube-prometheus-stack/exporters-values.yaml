@@ -1,0 +1,12 @@
+# Override values for exporter components in kube-prometheus-stack
+prometheus-node-exporter:
+  image:
+    registry: harbor.home.arpa
+    repository: quayio/prometheus/node-exporter
+    tag: v1.6.1
+
+kube-state-metrics:
+  image:
+    registry: harbor.home.arpa
+    repository: k8s/kube-state-metrics/kube-state-metrics
+    tag: v2.9.2 

@@ -22,12 +22,13 @@ import (
 
 // Constants
 const (
-	// defaultFilePerm defines the default file permissions (rw-------)
+	// defaultFilePerm defines the default file permissions (rw-------) using modern Go octal syntax
 	defaultFilePerm = 0o600
 	// DefaultTargetRegistry is the registry used in tests when not specified.
 	DefaultTargetRegistry = "test-target.local"
-	// TestDirPermissions represents directory permissions (rwxr-xr-x)
-	TestDirPermissions = 0o755 // Used for bin directories
+	// TestDirPermissions is used for test directories (more restrictive than TestDirPermissions)
+	// Uses modern Go octal syntax (0o750) for secure directory permissions (rwxr-x---)
+	TestDirPermissions = 0o750 // Restrict to owner + group
 )
 
 // Global variables for build optimization
@@ -616,13 +617,62 @@ func (h *TestHarness) SetChartPath(path string) {
 	h.chartPath = path
 }
 
-// GetTestdataPath returns the absolute path to a file or directory within the testdata directory.
-func (h *TestHarness) GetTestdataPath(relativePath string) string {
-	absPath, err := filepath.Abs(filepath.Join("..", "testdata", relativePath))
+// GetTestdataPath returns the absolute path to a test chart directory.
+func (h *TestHarness) GetTestdataPath(relPath string) string {
+	// First try to find the test data relative to the project root
+	rootRelPath := filepath.Join(h.rootDir, "test-data", relPath)
+	if _, err := os.Stat(rootRelPath); err == nil {
+		absPath, err := filepath.Abs(rootRelPath)
+		if err != nil {
+			h.t.Fatalf("Failed to get absolute path for %s: %v", rootRelPath, err)
+		}
+		return absPath
+	}
+
+	// Fall back to the relative path directly
+	absPath, err := filepath.Abs(filepath.Join("test-data", relPath))
 	if err != nil {
-		h.t.Fatalf("Failed to get absolute path for testdata: %v", err)
+		h.t.Fatalf("Failed to get absolute path for %s: %v", relPath, err)
 	}
 	return absPath
+}
+
+// GetTestOverridePath returns the path to a test override values file.
+// If the file doesn't exist, it creates an empty file at the specified path.
+func (h *TestHarness) GetTestOverridePath(relPath string) string {
+	// Create the test-overrides directory in the temp directory if it doesn't exist
+	overridesDir := filepath.Join(h.tempDir, "test-overrides")
+	// Use modern Go octal literal syntax (0o750) with predefined constants for secure permissions
+	if err := os.MkdirAll(overridesDir, TestDirPermissions); err != nil {
+		h.t.Fatalf("Failed to create test-overrides directory: %v", err)
+	}
+
+	// Create subdirectories if needed
+	if strings.Contains(relPath, "/") {
+		dirPath := filepath.Dir(filepath.Join(overridesDir, relPath))
+		// Use modern Go octal literal syntax (0o750) with predefined constants for secure permissions
+		if err := os.MkdirAll(dirPath, TestDirPermissions); err != nil {
+			h.t.Fatalf("Failed to create directory %s: %v", dirPath, err)
+		}
+	}
+
+	// Create the override file path
+	overridePath := filepath.Join(overridesDir, relPath)
+
+	// Create an empty file if it doesn't exist
+	if _, err := os.Stat(overridePath); os.IsNotExist(err) {
+		// Use predefined constant (0o600) for secure file permissions to satisfy linter requirements
+		if err := os.WriteFile(overridePath, []byte("# Test override values for "+relPath+"\n"), defaultFilePerm); err != nil {
+			h.t.Fatalf("Failed to create empty override file at %s: %v", overridePath, err)
+		}
+	}
+
+	return overridePath
+}
+
+// CombineValuesPaths joins multiple values file paths with commas for use with the --values flag.
+func (h *TestHarness) CombineValuesPaths(paths []string) string {
+	return strings.Join(paths, ",")
 }
 
 // AssertExitCode runs the IRR binary with the given arguments and checks the exit code.

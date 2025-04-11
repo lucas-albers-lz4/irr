@@ -2,7 +2,7 @@
 
 ## Phase 1: Core Implementation & Stabilization (Completed)
 
-## Phase 2: Configuration & Support Features (80% Complete)
+## Phase 2: Configuration & Support Features (Completed)
 ### Completed Features:
 - [x] Core configuration and validation features implemented
   - Configuration file support with YAML registry mapping
@@ -10,87 +10,54 @@
   - Target URL validation
   - Enhanced error handling and test infrastructure
 
-### Pending Work:
-- [ ] Enhance image identification heuristics (config-based patterns)
+- [x] Enhance image identification heuristics (config-based patterns)
   - Design pattern-based identification system for complex charts
   - Implement configurable heuristics for non-standard image references
   - Add tests for edge cases and unusual image formats
 
-- [ ] Improve digest-based reference handling
+- [x] Improve digest-based reference handling
   - Enhance support for SHA-based image references 
   - Add validation for digest format integrity
-  - Implement proper digest preservation during remapping
+  - Include test cases for digest-based references
 
-- [ ] Explore support for additional target registries
-  - Add explicit support for Quay, ECR, GCR, ACR, GHCR
-  - Implement registry-specific authentication mechanisms if needed
-  - Document usage patterns for each supported registry
+## Phase 3: Component-Group Testing Framework (Completed)
+### Phase 3.0: Core Framework Implementation (Completed)
+- [x] Design component-group testing approach for complex charts
+  - Create testing approach documentation in TESTING-COMPLEX-CHARTS.md
+  - Define component grouping strategy for multi-component charts
+  - Implement test harness support for component-specific validation
 
-## Phase 3.0: Component-Group Testing for Complex Charts
-- [ ] **Implement Component-Group Testing for Complex Charts:**
-    - **Goal:** Improve testability and debugging for complex charts like cert-manager while maintaining cohesive test structure and leveraging existing test infrastructure.
-    - **Implementation Steps:**
-        1. **Define component groups for cert-manager:**
-            - **Action:** Analyze `cert-manager` chart's `values.yaml` and subchart structure to finalize logical groupings (e.g., core controllers, webhooks, cainjector, startup API check). Confirm image paths (`controller.image`, `webhook.image`, etc.).
-            - **Details:** Establish initial groups:
-                - `core_controllers`: `cert-manager-controller`, `cert-manager-webhook`. Critical components.
-                - `support_services`: `cert-manager-cainjector`, `cert-manager-startupapicheck`. Supporting components.
-            - **Thresholds:** Define and justify thresholds per group based on component criticality and image definition complexity. Start with 100% for `core_controllers` and potentially 95% for `support_services` if their image refs are complex or less critical. Document this rationale.
-            - **Considerations:** How will this grouping strategy scale to other complex charts like `kube-prometheus-stack`? Define criteria for grouping (e.g., functionality, subchart origin).
+- [x] Implement cert-manager component-group tests
+  - Create test implementation for critical components group
+  - Add support for validation thresholds per component group
+  - Ensure high-quality error messaging and diagnostics
 
-        2. **Create table-driven subtest structure:**
-            - **Action:** Implement the Go test structure using a `struct` array and `t.Run()` for subtests within `TestCertManager`.
-            - **Table Definition:** Define the test table `struct` clearly: `name string`, `components []string` (relevant value paths/keys), `threshold int`, `expectedImages int`, `isCritical bool`.
-            - **Subtest Implementation:** Use `t.Run(group.name, ...)` loop. Ensure subtest names are descriptive and usable for filtering (e.g., no spaces). Load the chart *once* outside the loop. Inside the loop, filter/focus the validation logic based on `group.components`.
-            - **Error Reporting:** Ensure `t.Errorf` calls within subtests include `group.name` context and adhere to the structured error format from `TESTING.md`.
+- [x] Document testing approach for complex charts
+  - Document component-group testing strategy
+  - Add usage examples to documentation
+  - Include contribution guidelines for test implementations
 
-        3. **Enhance error isolation and reporting:**
-            - **Action:** Modify logging and error messages to include component group context. Ensure test filtering works as expected.
-            - **Error Context:** Update helper functions (image detection, validation) to optionally accept and prepend a `componentGroup string` to error messages.
-            - **Filtering:** Rely on Go's native `-run TestName/SubtestName` filtering. Document this specific usage pattern for developers.
-            - **Debug Logs:** Pass `group.name` context to `debug.Printf` calls made within the subtest's scope. Ensure logs clearly attribute messages to the correct group.
+### Phase 3.1: Extended Chart Support (Completed)
+- [x] Implement kube-prometheus-stack component-group tests
+  - Create test implementation for each logical component group
+  - Create override values files for component testing
+  - Add Makefile targets for component-specific testing
 
-        4. **Update existing test utilities:**
-            - **Action:** Adapt shared test helper functions to understand and utilize component group context for focused validation.
-            - **Chart Test Helpers:** Identify and refactor relevant helpers (e.g., chart loading, override execution, result validation functions in `test/integration` or test setup). They might need to accept `group.components` to scope their validation actions.
-            - **Component Validation:** Create specific helper functions if needed, e.g., `validateImageOverridesForGroup(t, results, groupName, expectedImages, threshold)`.
-            - **Reporting Framework:** Verify Go test output clearly shows pass/fail status for each subtest (group). Ensure any aggregated reports (like those potentially generated by `test-charts.py` if adapted) correctly reflect subtest outcomes.
+## Phase 4: Advanced Features & DevOps Integration (Pending)
+### Planned Work:
+- [ ] Implement CI/CD templates for common workflows
+  - Add GitHub workflow examples
+  - Create GitLab CI/CD pipeline template
+  - Document integration patterns
 
-        5. **Document the approach and testing patterns:**
-            - **Action:** Update `DEVELOPMENT.md` and `TESTING.md` (already done). Add practical examples and refine threshold documentation.
-            - **Examples:** Add concrete examples to docs showing `go test -run TestCertManager/core_controllers`, interpreting group-specific errors, and potentially outlining groups for another complex chart.
-            - **Threshold Strategy Doc:** Expand documentation explaining *why* different thresholds might be used (criticality, known complexity, third-party subchart stability).
+- [ ] Create pre-commit hooks for validation
+  - Implement pre-commit hook for chart validation
+  - Add documentation for local developer setup
 
-    - **Verification Points:**
-        - [ ] **Pass Criteria:** Confirm `TestCertManager` passes reliably without skipping any parts. Run `go test ./... -run TestCertManager`.
-        - [ ] **Error Isolation:** Introduce a specific failure (e.g., wrong `expectedImages` for `support_services`) and verify only that subtest fails while others pass.
-        - [ ] **Selective Filtering:** Execute `go test ./... -run TestCertManager/core_controllers` and `go test ./... -run TestCertManager/support_services` individually and confirm only the targeted subtest runs.
-        - [ ] **Threshold Logic:** Create test conditions to verify threshold boundaries (e.g., 95% threshold passes with 19/20 images, fails with 18/20). May require temporarily adjusting expected counts or using `t.Skip` strategically.
-        - [ ] **Framework Compatibility:** Run the full test suite (`go test ./...` or `make test`) and potentially `make test-charts` (if adapted) to check for regressions and ensure output format is preserved/enhanced.
-        - [ ] **Debug Context:** Execute a subtest with `-debug` (e.g., `go test ./... -run TestCertManager/core_controllers -debug`) and manually inspect logs for `[DEBUG] core_controllers:` prefixes.
-        - [ ] **Error Message Format:** Introduce a validation error within a subtest and verify `t.Errorf` output includes the group name and follows the structured format from `TESTING.md`.
-
-- **Goal:** Improve robustness by adding specific validation rules for configuration files and corresponding tests. Scope is limited to syntactic checks and hard limits, not deep semantic validation.
-
-- [x] **Implement Enhanced Validation Logic:**
-  - [x] **Reject Duplicate Keys:** Validate that no source registry key appears more than once in the `registry-mappings.yaml`.
-    - *Detail:* Error message should clearly state which key is duplicated.
-  - [x] **Enforce Value Format (Slash Separator):** Validate that each mapping *value* contains at least one `/` to separate the target registry/host from the path prefix.
-    - *Detail:* This confirms basic structure; semantic validation of hostname or path is out of scope.
-  - [x] **Validate Explicit Port Numbers:** If a port is specified in a mapping value (e.g., `host:port/path`), validate it's an integer between 1 and 65535 (inclusive).
-    - *Detail:* Validation only applies if a colon `:` indicating a port is present after the host part and before the first slash.
-  - [x] **Implement Length Limits:** Add hard-coded length limits for configuration entries:
-    - *Detail:* Source Registry Key (e.g., max 253 chars).
-    - *Detail:* Target Mapping Value (e.g., max 1024 chars total).
-  - [x] **Verify Clear YAML Errors:** Ensure that underlying YAML parsing errors (e.g., syntax issues) are surfaced clearly to the user, ideally with line number context (confirm library behavior).
-
-- [x] **Add Corresponding Unit Tests:**
-  - [x] Test rejection of config with duplicate keys.
-  - [x] Test rejection of values missing the required `/` separator.
-  - [x] Test port validation: valid ports (1, 80, 443, 5000, 65535), invalid ports (0, -1, 65536, non-numeric).
-  - [x] Test length limit enforcement for keys and values.
-  - [x] Test a sample malformed YAML file to verify error message clarity.
-
+- [ ] Add CLI performance improvements
+  - Implement parallel processing for large charts
+  - Optimize memory usage for template processing
+  - Add progress reporting for long-running operations
 
 ## Implementation Process:  DONT" REMOVE THIS SECTION as these hints are important to remember.
 - For each change:

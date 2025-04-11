@@ -1,4 +1,4 @@
-.PHONY: build test lint clean run helm-lint test-charts test-integration test-cert-manager test-integration-specific test-integration-debug help
+.PHONY: build test lint clean run helm-lint test-charts test-integration test-cert-manager test-kube-prometheus-stack test-integration-specific test-integration-debug help
 
 BINARY_NAME=irr
 BUILD_DIR=bin
@@ -44,8 +44,24 @@ test-integration: build
 	@IRR_TESTING=true go test -v ./test/integration/...
 
 test-cert-manager: build
-	@echo "Running cert-manager integration tests..."
-	@IRR_TESTING=true go test -v ./test/integration/... -run TestCertManagerComponents
+	@echo "Running cert-manager component-group tests..."
+	@IRR_TESTING=true go test -v ./test/integration/... -run TestCertManager
+
+test-cert-manager-debug: build
+	@echo "Running cert-manager component-group tests with debug output..."
+	@IRR_TESTING=true LOG_LEVEL=DEBUG IRR_DEBUG=1 go test -v ./test/integration/... -run TestCertManager
+
+test-cert-manager-cores: build
+	@echo "Running cert-manager core controllers component test..."
+	@IRR_TESTING=true go test -v ./test/integration/... -run TestCertManager/core_controllers
+
+test-kube-prometheus-stack: build
+	@echo "Running kube-prometheus-stack component-group tests..."
+	@IRR_TESTING=true go test -v ./test/integration/... -run TestKubePrometheusStack
+
+test-kube-prometheus-stack-debug: build
+	@echo "Running kube-prometheus-stack component-group tests with debug output..."
+	@IRR_TESTING=true LOG_LEVEL=DEBUG IRR_DEBUG=1 go test -v ./test/integration/... -run TestKubePrometheusStack
 
 # You can run a specific integration test with:
 # make test-integration-specific TEST_NAME=TestConfigFileMappings
@@ -109,7 +125,11 @@ help:
 	@echo "  test-integration   Run all integration tests"
 	@echo "  test-integration-specific TEST_NAME=TestName  Run a specific integration test"
 	@echo "  test-integration-debug  Run integration tests with debug output"
-	@echo "  test-cert-manager  Run cert-manager integration tests"
+	@echo "  test-cert-manager  Run cert-manager component-group tests"
+	@echo "  test-cert-manager-debug  Run cert-manager component-group tests with debug output"
+	@echo "  test-cert-manager-cores  Run cert-manager core controllers component test"
+	@echo "  test-kube-prometheus-stack  Run kube-prometheus-stack component-group tests"
+	@echo "  test-kube-prometheus-stack-debug  Run kube-prometheus-stack tests with debug output"
 	@echo "  test-charts        Run chart tests"
 	@echo "  lint               Run linter"
 	@echo "  helm-lint          Run Helm lint and template validation"

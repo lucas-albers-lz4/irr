@@ -1,0 +1,6 @@
+# Override values for prometheus component in kube-prometheus-stack
+prometheus:
+  image:
+    registry: harbor.home.arpa
+    repository: quayio/prometheus/prometheus
+    tag: v2.45.0 

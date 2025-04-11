@@ -1,0 +1,6 @@
+# Override values for alertmanager component in kube-prometheus-stack
+alertmanager:
+  image:
+    registry: harbor.home.arpa
+    repository: quayio/prometheus/alertmanager
+    tag: v0.25.0 

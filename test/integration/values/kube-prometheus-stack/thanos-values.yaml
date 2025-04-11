@@ -1,0 +1,6 @@
+# Override values for thanos component in kube-prometheus-stack
+thanosRuler:
+  image:
+    registry: harbor.home.arpa
+    repository: quayio/thanos/thanos
+    tag: v0.31.0 

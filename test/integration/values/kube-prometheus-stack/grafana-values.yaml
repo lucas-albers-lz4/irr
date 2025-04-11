@@ -1,0 +1,6 @@
+# Override values for grafana component in kube-prometheus-stack
+grafana:
+  image:
+    registry: harbor.home.arpa
+    repository: dockerio/grafana/grafana
+    tag: 8.5.15 

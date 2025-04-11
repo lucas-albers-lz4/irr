@@ -1,0 +1,12 @@
+# Override values for prometheus-operator component in kube-prometheus-stack
+prometheusOperator:
+  image:
+    registry: harbor.home.arpa
+    repository: quayio/prometheus-operator/prometheus-operator
+    tag: v0.68.0
+  admissionWebhooks:
+    patch:
+      image:
+        registry: harbor.home.arpa
+        repository: k8s/ingress-nginx/kube-webhook-certgen
+        tag: v1.3.0 
