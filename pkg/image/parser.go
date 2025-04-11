@@ -61,7 +61,23 @@ var (
 )
 
 // ParseImageReference parses an image reference string into its components.
-// It returns a Reference struct or error if the image reference is invalid.
+// It attempts to parse using the distribution/reference library first, and falls back
+// to regex-based parsing if needed for better error messages or special cases.
+//
+// The function handles various image reference formats:
+// - registry/repository:tag (e.g., docker.io/nginx:1.23)
+// - repository:tag (e.g., nginx:1.23, implies docker.io registry)
+// - registry/repository@digest (e.g., docker.io/nginx@sha256:abc...)
+// - repository@digest (e.g., nginx@sha256:abc...)
+//
+// For single-name images like "nginx", it defaults to the "latest" tag.
+//
+// Parameters:
+//   - imageRef: The image reference string to parse
+//
+// Returns:
+//   - *Reference: A Reference struct containing the parsed components
+//   - error: An error if the image reference is invalid or cannot be parsed
 func ParseImageReference(imageRef string) (*Reference, error) {
 	debug.FunctionEnter("ParseImageReference")
 	defer debug.FunctionExit("ParseImageReference")

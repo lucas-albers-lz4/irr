@@ -5,7 +5,7 @@
 
 ## 1. Introduction
 
-This document outlines the design for a command-line tool, `helm-image-override`, intended to automate the generation of Helm override `values.yaml` files. The primary goal is to redirect container image pulls specified within a Helm chart from various public registries to a designated local or private registry, initially focusing on Harbor configured as a pull-through cache. This addresses the manual effort and potential errors involved in modifying Helm deployments for environments requiring centralized, proxied, or private image access. Additionally, this helps organizations maintain compliance with air-gapped environments and enforce image provenance requirements.
+This document outlines the design for a command-line tool, `irr` (Image Relocation and Rewrite), intended to automate the generation of Helm override `values.yaml` files. The primary goal is to redirect container image pulls specified within a Helm chart from various public registries to a designated local or private registry, initially focusing on Harbor configured as a pull-through cache. This addresses the manual effort and potential errors involved in modifying Helm deployments for environments requiring centralized, proxied, or private image access. Additionally, this helps organizations maintain compliance with air-gapped environments and enforce image provenance requirements.
 
 See [Tool Documentation](#) for installation and advanced usage. Planned documentation sections include:
 *   Installation Guide
@@ -282,7 +282,7 @@ Refer to the comprehensive Debug Control section in [TESTING.md](docs/TESTING.md
 ## 7. Command-Line Interface
 
 ```bash
-helm-image-override [options]
+irr [options]
 ```
 
 ### 7.1. Required Arguments
@@ -521,7 +521,7 @@ func detectAWSPartition(registryURL string) string {
 The tool is designed for easy integration into CI/CD pipelines:
 
 1. **Checkout:** Obtain chart source.
-2. **Generate Override:** Execute `helm-image-override` with environment-specific variables for `--target-registry` and potentially `--source-registries`. Output to a known file (e.g., `generated-override.yaml`).
+2. **Generate Override:** Execute `irr` with environment-specific variables for `--target-registry` and potentially `--source-registries`. Output to a known file (e.g., `generated-override.yaml`).
 3. **Deploy:** Use `helm install/upgrade` command, including the `-f generated-override.yaml` flag alongside other values files.
 
 This ensures automated, consistent application of registry redirection rules across environments.
@@ -531,7 +531,7 @@ This ensures automated, consistent application of registry redirection rules acr
 ```yaml
 - name: Generate Image Overrides
   run: |
-    helm-image-override \
+    irr \
       --chart-path ./my-chart \
       --target-registry ${{ env.TARGET_REGISTRY }} \
       --source-registries docker.io,quay.io \

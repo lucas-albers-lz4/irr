@@ -1,3 +1,12 @@
+// Package main implements the command-line interface for the irr (Image Relocation and Rewrite) tool.
+// It provides commands for analyzing Helm charts and generating override values to redirect
+// container image references from public registries to a target private registry.
+//
+// The main CLI commands are:
+//   - analyze: Analyze a Helm chart to identify image references
+//   - override: Generate override values to redirect images to a target registry
+//
+// Each command has various flags for configuration. See the help output for details.
 package main
 
 import (
@@ -114,10 +123,12 @@ var defaultAnalyzerFactory analyzerFactoryFunc = func(chartPath string) Analyzer
 // Keep track of the current factory (can be replaced in tests)
 var currentAnalyzerFactory = defaultAnalyzerFactory
 
-// AnalyzerInterface mirrors the analysis.Analyzer interface for mocking.
-// It defines the Analyze method expected by the command.
 // AnalyzerInterface defines the methods expected from an analyzer.
+// This interface is used to allow mocking in tests and to provide a clean
+// abstraction between the CLI and the analysis package.
 type AnalyzerInterface interface {
+	// Analyze performs chart analysis and returns the detected image patterns
+	// or an error if the analysis fails.
 	Analyze() (*analysis.ChartAnalysis, error)
 }
 
@@ -125,9 +136,12 @@ type AnalyzerInterface interface {
 
 // --- Factory for Generator ---
 
-// GeneratorInterface mirrors the chart.Generator interface for mocking.
-// It defines the Generate method expected by the command.
+// GeneratorInterface defines the methods expected from a generator.
+// This interface is used to allow mocking in tests and to provide a clean
+// abstraction between the CLI and the chart processing logic.
 type GeneratorInterface interface {
+	// Generate performs image reference override generation and returns
+	// the override file structure or an error if generation fails.
 	Generate() (*override.File, error)
 }
 

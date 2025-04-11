@@ -80,15 +80,15 @@ func (e *ThresholdError) Unwrap() error { return e.Err }
 
 // --- Local Loader Implementation (implements analysis.ChartLoader) ---
 
-// Ensure HelmLoader implements analysis.ChartLoader
-var _ analysis.ChartLoader = (*HelmLoader)(nil)
+// Ensure GeneratorLoader implements analysis.ChartLoader
+var _ analysis.ChartLoader = (*GeneratorLoader)(nil)
 
-// HelmLoader provides functionality to load Helm charts
-type HelmLoader struct{}
+// GeneratorLoader provides functionality to load Helm charts
+type GeneratorLoader struct{}
 
 // Load implements analysis.ChartLoader interface, returning helmchart.Chart
-func (l *HelmLoader) Load(chartPath string) (*helmchart.Chart, error) { // Return *helmchart.Chart
-	debug.Printf("HelmLoader: Loading chart from %s", chartPath)
+func (l *GeneratorLoader) Load(chartPath string) (*helmchart.Chart, error) { // Return *helmchart.Chart
+	debug.Printf("GeneratorLoader: Loading chart from %s", chartPath)
 
 	// Use helm's loader directly
 	helmLoadedChart, err := helmchartloader.Load(chartPath)
@@ -104,13 +104,51 @@ func (l *HelmLoader) Load(chartPath string) (*helmchart.Chart, error) { // Retur
 		debug.Printf("Helm chart loaded with nil Values, initialized empty map for %s", chartPath)
 	}
 
-	debug.Printf("HelmLoader successfully loaded chart: %s", helmLoadedChart.Name())
+	debug.Printf("GeneratorLoader successfully loaded chart: %s", helmLoadedChart.Name())
 	return helmLoadedChart, nil
 }
 
 // --- Generator Implementation ---
 
+// Package chart provides functionality for working with Helm charts, including
+// loading charts, analyzing their structure, and generating override values.
+//
+// The package is responsible for:
+// - Loading Helm charts from local filesystem or tarballs
+// - Analyzing chart values to detect image references
+// - Generating override values to redirect images to a target registry
+// - Applying path strategies to generate appropriate image paths
+// - Handling subcharts and their dependencies
+// - Supporting threshold-based override generation
+// - Validating generated overrides
+//
+// The primary components are:
+// - Generator: Generates image override values for a chart
+// - GeneratorLoader: Loads Helm charts using the Helm libraries
+//
+// Usage Example:
+//
+//	generator := chart.NewGenerator(
+//		"./my-chart", "harbor.example.com",
+//		[]string{"docker.io", "quay.io"}, []string{},
+//		strategy.NewPrefixSourceRegistryStrategy(),
+//		nil, nil, false, 100, nil, nil, nil, nil,
+//	)
+//	result, err := generator.Generate()
+
 // Generator implements chart analysis and override generation.
+// It loads a Helm chart, analyzes its values for image references,
+// and generates the necessary overrides to redirect those images
+// to a target registry using the specified path strategy.
+//
+// The Generator can be configured with:
+// - Source registries to process (e.g., docker.io, quay.io)
+// - Registries to exclude from processing
+// - A path strategy that determines how image paths are constructed
+// - Strict mode for handling unsupported structures
+// - A threshold for minimum processing success rate
+// - Registry mappings for advanced path manipulation
+//
 // Error handling is integrated with pkg/exitcodes for consistent exit codes:
 // - Chart loading failures map to ExitChartParsingError (10)
 // - Image processing issues map to ExitImageProcessingError (11)
@@ -146,7 +184,7 @@ func NewGenerator(
 	includePatterns, excludePatterns, knownPaths []string,
 ) *Generator {
 	if loader == nil {
-		loader = &HelmLoader{}
+		loader = &GeneratorLoader{}
 	}
 	return &Generator{
 		chartPath:         chartPath,
@@ -442,13 +480,21 @@ func (g *Generator) processAndGenerateOverride(
 	return true, nil
 }
 
-// Generate creates Helm override values by analyzing the chart
-// and remapping image references according to configuration.
-// It returns an override.File with the generated values.
-// Exit code documentation:
-// - ExitUnsupportedStructure (12) when strict mode validation fails
-// - ExitThresholdError (13) when success rate is below threshold
-// - ExitGeneralRuntimeError (20) for system/runtime errors
+// Generate performs the actual chart analysis and override generation.
+// It loads the chart, analyzes it for image references, and generates the
+// appropriate override values to redirect those images to the target registry.
+//
+// The process includes:
+// 1. Loading the chart using the configured loader
+// 2. Analyzing the chart for image references
+// 3. Filtering images based on source/exclude registries
+// 4. Generating overrides for each eligible image
+// 5. Applying threshold validation if configured
+// 6. Returning the final override file structure
+//
+// Returns:
+//   - *override.File: The generated override file structure
+//   - error: An error if generation fails (uses custom error types for specific failures)
 func (g *Generator) Generate() (*override.File, error) {
 	debug.FunctionEnter("Generator.Generate")
 	defer debug.FunctionExit("Generator.Generate")

@@ -123,21 +123,23 @@ Current blocking issues in integration tests:
 
 ### Current Issues (As of Latest Scan)
 
-1. **Error Checking (errcheck)** - RESOLVED (v0.x.y)
+All linting issues have been resolved. Running `golangci-lint run` shows 0 issues.
+
+~~1. **Error Checking (errcheck)** - RESOLVED (v0.x.y)~~
    * ~~Unchecked `os.Setenv/Unsetenv` in test files~~ (`test/integration/harness.go`)
    * ~~Unchecked type assertions~~ in `pkg/chart/generator_test.go`
    * ~~Unchecked `image.ParseImageReference`~~ in `pkg/chart/generator_test.go`
-   * Unchecked `os.Remove` in `cmd/irr/override_test.go` - REMAINS
+   * ~~Unchecked `os.Remove` in `cmd/irr/override_test.go` - RESOLVED~~
 
-2. **Code Efficiency (ineffassign, staticcheck)** - PARTIALLY RESOLVED (v0.x.y)
+~~2. **Code Efficiency (ineffassign, staticcheck)** - RESOLVED~~
    * ~~Ineffectual assignments to `result`~~ in `pkg/chart/generator.go`
-   * Empty if branch in detection tests (`pkg/image/detection_test.go`) - REMAINS
-   * Unnecessary separate variable declaration - REMAINS (Needs specific location)
-   * ~~Duplicate error definitions in pkg/image/detection.go~~ (RESOLVED)
-   * `S1005`: Unnecessary assignment before return in `pkg/override/path_utils.go` - REMAINS
-   * `U1000`: Unused `digestRegexCompiled` in `pkg/image/reference.go` - REMAINS
+   * ~~Empty if branch in detection tests~~ (`pkg/image/detection_test.go`)
+   * ~~Unnecessary separate variable declaration~~
+   * ~~Duplicate error definitions~~ in pkg/image/detection.go
+   * ~~`S1005`: Unnecessary assignment before return~~ in `pkg/override/path_utils.go`
+   * ~~`U1000`: Unused `digestRegexCompiled`~~ in `pkg/image/reference.go`
 
-3. **Dead Code (unused)** - RESOLVED (v0.x.y)
+~~3. **Dead Code (unused)** - RESOLVED (v0.x.y)~~
    * ~~Unused functions in image detection package (`pkg/image/detection.go`)~~:
      * ~~`tryExtractImageFromMap`~~ (Now used in refactored detection logic)
      * ~~`normalizeImageReference`~~ (Now used in refactored detection logic)

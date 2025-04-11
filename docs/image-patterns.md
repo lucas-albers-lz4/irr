@@ -1,6 +1,6 @@
 # Image Pattern Reference
 
-This document details all the image reference patterns supported by the helm-image-override tool.
+This document details all the image reference patterns supported by the irr (Image Relocation and Rewrite) tool.
 
 ## Supported Patterns
 

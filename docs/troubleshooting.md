@@ -129,7 +129,7 @@ my-registry.com/dockerio/nginx:1.23
 
 **Solution:**
 - Default strategy is prefix-source-registry
-- Use --path-strategy flag to select different strategy
+- Use --strategy flag to select different strategy
 - Check documentation for available strategies
 
 #### Source Registry Filtering

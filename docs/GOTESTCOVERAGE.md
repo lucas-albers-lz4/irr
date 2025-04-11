@@ -8,7 +8,7 @@
 
 ## 2. Current Status (as of 2024-08-14)
 
-*   **Overall Coverage:** **61.8%** (Run `go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out`)
+*   **Overall Coverage:** **63.7%** (Run `go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out`)
 *   **Progress Summary:**
     *   Completed initial unit test implementation for core logic in `pkg/analysis` and `pkg/chart` (partial).
     *   Resolved numerous build and test assertion failures across multiple packages.
@@ -22,18 +22,19 @@
     *   **All Go unit tests (`make test`) are currently passing.**
     *   Clarified separation between unit tests (`make test`) and integration tests (Python scripts in `test/tools/`).
 *   **Coverage Breakdown (Current):**
-    *   `github.com/lalbers/irr/cmd/irr`: **73.6%** (Phase 3 Complete)
-    *   `github.com/lalbers/irr/pkg/analysis`: **84.7%** (Good coverage)
-    *   `github.com/lalbers/irr/pkg/chart`: **37.7%** (Needs significant improvement)
-    *   `github.com/lalbers/irr/pkg/debug`: 0.0%
-    *   `github.com/lalbers/irr/pkg/image`: **86.8%** (Excellent coverage)
-    *   `github.com/lalbers/irr/pkg/log`: 0.0%
-    *   `github.com/lalbers/irr/pkg/override`: **81.8%** (Needs improvement, includes path_utils)
-    *   `github.com/lalbers/irr/pkg/registry`: **81.0%** (Good coverage - Consolidated)
-    *   `github.com/lalbers/irr/pkg/strategy`: **100.0%** (Good coverage)
-    *   `github.com/lalbers/irr/pkg/testutil`: **100.0%** (Good coverage)
-    *   `github.com/lalbers/irr/test/integration`: 61.2% (Go test harness only)
-*   **Next Priority:** Complete Phase 2 - Increase coverage in **`pkg/chart`**, `pkg/override`, `pkg/strategy`. Phase 4 - Test utility packages.
+    *   `github.com/lalbers/irr/cmd/irr`: **68.7%** (Phase 3 Complete)
+    *   `github.com/lalbers/irr/pkg/analysis`: **86.8%** (Good coverage)
+    *   `github.com/lalbers/irr/pkg/chart`: **61.1%** (Improved, needs more work)
+    *   `github.com/lalbers/irr/pkg/debug`: **8.6%**
+    *   `github.com/lalbers/irr/pkg/generator`: **75.0%**
+    *   `github.com/lalbers/irr/pkg/image`: **71.3%** (Good coverage)
+    *   `github.com/lalbers/irr/pkg/log`: **3.4%**
+    *   `github.com/lalbers/irr/pkg/override`: **43.7%** (Needs improvement, includes path_utils)
+    *   `github.com/lalbers/irr/pkg/registry`: **87.1%** (Good coverage - Consolidated)
+    *   `github.com/lalbers/irr/pkg/strategy`: **90.9%** (Excellent coverage)
+    *   `github.com/lalbers/irr/pkg/testutil`: **0.0%**
+    *   `github.com/lalbers/irr/test/integration`: **72.0%** (Go test harness only)
+*   **Next Priority:** Complete Phase 2 - Increase coverage in **`pkg/chart`**, `pkg/override`, `pkg/debug`, and `pkg/log`.
 
 ## 3. Implementation Plan (Detailed)
 
@@ -63,7 +64,7 @@
         *   `TestMergeOverrides` (Untested): Add tests.
         *   `TestExtractSubtree` (Untested): Add tests.
         *   `TestCleanupTemplateVariables` (Untested): Add tests.
-        *   `TestHelmLoaderLoad`: Verify coverage (currently good at 88.2%).
+        *   `TestDefaultLoaderLoad`: Verify coverage (currently good at 88.2%).
     *   **`pkg/override` (`override.go`, `path_utils.go`):** **[TODO - 58.3%]** Focus on core structure manipulation.
         *   *(Note: `path_utils.go` functions tested via `pkg/override/path_utils_test.go` and `pkg/image/path_utils_test.go`)*
         *   `TestConstructPath` skipped (trivial).

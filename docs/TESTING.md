@@ -38,7 +38,7 @@ These tests verify specific functions and isolated logic components:
 
 These tests provide end-to-end validation using real Helm charts:
 
-*   Leverage the `test/tools/test-charts.sh` script.
+*   Leverage the `test/tools/test-charts.py` script.
 *   Process a corpus of real-world charts (Top 50 from Artifact Hub + complex examples).
 *   Validate the generated `override.yaml` by rendering Helm templates (`helm template ... -f override.yaml`).
 *   Compare rendered manifests to ensure correct image relocation, version preservation, and non-destructive changes.
@@ -809,7 +809,7 @@ When testing functions that work with files:
 5. Clean up resources even in memory filesystem (good practice)
 
 ### 2. Chart Validation Tests (`make test-charts`)
-These tests use the `test/tools/test-charts.sh` script to validate against real-world charts:
+These tests use the `test/tools/test-charts.py` script to validate against real-world charts:
 - Tests against multiple chart types
 - Validates actual chart rendering
 - Tests with Harbor registry integration
@@ -820,7 +820,7 @@ These tests take longer to run and are better suited for validation testing.
 - `test-data/charts/`: Contains test fixtures used by integration tests
 - `test/results/`: Contains results from chart validation tests
 - `test/overrides/`: Contains generated override files from tests
-- `test/tools/`: Contains testing scripts
+- `test/tools/`: Contains testing scripts, including the Python-based chart testing utilities (`test-charts.py`, `pull-charts.py`, `analyze_errors.py`)
 - `test/integration/`: Contains Go integration tests
 
 ### Running Tests

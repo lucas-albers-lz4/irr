@@ -1,4 +1,24 @@
-// Package image provides core functionality for detecting, parsing, and normalizing container image references within Helm chart values.
+// Package image provides core functionality for detecting, parsing, and normalizing container
+// image references within Helm chart values.
+//
+// This package is responsible for:
+// - Detecting image references in chart values (map and string formats)
+// - Parsing image references into their component parts (registry, repository, tag, digest)
+// - Normalizing references for consistent processing
+// - Validating image reference components
+// - Supporting template variable detection and handling
+//
+// Usage Example:
+//
+//	detector := image.NewDetector(image.DetectionContext{
+//		SourceRegistries: []string{"docker.io", "quay.io"},
+//		ExcludeRegistries: []string{"internal-registry.example.com"},
+//		Strict: false,
+//		TemplateMode: true,
+//	})
+//	detected, unsupported, err := detector.DetectImages(chartValues, []string{})
+//
+// The package uses a modular design with components separated into logical files.
 package image
 
 // This package was originally contained in a single detection.go file but has been refactored into multiple files:

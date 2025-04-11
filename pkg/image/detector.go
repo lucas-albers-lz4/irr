@@ -40,6 +40,15 @@ type MapStructureResult struct {
 }
 
 // Detector handles the discovery of image references within chart values.
+// It implements a recursive traversal strategy to find image references in
+// complex nested structures like Helm chart values.yaml files.
+//
+// The detector can handle:
+// - Map-based image references (registry/repository/tag)
+// - String-based image references (e.g., "nginx:latest")
+// - Nested structures with arrays and maps
+// - Template variables in image references (when TemplateMode is enabled)
+// - Filtering by source registry
 //
 // NOTE: The accuracy of image detection heavily relies on the pkg/image/parser module.
 // Recent simplification of createImageReference did not resolve test failures, as the
@@ -49,7 +58,8 @@ type Detector struct {
 	context *DetectionContext
 }
 
-// NewDetector creates a new Detector
+// NewDetector creates a new Detector with the specified detection context.
+// The context controls filtering behavior, strict mode, and template handling.
 func NewDetector(context DetectionContext) *Detector {
 	debug.Printf("NewDetector: Initializing with context: %+v", context)
 	return &Detector{
@@ -58,6 +68,17 @@ func NewDetector(context DetectionContext) *Detector {
 }
 
 // DetectImages recursively traverses the values structure to find image references.
+// It processes maps, slices, and strings differently to detect image references
+// and returns both detected images and unsupported structures.
+//
+// Parameters:
+//   - values: The structure to traverse (typically a map[string]interface{} from parsed YAML)
+//   - path: The current path in the structure (used for reporting and validation)
+//
+// Returns:
+//   - []DetectedImage: Successfully detected and validated image references
+//   - []UnsupportedImage: Image-like structures that couldn't be processed
+//   - error: Any error encountered during processing
 func (d *Detector) DetectImages(values interface{}, path []string) ([]DetectedImage, []UnsupportedImage, error) {
 	debug.FunctionEnter("Detector.DetectImages")
 	debug.DumpValue("Input values", values)

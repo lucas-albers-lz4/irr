@@ -2,31 +2,18 @@
 
 ## Command Overview
 
-The `helm-image-override` tool provides several commands and options for analyzing and modifying image references in Helm charts.
+The `irr` (Image Relocation and Rewrite) tool provides commands and options for analyzing and modifying image references in Helm charts.
 
 ## Global Flags
 
 These flags are available for all commands:
 
-### Required Flags
-
-| Flag | Description | Example |
-|------|-------------|---------|
-| `--chart-path` | Path to the Helm chart (directory or .tgz) | `--chart-path ./my-chart` |
-| `--target-registry` | Target registry URL | `--target-registry harbor.example.com` |
-| `--source-registries` | Comma-separated list of source registries | `--source-registries docker.io,quay.io` |
-
-### Optional Flags
-
 | Flag | Description | Default | Example |
 |------|-------------|---------|---------|
-| `--output-file` | Output file for overrides | stdout | `--output-file overrides.yaml` |
-| `--path-strategy` | Path strategy for image references | prefix-source-registry | `--path-strategy flat` |
-| `--verbose` | Enable detailed logging | false | `--verbose` |
-| `--dry-run` | Preview changes without writing | false | `--dry-run` |
-| `--strict` | Fail on unrecognized structures | false | `--strict` |
-| `--exclude-registries` | Registries to exclude | none | `--exclude-registries gcr.io` |
-| `--threshold` | Success threshold percentage | 100 | `--threshold 90` |
+| `--config` | Config file path | `$HOME/.irr.yaml` | `--config my-config.yaml` |
+| `--debug` | Enable debug logging | false | `--debug` |
+| `--log-level` | Set log level | info | `--log-level debug` |
+| `--help` | Show help | | `--help` |
 
 ## Commands
 
@@ -35,36 +22,59 @@ These flags are available for all commands:
 Analyzes a Helm chart for image references without generating overrides.
 
 ```bash
-helm-image-override analyze --chart-path ./my-chart
+irr analyze [flags] CHART
 ```
 
-#### Additional Flags for analyze
+#### Flags for analyze
 
 | Flag | Description | Default | Example |
 |------|-------------|---------|---------|
-| `--json` | Output in JSON format | false | `--json` |
-| `--summary` | Show only summary | false | `--summary` |
+| `-h, --help` | Show help for analyze | | `--help` |
+| `-m, --mappings` | Registry mappings file | | `--mappings mappings.yaml` |
+| `-o, --output` | Output format | text | `--output json` |
+| `-f, --output-file` | Output file | stdout | `--output-file analysis.txt` |
+| `-r, --source-registries` | Source registries to analyze (required) | | `--source-registries docker.io,quay.io` |
+| `-s, --strict` | Enable strict mode | false | `--strict` |
+| `-v, --verbose` | Enable verbose output | false | `--verbose` |
 
 ### override
 
 Generates override values for redirecting images to the target registry.
 
 ```bash
-helm-image-override override \
-  --chart-path ./my-chart \
-  --target-registry harbor.example.com \
-  --source-registries docker.io,quay.io
+irr override [flags]
 ```
+
+#### Flags for override
+
+| Flag | Description | Default | Example |
+|------|-------------|---------|---------|
+| `-c, --chart-path` | Path to the Helm chart (required) | | `--chart-path ./my-chart` |
+| `--config` | Path to YAML config for registry mappings | | `--config mappings.yaml` |
+| `--dry-run` | Preview without writing | false | `--dry-run` |
+| `--exclude-pattern` | Glob patterns to exclude | | `--exclude-pattern "*.test.*"` |
+| `--exclude-registries` | Registries to exclude | | `--exclude-registries gcr.io` |
+| `-h, --help` | Show help for override | | `--help` |
+| `--include-pattern` | Glob patterns to include | | `--include-pattern "*.image"` |
+| `--known-image-paths` | Specific paths with images | | `--known-image-paths "containers[].image"` |
+| `-o, --output-file` | Output file path | stdout | `--output-file overrides.yaml` |
+| `--registry-file` | YAML file with registry mappings | | `--registry-file mappings.yaml` |
+| `-s, --source-registries` | Source registries (required) | | `--source-registries docker.io,quay.io` |
+| `-p, --strategy` | Path generation strategy | prefix-source-registry | `--strategy prefix-source-registry` |
+| `--strict` | Fail on any parsing error | false | `--strict` |
+| `-t, --target-registry` | Target registry URL (required) | | `--target-registry harbor.example.com` |
+| `--threshold` | Success percentage required | 0 | `--threshold 90` |
+| `--validate` | Run helm template to validate | false | `--validate` |
 
 ## Flag Details
 
-### --chart-path
+### --chart-path (-c)
 - Accepts both directory paths and .tgz archives
 - Must contain a valid Chart.yaml
 - Supports subcharts in charts/ directory
 - Example: `--chart-path ./charts/nginx`
 
-### --target-registry
+### --target-registry (-t)
 - Registry URL where images will be redirected
 - Can include port number
 - No trailing slash
@@ -72,20 +82,20 @@ helm-image-override override \
   - `--target-registry harbor.example.com`
   - `--target-registry localhost:5000`
 
-### --source-registries
+### --source-registries (-s)
 - Comma-separated list of registries to process
 - Registry names are normalized (e.g., "docker.io" = "index.docker.io")
 - Examples:
   - `--source-registries docker.io`
   - `--source-registries docker.io,quay.io,gcr.io`
 
-### --path-strategy
+### --strategy (-p)
 - Controls how image paths are constructed in target registry
 - Available strategies:
   - `prefix-source-registry` (default): Preserves source registry as path prefix
   - `flat` (planned): Removes source registry from path
 
-### --verbose
+### --verbose (-v)
 - Enables detailed logging
 - Shows:
   - Image detection process
@@ -101,7 +111,7 @@ helm-image-override override \
   - Checking path strategy results
   - Verifying registry transformations
 
-### --strict
+### --strict (-s)
 - Fails if unrecognized image structures found
 - Useful for:
   - CI/CD pipelines
@@ -120,6 +130,11 @@ helm-image-override override \
 - Range: 0-100
 - Example: `--threshold 90` (allow 10% failure)
 
+### --validate
+- Runs `helm template` with generated overrides
+- Confirms chart remains renderable
+- Useful for validating changes before applying
+
 ## Exit Codes
 
 | Code | Meaning |
@@ -132,22 +147,11 @@ helm-image-override override \
 | 5 | Unsupported structure (strict mode) |
 | 6 | Threshold not met |
 
-## Environment Variables
-
-Environment variables can be used instead of flags:
-
-| Variable | Flag Equivalent |
-|----------|----------------|
-| `HELM_IMAGE_OVERRIDE_TARGET_REGISTRY` | `--target-registry` |
-| `HELM_IMAGE_OVERRIDE_SOURCE_REGISTRIES` | `--source-registries` |
-| `HELM_IMAGE_OVERRIDE_PATH_STRATEGY` | `--path-strategy` |
-| `HELM_IMAGE_OVERRIDE_VERBOSE` | `--verbose` |
-
 ## Examples
 
 ### Basic Usage
 ```bash
-helm-image-override override \
+irr override \
   --chart-path ./nginx \
   --target-registry harbor.example.com \
   --source-registries docker.io
@@ -155,29 +159,29 @@ helm-image-override override \
 
 ### Complex Example
 ```bash
-helm-image-override override \
+irr override \
   --chart-path ./prometheus \
   --target-registry harbor.example.com \
   --source-registries docker.io,quay.io \
   --exclude-registries k8s.gcr.io \
-  --path-strategy prefix-source-registry \
+  --strategy prefix-source-registry \
   --threshold 90 \
-  --verbose \
   --output-file overrides.yaml
 ```
 
 ### Analysis Only
 ```bash
-helm-image-override analyze \
-  --chart-path ./my-chart \
-  --json \
-  --verbose
+irr analyze \
+  --output json \
+  --source-registries docker.io \
+  ./my-chart
 ```
 
-### Using Environment Variables
+### Using Registry Mappings
 ```bash
-export HELM_IMAGE_OVERRIDE_TARGET_REGISTRY=harbor.example.com
-export HELM_IMAGE_OVERRIDE_SOURCE_REGISTRIES=docker.io,quay.io
-
-helm-image-override override --chart-path ./my-chart
-``` 
+irr override \
+  --chart-path ./my-chart \
+  --target-registry harbor.example.com \
+  --source-registries docker.io \
+  --registry-file ./registry-mappings.yaml
+```

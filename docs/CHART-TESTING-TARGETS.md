@@ -1,6 +1,6 @@
 # Helm Chart Testing Targets
 
-This document outlines the Helm charts we'll use for systematic testing of the helm-image-override tool. Charts are organized by category and complexity.
+This document outlines the Helm charts we'll use for systematic testing of the irr (Image Relocation and Rewrite) tool. Charts are organized by category and complexity.
 
 ## Initial Testing Set (Top 10 Priority)
 

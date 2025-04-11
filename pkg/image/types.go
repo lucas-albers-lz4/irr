@@ -3,14 +3,16 @@ package image
 import "fmt"
 
 // Reference encapsulates the components of a container image reference.
+// It represents a complete image reference with its registry, repository, tag/digest,
+// and other metadata used during detection and processing.
 type Reference struct {
-	Original   string // The original string detected
-	Registry   string // e.g., docker.io, quay.io, gcr.io
-	Repository string
-	Tag        string
-	Digest     string
+	Original   string   // The original string detected in the chart
+	Registry   string   // Registry domain (e.g., docker.io, quay.io, gcr.io)
+	Repository string   // Repository path within the registry
+	Tag        string   // Image tag (e.g., latest, v1.0.0)
+	Digest     string   // Image digest (e.g., sha256:abc123...)
 	Path       []string // Path in the values structure where this reference was found
-	Detected   bool
+	Detected   bool     // Whether this reference was successfully detected
 }
 
 // String returns the string representation of the image reference
