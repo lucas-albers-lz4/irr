@@ -1,7 +1,7 @@
 # .golangci.yml
 #version:
 #   value : 2
-version : 2
+version: "2"
 run:
   go: "1.24"
   timeout: 5m
@@ -97,9 +97,20 @@ linters:
     mnd:
       # Comma-separated list of checks to enable
       # Recommended: argument, assign, case, condition, return, operation
-      checks: argument,assign,case,condition,return,operation
+      checks:
+        - argument
+        - assign
+        - case
+        - condition
+        - return
+        - operation
       # Comma-separated list of numbers to ignore
-      ignored-numbers: 0,1,-1,80,443 # Add other common non-magic numbers relevant to your project
+      ignored-numbers:
+        - "0"
+        - "1"
+        - "-1"
+        - "80"
+        - "443"
       # You can also ignore specific types or functions if needed
       # ignored-functions: ...
       # ignored-types: ...
@@ -112,23 +123,7 @@ linters:
     dupl:
       # Threshold for code duplication token sequence length
       threshold: 100 # Default is 100, adjust based on findings (lower finds more duplicates)
-    revive:
-      # Example: Adjust confidence level (0.0 to 1.0)
-      # confidence: 0.8
-      # Example: Ignore generated files (often default, but good practice)
-      # ignore-generated-header: true
-      # Example: Configure specific rules if needed
-      # rule:
-      #   exported:
-      #     severity: warning # Default is error
-    wrapcheck:
-      # Comma-separated list of regexps for function/method signatures to ignore.
-      # Example: ignore signatures returning standard library errors directly
-      ignoreSigs:
-        - \.Errorf\( # Don't require wrapping fmt.Errorf itself
-        - os\.ReadFile\( # Example standard lib function
-        - io\.Copy\( # Example standard lib function
-      # You might add patterns for specific internal functions/methods too
+    # wrapcheck section removed because the property names were causing validation errors
     misspell:
       locale: US # Default is US. Use 'UK' for British English.
       # ignore-words: # Add list of custom words to ignore if needed
@@ -140,16 +135,6 @@ linters:
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
-      
-  exclude:
-    # Regex for paths to exclude from analysis
-    - "zz_generated.*\\.go" # Exclude auto-generated files
+  # exclude-rules section removed because the property names were causing validation errors
 
-output:
-  # Removing keys that seem invalid in config file format
-  # format: colored-line-number
-  # print-issued-lines: true
-  # print-linter-name: true
-  # sort-results: true
-  # Keep output section minimal or empty if defaults are okay
-  # If specific format needed, verify exact key name from documentation / schema
+# Output section removed as it was empty and causing validation errors
