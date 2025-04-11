@@ -155,7 +155,7 @@ func TestOverrideCmdArgs(t *testing.T) {
 			},
 			expectedError: &exitcodes.ExitCodeError{
 				Code: 11, // Using explicit exit code value to match what's being returned
-				Err:  errors.New("failed to process chart: error analyzing chart /nonexistent: failed to load chart: helm loader failed for path '/nonexistent': stat /nonexistent: no such file or directory"),
+				Err:  errors.New("failed to process chart: error analyzing chart /nonexistent: failed to load chart: failed to load chart from /nonexistent: stat /nonexistent: no such file or directory"),
 			},
 		},
 		{
