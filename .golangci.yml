@@ -40,6 +40,10 @@ linters:
     - mnd
     - dupl
     - funlen
+    
+    # Additionally recommended linters
+    - whitespace
+    - asciicheck
 
   disable:
     - gomoddirectives
@@ -136,5 +140,3 @@ issues:
   max-issues-per-linter: 0
   max-same-issues: 0
   # exclude-rules section removed because the property names were causing validation errors
-
-# Output section removed as it was empty and causing validation errors
