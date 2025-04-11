@@ -4,6 +4,7 @@ package chart
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	// "github.com/spf13/afero" // No longer needed for this test file
@@ -13,7 +14,7 @@ import (
 	// "github.com/lalbers/irr/pkg/analysis"
 )
 
-// Helper to create a temporary chart directory for testing HelmLoader
+// Helper to create a temporary chart directory for testing DefaultLoader
 func createTempChartDir(t *testing.T, name, chartYaml, valuesYaml string) string {
 	t.Helper()
 	tempDir := t.TempDir()
@@ -35,11 +36,11 @@ func createTempChartDir(t *testing.T, name, chartYaml, valuesYaml string) string
 	return chartPath
 }
 
-// TestHelmLoaderLoad tests the Load method of the concrete helmLoader implementation.
+// TestDefaultLoaderLoad tests the Load method of the concrete DefaultLoader implementation.
 // It uses the real filesystem via t.TempDir().
-func TestHelmLoaderLoad(t *testing.T) {
-	loader := NewLoader() // Get the concrete implementation
-	require.IsType(t, &helmLoader{}, loader, "NewLoader should return helmLoader type")
+func TestDefaultLoaderLoad(t *testing.T) {
+	loader := &DefaultLoader{} // Use the DefaultLoader struct
+	require.IsType(t, &DefaultLoader{}, loader, "DefaultLoader should be the correct type")
 
 	t.Run("Load From Valid Directory", func(t *testing.T) {
 		chartYaml := `
@@ -71,10 +72,8 @@ image:
 		chartInstance, loadErr := loader.Load(nonExistentPath)
 
 		assert.Error(t, loadErr, "Load should fail for non-existent path")
-		// Check if the error is file not found related (os specific checks might be needed)
-		// Update: Helm loader checks for Chart.yaml first.
-		// assert.ErrorContains(t, loadErr, "no such file or directory")
-		assert.ErrorContains(t, loadErr, "Chart.yaml file is missing", "Helm loader error mismatch for non-existent path")
+		// Error message depends on the Helm version, but should include "no such file or directory"
+		assert.Contains(t, loadErr.Error(), "no such file or directory", "Error message should indicate file not found")
 		assert.Nil(t, chartInstance, "Chart instance should be nil on error")
 	})
 
@@ -86,10 +85,12 @@ image:
 		chartInstance, loadErr := loader.Load(filePath)
 
 		assert.Error(t, loadErr, "Load should fail for a plain file path")
-		// Helm's loader.LoadDir returns a specific error type here
-		// Update: It also checks for Chart.yaml.
-		// assert.ErrorContains(t, loadErr, "chart directory not found")
-		assert.ErrorContains(t, loadErr, "Chart.yaml file is missing", "Helm loader error mismatch for file path")
+		// Error message depends on the Helm version - check for typical messages
+		errMsg := loadErr.Error()
+		isExpectedError := strings.Contains(errMsg, "does not appear to be a gzipped archive") ||
+			strings.Contains(errMsg, "file does not appear to be a valid chart") ||
+			strings.Contains(errMsg, "Chart.yaml file is missing")
+		assert.True(t, isExpectedError, "Error should indicate invalid chart format: %s", errMsg)
 		assert.Nil(t, chartInstance, "Chart instance should be nil on error")
 	})
 
@@ -127,7 +128,7 @@ image:
 	require.NoErrorf(t, err, "failed to create dummy.yaml in %s", chartPath)
 }
 
-func TestHelmLoader_LoadChart(t *testing.T) {
+func TestDefaultLoader_LoadChart(t *testing.T) {
 	// Create a temporary directory for the test chart
 	chartPath, err := os.MkdirTemp("", "irr-test-")
 	require.NoErrorf(t, err, "failed to create temp directory")
@@ -160,7 +161,7 @@ func TestHelmLoader_LoadChart(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			loader := NewLoader()
+			loader := &DefaultLoader{} // Use DefaultLoader
 			_, err := loader.Load(tt.path)
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -171,7 +172,7 @@ func TestHelmLoader_LoadChart(t *testing.T) {
 	}
 }
 
-func TestHelmLoader_LoadChartWithInvalidFile(t *testing.T) {
+func TestDefaultLoader_LoadChartWithInvalidFile(t *testing.T) {
 	// Create a temporary directory for the test chart
 	chartPath, err := os.MkdirTemp("", "irr-test-")
 	require.NoErrorf(t, err, "failed to create temp directory")
@@ -187,7 +188,7 @@ func TestHelmLoader_LoadChartWithInvalidFile(t *testing.T) {
 	require.NoErrorf(t, err, "failed to create invalid Chart.yaml in %s", chartPath)
 
 	// Test loading the invalid chart
-	loader := NewLoader()
+	loader := &DefaultLoader{} // Use DefaultLoader
 	_, err = loader.Load(chartPath)
 	assert.Error(t, err, "expected error loading invalid chart")
 }

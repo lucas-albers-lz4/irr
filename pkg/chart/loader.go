@@ -3,9 +3,9 @@ package chart
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 
+	"github.com/lalbers/irr/pkg/analysis"
 	"github.com/lalbers/irr/pkg/debug"
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
@@ -14,58 +14,68 @@ import (
 )
 
 // Loader defines the interface for loading Helm charts.
+// This interface allows for dependency injection and testability.
+// Implementations should handle loading charts from filesystem paths
+// and return the loaded chart along with any error encountered.
 type Loader interface {
+	// Load loads a chart from the specified path.
+	// The path can be a directory or a .tgz file.
+	// Returns the loaded chart or an error if loading fails.
 	Load(chartPath string) (*chart.Chart, error)
 }
 
-// helmLoader implements the Loader interface using the Helm library.
-type helmLoader struct {
-	// No fields needed for this implementation as it uses library functions
-}
+// Ensure DefaultLoader implements analysis.ChartLoader
+var _ analysis.ChartLoader = (*DefaultLoader)(nil)
 
-// NewLoader creates a new Loader instance that uses the Helm library.
-func NewLoader() Loader {
-	return &helmLoader{}
-}
+// DefaultLoader is the standard implementation of Loader.
+// It uses Helm's chart.loader package to load charts from the filesystem.
+type DefaultLoader struct{}
 
-// Load loads a Helm chart from a directory or .tgz file using the Helm library.
-func (l *helmLoader) Load(chartPath string) (*chart.Chart, error) {
-	debug.FunctionEnter("[helmLoader] Load")
-	defer debug.FunctionExit("[helmLoader] Load")
-
+// Load implements the Loader interface.
+// It loads a chart from the specified path using Helm's loader.
+// The path can be a directory containing an unpacked chart or a .tgz file.
+// If the path is relative, it's resolved against the current working directory.
+//
+// Returns:
+//   - *chart.Chart: The loaded chart with its values and dependencies
+//   - error: An error if loading fails, which can happen if:
+//   - The path doesn't exist
+//   - The path doesn't contain a valid chart
+//   - There are issues with the chart's structure or metadata
+func (l *DefaultLoader) Load(chartPath string) (*chart.Chart, error) {
 	debug.Printf("Loading chart from path: %s", chartPath)
 
-	// Check if path exists using standard os.Stat
-	_, err := os.Stat(chartPath)
+	// Convert to absolute path if it's relative
+	absPath, err := filepath.Abs(chartPath)
 	if err != nil {
-		debug.Printf("Error checking chart path: %v", err)
-		// Helm loader functions below will handle path errors with more context
+		return nil, fmt.Errorf("failed to get absolute path for %s: %w", chartPath, err)
+	}
+	debug.Printf("Absolute chart path: %s", absPath)
+
+	// Load the chart
+	loadedChart, err := loader.Load(absPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load chart from %s: %w", absPath, err)
+	}
+	debug.Printf("Successfully loaded chart: %s (version: %s)", loadedChart.Name(), loadedChart.Metadata.Version)
+
+	// Ensure chart has values
+	if loadedChart.Values == nil {
+		debug.Printf("Chart has no values, creating empty values map")
+		loadedChart.Values = make(map[string]interface{})
 	}
 
-	// Load the chart using Helm's loader funcs
-	var chartData *chart.Chart
-	if filepath.Ext(chartPath) == ".tgz" {
-		debug.Printf("Loading packaged chart from .tgz file using loader.Load")
-		chartData, err = loader.Load(chartPath)
+	// Output dependency information if present
+	if len(loadedChart.Dependencies()) > 0 {
+		debug.Printf("Chart has %d dependencies:", len(loadedChart.Dependencies()))
+		for i, dep := range loadedChart.Dependencies() {
+			debug.Printf("  [%d] %s (version: %s)", i, dep.Name(), dep.Metadata.Version)
+		}
 	} else {
-		// Assume directory if not .tgz. loader.LoadDir handles non-dirs.
-		debug.Printf("Loading chart from directory using loader.LoadDir")
-		chartData, err = loader.LoadDir(chartPath)
+		debug.Printf("Chart has no dependencies")
 	}
 
-	if err != nil {
-		debug.Printf("Error loading chart: %v", err)
-		// Return the Helm library's error directly for better detail
-		return nil, fmt.Errorf("helm chart load failed: %w", err)
-	}
-
-	debug.Printf("Successfully loaded chart: %s", chartData.Name())
-	// Optional: Keep debug dumps if useful
-	// debug.DumpValue("Chart Metadata", chartData.Metadata)
-	// debug.DumpValue("Chart Values", chartData.Values)
-	// debug.Printf("Number of dependencies: %d", len(chartData.Dependencies()))
-
-	return chartData, nil
+	return loadedChart, nil
 }
 
 // --- Removed unused ChartData struct and helper functions ---

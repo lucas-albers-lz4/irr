@@ -463,7 +463,7 @@ func runOverride(cmd *cobra.Command, _ []string) error {
 	}
 
 	// Create generator
-	var loader analysis.ChartLoader = &chart.HelmLoader{}
+	var loader analysis.ChartLoader = &chart.DefaultLoader{}
 	generator := currentGeneratorFactory(
 		config.ChartPath, config.TargetRegistry,
 		config.SourceRegistries, config.ExcludeRegistries,
