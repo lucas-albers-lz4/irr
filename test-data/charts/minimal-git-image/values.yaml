@@ -1,0 +1,5 @@
+cloneStaticSiteFromGit:
+  image:
+    registry: docker.io
+    repository: bitnami/git
+    tag: 2.48.1-debian-12-r9 

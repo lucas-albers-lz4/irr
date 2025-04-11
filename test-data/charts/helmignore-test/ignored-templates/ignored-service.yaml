@@ -1,0 +1,8 @@
+# This whole file should be ignored by .helmignore
+apiVersion: v1
+kind: Service
+metadata:
+  name: "{{ .Release.Name }}-ignored-service"
+spec:
+  ports:
+  - port: 80 

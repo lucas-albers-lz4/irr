@@ -1,0 +1,4 @@
+apiVersion: v2
+name: minimal-git-image
+description: A minimal chart containing only the cloneStaticSiteFromGit.image structure.
+version: 0.1.0 

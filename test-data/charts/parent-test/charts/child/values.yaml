@@ -1,0 +1,7 @@
+image:
+  repository: docker.io/nginx
+  tag: latest
+
+extraImage:
+  repository: docker.io/bitnami/nginx
+  tag: latest 

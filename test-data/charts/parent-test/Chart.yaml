@@ -1,0 +1,12 @@
+apiVersion: v2
+name: parent-test
+version: 0.1.0
+description: A parent test chart with dependencies for helm-image-override
+
+dependencies:
+  - name: child
+    version: 0.1.0
+    repository: file://charts/child
+  - name: another-child
+    version: 0.1.0
+    repository: file://charts/another-child 

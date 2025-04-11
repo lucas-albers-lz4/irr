@@ -1,0 +1,4 @@
+# Ignore files in the ignored-templates directory
+ignored-templates/
+# Ignore values under the ignored_section key
+ignored_section 

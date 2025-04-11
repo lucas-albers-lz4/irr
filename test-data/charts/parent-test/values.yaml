@@ -1,0 +1,45 @@
+# Parent chart values
+parentImage:
+  registry: docker.io
+  repository: parent/app
+  tag: v1.0.0
+
+# Values for first child chart instance
+child:
+  image:
+    repository: docker.io/nginx
+    tag: latest
+  
+  explicitRegistry:
+    image:
+      registry: docker.io
+      repository: docker.io/bitnami/nginx
+      tag: latest
+
+# Values for second child chart instance
+another-child:
+  image:
+    repository: docker.io/redis
+    tag: latest
+  
+  quayImage:
+    image:
+      registry: quay.io
+      repository: prometheus/node-exporter
+      tag: latest
+
+image:
+  repository: docker.io/parent/app
+  tag: latest
+  pullPolicy: IfNotPresent
+
+child:
+  extraImage:
+    repository: docker.io/bitnami/nginx
+    tag: latest
+
+another-child:
+  monitoring:
+    image:
+      repository: quay.io/prometheus/node-exporter
+      tag: latest 

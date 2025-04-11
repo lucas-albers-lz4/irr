@@ -1,0 +1,8 @@
+image:
+  repository: docker.io/redis
+  tag: latest
+
+monitoring:
+  image:
+    repository: quay.io/prometheus/node-exporter
+    tag: latest 

@@ -1,0 +1,4 @@
+apiVersion: v2
+name: child
+version: 0.1.0
+description: A child test chart for helm-image-override 

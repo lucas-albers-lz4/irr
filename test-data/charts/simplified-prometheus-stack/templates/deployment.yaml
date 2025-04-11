@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-prometheus-test
+  labels:
+    app: prometheus-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus-test
+  template:
+    metadata:
+      labels:
+        app: prometheus-test
+    spec:
+      containers:
+      - name: prometheus
+        # Use the image defined in values.yaml
+        image: "{{ .Values.prometheus.prometheusSpec.image.registry }}/{{ .Values.prometheus.prometheusSpec.image.repository }}:{{ .Values.prometheus.prometheusSpec.image.tag }}"
+        imagePullPolicy: IfNotPresent # Or as defined in values, keeping it simple here
+        ports:
+        - containerPort: 9090 # Example port 

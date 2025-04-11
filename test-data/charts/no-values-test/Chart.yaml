@@ -1,0 +1,3 @@
+apiVersion: v2
+name: no-values-test
+version: 0.1.0

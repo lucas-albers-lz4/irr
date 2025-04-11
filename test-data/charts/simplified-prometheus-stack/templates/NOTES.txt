@@ -1,0 +1,3 @@
+# Placeholder for templates
+# Add minimal templates if required for the test to process the chart,
+# otherwise leave empty. 

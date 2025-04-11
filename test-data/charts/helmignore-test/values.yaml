@@ -1,0 +1,17 @@
+# This image should be processed
+image_to_process:
+  repository: docker.io/library/nginx
+  tag: 1.24
+
+# This section's contents should be ignored by .helmignore
+ignored_section:
+  image_to_ignore:
+    repository: docker.io/library/redis
+    tag: latest
+
+# Reference to an ignored template (the image here might still be processed
+# if the template inclusion itself isn't ignored, depending on Helm logic,
+# but having it reinforces the test)
+image_in_ignored_template_ref:
+  repository: docker.io/library/alpine
+  tag: 3.18 

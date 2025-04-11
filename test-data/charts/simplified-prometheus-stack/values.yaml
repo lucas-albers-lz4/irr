@@ -1,0 +1,40 @@
+# Simplified values for integration testing
+# Contains only the specific images the test expects
+
+# Explicit image definitions for testing purposes
+prometheus:
+  prometheusSpec:
+    image:
+      registry: quay.io
+      repository: prometheus/prometheus
+      tag: v2.48.1 # Match the original chart's version for consistency if needed
+
+alertmanager:
+  alertmanagerSpec:
+    image:
+      registry: quay.io
+      repository: prometheus/alertmanager
+      tag: v0.26.0 # Match the original chart's version
+
+prometheus-node-exporter:
+  image:
+    registry: quay.io
+    repository: prometheus/node-exporter
+    tag: v1.7.0 # Example tag, adjust if test expects specific version
+
+kube-state-metrics:
+  image:
+    registry: registry.k8s.io
+    repository: kube-state-metrics/kube-state-metrics
+    tag: v2.10.1 # Example tag
+
+grafana:
+  image:
+    # Note: The test expects docker.io/grafana/grafana, but the original chart uses grafana/grafana.
+    # Sticking to the test expectation here.
+    registry: docker.io
+    repository: grafana/grafana
+    tag: 10.2.2 # Example tag
+
+  # Add other minimal necessary values if the test processing requires them,
+  # but keep it focused on the image definitions. 

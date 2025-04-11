@@ -1,0 +1,11 @@
+apiVersion: v2
+name: simplified-prometheus-stack
+description: A simplified Helm chart for integration testing image overrides.
+version: 0.1.0
+appVersion: "1.0"
+
+# Minimal dependencies, if any are strictly required for chart processing
+# dependencies:
+#   # Add minimal subchart definitions if the test logic specifically requires them
+#   # Example (adjust as needed):
+#   # - name: common 

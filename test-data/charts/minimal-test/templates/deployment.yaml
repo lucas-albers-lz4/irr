@@ -1,0 +1,27 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-test
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-test
+    spec:
+      containers:
+      - name: main
+        image: {{ printf "%s:%s" .Values.image.repository .Values.image.tag | quote }}
+      - name: explicit
+        image: {{ printf "%s/%s:%s" .Values.explicitRegistry.image.registry .Values.explicitRegistry.image.repository .Values.explicitRegistry.image.tag | quote }}
+      - name: quay
+        image: {{ printf "%s/%s:%s" .Values.quayImage.image.registry .Values.quayImage.image.repository .Values.quayImage.image.tag | quote }}
+      - name: string
+        image: {{ .Values.stringImage.image | quote }}
+      - name: nested
+        image: {{ .Values.nestedChart.subcomponent.image.imageString | default (printf "%s:%s" .Values.nestedChart.subcomponent.image.repository .Values.nestedChart.subcomponent.image.tag) | quote }}
+      - name: digest
+        image: {{ printf "%s/%s:%s" .Values.digestImage.image.registry .Values.digestImage.image.repository .Values.digestImage.image.tag | quote }} 
