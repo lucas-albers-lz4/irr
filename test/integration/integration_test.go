@@ -315,7 +315,7 @@ func TestStrictMode(t *testing.T) {
 	defer h.Cleanup()
 
 	// Setup chart with known unsupported structure
-	h.SetChartPath(h.GetTestdataPath("unsupported-test"))
+	h.SetupChart(testutil.GetChartPath("unsupported-test"))
 
 	// Define the arguments for the IRR command
 	args := []string{
@@ -326,8 +326,8 @@ func TestStrictMode(t *testing.T) {
 		"--strict",
 	}
 
-	// Verify exit code is 11 (ExitImageProcessingError) using harness method, passing args
-	h.AssertExitCode(exitcodes.ExitImageProcessingError, args...)
+	// Verify exit code is 12 (ExitUnsupportedStructure) using harness method, passing args
+	h.AssertExitCode(exitcodes.ExitUnsupportedStructure, args...)
 
 	// Verify the error message contains expected text using harness method, passing args
 	h.AssertErrorContains("unsupported structure found", args...)
@@ -642,7 +642,7 @@ func TestStrictModeExitCode(t *testing.T) {
 	defer h.Cleanup()
 
 	// Setup chart with known unsupported structure
-	h.SetChartPath(h.GetTestdataPath("unsupported-test"))
+	h.SetupChart(testutil.GetChartPath("unsupported-test"))
 
 	// Define the arguments for the IRR command
 	args := []string{
@@ -653,8 +653,8 @@ func TestStrictModeExitCode(t *testing.T) {
 		"--strict",
 	}
 
-	// Verify exit code is 11 (ExitImageProcessingError) using harness method, passing args
-	h.AssertExitCode(exitcodes.ExitImageProcessingError, args...)
+	// Verify exit code is 12 (ExitUnsupportedStructure) using harness method, passing args
+	h.AssertExitCode(exitcodes.ExitUnsupportedStructure, args...)
 
 	// Verify the error message contains expected text using harness method, passing args
 	h.AssertErrorContains("unsupported structure found", args...)

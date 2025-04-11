@@ -257,7 +257,7 @@ func handleGenerateError(err error) error {
 			Code: exitcodes.ExitChartParsingError,
 			Err:  fmt.Errorf("failed to process chart: %w", err),
 		}
-	case errors.Is(err, chart.ErrStrictValidationFailed):
+	case errors.Is(err, chart.ErrUnsupportedStructure):
 		return &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitUnsupportedStructure,
 			Err:  fmt.Errorf("failed to process chart: %w", err),
