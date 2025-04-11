@@ -108,7 +108,6 @@ _output/
 *.pprof
 
 # Project specific
-test-data/
 test-chart/
 tools/bin/
 tools/build/
