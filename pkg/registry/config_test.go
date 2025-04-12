@@ -15,91 +15,14 @@ const (
 	TestTmpDir = "/tmp"
 )
 
+// TestLoadConfig tests the LoadConfig function with different inputs
 func TestLoadConfig(t *testing.T) {
 	// Create a memory-backed filesystem for testing
 	fs := afero.NewMemMapFs()
 	tmpDir := TestTmpDir
 
-	// Create test file paths
-	validConfigFile := filepath.Join(tmpDir, "valid-config.yaml")
-	emptyConfigFile := filepath.Join(tmpDir, "empty-config.yaml")
-	invalidYamlFile := filepath.Join(tmpDir, "invalid-yaml.yaml")
-	invalidDomainFile := filepath.Join(tmpDir, "invalid-domain.yaml")
-	invalidValueFile := filepath.Join(tmpDir, "invalid-value.yaml")
-	invalidExtFile := filepath.Join(tmpDir, "invalid-ext.txt")
-	configDir := filepath.Join(tmpDir, "config-dir")
-	duplicateKeysFile := filepath.Join(tmpDir, "duplicate-keys.yaml")
-	invalidPortFile := filepath.Join(tmpDir, "invalid-port.yaml")
-	longKeyFile := filepath.Join(tmpDir, "long-key.yaml")
-	longValueFile := filepath.Join(tmpDir, "long-value.yaml")
-
-	// Create test directory
-	require.NoError(t, fs.MkdirAll(tmpDir, 0o755))
-	require.NoError(t, fs.MkdirAll(configDir, 0o755))
-
-	// Create valid config file content
-	validConfigContent := `
-docker.io: harbor.example.com/docker
-quay.io: harbor.example.com/quay
-gcr.io: harbor.example.com/gcr
-`
-
-	// Create invalid domain file content
-	invalidDomainContent := `
-docker.io: harbor.example.com/docker
-invalid_domain_with_underscore: harbor.example.com/invalid
-`
-
-	// Create invalid value file content (missing slash)
-	invalidValueContent := `
-docker.io: harbor.example.com/docker
-quay.io: missingslash
-`
-
-	// Invalid YAML content
-	invalidYamlContent := `
-docker.io: harbor.example.com/docker
-- invalid: yaml: format
-`
-
-	// Duplicate keys content
-	duplicateKeysContent := `
-docker.io: harbor.example.com/docker
-docker.io: harbor.example.com/other
-`
-
-	// Invalid port content
-	invalidPortContent := `
-docker.io: harbor.example.com/docker
-quay.io: myregistry.example.com:99999/path
-`
-
-	// Long key content
-	longKey := "a" + strings.Repeat("x", MaxKeyLength)
-	longKeyContent := longKey + ": harbor.example.com/long"
-
-	// Long value content
-	longValue := "harbor.example.com/" + strings.Repeat("x", MaxValueLength)
-	longValueContent := "docker.io: " + longValue
-
-	// Write test files
-	require.NoError(t, afero.WriteFile(fs, validConfigFile, []byte(validConfigContent), 0o644))
-	require.NoError(t, afero.WriteFile(fs, emptyConfigFile, []byte(""), 0o644))
-	require.NoError(t, afero.WriteFile(fs, invalidYamlFile, []byte(invalidYamlContent), 0o644))
-	require.NoError(t, afero.WriteFile(fs, invalidDomainFile, []byte(invalidDomainContent), 0o644))
-	require.NoError(t, afero.WriteFile(fs, invalidValueFile, []byte(invalidValueContent), 0o644))
-	require.NoError(t, afero.WriteFile(fs, invalidExtFile, []byte(validConfigContent), 0o644))
-	require.NoError(t, afero.WriteFile(fs, duplicateKeysFile, []byte(duplicateKeysContent), 0o644))
-	require.NoError(t, afero.WriteFile(fs, invalidPortFile, []byte(invalidPortContent), 0o644))
-	require.NoError(t, afero.WriteFile(fs, longKeyFile, []byte(longKeyContent), 0o644))
-	require.NoError(t, afero.WriteFile(fs, longValueFile, []byte(longValueContent), 0o644))
-
-	// Expected valid config result
-	expectedConfig := map[string]string{
-		"docker.io": "harbor.example.com/docker",
-		"quay.io":   "harbor.example.com/quay",
-		"gcr.io":    "harbor.example.com/gcr",
-	}
+	// Create test files and directory structure
+	testFiles, expectedConfig := setupConfigTestFiles(t, fs, tmpDir)
 
 	tests := []struct {
 		name          string
@@ -110,13 +33,13 @@ quay.io: myregistry.example.com:99999/path
 	}{
 		{
 			name:       "valid config file",
-			path:       validConfigFile,
+			path:       testFiles.validConfigFile,
 			wantConfig: expectedConfig,
 			wantErr:    false,
 		},
 		{
 			name:          "empty file",
-			path:          emptyConfigFile,
+			path:          testFiles.emptyConfigFile,
 			wantErr:       true,
 			errorContains: "mappings file is empty",
 		},
@@ -128,31 +51,31 @@ quay.io: myregistry.example.com:99999/path
 		},
 		{
 			name:          "invalid YAML format",
-			path:          invalidYamlFile,
+			path:          testFiles.invalidYamlFile,
 			wantErr:       true,
-			errorContains: "failed to parse mappings file",
+			errorContains: "failed to parse config file",
 		},
 		{
 			name:          "invalid domain",
-			path:          invalidDomainFile,
+			path:          testFiles.invalidDomainFile,
 			wantErr:       true,
 			errorContains: "invalid source registry domain",
 		},
 		{
 			name:          "invalid value (missing slash)",
-			path:          invalidValueFile,
+			path:          testFiles.invalidValueFile,
 			wantErr:       true,
 			errorContains: "must contain at least one '/'",
 		},
 		{
 			name:          "invalid file extension",
-			path:          invalidExtFile,
+			path:          testFiles.invalidExtFile,
 			wantErr:       true,
 			errorContains: "mappings file path must end with .yaml or .yml",
 		},
 		{
 			name:          "path is a directory",
-			path:          configDir,
+			path:          testFiles.configDir,
 			wantErr:       true,
 			errorContains: "failed to read config file",
 		},
@@ -163,32 +86,33 @@ quay.io: myregistry.example.com:99999/path
 			errorContains: "mappings file path '../../../etc/passwd.yaml' must be within the current working directory tree",
 		},
 		{
-			name:       "empty path",
-			path:       "",
-			wantConfig: nil,
-			wantErr:    false,
+			name:          "empty path",
+			path:          "",
+			wantConfig:    nil,
+			wantErr:       true,
+			errorContains: "no configuration file specified",
 		},
 		{
 			name:          "duplicate keys",
-			path:          duplicateKeysFile,
+			path:          testFiles.duplicateKeysFile,
 			wantErr:       true,
 			errorContains: "duplicate registry key",
 		},
 		{
 			name:          "invalid port number",
-			path:          invalidPortFile,
+			path:          testFiles.invalidPortFile,
 			wantErr:       true,
 			errorContains: "invalid port number",
 		},
 		{
 			name:          "key too long",
-			path:          longKeyFile,
+			path:          testFiles.longKeyFile,
 			wantErr:       true,
 			errorContains: "registry key",
 		},
 		{
 			name:          "value too long",
-			path:          longValueFile,
+			path:          testFiles.longValueFile,
 			wantErr:       true,
 			errorContains: "registry value",
 		},
@@ -217,6 +141,143 @@ quay.io: myregistry.example.com:99999/path
 			}
 		})
 	}
+}
+
+// TestFilesConfig contains file paths for config tests
+type TestFilesConfig struct {
+	validConfigFile   string
+	emptyConfigFile   string
+	invalidYamlFile   string
+	invalidDomainFile string
+	invalidValueFile  string
+	invalidExtFile    string
+	configDir         string
+	duplicateKeysFile string
+	invalidPortFile   string
+	longKeyFile       string
+	longValueFile     string
+}
+
+// setupConfigTestFiles creates test files for configuration testing
+func setupConfigTestFiles(t *testing.T, fs afero.Fs, tmpDir string) (files TestFilesConfig, expectedConfig map[string]string) {
+	// Create test file paths
+	files = TestFilesConfig{
+		validConfigFile:   filepath.Join(tmpDir, "valid-config.yaml"),
+		emptyConfigFile:   filepath.Join(tmpDir, "empty-config.yaml"),
+		invalidYamlFile:   filepath.Join(tmpDir, "invalid-yaml.yaml"),
+		invalidDomainFile: filepath.Join(tmpDir, "invalid-domain.yaml"),
+		invalidValueFile:  filepath.Join(tmpDir, "invalid-value.yaml"),
+		invalidExtFile:    filepath.Join(tmpDir, "invalid-ext.txt"),
+		configDir:         filepath.Join(tmpDir, "config-dir"),
+		duplicateKeysFile: filepath.Join(tmpDir, "duplicate-keys.yaml"),
+		invalidPortFile:   filepath.Join(tmpDir, "invalid-port.yaml"),
+		longKeyFile:       filepath.Join(tmpDir, "long-key.yaml"),
+		longValueFile:     filepath.Join(tmpDir, "long-value.yaml"),
+	}
+
+	// Create test directory
+	require.NoError(t, fs.MkdirAll(tmpDir, 0o755))
+	require.NoError(t, fs.MkdirAll(files.configDir, 0o755))
+
+	// Create valid config file content
+	validConfigContent := `
+registries:
+  mappings:
+    - source: docker.io
+      target: harbor.example.com/docker
+    - source: quay.io
+      target: harbor.example.com/quay
+    - source: gcr.io
+      target: harbor.example.com/gcr
+`
+
+	// Create invalid domain file content
+	invalidDomainContent := `
+registries:
+  mappings:
+    - source: docker.io
+      target: harbor.example.com/docker
+    - source: invalid_domain_with_underscore
+      target: harbor.example.com/invalid
+`
+
+	// Create invalid value file content (missing slash)
+	invalidValueContent := `
+registries:
+  mappings:
+    - source: docker.io
+      target: harbor.example.com/docker
+    - source: quay.io
+      target: missingslash
+`
+
+	// Invalid YAML content
+	invalidYamlContent := `
+registries:
+  mappings:
+    - source: docker.io
+      target: harbor.example.com/docker
+    - invalid: yaml: format
+`
+
+	// Duplicate keys content
+	duplicateKeysContent := `
+registries:
+  mappings:
+    - source: docker.io
+      target: harbor.example.com/docker
+    - source: docker.io
+      target: harbor.example.com/other
+`
+
+	// Invalid port content
+	invalidPortContent := `
+registries:
+  mappings:
+    - source: docker.io
+      target: harbor.example.com/docker
+    - source: quay.io
+      target: myregistry.example.com:99999/path
+`
+
+	// Long key content
+	longKey := "a" + strings.Repeat("x", MaxKeyLength)
+	longKeyContent := `
+registries:
+  mappings:
+    - source: ` + longKey + `
+      target: harbor.example.com/long
+`
+
+	// Long value content
+	longValue := "harbor.example.com/" + strings.Repeat("x", MaxValueLength)
+	longValueContent := `
+registries:
+  mappings:
+    - source: docker.io
+      target: ` + longValue + `
+`
+
+	// Write test files
+	require.NoError(t, afero.WriteFile(fs, files.validConfigFile, []byte(validConfigContent), 0o644))
+	require.NoError(t, afero.WriteFile(fs, files.emptyConfigFile, []byte(""), 0o644))
+	require.NoError(t, afero.WriteFile(fs, files.invalidYamlFile, []byte(invalidYamlContent), 0o644))
+	require.NoError(t, afero.WriteFile(fs, files.invalidDomainFile, []byte(invalidDomainContent), 0o644))
+	require.NoError(t, afero.WriteFile(fs, files.invalidValueFile, []byte(invalidValueContent), 0o644))
+	require.NoError(t, afero.WriteFile(fs, files.invalidExtFile, []byte(validConfigContent), 0o644))
+	require.NoError(t, afero.WriteFile(fs, files.duplicateKeysFile, []byte(duplicateKeysContent), 0o644))
+	require.NoError(t, afero.WriteFile(fs, files.invalidPortFile, []byte(invalidPortContent), 0o644))
+	require.NoError(t, afero.WriteFile(fs, files.longKeyFile, []byte(longKeyContent), 0o644))
+	require.NoError(t, afero.WriteFile(fs, files.longValueFile, []byte(longValueContent), 0o644))
+
+	// Expected valid config result
+	expectedConfig = map[string]string{
+		"docker.io": "harbor.example.com/docker",
+		"quay.io":   "harbor.example.com/quay",
+		"gcr.io":    "harbor.example.com/gcr",
+	}
+
+	return files, expectedConfig
 }
 
 // TestIsValidDomain tests the domain validation function
@@ -333,7 +394,7 @@ registries:
   defaultTarget: harbor.example.com/default
   strictMode: false
 compatibility:
-  legacyFlatFormat: true
+  ignoreEmptyFields: true
 `
 
 	// Create invalid structured config file content
@@ -402,7 +463,7 @@ registries:
 					StrictMode:    false,
 				},
 				Compatibility: CompatibilityConfig{
-					LegacyFlatFormat: true,
+					IgnoreEmptyFields: true,
 				},
 			},
 			wantErr: false,
@@ -445,7 +506,7 @@ registries:
 			assert.Equal(t, tt.wantConfig.Version, got.Version)
 			assert.Equal(t, tt.wantConfig.Registries.DefaultTarget, got.Registries.DefaultTarget)
 			assert.Equal(t, tt.wantConfig.Registries.StrictMode, got.Registries.StrictMode)
-			assert.Equal(t, tt.wantConfig.Compatibility.LegacyFlatFormat, got.Compatibility.LegacyFlatFormat)
+			assert.Equal(t, tt.wantConfig.Compatibility.IgnoreEmptyFields, got.Compatibility.IgnoreEmptyFields)
 
 			// Check mappings
 			require.Equal(t, len(tt.wantConfig.Registries.Mappings), len(got.Registries.Mappings))

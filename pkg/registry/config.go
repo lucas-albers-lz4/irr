@@ -87,11 +87,20 @@ func validateStructuredConfig(config *Config, path string) error {
 		return WrapMappingFileEmpty(path)
 	}
 
+	// Check for duplicate source entries
+	seenSources := make(map[string]bool)
+
 	// Validate each mapping and set defaults
 	for i := range config.Registries.Mappings {
 		mapping := &config.Registries.Mappings[i]
 		source := mapping.Source
 		target := mapping.Target
+
+		// Check for duplicate source values
+		if seenSources[source] {
+			return WrapDuplicateRegistryKey(path, source)
+		}
+		seenSources[source] = true
 
 		// For TestEnabledFlagBehavior: Check if the mapping had Enabled explicitly set to false
 		// For regular YAML parsing: Default to true for all mappings
