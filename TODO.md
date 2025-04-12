@@ -64,7 +64,65 @@ _**Goal:** Implement the core `inspect`, `override`, `validate` commands and the
   - [ ] [Sub-Task] Remove legacy config parsing code path (contingent on Phase 4.1/4.3 completion).
   - [ ] [Sub-Task] Update tests and documentation to use only structured config format.
 
-### Phase 4.3: Testing Implementation
+### Phase 4.3: Fixing Current Failing tests ( `make test | grep FAIL`)
+
+The following tests are currently failing in the integration test suite:
+```
+--- FAIL: TestMinimalChart (0.17s)
+--- FAIL: TestParentChart (0.00s)
+--- FAIL: TestKubePrometheusStack (0.00s)
+--- FAIL: TestComplexChartFeatures (0.01s)
+    --- FAIL: TestComplexChartFeatures/simplified-prometheus-stack_with_specific_components (0.00s)
+    --- FAIL: TestComplexChartFeatures/ingress-nginx_with_admission_webhook (0.00s)
+--- FAIL: TestRegistryMappingFile (0.00s)
+--- FAIL: TestConfigFileMappings (0.00s)
+--- FAIL: TestMinimalGitImageOverride (0.00s)
+```
+
+#### Implementation Plan:
+
+1. **Fix TestHarness and base integration test functionality**
+   - [ ] [Sub-Task] Debug the `TestAnalyzeMode` flag usage in integration tests
+   - [ ] [Sub-Task] Update the `TestHarness.ExecuteIRR` method to properly include the `--integration-test-mode` flag
+   - [ ] [Sub-Task] Fix the registry mapping file loading in `ValidateOverrides` method
+   - [ ] [Sub-Task] Verify chart path handling and add additional logging for troubleshooting
+
+2. **Fix basic chart tests (TestMinimalChart, TestParentChart)**
+   - [ ] [Sub-Task] Update test cases to work with the new CLI interface
+   - [ ] [Sub-Task] Add proper chart-path handling for minimal and parent charts
+   - [ ] [Sub-Task] Fix override generation and validation for these basic charts
+   - [ ] [Sub-Task] Add additional debugging to identify exact failure points
+
+3. **Fix complex chart tests (TestKubePrometheusStack, TestComplexChartFeatures)**
+   - [ ] [Sub-Task] Update simplified-prometheus-stack test to match new CLI structure
+   - [ ] [Sub-Task] Update ingress-nginx test to handle its specific requirements
+   - [ ] [Sub-Task] Fix template validation for complex charts with subchart handling
+   - [ ] [Sub-Task] Add special handling for Prometheus-specific image structures
+
+4. **Fix mapping-related tests (TestRegistryMappingFile, TestConfigFileMappings)**
+   - [ ] [Sub-Task] Update registry mapping file format and loading mechanism
+   - [ ] [Sub-Task] Fix config file mapping integration with the new CLI commands
+   - [ ] [Sub-Task] Update test case expectations for the new mapping implementation
+   - [ ] [Sub-Task] Add detailed validation of registry mapping output
+
+5. **Fix special case tests (TestMinimalGitImageOverride)**
+   - [ ] [Sub-Task] Update Git image override to work with the updated image detection logic
+   - [ ] [Sub-Task] Fix repository path generation for Git images
+   - [ ] [Sub-Task] Add specific validation for the Git image override pattern
+
+#### Implementation Approach:
+
+1. **Identify root causes**: First, enable additional debug logging in the test harness to identify exactly where each test is failing.
+
+2. **Fix core issues**: Address common problems in TestHarness that might affect multiple tests, like flag handling, CLI interface changes, and path resolution.
+
+3. **Fix test by test**: Start with the simplest tests (Minimal/Parent charts) and work towards more complex ones, ensuring each works properly before moving to the next.
+
+4. **Verify improvements**: After each fix, run individual tests with verbose logging to confirm they're working correctly before moving to the next failure.
+
+5. **Final integration**: Once all individual tests pass, verify the entire test suite runs successfully.
+
+### Phase 4.4: Testing Implementation
 - [ ] **High Priority:** Implement comprehensive Unit/Integration tests for `pkg/analyzer` (inspect logic).
 - [ ] **High Priority:** Implement Integration tests for `internal/helm` (Helm command interactions, including `get values` and `template` success/failure simulation).
 - [ ] **High Priority:** Increase Unit/Integration test coverage for `pkg/override` (override generation logic).
