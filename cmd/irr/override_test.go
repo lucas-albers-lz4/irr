@@ -85,7 +85,7 @@ func setupDryRunTestEnvironment(t *testing.T, args []string) (updatedArgs []stri
 
 	// Create a mock Generator that returns a simple override file
 	overrideFile := &override.File{
-		Overrides: map[string]interface{}{"image": map[string]interface{}{"repository": "target.io/repo", "tag": "newtag"}},
+		Values: map[string]interface{}{"image": map[string]interface{}{"repository": "target.io/repo", "tag": "newtag"}},
 	}
 	mockGen := &mockGenerator{}
 	mockGen.On("Generate").Return(overrideFile, nil)
@@ -155,7 +155,7 @@ func TestOverrideCmdArgs(t *testing.T) {
 			},
 			expectedError: &exitcodes.ExitCodeError{
 				Code: 11, // Using explicit exit code value to match what's being returned
-				Err:  errors.New("failed to process chart: error analyzing chart /nonexistent: failed to load chart: failed to load chart from /nonexistent: stat /nonexistent: no such file or directory"),
+				Err:  errors.New("failed to process chart: error analyzing chart /nonexistent: failed to load chart: helm loader failed for path '/nonexistent': stat /nonexistent: no such file or directory"),
 			},
 		},
 		{
@@ -398,7 +398,7 @@ func createSuccessTestCase(args []string, overrideValues map[string]interface{},
 		args: args,
 		mockGeneratorFunc: func() (*override.File, error) {
 			return &override.File{
-				Overrides: overrideValues,
+				Values: overrideValues,
 			}, nil
 		},
 		expectErr:      false,
@@ -467,7 +467,7 @@ func createOutputFileTestCase(args []string) struct {
 		args: args,
 		mockGeneratorFunc: func() (*override.File, error) {
 			return &override.File{
-				Overrides: map[string]interface{}{
+				Values: map[string]interface{}{
 					"image": map[string]interface{}{
 						"repository": "mock-target.com/dockerio/nginx",
 					},
@@ -624,8 +624,7 @@ func TestOverrideCommand_Success(t *testing.T) {
 	// Create a mock generator that we fully control
 	mockGen := &mockGenerator{}
 	overrideFile := &override.File{
-		ChartPath: chartDir,
-		Overrides: map[string]interface{}{
+		Values: map[string]interface{}{
 			"image": map[string]interface{}{
 				"registry":   "target.io",
 				"repository": "library/nginx",
@@ -717,7 +716,7 @@ func setupDryRunTest(t *testing.T) (fs afero.Fs, chartDir string, cleanup func()
 
 	// Create test override file
 	overrideFile = &override.File{
-		Overrides: map[string]interface{}{
+		Values: map[string]interface{}{
 			"global": map[string]interface{}{
 				"imageRegistry": "target.io",
 			},

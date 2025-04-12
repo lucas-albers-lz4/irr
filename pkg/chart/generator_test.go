@@ -83,7 +83,7 @@ func TestGenerator_Generate_Simple(t *testing.T) {
 	// Verify the expected overrides map structure
 	expectedOverrides := override.File{
 		ChartPath: "test-chart",
-		Overrides: map[string]interface{}{
+		Values: map[string]interface{}{
 			"image": map[string]interface{}{
 				"registry":   "target.registry.com",
 				"repository": "mockpath/library/nginx",
@@ -94,7 +94,7 @@ func TestGenerator_Generate_Simple(t *testing.T) {
 	}
 
 	assert.Equal(t, expectedOverrides.ChartPath, result.ChartPath)
-	assert.Equal(t, expectedOverrides.Overrides, result.Overrides)
+	assert.Equal(t, expectedOverrides.Values, result.Values)
 	assert.Equal(t, expectedOverrides.Unsupported, result.Unsupported)
 }
 
@@ -143,7 +143,7 @@ func TestGenerator_Generate_ThresholdMet(t *testing.T) {
 
 	// Verify the expected overrides for both images
 	expectedOverrides := override.File{
-		Overrides: map[string]interface{}{
+		Values: map[string]interface{}{
 			"image": map[string]interface{}{
 				"registry":   "target.registry.com",
 				"repository": "mockpath/library/nginx", // mockpath/ + library/nginx
@@ -159,7 +159,7 @@ func TestGenerator_Generate_ThresholdMet(t *testing.T) {
 		},
 		Unsupported: []override.UnsupportedStructure{},
 	}
-	assert.Equal(t, expectedOverrides.Overrides, result.Overrides)
+	assert.Equal(t, expectedOverrides.Values, result.Values)
 	assert.Empty(t, result.Unsupported) // Ensure no unsupported structures reported
 }
 
@@ -309,23 +309,23 @@ func TestGenerator_Generate_Mappings(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, overrideFile)
 	// Expect overrides for all three images
-	require.Len(t, overrideFile.Overrides, 3)
+	require.Len(t, overrideFile.Values, 3)
 
 	// Check imageOne override (Uses mapping: source -> mapped-target)
 	// Since original was string, expect string override
-	imgOneOverride, ok := overrideFile.Overrides["imageOne"].(string)
+	imgOneOverride, ok := overrideFile.Values["imageOne"].(string)
 	require.True(t, ok, "Override for imageOne should be a string")
 	// Expected: mapped-target.example.com + / + mockpath/library/nginx:stable
 	assert.Equal(t, "mapped-target.example.com/mockpath/library/nginx:stable", imgOneOverride)
 
 	// Check imageTwo override (Uses mapping: another -> another-mapped)
-	imgTwoOverride, ok := overrideFile.Overrides["imageTwo"].(string)
+	imgTwoOverride, ok := overrideFile.Values["imageTwo"].(string)
 	require.True(t, ok, "Override for imageTwo should be a string")
 	// Expected: another-mapped.example.com + / + mockpath/utils/prometheus:latest
 	assert.Equal(t, "another-mapped.example.com/mockpath/utils/prometheus:latest", imgTwoOverride)
 
 	// Check imageThree override (No mapping, uses default target registry)
-	imgThreeOverride, ok := overrideFile.Overrides["imageThree"].(string)
+	imgThreeOverride, ok := overrideFile.Values["imageThree"].(string)
 	require.True(t, ok, "Override for imageThree should be a string")
 	// Expected: default-target.registry.com + / + mockpath/app/backend:v1
 	assert.Equal(t, "default-target.registry.com/mockpath/app/backend:v1", imgThreeOverride)

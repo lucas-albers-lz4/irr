@@ -10,10 +10,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const (
+	// TestTmpDir is the temporary directory used for testing
+	TestTmpDir = "/tmp"
+)
+
 func TestLoadConfig(t *testing.T) {
 	// Create a memory-backed filesystem for testing
 	fs := afero.NewMemMapFs()
-	tmpDir := "/tmp"
+	tmpDir := TestTmpDir
 
 	// Create test file paths
 	validConfigFile := filepath.Join(tmpDir, "valid-config.yaml")
@@ -294,4 +299,182 @@ func TestIsValidDomain(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+// TestLoadStructuredConfig tests the structured config loading functionality
+func TestLoadStructuredConfig(t *testing.T) {
+	// Create a memory-backed filesystem for testing
+	fs := afero.NewMemMapFs()
+	tmpDir := TestTmpDir
+
+	// Create test file paths
+	validStructuredFile := filepath.Join(tmpDir, "valid-structured.yaml")
+	invalidStructuredFile := filepath.Join(tmpDir, "invalid-structured.yaml")
+	emptyMappingsFile := filepath.Join(tmpDir, "empty-mappings.yaml")
+	invalidSourceFile := filepath.Join(tmpDir, "invalid-source.yaml")
+
+	// Create test directory
+	require.NoError(t, fs.MkdirAll(tmpDir, 0o755))
+
+	// Create valid structured config file content
+	validStructuredContent := `
+version: "1"
+registries:
+  mappings:
+    - source: docker.io
+      target: harbor.example.com/docker
+      description: "Docker Hub to Harbor"
+    - source: quay.io
+      target: harbor.example.com/quay
+      description: "Quay to Harbor"
+    - source: gcr.io
+      target: harbor.example.com/gcr
+      description: "GCR to Harbor"
+  defaultTarget: harbor.example.com/default
+  strictMode: false
+compatibility:
+  legacyFlatFormat: true
+`
+
+	// Create invalid structured config file content
+	invalidStructuredContent := `
+version: "1"
+registries:
+  invalid_key: value
+`
+
+	// Create empty mappings file content
+	emptyMappingsContent := `
+version: "1"
+registries:
+  mappings: []
+  defaultTarget: harbor.example.com/default
+`
+
+	// Create invalid source file content
+	invalidSourceContent := `
+version: "1"
+registries:
+  mappings:
+    - source: invalid_domain_with_underscore
+      target: harbor.example.com/invalid
+    - source: docker.io
+      target: harbor.example.com/docker
+  defaultTarget: harbor.example.com/default
+`
+
+	// Write test files
+	require.NoError(t, afero.WriteFile(fs, validStructuredFile, []byte(validStructuredContent), 0o644))
+	require.NoError(t, afero.WriteFile(fs, invalidStructuredFile, []byte(invalidStructuredContent), 0o644))
+	require.NoError(t, afero.WriteFile(fs, emptyMappingsFile, []byte(emptyMappingsContent), 0o644))
+	require.NoError(t, afero.WriteFile(fs, invalidSourceFile, []byte(invalidSourceContent), 0o644))
+
+	// Expected valid config result
+	expectedMappings := []RegMapping{
+		{Source: "docker.io", Target: "harbor.example.com/docker", Description: "Docker Hub to Harbor", Enabled: true},
+		{Source: "quay.io", Target: "harbor.example.com/quay", Description: "Quay to Harbor", Enabled: true},
+		{Source: "gcr.io", Target: "harbor.example.com/gcr", Description: "GCR to Harbor", Enabled: true},
+	}
+
+	// Expected converted legacy format
+	expectedLegacyFormat := map[string]string{
+		"docker.io": "harbor.example.com/docker",
+		"quay.io":   "harbor.example.com/quay",
+		"gcr.io":    "harbor.example.com/gcr",
+	}
+
+	// Test LoadStructuredConfig
+	tests := []struct {
+		name          string
+		path          string
+		wantConfig    *Config
+		wantErr       bool
+		errorContains string
+	}{
+		{
+			name: "valid structured config file",
+			path: validStructuredFile,
+			wantConfig: &Config{
+				Version: "1",
+				Registries: RegConfig{
+					Mappings:      expectedMappings,
+					DefaultTarget: "harbor.example.com/default",
+					StrictMode:    false,
+				},
+				Compatibility: CompatibilityConfig{
+					LegacyFlatFormat: true,
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name:          "invalid structured config",
+			path:          invalidStructuredFile,
+			wantErr:       true,
+			errorContains: "mappings file is empty",
+		},
+		{
+			name:          "empty mappings",
+			path:          emptyMappingsFile,
+			wantErr:       true,
+			errorContains: "mappings file is empty",
+		},
+		{
+			name:          "invalid source domain",
+			path:          invalidSourceFile,
+			wantErr:       true,
+			errorContains: "invalid source registry domain",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Skip CWD restriction for all these tests
+			skipCheck := true
+
+			// Call LoadStructuredConfig with the test filesystem
+			got, err := LoadStructuredConfig(fs, tt.path, skipCheck)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errorContains)
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantConfig.Version, got.Version)
+			assert.Equal(t, tt.wantConfig.Registries.DefaultTarget, got.Registries.DefaultTarget)
+			assert.Equal(t, tt.wantConfig.Registries.StrictMode, got.Registries.StrictMode)
+			assert.Equal(t, tt.wantConfig.Compatibility.LegacyFlatFormat, got.Compatibility.LegacyFlatFormat)
+
+			// Check mappings
+			require.Equal(t, len(tt.wantConfig.Registries.Mappings), len(got.Registries.Mappings))
+			for i, mapping := range tt.wantConfig.Registries.Mappings {
+				assert.Equal(t, mapping.Source, got.Registries.Mappings[i].Source)
+				assert.Equal(t, mapping.Target, got.Registries.Mappings[i].Target)
+				assert.Equal(t, mapping.Description, got.Registries.Mappings[i].Description)
+				assert.Equal(t, mapping.Enabled, got.Registries.Mappings[i].Enabled)
+			}
+
+			// Test conversion to legacy format
+			legacyFormat := ConvertToLegacyFormat(got)
+			assert.Equal(t, expectedLegacyFormat, legacyFormat)
+
+			// Test ToMappings conversion
+			mappings := got.ToMappings()
+			assert.Equal(t, len(expectedMappings), len(mappings.Entries))
+			for i, entry := range mappings.Entries {
+				assert.Equal(t, expectedMappings[i].Source, entry.Source)
+				assert.Equal(t, expectedMappings[i].Target, entry.Target)
+			}
+		})
+	}
+
+	// Test backward compatibility through LoadConfig
+	t.Run("LoadConfig with structured file", func(t *testing.T) {
+		// Call LoadConfig with a structured file - should automatically parse it correctly
+		got, err := LoadConfig(fs, validStructuredFile, true)
+		require.NoError(t, err)
+		assert.Equal(t, expectedLegacyFormat, got)
+	})
 }
