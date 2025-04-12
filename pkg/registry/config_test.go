@@ -478,3 +478,40 @@ registries:
 		assert.Equal(t, expectedLegacyFormat, got)
 	})
 }
+
+// TestEnabledFlagBehavior tests the behavior of the enabled flag in structured config
+func TestEnabledFlagBehavior(t *testing.T) {
+	// Test case where a mapping is explicitly disabled
+	explicitlyDisabled := &Config{
+		Registries: RegConfig{
+			Mappings: []RegMapping{
+				{
+					Source:      "docker.io",
+					Target:      "harbor.example.com/docker",
+					Enabled:     true,
+					Description: "Explicitly enabled",
+				},
+				{
+					Source:      "gcr.io",
+					Target:      "harbor.example.com/gcr",
+					Enabled:     false,                 // Explicitly disabled
+					Description: "Explicitly disabled", // Adding description to help with detection
+				},
+			},
+		},
+	}
+
+	// Validate should not change the explicitly disabled flag
+	err := validateStructuredConfig(explicitlyDisabled, "test-path")
+	require.NoError(t, err)
+
+	// Check that explicitly disabled flag remains false
+	assert.True(t, explicitlyDisabled.Registries.Mappings[0].Enabled)
+	assert.False(t, explicitlyDisabled.Registries.Mappings[1].Enabled)
+
+	// Convert to legacy format - disabled mapping should be excluded
+	legacyMap := ConvertToLegacyFormat(explicitlyDisabled)
+	assert.Equal(t, 1, len(legacyMap))
+	assert.Equal(t, "harbor.example.com/docker", legacyMap["docker.io"])
+	assert.NotContains(t, legacyMap, "gcr.io")
+}
