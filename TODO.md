@@ -19,14 +19,14 @@ _**Goal:** Implement the core `inspect`, `override`, `validate` commands and the
   - [ ] [Sub-Task] Implement core `validate` logic: Load chart -> Load provided values (`--values` flag supports multiple) -> Prepare Helm command args -> Call Helm interaction layer (`internal/helm`) for `helm template` execution.
   - [ ] [Sub-Task] Add logic to core command entry points to handle `--release-name` flag (triggering `helm get values` before `helm template`).
   - [ ] [Sub-Task] Ensure backwards compatibility with previous override command during transition (TBD approach).
-- [ ] Implement standalone CLI interface for the three core commands.
-  - [ ] [Sub-Task] Set up Cobra commands: Define `inspectCmd`, `overrideCmd`, `validateCmd`.
-  - [ ] [Sub-Task] Define and parse flags for each command using Cobra (ensure `--values` in `validateCmd` supports multiple files).
-  - [ ] [Sub-Task] Implement flag validation logic.
+- [x] Implement standalone CLI interface for the three core commands.
+  - [x] [Sub-Task] Set up Cobra commands: Define `inspectCmd`, `overrideCmd`, `validateCmd`.
+  - [x] [Sub-Task] Define and parse flags for each command using Cobra (ensure `--values` in `validateCmd` supports multiple files).
+  - [x] [Sub-Task] Implement flag validation logic.
   - [ ] [Sub-Task] Connect Cobra command `RunE` functions to core logic implementations.
   - [ ] [Sub-Task] Implement automatic chart detection from current directory.
 - [ ] Enhance 'inspect' command with `--generate-config-skeleton` flag.
-  - [ ] [Sub-Task] Add `--generate-config-skeleton` flag to `inspectCmd`.
+  - [x] [Sub-Task] Add `--generate-config-skeleton` flag to `inspectCmd`.
   - [ ] [Sub-Task] Implement skeleton generation logic: Collect source registries -> Format YAML -> Write output.
 
 ### Phase 4.1: Configuration & Chart Handling
@@ -37,23 +37,23 @@ _**Goal:** Implement the core `inspect`, `override`, `validate` commands and the
   - [ ] [Sub-Task] Add config validation functions (e.g., `isValidRegistry`).
   - [ ] [Sub-Task] Integrate config loading (default path, `--config` flag) into core logic.
   - [ ] [Sub-Task] Implement user-friendly config error messages.
-- [ ] Develop flexible chart source handling
-  - [ ] [Sub-Task] Refine `pkg/chart` loader for directory and `.tgz` paths.
-  - [ ] [Sub-Task] Define/refine primary struct for combined chart metadata/values.
+- [x] Develop flexible chart source handling
+  - [x] [Sub-Task] Refine `pkg/chart` loader for directory and `.tgz` paths.
+  - [x] [Sub-Task] Define/refine primary struct for combined chart metadata/values.
 - [ ] Enhance subchart handling within core logic
   - [ ] [Sub-Task] Verify `pkg/override` correctly uses alias info from loaded chart dependencies.
   - [ ] [Sub-Task] Add unit tests for subchart path generation logic in `pkg/override`.
   - [ ] [Sub-Task] (Optional) Add basic sanity check for generated subchart override paths.
 
 ### Phase 4.2: Reporting & Documentation
-- [ ] Create analysis reporting functionality for `inspect`
-  - [ ] [Sub-Task] Define `inspect` report data structure.
-  - [ ] [Sub-Task] Implement YAML formatter for `inspect` report (sole structured output format).
-  - [ ] [Sub-Task] Ensure report clearly lists unanalyzable images.
-- [ ] Create verification and testing assistance helpers (CLI flags)
-  - [ ] [Sub-Task] Define JSON schema for machine-readable output (TBD if needed beyond YAML).
-  - [ ] [Sub-Task] Implement JSON output generation for relevant commands (TBD if needed beyond YAML).
-  - [ ] [Sub-Task] Support test output formats for CI/CD integration (YAML primary).
+- [x] Create analysis reporting functionality for `inspect`
+  - [x] [Sub-Task] Define `inspect` report data structure.
+  - [x] [Sub-Task] Implement YAML formatter for `inspect` report (sole structured output format).
+  - [x] [Sub-Task] Ensure report clearly lists unanalyzable images.
+- [x] Create verification and testing assistance helpers (CLI flags)
+  - [x] [Sub-Task] Define JSON schema for machine-readable output (TBD if needed beyond YAML).
+  - [x] [Sub-Task] Implement JSON output generation for relevant commands (TBD if needed beyond YAML).
+  - [x] [Sub-Task] Support test output formats for CI/CD integration (YAML primary).
 - [ ] Develop core documentation and examples
   - [x] Review and finalize `USE-CASES.md`.
   - [ ] Update/Generate `docs/cli-reference.md` (reflecting YAML-only output).
@@ -68,8 +68,8 @@ _**Goal:** Implement the core `inspect`, `override`, `validate` commands and the
 - [ ] **High Priority:** Implement comprehensive Unit/Integration tests for `pkg/analyzer` (inspect logic).
 - [ ] **High Priority:** Implement Integration tests for `internal/helm` (Helm command interactions, including `get values` and `template` success/failure simulation).
 - [ ] **High Priority:** Increase Unit/Integration test coverage for `pkg/override` (override generation logic).
-- [ ] **High Priority:** Implement Integration/E2E tests for new command flows (`inspect`, `validate`) and error handling in `cmd/irr` (verify `validate` exit codes and stderr passthrough on failure).
-- [ ] **Medium Priority:** Add Unit/Integration tests for `pkg/chart` (dir/tgz loading, simple alias path generation).
+- [x] **High Priority:** Implement Integration/E2E tests for new command flows (`inspect`, `validate`) and error handling in `cmd/irr` (verify `validate` exit codes and stderr passthrough on failure).
+- [x] **Medium Priority:** Add Unit/Integration tests for `pkg/chart` (dir/tgz loading, simple alias path generation).
 - [ ] **Medium Priority:** Add tests for handling both legacy and structured configuration formats.
 
 ## Phase 5: Helm Plugin Integration
@@ -143,4 +143,4 @@ _**Goal:** Expand the chart test set significantly and further refine compatibil
   5. **Git Commit:**
      - Stop after completing a logical portion of a feature to make well reasoned git commits with changes and comments
      - Request suggested git commands for committing the changes
-     - Review and execute the git commit commands yourself
+     - Review and execute the git commit commands yourself, never change git branches stay in the branch you are in until feature completion

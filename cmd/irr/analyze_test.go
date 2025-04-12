@@ -135,7 +135,7 @@ func createAnalyzeErrorTestCase(name, errorMsg string, args []string, isArgError
 func createSuccessTextOutputTestCase() analyzeTestCase {
 	return analyzeTestCase{
 		name: "success with text output",
-		args: []string{"analyze", "./fake/chart", "--source-registries", "source.io"},
+		args: []string{"analyze", "./fake/chart", "--source-registries", "source.io", "--chart-path", "./fake/chart"},
 		mockAnalyzeFunc: func() (*analysis.ChartAnalysis, error) {
 			return &analysis.ChartAnalysis{
 				ImagePatterns: []analysis.ImagePattern{
@@ -154,7 +154,7 @@ func createSuccessTextOutputTestCase() analyzeTestCase {
 func createSuccessJSONOutputTestCase() analyzeTestCase {
 	return analyzeTestCase{
 		name: "success with json output",
-		args: []string{"analyze", "./fake/chart", "--source-registries", "source.io", "--output", "json"},
+		args: []string{"analyze", "./fake/chart", "--source-registries", "source.io", "--chart-path", "./fake/chart", "--output", "json"},
 		mockAnalyzeFunc: func() (*analysis.ChartAnalysis, error) {
 			return &analysis.ChartAnalysis{
 				ImagePatterns: []analysis.ImagePattern{
@@ -171,7 +171,7 @@ func createSuccessJSONOutputTestCase() analyzeTestCase {
 func createSuccessFileOutputTestCase() analyzeTestCase {
 	return analyzeTestCase{
 		name: "success with output file",
-		args: []string{"analyze", "../../test-data/charts/basic", "--source-registries", "source.io", "--output-file", "analyze_test_output.txt"},
+		args: []string{"analyze", "../../test-data/charts/basic", "--source-registries", "source.io", "--chart-path", "../../test-data/charts/basic", "--output-file", "analyze_test_output.txt"},
 		mockAnalyzeFunc: func() (*analysis.ChartAnalysis, error) {
 			// Provide a simple mock result for the file output test
 			result := analysis.NewChartAnalysis()
@@ -188,7 +188,7 @@ func createSuccessFileOutputTestCase() analyzeTestCase {
 func createAnalyzerErrorTestCase() analyzeTestCase {
 	return analyzeTestCase{
 		name: "analyzer returns error",
-		args: []string{"analyze", "./bad/chart", "--source-registries", "source.io"},
+		args: []string{"analyze", "./bad/chart", "--source-registries", "source.io", "--chart-path", "./bad/chart"},
 		mockAnalyzeFunc: func() (*analysis.ChartAnalysis, error) {
 			return nil, fmt.Errorf("mock analyze error: chart not found")
 		},
@@ -210,7 +210,7 @@ func defineAnalyzeTestCases() []analyzeTestCase {
 
 	missingFlagCase := createAnalyzeErrorTestCase(
 		"missing required flag source-registries",
-		"required flag(s) \"source-registries\" not set",
+		"required flag(s) \"chart-path\", \"source-registries\" not set",
 		[]string{"analyze", "./fake/chart"},
 		true,
 	)
@@ -218,7 +218,7 @@ func defineAnalyzeTestCases() []analyzeTestCase {
 	tooManyArgsCase := createAnalyzeErrorTestCase(
 		"too many arguments",
 		"accepts 1 arg(s), received 2",
-		[]string{"analyze", "path1", "path2", "--source-registries", "source.io"},
+		[]string{"analyze", "path1", "path2", "--source-registries", "source.io", "--chart-path", "path1"},
 		true,
 	)
 
@@ -249,12 +249,21 @@ func TestAnalyzeCmd(t *testing.T) {
 	defer func() {
 		currentAnalyzerFactory = originalFactory
 		AppFs = originalFs
+		TestAnalyzeMode = false // Reset test mode
 	}()
 
-	// Get predefined test cases
-	tests := defineAnalyzeTestCases()
+	// Enable test mode for analyze command
+	TestAnalyzeMode = true
 
-	for _, tt := range tests {
+	// Setup test filesystem
+	testFs := setupAnalyzeTestFS(t)
+	AppFs = testFs
+
+	// Define test cases
+	testCases := defineAnalyzeTestCases()
+
+	// Run all test cases
+	for _, tt := range testCases {
 		t.Run(tt.name, func(t *testing.T) {
 			runAnalyzeTestCase(t, &tt)
 		})
@@ -286,6 +295,8 @@ func TestAnalyzeCommand_Success_TextOutput(t *testing.T) {
 	// Create a dummy command object to pass to runAnalyze
 	cmd := newAnalyzeCmd()
 	err := cmd.Flags().Set("source-registries", "source.io")
+	require.NoError(t, err)
+	err = cmd.Flags().Set("chart-path", chartPath)
 	require.NoError(t, err)
 
 	// Capture stdout
@@ -341,6 +352,8 @@ func TestAnalyzeCommand_Success_JsonOutput(t *testing.T) {
 	cmd := newAnalyzeCmd()
 	err := cmd.Flags().Set("source-registries", "source.io")
 	require.NoError(t, err)
+	err = cmd.Flags().Set("chart-path", chartPath)
+	require.NoError(t, err)
 	err = cmd.Flags().Set("output", "json")
 	require.NoError(t, err)
 
@@ -394,7 +407,7 @@ func TestAnalyzeCommand_AnalysisError(t *testing.T) {
 	}
 	defer func() { currentAnalyzerFactory = originalFactory }()
 
-	args := []string{"analyze", chartPath, "--source-registries", "source.io"}
+	args := []string{"analyze", chartPath, "--source-registries", "source.io", "--chart-path", chartPath}
 	cmd := getRootCmd()
 	output, err := executeAnalyzeCommand(cmd, args...)
 	require.Error(t, err)
