@@ -41,10 +41,8 @@ type RegMapping struct {
 	Enabled bool `yaml:"enabled,omitempty"`
 }
 
-// CompatibilityConfig holds compatibility flags for special handling
+// CompatibilityConfig contains compatibility flags for handling special cases
 type CompatibilityConfig struct {
-	// LegacyFlatFormat if true allows falling back to the old flat map[string]string format
-	LegacyFlatFormat bool `yaml:"legacyFlatFormat,omitempty"`
 	// IgnoreEmptyFields if true ignores empty fields in the structured format
 	IgnoreEmptyFields bool `yaml:"ignoreEmptyFields,omitempty"`
 }

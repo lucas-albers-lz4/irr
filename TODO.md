@@ -8,7 +8,7 @@
 
 ## Phase 3: Component-Group Testing Framework (Completed)
 
-## Phase 4: Core CLI Implementation
+## Phase 4: Core CLI Implementation - COMPLETED
 _**Goal:** Implement the core `inspect`, `override`, `validate` commands and the enhanced configuration system with a robust standalone CLI interface._
 
 ### Phase 4.0: Command Implementation
@@ -59,9 +59,9 @@ _**Goal:** Implement the core `inspect`, `override`, `validate` commands and the
   - [x] Update/Generate `docs/cli-reference.md` (reflecting YAML-only output).
   - [x] Add basic CI/CD examples to documentation.
   - [x] Create `TROUBLESHOOTING.md` with initial common errors.
-- [ ] Finalize design decisions and remove temporary backward compatibility for config format.
+- [x] Finalize design decisions and remove temporary backward compatibility for config format.
   - [x] Finalize design decisions (covered in Phase 4.3 resolved items).
-  - [ ] [Sub-Task] Remove legacy config parsing code path (contingent on Phase 4.1/4.3 completion).
+  - [x] [Sub-Task] Remove legacy config parsing code path (contingent on Phase 4.1/4.3 completion).
   - [x] [Sub-Task] Update tests and documentation to use only structured config format.
 
 ### Phase 4.3: Fixing Current Failing tests - COMPLETED
@@ -95,7 +95,7 @@ _**Goal:** Fix the IRR_DEBUG environment variable warning to maintain test funct
   - [x] [Sub-Task] Make sure debug state can still be verified programmatically in tests
   - [x] [Sub-Task] Update documentation to reflect new behavior in test environments
 
-### Phase 4.6: Testing Implementation (In Progress)
+### Phase 4.6: Testing Implementation
 - [x] **High Priority:** Implement comprehensive Unit/Integration tests for `pkg/analyzer` (inspect logic).
   - [x] Fixed TestAnalyzeCommand_NoArgs test to check for correct error message
   - [x] All analyzer tests now pass successfully

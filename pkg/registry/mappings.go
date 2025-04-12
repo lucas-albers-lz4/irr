@@ -104,52 +104,28 @@ func LoadMappings(fs afero.Fs, path string, skipCWDRestriction bool) (*Mappings,
 
 	debug.Printf("LoadMappings: Attempting to parse file content:\n%s", string(data))
 
-	// Try both formats: map[string]string and Mappings struct
+	// Try the new format (with mappings key)
 	var mappings Mappings
-
-	// Try the new format first (with mappings key)
 	var newFormat struct {
 		Mappings []Mapping `yaml:"mappings"`
 	}
-	if err := yaml.Unmarshal(data, &newFormat); err == nil && len(newFormat.Mappings) > 0 {
-		debug.Printf("LoadMappings: Successfully parsed new format, found %d entries", len(newFormat.Mappings))
-		mappings.Entries = make([]Mapping, len(newFormat.Mappings))
-		for i, m := range newFormat.Mappings {
-			mappings.Entries[i] = Mapping{
-				Source: strings.TrimSpace(m.Source),
-				Target: strings.TrimSpace(m.Target),
-			}
-		}
-		return &mappings, nil
-	}
-	debug.Printf("LoadMappings: Failed to parse new format or no entries found, trying old format")
-
-	// Try the old format (map[string]string)
-	var rawMappings map[string]string
-	if err := yaml.Unmarshal(data, &rawMappings); err != nil {
-		debug.Printf("LoadMappings: Failed to parse as map[string]string: %v", err)
+	if err := yaml.Unmarshal(data, &newFormat); err != nil {
+		debug.Printf("LoadMappings: Failed to parse as structured format: %v", err)
 		return nil, WrapMappingFileParse(path, err)
 	}
 
-	// Convert the map into the expected []Mapping slice
-	mappings.Entries = make([]Mapping, 0, len(rawMappings))
-	for source, target := range rawMappings {
-		if source = strings.TrimSpace(source); source == "" {
-			continue // Skip empty source keys
-		}
-		if target = strings.TrimSpace(target); target == "" {
-			continue // Skip empty target values
-		}
-		mappings.Entries = append(mappings.Entries, Mapping{
-			Source: source,
-			Target: target,
-		})
-	}
-
-	// Check if we have any mappings
-	if len(mappings.Entries) == 0 {
+	if len(newFormat.Mappings) == 0 {
 		debug.Printf("LoadMappings: No valid entries found after parsing")
 		return nil, WrapMappingFileEmpty(path)
+	}
+
+	debug.Printf("LoadMappings: Successfully parsed structured format, found %d entries", len(newFormat.Mappings))
+	mappings.Entries = make([]Mapping, len(newFormat.Mappings))
+	for i, m := range newFormat.Mappings {
+		mappings.Entries[i] = Mapping{
+			Source: strings.TrimSpace(m.Source),
+			Target: strings.TrimSpace(m.Target),
+		}
 	}
 
 	debug.Printf("LoadMappings: Successfully loaded %d mappings from %s", len(mappings.Entries), path)
@@ -311,98 +287,23 @@ func validateMappingValue(source, target, path string) error {
 	return nil
 }
 
-// LoadConfig loads registry mappings from a YAML file specified by the --config flag.
-// It attempts to parse using the new structured format first, then falls back to the legacy
-// flat map[string]string format if that fails. This ensures backward compatibility.
+// LoadConfig loads a configuration file using the provided filesystem.
+// Returns a map[string]string for backward compatibility with existing code.
 func LoadConfig(fs afero.Fs, path string, skipCWDRestriction bool) (map[string]string, error) {
 	if path == "" {
-		// Return empty map for empty path per test expectations
-		return EmptyPathResult, nil
+		return EmptyPathResult, ErrNoConfigSpecified
 	}
 
-	// First try loading as structured config
-	debug.Printf("LoadConfig: Attempting to load structured config format first")
-	structuredConfig, structuredErr := LoadStructuredConfig(fs, path, skipCWDRestriction)
-
-	// If structured format successful, convert to legacy format for backward compatibility
-	if structuredErr == nil {
-		debug.Printf("LoadConfig: Successfully loaded structured format, converting to legacy format")
-		// Convert the structured config to the legacy map format
-		return ConvertToLegacyFormat(structuredConfig), nil
-	}
-
-	debug.Printf("LoadConfig: Structured format load failed: %v. Falling back to legacy format.", structuredErr)
-
-	// Validate the config file path (reusing existing validation)
-	if err := validateConfigFilePath(fs, path, skipCWDRestriction); err != nil {
-		return nil, err
-	}
-
-	// Read and validate file content
-	data, err := readConfigFileContent(fs, path)
+	// Try loading as structured format
+	structuredConfig, err := LoadStructuredConfig(fs, path, skipCWDRestriction)
 	if err != nil {
+		debug.Printf("LoadConfig: Failed to load structured config: %v", err)
 		return nil, err
 	}
 
-	debug.Printf("LoadConfig: Attempting to parse file content as legacy format:\n%s", string(data))
-
-	// Check for duplicate keys
-	if err := checkForDuplicateKeys(data, path); err != nil {
-		return nil, err
-	}
-
-	// Parse the YAML content as map[string]string
-	var config map[string]string
-	if err := yaml.Unmarshal(data, &config); err != nil {
-		debug.Printf("LoadConfig: Failed to parse as map[string]string: %v", err)
-		// If we can't parse as structured or legacy, return structured error for better diagnostics
-		return nil, fmt.Errorf("failed to parse mappings file '%s': %w (structured format error: %w)",
-			path, err, structuredErr)
-	}
-
-	// Strict validation of the config content
-	validatedConfig := make(map[string]string)
-	for source, target := range config {
-		// Validate source (key) - must be a valid domain name
-		source = strings.TrimSpace(source)
-		if source == "" {
-			debug.Printf("LoadConfig: Empty source key found, skipping entry")
-			continue
-		}
-
-		// Check key length
-		if len(source) > MaxKeyLength {
-			return nil, WrapKeyTooLong(path, source, len(source), MaxKeyLength)
-		}
-
-		// Simple domain validation - could be enhanced with regex
-		if !isValidDomain(source) {
-			return nil, fmt.Errorf("invalid source registry domain '%s' in config file '%s'", source, path)
-		}
-
-		// Validate target (value) - must contain at least one slash
-		target = strings.TrimSpace(target)
-		if target == "" {
-			debug.Printf("LoadConfig: Empty target value for source '%s', skipping entry", source)
-			continue
-		}
-
-		// Validate target value format and constraints
-		if err := validateMappingValue(source, target, path); err != nil {
-			return nil, err
-		}
-
-		validatedConfig[source] = target
-	}
-
-	// Check if we have any valid entries
-	if len(validatedConfig) == 0 {
-		debug.Printf("LoadConfig: No valid entries found after parsing")
-		return nil, WrapMappingFileEmpty(path)
-	}
-
-	debug.Printf("LoadConfig: Successfully loaded %d mappings from %s using legacy format", len(validatedConfig), path)
-	return validatedConfig, nil
+	// Convert structured format to map[string]string for backward compatibility
+	debug.Printf("LoadConfig: Successfully loaded structured config with %d mappings", len(structuredConfig.Registries.Mappings))
+	return ConvertToLegacyFormat(structuredConfig), nil
 }
 
 // isValidDomain performs a simple validation on a domain string
