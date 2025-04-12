@@ -12,38 +12,38 @@
 _**Goal:** Implement the core `inspect`, `override`, `validate` commands and the enhanced configuration system with a robust standalone CLI interface._
 
 ### Phase 4.0: Command Implementation
-- [ ] Design and implement core command logic for `inspect`, `override`, `validate`.
-  - [ ] [Sub-Task] Define shared Go structs (e.g., `ChartInfo`, `ImageAnalysis`, `OverrideResult`).
-  - [ ] [Sub-Task] Implement core `inspect` logic: Load chart -> Detect images (`pkg/image`) -> Generate analysis report data structure.
-  - [ ] [Sub-Task] Implement core `override` logic: Load chart -> Load config -> Detect images -> Apply path strategy (`pkg/strategy`) -> Generate override map structure (`pkg/override`).
-  - [ ] [Sub-Task] Implement core `validate` logic: Load chart -> Load provided values (`--values` flag supports multiple) -> Prepare Helm command args -> Call Helm interaction layer (`internal/helm`) for `helm template` execution.
-  - [ ] [Sub-Task] Add logic to core command entry points to handle `--release-name` flag (triggering `helm get values` before `helm template`).
+- [x] Design and implement core command logic for `inspect`, `override`, `validate`.
+  - [x] [Sub-Task] Define shared Go structs (e.g., `ChartInfo`, `ImageAnalysis`, `OverrideResult`).
+  - [x] [Sub-Task] Implement core `inspect` logic: Load chart -> Detect images (`pkg/image`) -> Generate analysis report data structure.
+  - [x] [Sub-Task] Implement core `override` logic: Load chart -> Load config -> Detect images -> Apply path strategy (`pkg/strategy`) -> Generate override map structure (`pkg/override`).
+  - [x] [Sub-Task] Implement core `validate` logic: Load chart -> Load provided values (`--values` flag supports multiple) -> Prepare Helm command args -> Call Helm interaction layer (`internal/helm`) for `helm template` execution.
+  - [x] [Sub-Task] Add logic to core command entry points to handle `--release-name` flag (triggering `helm get values` before `helm template`).
   - [ ] [Sub-Task] Ensure backwards compatibility with previous override command during transition (TBD approach).
 - [x] Implement standalone CLI interface for the three core commands.
   - [x] [Sub-Task] Set up Cobra commands: Define `inspectCmd`, `overrideCmd`, `validateCmd`.
   - [x] [Sub-Task] Define and parse flags for each command using Cobra (ensure `--values` in `validateCmd` supports multiple files).
   - [x] [Sub-Task] Implement flag validation logic.
-  - [ ] [Sub-Task] Connect Cobra command `RunE` functions to core logic implementations.
-  - [ ] [Sub-Task] Implement automatic chart detection from current directory.
-- [ ] Enhance 'inspect' command with `--generate-config-skeleton` flag.
+  - [x] [Sub-Task] Connect Cobra command `RunE` functions to core logic implementations.
+  - [x] [Sub-Task] Implement automatic chart detection from current directory.
+- [x] Enhance 'inspect' command with `--generate-config-skeleton` flag.
   - [x] [Sub-Task] Add `--generate-config-skeleton` flag to `inspectCmd`.
-  - [ ] [Sub-Task] Implement skeleton generation logic: Collect source registries -> Format YAML -> Write output.
+  - [x] [Sub-Task] Implement skeleton generation logic: Collect source registries -> Format YAML -> Write output.
 
 ### Phase 4.1: Configuration & Chart Handling
-- [ ] Enhance configuration system
-  - [ ] [Sub-Task] Define Go structs for new structured config YAML.
-  - [ ] [Sub-Task] Implement structured YAML parsing.
-  - [ ] [Sub-Task] Implement backward compatibility: Attempt legacy flat parse if structured parse fails.
-  - [ ] [Sub-Task] Add config validation functions (e.g., `isValidRegistry`).
-  - [ ] [Sub-Task] Integrate config loading (default path, `--config` flag) into core logic.
-  - [ ] [Sub-Task] Implement user-friendly config error messages.
+- [x] Enhance configuration system
+  - [x] [Sub-Task] Define Go structs for new structured config YAML.
+  - [x] [Sub-Task] Implement structured YAML parsing.
+  - [x] [Sub-Task] Implement backward compatibility: Attempt legacy flat parse if structured parse fails.
+  - [x] [Sub-Task] Add config validation functions (e.g., `isValidRegistry`).
+  - [x] [Sub-Task] Integrate config loading (default path, `--config` flag) into core logic.
+  - [x] [Sub-Task] Implement user-friendly config error messages.
 - [x] Develop flexible chart source handling
   - [x] [Sub-Task] Refine `pkg/chart` loader for directory and `.tgz` paths.
   - [x] [Sub-Task] Define/refine primary struct for combined chart metadata/values.
-- [ ] Enhance subchart handling within core logic
-  - [ ] [Sub-Task] Verify `pkg/override` correctly uses alias info from loaded chart dependencies.
-  - [ ] [Sub-Task] Add unit tests for subchart path generation logic in `pkg/override`.
-  - [ ] [Sub-Task] (Optional) Add basic sanity check for generated subchart override paths.
+- [x] Enhance subchart handling within core logic
+  - [x] [Sub-Task] Verify `pkg/override` correctly uses alias info from loaded chart dependencies.
+  - [x] [Sub-Task] Add unit tests for subchart path generation logic in `pkg/override`.
+  - [x] [Sub-Task] (Optional) Add basic sanity check for generated subchart override paths.
 
 ### Phase 4.2: Reporting & Documentation
 - [x] Create analysis reporting functionality for `inspect`
@@ -54,78 +54,45 @@ _**Goal:** Implement the core `inspect`, `override`, `validate` commands and the
   - [x] [Sub-Task] Define JSON schema for machine-readable output (TBD if needed beyond YAML).
   - [x] [Sub-Task] Implement JSON output generation for relevant commands (TBD if needed beyond YAML).
   - [x] [Sub-Task] Support test output formats for CI/CD integration (YAML primary).
-- [ ] Develop core documentation and examples
+- [x] Develop core documentation and examples
   - [x] Review and finalize `USE-CASES.md`.
-  - [ ] Update/Generate `docs/cli-reference.md` (reflecting YAML-only output).
-  - [ ] Add basic CI/CD examples to documentation.
-  - [ ] Create `TROUBLESHOOTING.md` with initial common errors.
+  - [x] Update/Generate `docs/cli-reference.md` (reflecting YAML-only output).
+  - [x] Add basic CI/CD examples to documentation.
+  - [x] Create `TROUBLESHOOTING.md` with initial common errors.
 - [ ] Finalize design decisions and remove temporary backward compatibility for config format.
   - [x] Finalize design decisions (covered in Phase 4.3 resolved items).
   - [ ] [Sub-Task] Remove legacy config parsing code path (contingent on Phase 4.1/4.3 completion).
   - [ ] [Sub-Task] Update tests and documentation to use only structured config format.
 
-### Phase 4.3: Fixing Current Failing tests ( `make test | grep FAIL`)
+### Phase 4.3: Fixing Current Failing tests - COMPLETED
+- [x] **COMPLETED** - All integration tests now pass after fixing the following:
+  - [x] TestMinimalChart, TestMinimalGitImage, TestMultipleTargetRegistries, TestReadOverridesFromStdout, TestConfigFileMappings, TestRegistryMappingFile, TestComplexChartFeatures, TestDryRunFlag, TestStrictMode and other integration tests 
+    - Fixed by correcting the flag name in harness.go from `--integration-test-mode` to `--integration-test` to match root.go
 
-The following tests are currently failing in the integration test suite:
-```
---- FAIL: TestMinimalChart (0.17s)
---- FAIL: TestParentChart (0.00s)
---- FAIL: TestKubePrometheusStack (0.00s)
---- FAIL: TestComplexChartFeatures (0.01s)
-    --- FAIL: TestComplexChartFeatures/simplified-prometheus-stack_with_specific_components (0.00s)
-    --- FAIL: TestComplexChartFeatures/ingress-nginx_with_admission_webhook (0.00s)
---- FAIL: TestRegistryMappingFile (0.00s)
---- FAIL: TestConfigFileMappings (0.00s)
---- FAIL: TestMinimalGitImageOverride (0.00s)
-```
+### Phase 4.3.1: Fixing Current Linting Errors
+- [ ] **High Priority:** Fix error handling issues
+  - [ ] Add error checking for `os.Remove` calls in cmd/irr/override.go and cmd/irr/validate.go
+  - [ ] Fix error wrapping in pkg/registry/mappings.go (use `%w` instead of `%v`)
+  - [ ] Wrap external error in cmd/irr/root.go (rootCmd.Execute())
+- [ ] **Medium Priority:** Fix code quality issues
+  - [ ] Replace magic number 100.0 with a named constant in pkg/chart/generator.go
+  - [ ] Pass heavy parameter by pointer in internal/helm/command.go
+  - [ ] Apply De Morgan's law to simplify logical expression in pkg/override/override.go
+  - [ ] Extract "/tmp" string to a constant in pkg/registry/config_test.go
+- [ ] **Medium Priority:** Fix security issues
+  - [ ] Use more secure file permissions (0600 instead of 0644) for file writes in cmd/irr/inspect.go
+- [x] **Low Priority:** Fix naming conventions
+  - [x] Rename stuttering type names:
+    - [x] `ChartInfo` to `Info` in pkg/chart/chartinfo.go
+    - [x] `RegistryConfig` to `Config` in pkg/registry/config.go
+    - [x] `RegistryMapping` to `Mapping` in pkg/registry/config.go
 
-#### Implementation Plan:
-
-1. **Fix TestHarness and base integration test functionality**
-   - [ ] [Sub-Task] Debug the `TestAnalyzeMode` flag usage in integration tests
-   - [ ] [Sub-Task] Update the `TestHarness.ExecuteIRR` method to properly include the `--integration-test-mode` flag
-   - [ ] [Sub-Task] Fix the registry mapping file loading in `ValidateOverrides` method
-   - [ ] [Sub-Task] Verify chart path handling and add additional logging for troubleshooting
-
-2. **Fix basic chart tests (TestMinimalChart, TestParentChart)**
-   - [ ] [Sub-Task] Update test cases to work with the new CLI interface
-   - [ ] [Sub-Task] Add proper chart-path handling for minimal and parent charts
-   - [ ] [Sub-Task] Fix override generation and validation for these basic charts
-   - [ ] [Sub-Task] Add additional debugging to identify exact failure points
-
-3. **Fix complex chart tests (TestKubePrometheusStack, TestComplexChartFeatures)**
-   - [ ] [Sub-Task] Update simplified-prometheus-stack test to match new CLI structure
-   - [ ] [Sub-Task] Update ingress-nginx test to handle its specific requirements
-   - [ ] [Sub-Task] Fix template validation for complex charts with subchart handling
-   - [ ] [Sub-Task] Add special handling for Prometheus-specific image structures
-
-4. **Fix mapping-related tests (TestRegistryMappingFile, TestConfigFileMappings)**
-   - [ ] [Sub-Task] Update registry mapping file format and loading mechanism
-   - [ ] [Sub-Task] Fix config file mapping integration with the new CLI commands
-   - [ ] [Sub-Task] Update test case expectations for the new mapping implementation
-   - [ ] [Sub-Task] Add detailed validation of registry mapping output
-
-5. **Fix special case tests (TestMinimalGitImageOverride)**
-   - [ ] [Sub-Task] Update Git image override to work with the updated image detection logic
-   - [ ] [Sub-Task] Fix repository path generation for Git images
-   - [ ] [Sub-Task] Add specific validation for the Git image override pattern
-
-#### Implementation Approach:
-
-1. **Identify root causes**: First, enable additional debug logging in the test harness to identify exactly where each test is failing.
-
-2. **Fix core issues**: Address common problems in TestHarness that might affect multiple tests, like flag handling, CLI interface changes, and path resolution.
-
-3. **Fix test by test**: Start with the simplest tests (Minimal/Parent charts) and work towards more complex ones, ensuring each works properly before moving to the next.
-
-4. **Verify improvements**: After each fix, run individual tests with verbose logging to confirm they're working correctly before moving to the next failure.
-
-5. **Final integration**: Once all individual tests pass, verify the entire test suite runs successfully.
-
-### Phase 4.4: Testing Implementation
-- [ ] **High Priority:** Implement comprehensive Unit/Integration tests for `pkg/analyzer` (inspect logic).
+### Phase 4.4: Testing Implementation (In Progress)
+- [x] **High Priority:** Implement comprehensive Unit/Integration tests for `pkg/analyzer` (inspect logic).
+  - [x] Fixed TestAnalyzeCommand_NoArgs test to check for correct error message
+  - [x] All analyzer tests now pass successfully
 - [ ] **High Priority:** Implement Integration tests for `internal/helm` (Helm command interactions, including `get values` and `template` success/failure simulation).
-- [ ] **High Priority:** Increase Unit/Integration test coverage for `pkg/override` (override generation logic).
+- [x] **High Priority:** Increase Unit/Integration test coverage for `pkg/override` (override generation logic).
 - [x] **High Priority:** Implement Integration/E2E tests for new command flows (`inspect`, `validate`) and error handling in `cmd/irr` (verify `validate` exit codes and stderr passthrough on failure).
 - [x] **Medium Priority:** Add Unit/Integration tests for `pkg/chart` (dir/tgz loading, simple alias path generation).
 - [ ] **Medium Priority:** Add tests for handling both legacy and structured configuration formats.
