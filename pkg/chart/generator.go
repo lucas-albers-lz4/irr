@@ -34,6 +34,8 @@ const (
 	FilePermissions = 0o600
 	// ExpectedMappingParts defines the number of parts expected after splitting a config mapping value.
 	ExpectedMappingParts = 2
+	// PercentageMultiplier is used when calculating success rates as percentages
+	PercentageMultiplier = 100.0
 )
 
 // --- Local Error Definitions ---
@@ -574,9 +576,13 @@ func (g *Generator) Generate() (*override.File, error) {
 	}
 
 	return &override.File{
-		ChartPath:   g.chartPath,
-		Overrides:   overrides,
-		Unsupported: unsupportedPatterns,
+		ChartPath:      g.chartPath,
+		ChartName:      filepath.Base(g.chartPath),
+		Values:         overrides,
+		Unsupported:    unsupportedPatterns,
+		ProcessedCount: processedCount,
+		TotalCount:     len(detectedImages),
+		SuccessRate:    float64(processedCount) / float64(len(detectedImages)) * PercentageMultiplier,
 	}, nil
 }
 

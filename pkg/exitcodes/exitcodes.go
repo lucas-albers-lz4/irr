@@ -21,15 +21,20 @@ const (
 	ExitMissingRequiredFlag     = 1 // Required command flag not provided
 	ExitInputConfigurationError = 2 // General configuration error
 	ExitCodeInvalidStrategy     = 3 // Invalid path strategy specified
+	ExitChartNotFound           = 4 // Chart or values file not found
 
 	// Chart Processing Errors (10-19)
-	ExitChartParsingError    = 10 // Failed to parse or load chart
-	ExitImageProcessingError = 11 // Failed to process image references
-	ExitUnsupportedStructure = 12 // Unsupported structure found (e.g., templates in strict mode)
-	ExitThresholdError       = 13 // Failed to meet processing success threshold
+	ExitChartParsingError     = 10 // Failed to parse or load chart
+	ExitImageProcessingError  = 11 // Failed to process image references
+	ExitUnsupportedStructure  = 12 // Unsupported structure found (e.g., templates in strict mode)
+	ExitThresholdError        = 13 // Failed to meet processing success threshold
+	ExitChartLoadFailed       = 14 // Failed to load chart
+	ExitChartProcessingFailed = 15 // Failed to process chart
+	ExitHelmCommandFailed     = 16 // Helm command execution failed
 
 	// Runtime Errors (20-29)
 	ExitGeneralRuntimeError = 20 // General runtime/system error
+	ExitIOError             = 21 // IO operation error
 )
 
 // ExitCodeError wraps an error with an exit code for consistent error handling.

@@ -312,21 +312,28 @@ func validateMappingValue(source, target, path string) error {
 }
 
 // LoadConfig loads registry mappings from a YAML file specified by the --config flag.
-// It enforces strict validation on the format and content of the file:
-// - The file must exist and be readable
-// - The content must be a valid YAML map[string]string
-// - Keys must be valid domain names
-// - Values must contain at least one slash (registry/path format)
-// - If port numbers are specified, they must be valid (1-65535)
-// - Keys and values must not exceed length limits
-// - No duplicate keys are allowed
+// It attempts to parse using the new structured format first, then falls back to the legacy
+// flat map[string]string format if that fails. This ensures backward compatibility.
 func LoadConfig(fs afero.Fs, path string, skipCWDRestriction bool) (map[string]string, error) {
 	if path == "" {
 		// Return empty map for empty path per test expectations
 		return EmptyPathResult, nil
 	}
 
-	// Validate the config file path
+	// First try loading as structured config
+	debug.Printf("LoadConfig: Attempting to load structured config format first")
+	structuredConfig, structuredErr := LoadStructuredConfig(fs, path, skipCWDRestriction)
+
+	// If structured format successful, convert to legacy format for backward compatibility
+	if structuredErr == nil {
+		debug.Printf("LoadConfig: Successfully loaded structured format, converting to legacy format")
+		// Convert the structured config to the legacy map format
+		return ConvertToLegacyFormat(structuredConfig), nil
+	}
+
+	debug.Printf("LoadConfig: Structured format load failed: %v. Falling back to legacy format.", structuredErr)
+
+	// Validate the config file path (reusing existing validation)
 	if err := validateConfigFilePath(fs, path, skipCWDRestriction); err != nil {
 		return nil, err
 	}
@@ -337,7 +344,7 @@ func LoadConfig(fs afero.Fs, path string, skipCWDRestriction bool) (map[string]s
 		return nil, err
 	}
 
-	debug.Printf("LoadConfig: Attempting to parse file content:\n%s", string(data))
+	debug.Printf("LoadConfig: Attempting to parse file content as legacy format:\n%s", string(data))
 
 	// Check for duplicate keys
 	if err := checkForDuplicateKeys(data, path); err != nil {
@@ -348,7 +355,9 @@ func LoadConfig(fs afero.Fs, path string, skipCWDRestriction bool) (map[string]s
 	var config map[string]string
 	if err := yaml.Unmarshal(data, &config); err != nil {
 		debug.Printf("LoadConfig: Failed to parse as map[string]string: %v", err)
-		return nil, WrapMappingFileParse(path, err)
+		// If we can't parse as structured or legacy, return structured error for better diagnostics
+		return nil, fmt.Errorf("failed to parse mappings file '%s': %w (structured format error: %w)",
+			path, err, structuredErr)
 	}
 
 	// Strict validation of the config content
@@ -392,7 +401,7 @@ func LoadConfig(fs afero.Fs, path string, skipCWDRestriction bool) (map[string]s
 		return nil, WrapMappingFileEmpty(path)
 	}
 
-	debug.Printf("LoadConfig: Successfully loaded %d mappings from %s", len(validatedConfig), path)
+	debug.Printf("LoadConfig: Successfully loaded %d mappings from %s using legacy format", len(validatedConfig), path)
 	return validatedConfig, nil
 }
 

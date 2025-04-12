@@ -26,10 +26,13 @@ type ChartDependency struct {
 
 // File represents the generated overrides for a single Helm chart.
 type File struct {
-	ChartPath   string                 `yaml:"-"` // Original path to the chart
-	ChartName   string                 `yaml:"-"` // Base name of the chart directory
-	Overrides   map[string]interface{} `yaml:"overrides"`
-	Unsupported []UnsupportedStructure
+	ChartPath      string                 `yaml:"-"` // Original path to the chart
+	ChartName      string                 `yaml:"-"` // Base name of the chart directory
+	Values         map[string]interface{} `yaml:"overrides"`
+	Unsupported    []UnsupportedStructure
+	ProcessedCount int     `yaml:"-"` // Number of images successfully processed
+	TotalCount     int     `yaml:"-"` // Total number of images detected
+	SuccessRate    float64 `yaml:"-"` // Percentage of images successfully processed
 }
 
 // UnsupportedStructure represents a structure that could not be processed
@@ -182,10 +185,49 @@ func ConstructSubchartPath(deps []ChartDependency, path string) (string, error) 
 	return strings.Join(result, "."), nil
 }
 
+// VerifySubchartPath verifies that the generated subchart path is valid
+// This provides a basic sanity check for generated paths
+func VerifySubchartPath(path string, deps []ChartDependency) error {
+	if path == "" {
+		return fmt.Errorf("empty path provided for verification")
+	}
+
+	// Build a map of chart names and aliases
+	chartNames := make(map[string]bool)
+	chartAliases := make(map[string]bool)
+
+	for _, dep := range deps {
+		chartNames[dep.Name] = true
+		if dep.Alias != "" {
+			chartAliases[dep.Alias] = true
+		}
+	}
+
+	// Parse the path and verify parts
+	parts := strings.Split(path, ".")
+	if len(parts) == 0 {
+		return fmt.Errorf("invalid empty path")
+	}
+
+	// Check if first part is a known chart name or alias
+	firstPart := parts[0]
+	_, isName := chartNames[firstPart]
+	_, isAlias := chartAliases[firstPart]
+
+	// If we have chart dependencies and first part isn't recognized,
+	// it might indicate a potential path issue
+	if len(deps) > 0 && (!isName && !isAlias) {
+		debug.Printf("Warning: Generated path '%s' starts with '%s', which is not a known chart name or alias",
+			path, firstPart)
+	}
+
+	return nil
+}
+
 // ToYAML serializes the override structure to YAML.
 func (f *File) ToYAML() ([]byte, error) {
 	debug.Printf("Marshaling override.File to YAML")
-	yamlBytes, err := yaml.Marshal(f.Overrides)
+	yamlBytes, err := yaml.Marshal(f.Values)
 	if err != nil {
 		// Wrap error from external YAML library
 		return nil, fmt.Errorf("failed to marshal override content to YAML: %w", err)
