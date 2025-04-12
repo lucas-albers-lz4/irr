@@ -395,49 +395,101 @@ func TestConfigFileMappings(t *testing.T) {
 	harness := NewTestHarness(t)
 	defer harness.Cleanup()
 
-	// Create a test config file with mappings
-	configContent := `
+	// Create registry mappings content
+	registryMappingsContent := `
 docker.io: my-registry.io/custom/nginx-mirror
 quay.io: my-registry.io/monitoring/prometheus
 `
-	configFilePath := filepath.Join(harness.tempDir, "test-config.yaml")
-	err := os.WriteFile(configFilePath, []byte(configContent), 0o600)
-	require.NoError(t, err, "Failed to write temp config file")
 
-	harness.SetupChart(testutil.GetChartPath("minimal-test"))
-	harness.SetRegistries("target.registry.com", []string{"docker.io", "quay.io"})
+	// Write the config file
+	configPath := filepath.Join(harness.tempDir, "test-config.yaml")
+	err := os.WriteFile(configPath, []byte(registryMappingsContent), 0644)
+	require.NoError(t, err, "Failed to write test config file")
 
-	args := []string{
+	output, err := harness.ExecuteIRR(
 		"override",
-		"--chart-path", harness.chartPath,
-		"--target-registry", harness.targetReg,
-		"--source-registries", strings.Join(harness.sourceRegs, ","),
-		"--config", configFilePath,
+		"--chart-path", testutil.GetChartPath("minimal-test"),
+		"--target-registry", "target.registry.com",
+		"--source-registries", "docker.io,quay.io",
+		"--config", configPath,
 		"--output-file", harness.overridePath,
+		"--debug",
+	)
+	require.NoError(t, err, "IRR execution failed: %v\nOutput: %s", err, output)
+
+	// Verify the overrides were written properly
+	// #nosec G304 -- Reading a test-generated file from the test's temp directory is safe.
+	overridesBytes, err := os.ReadFile(harness.overridePath)
+	require.NoError(t, err, "Failed to read overrides file")
+	require.NotEmpty(t, overridesBytes, "Overrides file should not be empty")
+}
+
+// TestClickhouseOperator tests the IRR tool's ability to process complex charts with multiple images
+// using the clickhouse-operator chart as a test case
+func TestClickhouseOperator(t *testing.T) {
+	harness := NewTestHarness(t)
+	defer harness.Cleanup()
+
+	// Use the clickhouse-operator chart from the chart cache
+	chartPath := filepath.Join("..", "chart-cache", "clickhouse-operator-latest")
+	_, err := os.Stat(chartPath)
+	require.NoError(t, err, "Clickhouse-operator chart not found at %s", chartPath)
+
+	// Set up the test harness with the clickhouse-operator chart
+	harness.SetupChart(chartPath)
+	harness.SetRegistries("harbor.home.arpa", []string{"docker.io"})
+
+	// Expected images to be found in the overrides
+	expectedImages := []string{
+		"harbor.home.arpa/dockerio/bitnami/clickhouse:25.3.2-debian-12-r3",
+		"harbor.home.arpa/dockerio/bitnami/clickhouse-operator:0.24.5-debian-12-r3",
+		"harbor.home.arpa/dockerio/bitnami/clickhouse-keeper:25.3.2-debian-12-r6",
+		"harbor.home.arpa/dockerio/bitnami/clickhouse-operator-metrics-exporter:0.24.5-debian-12-r1",
 	}
 
-	output, err := harness.ExecuteIRR(args...)
-	require.NoError(t, err, "irr command with config file failed. Output: %s", output)
+	// Generate overrides using the IRR tool
+	if err := harness.GenerateOverrides(); err != nil {
+		t.Fatalf("Failed to generate overrides: %v", err)
+	}
 
-	overrides, err := harness.getOverrides()
-	require.NoError(t, err, "Failed to read/parse generated overrides file")
+	// Read and parse the overrides file
+	overridesBytes, err := os.ReadFile(harness.overridePath)
+	require.NoError(t, err, "Failed to read overrides file")
+	require.NotEmpty(t, overridesBytes, "Overrides file should not be empty")
 
-	// Check that the specific image mappings from the config file were applied
-	imageData, ok := overrides["image"].(map[string]interface{})
-	require.True(t, ok, "Failed to find map for overrides[\"image\"]")
+	overrides := make(map[string]interface{})
+	err = yaml.Unmarshal(overridesBytes, &overrides)
+	require.NoError(t, err, "Failed to unmarshal overrides YAML")
 
-	// The config mapping should override the normal processing for nginx
-	// Instead of converting to target.registry.com/dockerio/library/nginx
-	// It should use the mapping specified in the config file for docker.io
-	fullImageValue, ok := imageData["repository"].(string)
-	assert.True(t, ok, "Failed to find repository for image")
-	// Since we're now mapping the entire registry 'docker.io', the repository path will
-	// include the 'library/nginx' part from the original image
-	assert.Equal(t, "custom/nginx-mirror/dockerio/library/nginx", fullImageValue, "Repository should include mapping plus image path")
+	// Collect image repositories from the overrides
+	repos, _ := collectImageInfo(t, harness, overrides)
+	require.Equal(t, 4, len(repos), "Expected 4 image repositories in overrides, got %d", len(repos))
 
-	registryValue, ok := imageData["registry"].(string)
-	assert.True(t, ok, "Failed to find registry for image")
-	assert.Equal(t, "my-registry.io", registryValue, "Registry should match the config mapping")
+	// Validate that the expected images are present in the overrides
+	for _, expectedImage := range expectedImages {
+		parts := strings.Split(expectedImage, "/")
+		expectedRepo := strings.Join(parts[1:], "/")
+		// Remove the tag part
+		if strings.Contains(expectedRepo, ":") {
+			expectedRepo = strings.Split(expectedRepo, ":")[0]
+		}
+
+		found := false
+		for actualRepo := range repos {
+			if strings.HasSuffix(actualRepo, expectedRepo) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("Expected image %s not found in overrides. Found repositories: %v", expectedRepo, repos)
+		}
+	}
+
+	// Validate the overrides by running helm template
+	if err := harness.ValidateOverrides(); err != nil {
+		t.Fatalf("Failed to validate overrides: %v", err)
+	}
 }
 
 func TestMinimalGitImageOverride(t *testing.T) {
