@@ -4,62 +4,121 @@
 
 ## Phase 2: Configuration & Support Features (Completed)
 ### Completed Features:
-- [x] Core configuration and validation features implemented
-  - Configuration file support with YAML registry mapping
-  - Private registry exclusion patterns
-  - Target URL validation
-  - Enhanced error handling and test infrastructure
 
-- [x] Enhance image identification heuristics (config-based patterns)
-  - Design pattern-based identification system for complex charts
-  - Implement configurable heuristics for non-standard image references
-  - Add tests for edge cases and unusual image formats
-
-- [x] Improve digest-based reference handling
-  - Enhance support for SHA-based image references 
-  - Add validation for digest format integrity
-  - Include test cases for digest-based references
 
 ## Phase 3: Component-Group Testing Framework (Completed)
-### Phase 3.0: Core Framework Implementation (Completed)
-- [x] Design component-group testing approach for complex charts
-  - Create testing approach documentation in TESTING-COMPLEX-CHARTS.md
-  - Define component grouping strategy for multi-component charts
-  - Implement test harness support for component-specific validation
 
-- [x] Implement cert-manager component-group tests
-  - Create test implementation for critical components group
-  - Add support for validation thresholds per component group
-  - Ensure high-quality error messaging and diagnostics
+## Phase 4: Core CLI Implementation
+_**Goal:** Implement the core `inspect`, `override`, `validate` commands and the enhanced configuration system with a robust standalone CLI interface._
 
-- [x] Document testing approach for complex charts
-  - Document component-group testing strategy
-  - Add usage examples to documentation
-  - Include contribution guidelines for test implementations
+### Phase 4.0: Command Implementation
+- [ ] Design and implement core command logic for `inspect`, `override`, `validate`.
+  - [ ] [Sub-Task] Define shared Go structs (e.g., `ChartInfo`, `ImageAnalysis`, `OverrideResult`).
+  - [ ] [Sub-Task] Implement core `inspect` logic: Load chart -> Detect images (`pkg/image`) -> Generate analysis report data structure.
+  - [ ] [Sub-Task] Implement core `override` logic: Load chart -> Load config -> Detect images -> Apply path strategy (`pkg/strategy`) -> Generate override map structure (`pkg/override`).
+  - [ ] [Sub-Task] Implement core `validate` logic: Load chart -> Load provided values (`--values` flag supports multiple) -> Prepare Helm command args -> Call Helm interaction layer (`internal/helm`) for `helm template` execution.
+  - [ ] [Sub-Task] Add logic to core command entry points to handle `--release-name` flag (triggering `helm get values` before `helm template`).
+  - [ ] [Sub-Task] Ensure backwards compatibility with previous override command during transition (TBD approach).
+- [ ] Implement standalone CLI interface for the three core commands.
+  - [ ] [Sub-Task] Set up Cobra commands: Define `inspectCmd`, `overrideCmd`, `validateCmd`.
+  - [ ] [Sub-Task] Define and parse flags for each command using Cobra (ensure `--values` in `validateCmd` supports multiple files).
+  - [ ] [Sub-Task] Implement flag validation logic.
+  - [ ] [Sub-Task] Connect Cobra command `RunE` functions to core logic implementations.
+  - [ ] [Sub-Task] Implement automatic chart detection from current directory.
+- [ ] Enhance 'inspect' command with `--generate-config-skeleton` flag.
+  - [ ] [Sub-Task] Add `--generate-config-skeleton` flag to `inspectCmd`.
+  - [ ] [Sub-Task] Implement skeleton generation logic: Collect source registries -> Format YAML -> Write output.
 
-### Phase 3.1: Extended Chart Support (Completed)
-- [x] Implement kube-prometheus-stack component-group tests
-  - Create test implementation for each logical component group
-  - Create override values files for component testing
-  - Add Makefile targets for component-specific testing
+### Phase 4.1: Configuration & Chart Handling
+- [ ] Enhance configuration system
+  - [ ] [Sub-Task] Define Go structs for new structured config YAML.
+  - [ ] [Sub-Task] Implement structured YAML parsing.
+  - [ ] [Sub-Task] Implement backward compatibility: Attempt legacy flat parse if structured parse fails.
+  - [ ] [Sub-Task] Add config validation functions (e.g., `isValidRegistry`).
+  - [ ] [Sub-Task] Integrate config loading (default path, `--config` flag) into core logic.
+  - [ ] [Sub-Task] Implement user-friendly config error messages.
+- [ ] Develop flexible chart source handling
+  - [ ] [Sub-Task] Refine `pkg/chart` loader for directory and `.tgz` paths.
+  - [ ] [Sub-Task] Define/refine primary struct for combined chart metadata/values.
+- [ ] Enhance subchart handling within core logic
+  - [ ] [Sub-Task] Verify `pkg/override` correctly uses alias info from loaded chart dependencies.
+  - [ ] [Sub-Task] Add unit tests for subchart path generation logic in `pkg/override`.
+  - [ ] [Sub-Task] (Optional) Add basic sanity check for generated subchart override paths.
 
-## Phase 4: Advanced Features & DevOps Integration (Pending)
-### Planned Work:
-- [ ] Implement CI/CD templates for common workflows
-  - Add GitHub workflow examples
-  - Create GitLab CI/CD pipeline template
-  - Document integration patterns
+### Phase 4.2: Reporting & Documentation
+- [ ] Create analysis reporting functionality for `inspect`
+  - [ ] [Sub-Task] Define `inspect` report data structure.
+  - [ ] [Sub-Task] Implement YAML formatter for `inspect` report (sole structured output format).
+  - [ ] [Sub-Task] Ensure report clearly lists unanalyzable images.
+- [ ] Create verification and testing assistance helpers (CLI flags)
+  - [ ] [Sub-Task] Define JSON schema for machine-readable output (TBD if needed beyond YAML).
+  - [ ] [Sub-Task] Implement JSON output generation for relevant commands (TBD if needed beyond YAML).
+  - [ ] [Sub-Task] Support test output formats for CI/CD integration (YAML primary).
+- [ ] Develop core documentation and examples
+  - [x] Review and finalize `USE-CASES.md`.
+  - [ ] Update/Generate `docs/cli-reference.md` (reflecting YAML-only output).
+  - [ ] Add basic CI/CD examples to documentation.
+  - [ ] Create `TROUBLESHOOTING.md` with initial common errors.
+- [ ] Finalize design decisions and remove temporary backward compatibility for config format.
+  - [x] Finalize design decisions (covered in Phase 4.3 resolved items).
+  - [ ] [Sub-Task] Remove legacy config parsing code path (contingent on Phase 4.1/4.3 completion).
+  - [ ] [Sub-Task] Update tests and documentation to use only structured config format.
 
-- [ ] Create pre-commit hooks for validation
-  - Implement pre-commit hook for chart validation
-  - Add documentation for local developer setup
+### Phase 4.3: Testing Implementation
+- [ ] **High Priority:** Implement comprehensive Unit/Integration tests for `pkg/analyzer` (inspect logic).
+- [ ] **High Priority:** Implement Integration tests for `internal/helm` (Helm command interactions, including `get values` and `template` success/failure simulation).
+- [ ] **High Priority:** Increase Unit/Integration test coverage for `pkg/override` (override generation logic).
+- [ ] **High Priority:** Implement Integration/E2E tests for new command flows (`inspect`, `validate`) and error handling in `cmd/irr` (verify `validate` exit codes and stderr passthrough on failure).
+- [ ] **Medium Priority:** Add Unit/Integration tests for `pkg/chart` (dir/tgz loading, simple alias path generation).
+- [ ] **Medium Priority:** Add tests for handling both legacy and structured configuration formats.
 
-- [ ] Add CLI performance improvements
-  - Implement parallel processing for large charts
-  - Optimize memory usage for template processing
-  - Add progress reporting for long-running operations
+## Phase 5: Helm Plugin Integration
+_**Goal:** Implement the Helm plugin interface that wraps around the core CLI functionality._
 
-## Implementation Process:  DONT" REMOVE THIS SECTION as these hints are important to remember.
+- [ ] Create Helm plugin architecture
+  - Design plugin structure that wraps around core command logic.
+  - Implement plugin installation process and discovery.
+  - Ensure consistent command-line interface with standalone CLI.
+- [ ] Implement Helm-specific functionality
+  - Add release name resolution to chart path.
+  - Add Helm environment integration for configuration and auth.
+- [ ] Develop Helm plugin testing
+  - Implement basic E2E tests for core Helm Plugin workflows (happy path `inspect`, `override`, `validate`).
+  - Test plugin installation and registration.
+  - Verify Helm release interaction.
+- [ ] Update documentation for Helm plugin usage
+  - Add Helm-specific examples and workflows.
+  - Document plugin installation and configuration.
+
+## Phase 6: Test Framework Refactoring
+_**Goal:** Refactor the Python-based `test-charts.py` framework to use the new Phase 4/5 commands with the existing chart corpus._
+
+- [ ] Refactor `test-charts.py` script
+  - Update script to call `irr inspect`, `irr override`, and `irr validate` commands using the finalized CLI.
+  - Adapt failure categorization and reporting for the new command structure.
+  - Ensure script handles the new structured configuration format.
+- [ ] Analyze Failure Patterns (on existing corpus)
+  - Use the refactored script's output (error reports, patterns) to identify common failure reasons.
+- [ ] Improve Values Templates ("Bucket Solvers") (on existing corpus)
+  - Iteratively refine the minimal values templates (`VALUES_TEMPLATE_...`) based on failure analysis to increase the success rate.
+  - Consider adding new classifications/templates if warranted.
+- [ ] Generate Intermediate Compatibility Report
+  - Document the success rate achieved after refactoring and initial template improvements.
+
+## Phase 7: Test Corpus Expansion & Advanced Refinement
+_**Goal:** Expand the chart test set significantly and further refine compatibility based on broader testing._
+
+- [ ] Expand Test Chart Corpus
+  - Increase the number and variety of charts tested (e.g., Top 200+, community requests, specific complex charts).
+  - Update chart pulling/caching mechanism if necessary.
+- [ ] Re-Analyze Failure Patterns (on expanded corpus)
+  - Identify new or more prevalent failure reasons with the larger chart set.
+- [ ] Further Improve Values Templates
+  - Make additional refinements to templates based on the expanded analysis.
+- [ ] Generate Final Compatibility Report
+  - Document the final success rate across the expanded corpus.
+
+## Implementation Process: DONT REMOVE THIS SECTION as these hints are important to remember.
 - For each change:
   1. **Baseline Verification:**
      - Run full test suite: `go test ./...` 

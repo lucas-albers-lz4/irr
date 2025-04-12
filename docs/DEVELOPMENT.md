@@ -279,13 +279,55 @@ Key points about debug control in tests:
 
 Refer to the comprehensive Debug Control section in [TESTING.md](docs/TESTING.md#10-debug-control-in-tests) for more detailed information about capturing debug output, testing debug behavior, and best practices for debug testing.
 
-## 7. Command-Line Interface
+## 7. Command-Line Interface (Phase 4)
 
-```bash
-irr [options]
-```
+The Phase 4 implementation focuses on a standalone CLI with three core commands:
 
-### 7.1. Required Arguments
+### 7.1. `irr inspect`
+
+*   **Purpose:** Analyze a chart's values to discover container images without modification.
+*   **Inputs:**
+    *   `--chart-path <path>` OR `--release-name <name>` (plus optional `--namespace`)
+    *   Optional: `--generate-config-skeleton <output_path>`
+    *   Optional: `--output-file <path>` (defaults to stdout)
+    *   Optional: `--config <path>` (to identify excluded registries during analysis)
+*   **Processing:** Loads chart/release values, traverses the structure, detects image patterns (`pkg/image`), categorizes by source registry, identifies value paths.
+*   **Output:** YAML formatted report listing detected images, source registries, value paths, and any parsing issues. If `--generate-config-skeleton` is used, outputs a basic config file with detected source registries.
+
+### 7.2. `irr override`
+
+*   **Purpose:** Generate a Helm override values file to redirect images.
+*   **Inputs:**
+    *   `--chart-path <path>` OR `--release-name <name>`
+    *   `--target-registry <url>` (required, unless fully defined via mappings)
+    *   `--source-registries <list>` (required, unless using mappings)
+    *   Optional: `--output-file <path>` (defaults to stdout)
+    *   Optional: `--config <path>` (for registry mappings, exclusions, path strategy)
+    *   Optional: `--strict` (fail on unsupported structures)
+    *   Optional: `--path-strategy <name>` (defaults to `prefix-source-registry`)
+*   **Processing:** Loads chart/release values, loads configuration, detects images, filters based on source/exclude lists, generates new image paths using the selected strategy (`pkg/strategy`), constructs the minimal override map (`pkg/override`).
+*   **Output:** YAML formatted override values file.
+
+### 7.3. `irr validate`
+
+*   **Purpose:** Perform a pre-flight check to ensure a chart renders successfully (`helm template`) with specified override values.
+*   **Inputs:**
+    *   `--chart-path <path>` OR `--release-name <name>`
+    *   `--values <file>` (required, supports multiple occurrences for multiple value files)
+*   **Processing:**
+    *   If `--release-name` is provided, executes `helm get values <release>` to retrieve current values.
+    *   Executes `helm template <chart-source> -f <current-values-if-release> -f <provided-values-1> [-f <provided-values-2> ...]`. Uses `internal/helm` helper.
+*   **Output:**
+    *   **Exit Code:** 0 for success (template rendered), non-zero for failure.
+    *   **Stderr:** Passes through Helm's `stderr` output on failure to show the template error.
+    *   **Stdout:** Minimal output on success, potentially indicating validation passed.
+*   **Scope:** Does *not* analyze rendered templates or perform diffs. Purely checks `helm template` renderability.
+
+### 7.4. Helm Plugin Interface (Phase 5)
+
+A Helm plugin (`helm irr`) will be developed in Phase 5, wrapping the core CLI commands. It will provide:
+*   Seamless integration (`helm irr inspect <release>`, etc.).
+*   Potentially leverage Helm's context for configuration/authentication.
 
 ## 8. Target Registry Path Strategy
 
