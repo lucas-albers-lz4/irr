@@ -548,7 +548,7 @@ func (h *TestHarness) ExecuteIRR(args ...string) (output string, err error) {
 	irrBinaryPath := h.getBinaryPath()
 
 	// Include debug flag for visibility during tests
-	finalArgs := []string{"--debug", "--integration-test-mode"}
+	finalArgs := []string{"--debug", "--integration-test"}
 	finalArgs = append(finalArgs, args...)
 
 	// Show the full command for debugging
