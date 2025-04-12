@@ -31,11 +31,29 @@ irr analyze [flags] CHART
 |------|-------------|---------|---------|
 | `-h, --help` | Show help for analyze | | `--help` |
 | `-m, --mappings` | Registry mappings file | | `--mappings mappings.yaml` |
-| `-o, --output` | Output format | text | `--output json` |
-| `-f, --output-file` | Output file | stdout | `--output-file analysis.txt` |
+| `-o, --output` | Output format | text | `--output yaml` |
+| `-f, --output-file` | Output file | stdout | `--output-file analysis.yaml` |
 | `-r, --source-registries` | Source registries to analyze (required) | | `--source-registries docker.io,quay.io` |
 | `-s, --strict` | Enable strict mode | false | `--strict` |
 | `-v, --verbose` | Enable verbose output | false | `--verbose` |
+
+### inspect
+
+Inspects a Helm chart for image references with enhanced analysis and configuration generation capabilities.
+
+```bash
+irr inspect [flags]
+```
+
+#### Flags for inspect
+
+| Flag | Description | Default | Example |
+|------|-------------|---------|---------|
+| `--chart-path` | Path to the Helm chart (required) | | `--chart-path ./my-chart` |
+| `--generate-config-skeleton` | Generate skeleton config file | | `--generate-config-skeleton config.yaml` |
+| `--format` | Output format | yaml | `--format yaml` |
+| `-o, --output-file` | Output file path | stdout | `--output-file analysis.yaml` |
+| `-h, --help` | Show help for inspect | | `--help` |
 
 ### override
 
@@ -65,6 +83,26 @@ irr override [flags]
 | `-t, --target-registry` | Target registry URL (required) | | `--target-registry harbor.example.com` |
 | `--threshold` | Success percentage required | 0 | `--threshold 90` |
 | `--validate` | Run helm template to validate | false | `--validate` |
+
+### validate
+
+Validates a Helm chart with the generated overrides by running `helm template`.
+
+```bash
+irr validate [flags]
+```
+
+#### Flags for validate
+
+| Flag | Description | Default | Example |
+|------|-------------|---------|---------|
+| `--chart-path` | Path to the Helm chart (required) | | `--chart-path ./my-chart` |
+| `--release-name` | Release name for validation | | `--release-name my-release` |
+| `--values` | Values files to use (can specify multiple) | | `--values overrides.yaml` |
+| `--namespace` | Namespace for validation | default | `--namespace my-namespace` |
+| `--output-file` | Output file for template result | | `--output-file template.yaml` |
+| `--debug-template` | Show full template output | false | `--debug-template` |
+| `-h, --help` | Show help for validate | | `--help` |
 
 ## Flag Details
 
@@ -135,21 +173,55 @@ irr override [flags]
 - Confirms chart remains renderable
 - Useful for validating changes before applying
 
+### --generate-config-skeleton (inspect command)
+- Generates a skeleton configuration file
+- Automatically includes detected source registries
+- Creates structured YAML format with empty target fields for completion
+
+## Output Formats
+
+All structured data output is now provided in YAML format only for better readability and consistency. This applies to:
+
+- The `analyze` command output (`--output yaml`, default)
+- The `inspect` command output (always YAML)
+- The `override` command output (always YAML for structured data)
+
+JSON output format has been deprecated and is no longer supported.
+
 ## Exit Codes
 
 | Code | Meaning |
 |------|---------|
 | 0 | Success |
-| 1 | General runtime error |
+| 1 | Missing required flag |
 | 2 | Input/Configuration error |
-| 3 | Chart parsing error |
-| 4 | Image processing error |
-| 5 | Unsupported structure (strict mode) |
-| 6 | Threshold not met |
+| 3 | Invalid strategy |
+| 4 | Chart not found |
+| 10 | Chart parsing error |
+| 11 | Image processing error |
+| 12 | Unsupported structure (strict mode) |
+| 13 | Threshold not met |
+| 14 | Chart load failed |
+| 15 | Chart processing failed |
+| 16 | Helm command failed |
+| 20 | General runtime error |
+| 21 | I/O error |
 
 ## Examples
 
-### Basic Usage
+### Basic Inspection
+```bash
+irr inspect --chart-path ./nginx
+```
+
+### Generate Config Skeleton
+```bash
+irr inspect \
+  --chart-path ./my-chart \
+  --generate-config-skeleton my-config.yaml
+```
+
+### Basic Override Generation
 ```bash
 irr override \
   --chart-path ./nginx \
@@ -157,31 +229,26 @@ irr override \
   --source-registries docker.io
 ```
 
-### Complex Example
+### Complex Example with Configuration
 ```bash
 irr override \
   --chart-path ./prometheus \
-  --target-registry harbor.example.com \
-  --source-registries docker.io,quay.io \
-  --exclude-registries k8s.gcr.io \
-  --strategy prefix-source-registry \
+  --config registry-config.yaml \
   --threshold 90 \
   --output-file overrides.yaml
 ```
 
-### Analysis Only
+### Validation
 ```bash
-irr analyze \
-  --output json \
-  --source-registries docker.io \
-  ./my-chart
+irr validate \
+  --chart-path ./my-chart \
+  --values overrides.yaml
 ```
 
-### Using Registry Mappings
+### Using Release Name for Validation
 ```bash
-irr override \
+irr validate \
+  --release-name my-release \
   --chart-path ./my-chart \
-  --target-registry harbor.example.com \
-  --source-registries docker.io \
-  --registry-file ./registry-mappings.yaml
+  --values overrides.yaml
 ```
