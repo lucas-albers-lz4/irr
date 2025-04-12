@@ -430,13 +430,15 @@ func TestClickhouseOperator(t *testing.T) {
 	harness := NewTestHarness(t)
 	defer harness.Cleanup()
 
-	// Use the clickhouse-operator chart from the chart cache
-	chartPath := filepath.Join("..", "chart-cache", "clickhouse-operator-latest")
+	// Use the clickhouse-operator chart from the standard test charts location
+	chartPath := testutil.GetChartPath("clickhouse-operator")
 	_, err := os.Stat(chartPath)
 	require.NoError(t, err, "Clickhouse-operator chart not found at %s", chartPath)
 
 	// Set up the test harness with the clickhouse-operator chart
 	harness.SetupChart(chartPath)
+
+	// Set target registry as "harbor.home.arpa" and source registry as "docker.io"
 	harness.SetRegistries("harbor.home.arpa", []string{"docker.io"})
 
 	// Expected images to be found in the overrides
@@ -485,6 +487,29 @@ func TestClickhouseOperator(t *testing.T) {
 			t.Errorf("Expected image %s not found in overrides. Found repositories: %v", expectedRepo, repos)
 		}
 	}
+
+	// Add global.security.allowInsecureImages=true to the overrides to avoid Bitnami's validation error
+	if globalMap, ok := overrides["global"].(map[string]interface{}); ok {
+		if securityMap, ok := globalMap["security"].(map[string]interface{}); ok {
+			securityMap["allowInsecureImages"] = true
+		} else {
+			globalMap["security"] = map[string]interface{}{
+				"allowInsecureImages": true,
+			}
+		}
+	} else {
+		overrides["global"] = map[string]interface{}{
+			"security": map[string]interface{}{
+				"allowInsecureImages": true,
+			},
+		}
+	}
+
+	// Write updated overrides back to file
+	updatedOverridesBytes, err := yaml.Marshal(overrides)
+	require.NoError(t, err, "Failed to marshal updated overrides YAML")
+	err = os.WriteFile(harness.overridePath, updatedOverridesBytes, 0644)
+	require.NoError(t, err, "Failed to write updated overrides file")
 
 	// Validate the overrides by running helm template
 	if err := harness.ValidateOverrides(); err != nil {
