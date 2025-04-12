@@ -230,34 +230,6 @@ func readConfigFileContent(fs afero.Fs, path string) ([]byte, error) {
 	return data, nil
 }
 
-// checkForDuplicateKeys scans YAML content for duplicate keys
-func checkForDuplicateKeys(content []byte, path string) error {
-	yamlLines := strings.Split(string(content), "\n")
-	seenKeys := make(map[string]bool)
-
-	for _, line := range yamlLines {
-		// Skip empty lines and comments
-		trimmedLine := strings.TrimSpace(line)
-		if trimmedLine == "" || strings.HasPrefix(trimmedLine, "#") {
-			continue
-		}
-
-		// Look for lines that follow the pattern "key: value"
-		parts := strings.SplitN(trimmedLine, ":", SplitKeyValueParts)
-		if len(parts) == SplitKeyValueParts {
-			key := strings.TrimSpace(parts[0])
-			if key != "" {
-				if seenKeys[key] {
-					return WrapDuplicateRegistryKey(path, key)
-				}
-				seenKeys[key] = true
-			}
-		}
-	}
-
-	return nil
-}
-
 // validateMappingValue validates format and constraints for a target value
 func validateMappingValue(source, target, path string) error {
 	// Check value length

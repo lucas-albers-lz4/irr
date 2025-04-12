@@ -5,12 +5,14 @@ import (
 	"path/filepath"
 	"testing"
 
+	"errors"
+
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// Test function names updated to match consolidated functions
+// TestLoadMappings tests the LoadMappings function with different inputs
 func TestLoadMappings(t *testing.T) {
 	// Create a memory-backed filesystem for testing
 	fs := afero.NewMemMapFs()
@@ -18,7 +20,6 @@ func TestLoadMappings(t *testing.T) {
 
 	// Create test file paths
 	newFormatFile := filepath.Join(tmpDir, "new-format.yaml")
-	oldFormatFile := filepath.Join(tmpDir, "old-format.yaml")
 	emptyTmpFile := filepath.Join(tmpDir, "empty.yaml")
 	invalidTmpFile := filepath.Join(tmpDir, "invalid.yaml")
 	invalidExtTmpFile := filepath.Join(tmpDir, "mappings.txt")
@@ -32,9 +33,6 @@ func TestLoadMappings(t *testing.T) {
   - source: docker.io
     target: my-registry.example.com/docker-mirror`
 
-	oldFormatContent := `quay.io: my-registry.example.com/quay-mirror
-docker.io: my-registry.example.com/docker-mirror`
-
 	invalidYAMLContent := `mappings: [invalid yaml`
 
 	// Set up the memory filesystem
@@ -43,7 +41,6 @@ docker.io: my-registry.example.com/docker-mirror`
 
 	// Write test files
 	require.NoError(t, afero.WriteFile(fs, newFormatFile, []byte(newFormatContent), 0o644))
-	require.NoError(t, afero.WriteFile(fs, oldFormatFile, []byte(oldFormatContent), 0o644))
 	require.NoError(t, afero.WriteFile(fs, emptyTmpFile, []byte(""), 0o644))
 	require.NoError(t, afero.WriteFile(fs, invalidTmpFile, []byte(invalidYAMLContent), 0o644))
 	require.NoError(t, afero.WriteFile(fs, invalidExtTmpFile, []byte(""), 0o644))
@@ -62,38 +59,29 @@ docker.io: my-registry.example.com/docker-mirror`
 		wantMappings  *Mappings
 		wantErr       bool
 		errorContains string
-		content       string
 	}{
 		{
-			name:          "valid mappings file (new format)",
+			name:          "valid_mappings_file_(new_format)",
 			path:          newFormatFile,
 			wantMappings:  expectedMappings,
 			wantErr:       false,
 			errorContains: "",
-			content:       newFormatContent,
 		},
 		{
-			name:          "valid mappings file (old format)",
-			path:          oldFormatFile,
-			wantMappings:  expectedMappings,
-			wantErr:       false,
-			errorContains: "",
-			content:       oldFormatContent,
-		},
-		{
-			name:          "nonexistent file",
-			path:          "nonexistent.yaml",
+			name:          "nonexistent_file",
+			path:          "/path/does/not/exist.yaml",
+			wantMappings:  nil,
 			wantErr:       true,
 			errorContains: "mappings file does not exist",
 		},
 		{
-			name:          "empty file",
+			name:          "empty_file",
 			path:          emptyTmpFile,
 			wantErr:       true,
 			errorContains: "mappings file is empty",
 		},
 		{
-			name:          "invalid yaml format",
+			name:          "invalid_yaml_format",
 			path:          invalidTmpFile,
 			wantErr:       true,
 			errorContains: "failed to parse mappings file",
@@ -213,4 +201,27 @@ func TestGetTargetRegistry(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+// TestNonexistentFileMappingError tests that the correct error type is returned for nonexistent files
+func TestNonexistentFileMappingError(t *testing.T) {
+	// Create a memory-backed filesystem for testing
+	fs := afero.NewMemMapFs()
+
+	// Try to load a nonexistent file
+	nonexistentPath := "/path/does/not/exist.yaml"
+	_, err := LoadMappings(fs, nonexistentPath, true)
+
+	// Check that the error is of the correct type
+	require.Error(t, err)
+	var mappingErr *ErrMappingFileNotExist
+	ok := errors.As(err, &mappingErr)
+	require.True(t, ok, "Error should be of type ErrMappingFileNotExist, got %T", err)
+
+	// Check the error message
+	assert.Contains(t, err.Error(), "mappings file does not exist")
+
+	// Check that we can unwrap the original error
+	unwrappedErr := errors.Unwrap(err)
+	require.NotNil(t, unwrappedErr, "Unwrapped error should not be nil")
 }

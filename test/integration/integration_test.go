@@ -337,9 +337,11 @@ func TestRegistryMappingFile(t *testing.T) {
 	harness := NewTestHarness(t)
 	defer harness.Cleanup()
 
-	mappingContent := `
-docker.io: dckr
-quay.io: quaycustom
+	mappingContent := `mappings:
+  - source: docker.io
+    target: dckr
+  - source: quay.io
+    target: quaycustom
 `
 	mappingFilePath := filepath.Join(harness.tempDir, "test-mappings.yaml")
 	err := os.WriteFile(mappingFilePath, []byte(mappingContent), 0o600)
@@ -396,9 +398,12 @@ func TestConfigFileMappings(t *testing.T) {
 	defer harness.Cleanup()
 
 	// Create registry mappings content
-	registryMappingsContent := `
-docker.io: my-registry.io/custom/nginx-mirror
-quay.io: my-registry.io/monitoring/prometheus
+	registryMappingsContent := `registries:
+  mappings:
+    - source: docker.io
+      target: my-registry.io/custom/nginx-mirror
+    - source: quay.io
+      target: my-registry.io/monitoring/prometheus
 `
 
 	// Write the config file
