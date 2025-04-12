@@ -5,14 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 
 	"github.com/lalbers/irr/pkg/analysis"
 	"github.com/lalbers/irr/pkg/exitcodes"
 	"github.com/spf13/afero"
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -33,25 +31,6 @@ func (m *mockAnalyzer) Analyze() (*analysis.ChartAnalysis, error) {
 }
 
 // --- End Mocking ---
-
-// executeAnalyzeCommand runs the analyze command with args and returns output/error
-func executeAnalyzeCommand(cmd *cobra.Command, args ...string) (string, error) {
-	// Add test-analyze flag for test mode
-	if TestAnalyzeMode && !sliceContains(args, "--test-analyze") {
-		args = append(args, "--test-analyze")
-	}
-	return executeCommand(cmd, args...)
-}
-
-// sliceContains checks if a slice contains a specific string
-func sliceContains(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
-}
 
 // setupAnalyzeTestFS creates a temporary filesystem for tests
 func setupAnalyzeTestFS(_ *testing.T) afero.Fs {
@@ -326,30 +305,27 @@ func TestAnalyzeCommand_Success_TextOutput(t *testing.T) {
 	}
 	defer func() { currentAnalyzerFactory = originalFactory }()
 
-	// Create a dummy command object to pass to runAnalyze
+	// Create a command object and set up the buffer to capture output
 	cmd := newAnalyzeCmd()
 	err := cmd.Flags().Set("source-registries", "source.io")
 	require.NoError(t, err)
 	err = cmd.Flags().Set("chart-path", chartPath)
 	require.NoError(t, err)
 
-	// Capture stdout
-	oldStdout := os.Stdout
-	r, w, err := os.Pipe()
+	// Add the test-analyze flag to the command
+	cmd.Flags().Bool("test-analyze", false, "")
+	err = cmd.Flags().Set("test-analyze", "true")
 	require.NoError(t, err)
-	os.Stdout = w
+
+	// Set up buffer to capture output
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
 
 	// Execute the core run function
 	err = runAnalyze(cmd, []string{chartPath})
 	require.NoError(t, err)
 
-	// Restore stdout and read captured output
-	err = w.Close()
-	require.NoError(t, err)
-	os.Stdout = oldStdout
-	buf := new(bytes.Buffer)
-	_, err = buf.ReadFrom(r)
-	require.NoError(t, err)
+	// Get the captured output
 	output := buf.String()
 
 	// Verify output
@@ -382,7 +358,7 @@ func TestAnalyzeCommand_Success_JsonOutput(t *testing.T) {
 	}
 	defer func() { currentAnalyzerFactory = originalFactory }()
 
-	// Create a dummy command object and set flags
+	// Create a command object and set flags
 	cmd := newAnalyzeCmd()
 	err := cmd.Flags().Set("source-registries", "source.io")
 	require.NoError(t, err)
@@ -391,23 +367,20 @@ func TestAnalyzeCommand_Success_JsonOutput(t *testing.T) {
 	err = cmd.Flags().Set("output", "json")
 	require.NoError(t, err)
 
-	// Capture stdout
-	oldStdout := os.Stdout
-	r, w, err := os.Pipe()
+	// Add the test-analyze flag to the command
+	cmd.Flags().Bool("test-analyze", false, "")
+	err = cmd.Flags().Set("test-analyze", "true")
 	require.NoError(t, err)
-	os.Stdout = w
+
+	// Set up buffer to capture output
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
 
 	// Execute the core run function
 	err = runAnalyze(cmd, []string{chartPath})
 	require.NoError(t, err)
 
-	// Restore stdout and read captured output
-	err = w.Close()
-	require.NoError(t, err)
-	os.Stdout = oldStdout
-	buf := new(bytes.Buffer)
-	_, err = buf.ReadFrom(r)
-	require.NoError(t, err)
+	// Get the captured output
 	output := buf.String()
 
 	// Verify output is valid JSON

@@ -342,7 +342,10 @@ This command will scan a Helm chart for container image references and report th
 It can output in text or JSON format and supports filtering by source registry.`,
 		Args: func(cmd *cobra.Command, args []string) error {
 			// Skip argument validation in test mode
-			testAnalyze, _ := cmd.Flags().GetBool("test-analyze")
+			testAnalyze, err := cmd.Flags().GetBool("test-analyze")
+			if err != nil {
+				return fmt.Errorf("failed to get test-analyze flag: %w", err)
+			}
 			if testAnalyze {
 				return nil
 			}
@@ -426,7 +429,10 @@ func writeAnalysisOutput(cmd *cobra.Command, output, outputFile string) error {
 // runAnalyze implements the analyze command functionality
 func runAnalyze(cmd *cobra.Command, args []string) error {
 	// Check if we're in test mode
-	testAnalyze, _ := cmd.Flags().GetBool("test-analyze")
+	testAnalyze, err := cmd.Flags().GetBool("test-analyze")
+	if err != nil {
+		return fmt.Errorf("failed to get test-analyze flag: %w", err)
+	}
 	debug.Printf("Running analyze command in test mode: %v", testAnalyze)
 
 	// Check required args in normal mode
@@ -449,12 +455,13 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 
 	// Set up the analyzer
 	var chartPath string
-	if len(args) > 0 {
+	switch {
+	case len(args) > 0:
 		chartPath = args[0]
-	} else if testAnalyze {
+	case testAnalyze:
 		// Use a placeholder in test mode if no args provided
 		chartPath = "test-chart"
-	} else {
+	default:
 		return fmt.Errorf("chart path argument required")
 	}
 
