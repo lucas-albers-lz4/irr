@@ -230,12 +230,18 @@ func TestDebugFlagAndEnvVarInteraction(t *testing.T) {
 			// Set debug state to true to verify it gets disabled
 			debug.Enabled = true
 
+			// Enable warnings for this test since we're explicitly testing the warning output
+			debug.EnableDebugEnvVarWarnings()
+
 			// Call Init and capture output
 			output := captureDebugInit(false) // false = don't force enable
 
 			// Verify debug is disabled and warning is logged
 			assert.False(t, debug.Enabled, "debug.Enabled should be false with invalid value")
 			assert.True(t, strings.Contains(output, "Invalid boolean value for IRR_DEBUG"), "Should warn about invalid value")
+
+			// Reset to default behavior
+			debug.ShowDebugEnvWarnings = false
 		})
 
 		t.Run("EnvVar_Empty", func(t *testing.T) {
@@ -254,9 +260,9 @@ func TestDebugFlagAndEnvVarInteraction(t *testing.T) {
 			// Verify debug is disabled and empty env var should behave as if not set
 			assert.False(t, debug.Enabled, "debug.Enabled should be false with empty value")
 
-			// NOTE: Empty values may produce a warning in some versions of the debug package
-			// What matters is that debug.Enabled is set to false
-			t.Logf("Warning output with empty env var: %q", output)
+			// NOTE: Empty values should not produce warnings now
+			assert.False(t, strings.Contains(output, "Invalid boolean value for IRR_DEBUG"), "Should not warn about empty value")
+			t.Logf("Output with empty env var: %q", output)
 		})
 
 		t.Run("ForceEnable_OverridesEnvVar", func(t *testing.T) {

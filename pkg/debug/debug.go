@@ -34,8 +34,9 @@ var (
 	Enabled bool
 	// startTime stores the time when Init was called.
 	startTime time.Time
-
-	// debugPrefix was removed as it was unused
+	// ShowDebugEnvWarnings controls whether to display warnings for IRR_DEBUG parsing issues.
+	// This is primarily for test environments and is false by default for better user experience.
+	ShowDebugEnvWarnings bool
 )
 
 func init() {
@@ -44,11 +45,13 @@ func init() {
 		var err error
 		Enabled, err = strconv.ParseBool(debugEnv)
 		if err != nil {
-			// Default to false if parsing fails, maybe log this?
+			// Default to false if parsing fails
 			Enabled = false
-			fmt.Fprintf(os.Stderr, "Warning: Invalid boolean value for IRR_DEBUG: %s. Defaulting to false.\n", debugEnv)
+			// Only show warning if explicitly enabled (primarily for tests)
+			if ShowDebugEnvWarnings {
+				fmt.Fprintf(os.Stderr, "Warning: Invalid boolean value for IRR_DEBUG: %s. Defaulting to false.\n", debugEnv)
+			}
 		}
-		// Assignment to debugPrefix removed
 	} else {
 		Enabled = false
 	}
@@ -66,13 +69,22 @@ func Init(forceEnable bool) {
 		if err != nil {
 			// Default to false if parsing fails
 			Enabled = false
-			fmt.Fprintf(os.Stderr, "Warning: Invalid boolean value for IRR_DEBUG: %s. Defaulting to false.\n", debugEnv)
+			// Only show warning if explicitly enabled (primarily for tests)
+			if ShowDebugEnvWarnings {
+				fmt.Fprintf(os.Stderr, "Warning: Invalid boolean value for IRR_DEBUG: %s. Defaulting to false.\n", debugEnv)
+			}
 		}
 	}
 	startTime = time.Now()
 	if Enabled {
 		Printf("Debug logging enabled at %s", startTime.Format(time.RFC3339))
 	}
+}
+
+// EnableDebugEnvVarWarnings enables warnings related to IRR_DEBUG environment variable parsing.
+// This is primarily intended for test environments that need to verify this behavior.
+func EnableDebugEnvVarWarnings() {
+	ShowDebugEnvWarnings = true
 }
 
 // Printf logs a formatted debug message if debug logging is enabled.

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/testutil"
 )
 
@@ -107,10 +108,14 @@ func TestCertManager(t *testing.T) {
 			if err := os.Setenv("IRR_DEBUG", "true"); err != nil {
 				t.Logf("[%s] WARNING: Failed to set IRR_DEBUG env var: %v", group.name, err)
 			}
+			// Enable debug warnings for integration tests
+			debug.EnableDebugEnvVarWarnings()
 			defer func() {
 				if err := os.Unsetenv("IRR_DEBUG"); err != nil {
 					t.Logf("[%s] WARNING: Failed to unset IRR_DEBUG env var: %v", group.name, err)
 				}
+				// Reset to default (no warnings)
+				debug.ShowDebugEnvWarnings = false
 			}()
 
 			// Construct the command

@@ -268,7 +268,27 @@ These mechanisms interact in specific ways:
 - Invalid or empty values for `IRR_DEBUG` default to `false` (debug disabled)
 - The command-line flag takes precedence over the environment variable
 
-#### 10.2. Enabling Debug Logging in Tests
+#### 10.2. Debug Warning Behavior
+
+By default, IRR suppresses warning messages about invalid `IRR_DEBUG` environment variable values in user-facing contexts for a better user experience. This means:
+
+- Regular users won't see warnings about empty or invalid `IRR_DEBUG` values
+- The application will silently default to the appropriate debug state
+- Debug mode still works as expected when properly configured
+
+For tests and development environments, these warnings can be explicitly enabled:
+
+```go
+// Enable warnings about IRR_DEBUG environment variable parsing
+debug.EnableDebugEnvVarWarnings()
+
+// Disable warnings again (default state)
+debug.ShowDebugEnvWarnings = false
+```
+
+The integration test framework automatically enables these warnings to help with debugging and ensuring the debug state is properly set.
+
+#### 10.3. Enabling Debug Logging in Tests
 
 To enable debug logging at different levels:
 
@@ -292,7 +312,7 @@ To enable debug logging at different levels:
    IRR_DEBUG=true go test -v ./...
    ```
 
-#### 10.3. Capturing Debug Output in Tests
+#### 10.4. Capturing Debug Output in Tests
 
 When writing tests that need to verify debug output:
 
@@ -331,7 +351,7 @@ When writing tests that need to verify debug output:
    }
    ```
 
-#### 10.4. Testing Debug Behavior
+#### 10.5. Testing Debug Behavior
 
 The `TestDebugFlagAndEnvVarInteraction` test in `cmd/irr/root_test.go` provides a comprehensive verification of debug control mechanisms, including:
 
@@ -343,7 +363,7 @@ The `TestDebugFlagAndEnvVarInteraction` test in `cmd/irr/root_test.go` provides 
 
 When troubleshooting debug behavior, refer to this test for examples of proper debug state verification.
 
-#### 10.5. Best Practices for Debug in Tests
+#### 10.6. Best Practices for Debug in Tests
 
 1. **Reset state between tests**:
    ```go

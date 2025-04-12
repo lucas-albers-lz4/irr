@@ -228,8 +228,10 @@ It also supports linting image references for potential issues.`,
 			if debugEnv != "" {
 				debugVal, err := strconv.ParseBool(debugEnv)
 				if err != nil {
-					// Log the warning only if parsing fails for a non-empty value
-					log.Warnf("Invalid boolean value for IRR_DEBUG environment variable: '%s'. Defaulting to false.", debugEnv)
+					// Only log the warning if in test mode or if debug is already enabled
+					if integrationTestMode {
+						log.Warnf("Invalid boolean value for IRR_DEBUG environment variable: '%s'. Defaulting to false.", debugEnv)
+					}
 					debug.Enabled = false
 				} else {
 					debug.Enabled = debugVal

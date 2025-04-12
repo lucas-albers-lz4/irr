@@ -77,7 +77,25 @@ _**Goal:** Implement the core `inspect`, `override`, `validate` commands and the
 - [x] Fixed naming conventions:
   - Renamed stuttering type names in pkg/chart and pkg/registry packages
 
-### Phase 4.4: Testing Implementation (In Progress)
+### Phase 4.5: IRR_DEBUG Warning Message Fix
+_**Goal:** Fix the IRR_DEBUG environment variable warning to maintain test functionality while improving user experience._
+
+- [x] Modify debug package behavior for IRR_DEBUG environment variable warnings
+  - [x] [Sub-Task] Update `pkg/debug/debug.go` to suppress warning messages in user-facing contexts. The distinction between contexts will likely be managed using the existing `integrationTestMode` flag or the new internal flag.
+  - [x] [Sub-Task] Add an internal flag (e.g., `showDebugEnvWarnings`) to control whether to display IRR_DEBUG parsing warnings.
+  - [x] [Sub-Task] Modify the `init()` and `Init()` functions to check this internal flag before printing warnings related to `IRR_DEBUG` parsing.
+  - [x] [Sub-Task] Create a new exported function (e.g., `EnableDebugEnvVarWarnings()`) that allows test code to explicitly enable these warnings.
+  - [x] [Sub-Task] Update relevant test cases (like those in `cmd/irr/root_test.go`) to call `EnableDebugEnvVarWarnings()` when testing the warning behavior itself.
+- [x] Refine root command (`cmd/irr/root.go`) handling for debug settings
+  - [x] [Sub-Task] Review the `PersistentPreRunE` logic in `cmd/irr/root.go`. It currently checks `if debugEnv != ""` before parsing, so it shouldn't warn on empty values. The primary warning suppression needs to happen in `pkg/debug/debug.go` as planned above.
+  - [x] [Sub-Task] Adjust the `PersistentPreRunE` logic in `cmd/irr/root.go` to only use `log.Warnf` for invalid `IRR_DEBUG` values if the effective log level is `DEBUG` (set by `--debug` or `IRR_DEBUG=true`) OR if the new `debug.ShowDebugEnvWarnings` flag (or similar mechanism) is explicitly enabled for tests.
+  - [x] [Sub-Task] Ensure consistent debug state handling: Verify that subcommands rely on the `debug.Enabled` state set by `PersistentPreRunE` and do not independently check `IRR_DEBUG`.
+- [x] Ensure compatibility with integration test framework
+  - [x] [Sub-Task] Verify integration tests still work properly with the new warning behavior
+  - [x] [Sub-Task] Make sure debug state can still be verified programmatically in tests
+  - [x] [Sub-Task] Update documentation to reflect new behavior in test environments
+
+### Phase 4.6: Testing Implementation (In Progress)
 - [x] **High Priority:** Implement comprehensive Unit/Integration tests for `pkg/analyzer` (inspect logic).
   - [x] Fixed TestAnalyzeCommand_NoArgs test to check for correct error message
   - [x] All analyzer tests now pass successfully
@@ -87,6 +105,9 @@ _**Goal:** Implement the core `inspect`, `override`, `validate` commands and the
 - [x] **High Priority:** Implement Integration/E2E tests for new command flows (`inspect`, `validate`) and error handling in `cmd/irr` (verify `validate` exit codes and stderr passthrough on failure).
 - [x] **Medium Priority:** Add Unit/Integration tests for `pkg/chart` (dir/tgz loading, simple alias path generation).
 - [x] **Medium Priority:** Add tests for handling both legacy and structured configuration formats.
+- [x] Improve test consistency and maintainability:
+  - [x] Moved clickhouse-operator chart from `test/chart-cache/` to `test-data/charts/` for consistency with other test charts
+  - [x] Updated integration tests to use `testutil.GetChartPath()` consistently for accessing test charts
 
 ## Phase 5: Helm Plugin Integration
 _**Goal:** Implement the Helm plugin interface that wraps around the core CLI functionality._

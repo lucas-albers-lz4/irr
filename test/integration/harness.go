@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/image"
 	"github.com/lalbers/irr/pkg/registry"
 	"github.com/spf13/afero"
@@ -541,21 +542,24 @@ func (h *TestHarness) walkImageFieldsRecursive(data interface{}, currentPath []s
 	}
 }
 
-// ExecuteIRR runs the irr command with the given arguments.
-// It returns the combined stdout/stderr and any error.
+// ExecuteIRR runs the 'irr' binary with the given arguments and returns its output.
 func (h *TestHarness) ExecuteIRR(args ...string) (output string, err error) {
-	// Get the binary path
-	irrBinaryPath := h.getBinaryPath()
+	path := h.getBinaryPath()
 
-	// Include debug flag for visibility during tests
-	finalArgs := []string{"--debug", "--integration-test"}
-	finalArgs = append(finalArgs, args...)
+	h.logger.Printf("Running: %s %s", path, strings.Join(args, " "))
 
-	// Show the full command for debugging
-	h.logger.Printf("[HARNESS EXECUTE_IRR] Command: %s %s", irrBinaryPath, strings.Join(finalArgs, " "))
+	// For integration tests, we need to enable debug warning messages to help with diagnostics
+	debug.EnableDebugEnvVarWarnings()
+	defer func() {
+		debug.ShowDebugEnvWarnings = false
+	}()
 
-	cmd := exec.Command(irrBinaryPath, finalArgs...) // #nosec G204 -- Running controlled irr binary in test code
-	cmd.Dir = h.rootDir                              // Ensure command runs from project root for consistency
+	// Always include the integration-test flag to allow loading registry files from temp directories
+	args = append([]string{"--integration-test"}, args...)
+
+	// #nosec G204 -- This is test code and args are controlled by tests
+	cmd := exec.Command(path, args...)
+	cmd.Dir = h.rootDir // Run from project root
 
 	// Capture combined output
 	var out bytes.Buffer

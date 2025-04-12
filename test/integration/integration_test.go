@@ -403,7 +403,8 @@ quay.io: my-registry.io/monitoring/prometheus
 
 	// Write the config file
 	configPath := filepath.Join(harness.tempDir, "test-config.yaml")
-	err := os.WriteFile(configPath, []byte(registryMappingsContent), 0644)
+	// #nosec G306 -- Using secure permissions (0600) for test-generated file
+	err := os.WriteFile(configPath, []byte(registryMappingsContent), 0o600)
 	require.NoError(t, err, "Failed to write test config file")
 
 	output, err := harness.ExecuteIRR(
@@ -508,7 +509,8 @@ func TestClickhouseOperator(t *testing.T) {
 	// Write updated overrides back to file
 	updatedOverridesBytes, err := yaml.Marshal(overrides)
 	require.NoError(t, err, "Failed to marshal updated overrides YAML")
-	err = os.WriteFile(harness.overridePath, updatedOverridesBytes, 0644)
+	// #nosec G306 -- Using secure permissions (0600) for test-generated file
+	err = os.WriteFile(harness.overridePath, updatedOverridesBytes, 0o600)
 	require.NoError(t, err, "Failed to write updated overrides file")
 
 	// Validate the overrides by running helm template
