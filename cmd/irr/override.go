@@ -3,18 +3,21 @@ package main
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
-	"github.com/lalbers/irr/pkg/analysis"
+	"github.com/lalbers/irr/internal/helm"
 	"github.com/lalbers/irr/pkg/chart"
 	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/exitcodes"
+	log "github.com/lalbers/irr/pkg/log"
 	"github.com/lalbers/irr/pkg/registry"
 	"github.com/lalbers/irr/pkg/strategy"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -122,7 +125,7 @@ func newOverrideCmd() *cobra.Command {
 // setupOverrideFlags configures all flags for the override command
 func setupOverrideFlags(cmd *cobra.Command) {
 	// Required flags
-	cmd.Flags().StringP("chart-path", "c", "", "Path to the Helm chart directory or tarball (required)")
+	cmd.Flags().StringP("chart-path", "c", "", "Path to the Helm chart directory or tarball (default: auto-detect)")
 	cmd.Flags().StringP("target-registry", "t", "", "Target container registry URL (required)")
 	cmd.Flags().StringSliceP(
 		"source-registries",
@@ -145,6 +148,8 @@ func setupOverrideFlags(cmd *cobra.Command) {
 	cmd.Flags().String("registry-file", "", "Path to a YAML file containing registry mappings (source: target)")
 	cmd.Flags().String("config", "", "Path to a YAML configuration file for registry mappings (map[string]string format)")
 	cmd.Flags().Bool("validate", false, "Run 'helm template' with generated overrides to validate chart renderability")
+	cmd.Flags().StringP("release-name", "n", "", "Helm release name to get values from before generating overrides (optional)")
+	cmd.Flags().String("namespace", "", "Kubernetes namespace for the Helm release (only used with --release-name)")
 
 	// Analysis control flags
 	cmd.Flags().StringSlice("include-pattern", nil, "Glob patterns for values paths to include during analysis")
@@ -152,7 +157,7 @@ func setupOverrideFlags(cmd *cobra.Command) {
 	cmd.Flags().StringSlice("known-image-paths", nil, "Specific dot-notation paths known to contain images")
 
 	// Mark required flags
-	for _, flag := range []string{"chart-path", "target-registry", "source-registries"} {
+	for _, flag := range []string{"target-registry", "source-registries"} {
 		if err := cmd.MarkFlagRequired(flag); err != nil {
 			panic(fmt.Sprintf("failed to mark flag '%s' as required: %v", flag, err))
 		}
@@ -438,40 +443,82 @@ func setupGeneratorConfig(cmd *cobra.Command) (config GeneratorConfig, err error
 	return
 }
 
-// 3. Runtime Errors (20-29):
-//   - File I/O errors (ExitGeneralRuntimeError)
-//   - System-level failures (ExitGeneralRuntimeError)
+// runOverride implements the override command logic
 func runOverride(cmd *cobra.Command, _ []string) error {
-	debug.FunctionEnter("runOverride")
-	defer debug.FunctionExit("runOverride")
-
-	// Get output-related flags
-	outputFile, err := getStringFlag(cmd, "output-file")
-	if err != nil {
-		return err
-	}
-
-	dryRun, err := getBoolFlag(cmd, "dry-run")
-	if err != nil {
-		return err
-	}
-
-	// Set up all generator configuration
 	config, err := setupGeneratorConfig(cmd)
 	if err != nil {
 		return err
 	}
 
-	// Create generator
-	var loader analysis.ChartLoader = &chart.DefaultLoader{}
+	// If chart path is not specified, try to detect a chart in the current directory
+	if config.ChartPath == "" {
+		chartPath, err := detectChartInCurrentDirectoryIfNeeded("")
+		if err != nil {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitChartNotFound,
+				Err:  fmt.Errorf("chart path not specified and %w", err),
+			}
+		}
+		config.ChartPath = chartPath
+		log.Infof("Detected chart at %s", chartPath)
+	}
+
+	// Check if we need to get values from a release
+	releaseName, err := cmd.Flags().GetString("release-name")
+	if err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get release-name flag: %w", err),
+		}
+	}
+
+	namespace, err := cmd.Flags().GetString("namespace")
+	if err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get namespace flag: %w", err),
+		}
+	}
+
+	// If release-name is specified and doesn't equal the default, attempt to get values
+	var releaseValues map[string]interface{}
+	if releaseName != "" {
+		log.Infof("Getting values for release %s", releaseName)
+
+		// Call 'helm get values' to get the existing values
+		valuesResult, err := helm.GetValues(&helm.GetValuesOptions{
+			ReleaseName: releaseName,
+			Namespace:   namespace,
+		})
+
+		if err != nil {
+			log.Warnf("Failed to get values for release %s: %v", releaseName, err)
+			log.Warnf("Continuing with chart values only")
+		} else {
+			// Parse YAML values
+			err = yaml.Unmarshal([]byte(valuesResult.Stdout), &releaseValues)
+			if err != nil {
+				return &exitcodes.ExitCodeError{
+					Code: exitcodes.ExitIOError,
+					Err:  fmt.Errorf("failed to parse release values: %w", err),
+				}
+			}
+			log.Infof("Successfully retrieved release values from %s", releaseName)
+		}
+	}
+
+	// Create overrides generator
 	generator := currentGeneratorFactory(
-		config.ChartPath, config.TargetRegistry,
-		config.SourceRegistries, config.ExcludeRegistries,
-		config.Strategy, config.Mappings,
+		config.ChartPath,
+		config.TargetRegistry,
+		config.SourceRegistries,
+		config.ExcludeRegistries,
+		config.Strategy,
+		config.Mappings,
 		config.ConfigMappings,
 		config.StrictMode,
 		config.Threshold,
-		loader,
+		nil, // Use default chart loader
 		config.IncludePatterns,
 		config.ExcludePatterns,
 		config.KnownImagePaths,
@@ -483,15 +530,103 @@ func runOverride(cmd *cobra.Command, _ []string) error {
 		return handleGenerateError(err)
 	}
 
-	// Marshal the override file to YAML
-	yamlBytes, err := overrideFile.ToYAML()
+	// Convert to YAML
+	yamlBytes, err := yaml.Marshal(overrideFile.Values)
 	if err != nil {
 		return &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitGeneralRuntimeError,
-			Err:  fmt.Errorf("failed to marshal overrides to YAML: %w", err),
+			Err:  fmt.Errorf("failed to generate YAML: %w", err),
 		}
 	}
 
-	// Handle output based on flags
-	return outputOverrides(cmd, yamlBytes, outputFile, dryRun)
+	// Get output file and dry-run flag
+	outputFile, err := cmd.Flags().GetString("output-file")
+	if err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get output-file flag: %w", err),
+		}
+	}
+
+	dryRun, err := cmd.Flags().GetBool("dry-run")
+	if err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get dry-run flag: %w", err),
+		}
+	}
+
+	// Output the overrides
+	if err := outputOverrides(cmd, yamlBytes, outputFile, dryRun); err != nil {
+		return err
+	}
+
+	// Validate the chart with overrides if requested
+	shouldValidate, err := cmd.Flags().GetBool("validate")
+	if err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get validate flag: %w", err),
+		}
+	}
+
+	if shouldValidate {
+		overridesFile := outputFile
+		// If dry-run or no output file specified, write to temporary file
+		if dryRun || overridesFile == "" {
+			tempFile, err := os.CreateTemp("", "irr-overrides-*.yaml")
+			if err != nil {
+				return &exitcodes.ExitCodeError{
+					Code: exitcodes.ExitIOError,
+					Err:  fmt.Errorf("failed to create temporary file for validation: %w", err),
+				}
+			}
+			defer func() {
+				if err := os.Remove(tempFile.Name()); err != nil {
+					log.Warnf("Failed to remove temporary file %s: %v", tempFile.Name(), err)
+				}
+			}()
+
+			if _, err := tempFile.Write(yamlBytes); err != nil {
+				return &exitcodes.ExitCodeError{
+					Code: exitcodes.ExitIOError,
+					Err:  fmt.Errorf("failed to write to temporary file: %w", err),
+				}
+			}
+
+			if err := tempFile.Close(); err != nil {
+				return &exitcodes.ExitCodeError{
+					Code: exitcodes.ExitIOError,
+					Err:  fmt.Errorf("failed to close temporary file: %w", err),
+				}
+			}
+
+			overridesFile = tempFile.Name()
+		}
+
+		// Execute helm template command to validate overrides
+		log.Infof("Validating chart with overrides...")
+		_, err := helm.Template(&helm.TemplateOptions{
+			ReleaseName: releaseName,
+			ChartPath:   config.ChartPath,
+			ValuesFiles: []string{overridesFile},
+		})
+
+		if err != nil {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitHelmCommandFailed,
+				Err:  fmt.Errorf("validation failed: %w", err),
+			}
+		}
+
+		log.Infof("Validation successful: chart renders correctly with overrides")
+	}
+
+	// Display counts
+	log.Infof("Processed %d/%d images (%.1f%% success rate)",
+		overrideFile.ProcessedCount,
+		overrideFile.TotalCount,
+		overrideFile.SuccessRate)
+
+	return nil
 }
