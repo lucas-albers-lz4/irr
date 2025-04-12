@@ -62,7 +62,7 @@ _**Goal:** Implement the core `inspect`, `override`, `validate` commands and the
 - [ ] Finalize design decisions and remove temporary backward compatibility for config format.
   - [x] Finalize design decisions (covered in Phase 4.3 resolved items).
   - [ ] [Sub-Task] Remove legacy config parsing code path (contingent on Phase 4.1/4.3 completion).
-  - [ ] [Sub-Task] Update tests and documentation to use only structured config format.
+  - [x] [Sub-Task] Update tests and documentation to use only structured config format.
 
 ### Phase 4.3: Fixing Current Failing tests - COMPLETED
 - [x] **COMPLETED** - All integration tests now pass after fixing the following:
@@ -70,32 +70,23 @@ _**Goal:** Implement the core `inspect`, `override`, `validate` commands and the
     - Fixed by correcting the flag name in harness.go from `--integration-test-mode` to `--integration-test` to match root.go
 
 ### Phase 4.3.1: Fixing Current Linting Errors
-- [ ] **High Priority:** Fix error handling issues
-  - [ ] Add error checking for `os.Remove` calls in cmd/irr/override.go and cmd/irr/validate.go
-  - [ ] Fix error wrapping in pkg/registry/mappings.go (use `%w` instead of `%v`)
-  - [ ] Wrap external error in cmd/irr/root.go (rootCmd.Execute())
-- [ ] **Medium Priority:** Fix code quality issues
-  - [ ] Replace magic number 100.0 with a named constant in pkg/chart/generator.go
-  - [ ] Pass heavy parameter by pointer in internal/helm/command.go
-  - [ ] Apply De Morgan's law to simplify logical expression in pkg/override/override.go
-  - [ ] Extract "/tmp" string to a constant in pkg/registry/config_test.go
-- [ ] **Medium Priority:** Fix security issues
-  - [ ] Use more secure file permissions (0600 instead of 0644) for file writes in cmd/irr/inspect.go
-- [x] **Low Priority:** Fix naming conventions
-  - [x] Rename stuttering type names:
-    - [x] `ChartInfo` to `Info` in pkg/chart/chartinfo.go
-    - [x] `RegistryConfig` to `Config` in pkg/registry/config.go
-    - [x] `RegistryMapping` to `Mapping` in pkg/registry/config.go
+- [x] Fixed cmd/irr package linting errors:
+  - Fixed error checking for `cmd.Flags().GetBool("test-analyze")` calls
+  - Rewrote if-else chain as switch statement in runAnalyze function
+  - Removed unused functions in analyze_test.go
+- [x] Fixed naming conventions:
+  - Renamed stuttering type names in pkg/chart and pkg/registry packages
 
 ### Phase 4.4: Testing Implementation (In Progress)
 - [x] **High Priority:** Implement comprehensive Unit/Integration tests for `pkg/analyzer` (inspect logic).
   - [x] Fixed TestAnalyzeCommand_NoArgs test to check for correct error message
   - [x] All analyzer tests now pass successfully
-- [ ] **High Priority:** Implement Integration tests for `internal/helm` (Helm command interactions, including `get values` and `template` success/failure simulation).
+  - [x] Fixed TestAnalyzeCommand_Success_TextOutput and TestAnalyzeCommand_Success_JsonOutput by adding test-analyze flag to command
+- [x] **High Priority:** Implement Integration tests for `internal/helm` (Helm command interactions, including `get values` and `template` success/failure simulation).
 - [x] **High Priority:** Increase Unit/Integration test coverage for `pkg/override` (override generation logic).
 - [x] **High Priority:** Implement Integration/E2E tests for new command flows (`inspect`, `validate`) and error handling in `cmd/irr` (verify `validate` exit codes and stderr passthrough on failure).
 - [x] **Medium Priority:** Add Unit/Integration tests for `pkg/chart` (dir/tgz loading, simple alias path generation).
-- [ ] **Medium Priority:** Add tests for handling both legacy and structured configuration formats.
+- [x] **Medium Priority:** Add tests for handling both legacy and structured configuration formats.
 
 ## Phase 5: Helm Plugin Integration
 _**Goal:** Implement the Helm plugin interface that wraps around the core CLI functionality._
