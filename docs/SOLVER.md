@@ -2,218 +2,144 @@
 
 ## Overview
 
-The Chart Solver is a combinatorial optimization approach to find the minimal set of configuration values needed to successfully process different categories of Helm charts. This document outlines the design, implementation strategy, and considerations for this feature.
+The Chart Solver is a combinatorial optimization approach to find the minimal set of configuration values needed to successfully process different categories of Helm charts. This document outlines the design, the problem being solved, key concepts, and overall strategy for this feature.
 
 ## Problem Definition
 
 ### Input
-- Set of local Helm charts (e.g., 888 charts)
-- Chart attributes:
+- A collection of local Helm charts (e.g., from `test/chart-cache`)
+- Chart attributes potentially derivable from metadata:
   - Name
-  - Registry source
+  - Potential registry source/provider (e.g., Bitnami, standard)
   - Version
-  - Current classification
+  - Dependencies
 
 ### Goal
-- Find minimal sets of configuration values that maximize successful chart processing
-- Group charts into categories to avoid individual chart-specific rules
-- Optimize for minimal configuration combinations while maximizing success rate
+- Identify the minimal sets of configuration values (`--set` parameters) required for successful chart processing (specifically, passing `helm template` or `irr validate`).
+- Discover patterns and group charts into categories that share common configuration requirements, minimizing the need for chart-specific rules.
+- Drive the creation of generalized rules within the IRR tool to automatically apply necessary *Deployment-Critical* parameters to generated override files.
+- Differentiate requirements needed only for validation/testing from those needed for actual deployment.
 
 ### Constraints
-- Must work with `--local` charts only
-- Should minimize the number of custom rules
-- Must maintain high success rate (e.g., >95%)
+- Primarily focused on analyzing charts available locally.
+- Aim to minimize the number of distinct, hardcoded rules within IRR.
+- Strive for a high success rate for chart processing with generated overrides.
 
-## Key Configuration Parameters
+## Key Configuration Parameters (Conceptual)
 
-The solver considers the following configuration parameters that affect chart processing success:
+The solver considers various configuration parameters known to affect Helm chart processing success. These are candidates for inclusion in minimal parameter sets:
 
-1. **Kubernetes Version**
-   - Parameter: `--set kubeVersion`
-   - Impact: Version compatibility checks
-   - Common values: 1.24.0, 1.25.0, 1.26.0, etc.
+1.  **Kubernetes Version Context:** Simulating different Kubernetes API versions often required by chart templating logic (`.Capabilities.KubeVersion`).
+2.  **Security Settings:** Chart-specific flags controlling security behaviors, like image verification bypasses (e.g., `allowInsecureImages`).
+3.  **Storage Configurations:** Parameters related to persistence, volumes, and storage classes.
+4.  **Authentication Settings:** Dummy or default credentials needed to satisfy template logic for components like Redis, PostgreSQL, etc.
+5.  **Global Settings:** Parameters often found under a `global:` key, affecting registry, secrets, or other cross-chart settings.
+6.  **Service Configurations:** Basic service types, ports, or ingress settings sometimes checked during templating.
+7.  **Resource Configurations:** Default resource requests/limits, although less commonly required for basic templating.
+8.  **Required Template Values:** Specific values often checked in `NOTES.txt` or validation hooks (e.g., endpoints, flags).
 
-2. **Security Settings**
-   - Parameter: `allowInsecureImages`
-   - Scope: Global and component-specific
-   - Common in Bitnami charts
+_Note: The solver's primary role is to identify which of these (or others) are needed to pass validation. A subsequent analysis step categorizes these findings._
 
-3. **Storage Configurations**
-   - Storage class names
-   - Persistence settings
-   - Volume configurations
+## Parameter Categorization: Deployment-Critical vs. Test/Validation-Only
 
-4. **Authentication Settings**
-   - Redis auth
-   - PostgreSQL auth
-   - MongoDB auth
-   - Generic credentials
+When analyzing solver results and chart requirements, it's crucial to distinguish between two types of parameters:
 
-5. **Global Registry Settings**
-   - Registry URLs
-   - Pull secrets
-   - Mirror configurations
+1.  **Deployment-Critical Parameters (Type 1):**
+    *   **Definition:** These are configuration values that *must be present in the generated override file* for the Helm chart to function correctly during `helm install` or `helm upgrade` after image references have been modified by IRR.
+    *   **Purpose:** They often configure chart behavior related to the modified images or dependencies.
+    *   **Examples:**
+        *   `global.security.allowInsecureImages=true`: Necessary for Bitnami/Tanzu charts to accept modified image references during deployment.
+        *   Potentially specific endpoint configurations if they change based on registry overrides.
+    *   **Solver Role:** The solver might identify these if their absence causes validation failure, but their necessity often stems from runtime chart logic related to overrides, requiring direct chart analysis (e.g., checking for image verification templates).
+    *   **IRR Action:** The rule generation process (Phase 6) **must** identify these Type 1 parameters and create rules to automatically include them in the final `override.yaml` generated by `irr override`.
 
-6. **Service Configurations**
-   - Service types
-   - Port configurations
-   - Load balancer settings
+2.  **Test/Validation-Only Parameters (Type 2):**
+    *   **Definition:** These are configuration values that may be required *only* to satisfy the `helm template` engine (used by `irr validate` or direct `helm template` calls) during local validation or testing.
+    *   **Purpose:** They often simulate values that would normally be provided by the live Kubernetes cluster environment (like API versions) or satisfy conditional logic within templates that isn't relevant to the core override functionality.
+    *   **Examples:**
+        *   `kubeVersion`: Often checked by chart templates (`.Capabilities.KubeVersion`), but the actual value during deployment comes from the cluster API server. The solver identified `kubeVersion=1.25.0` as needed for `rancher-2.10.3.tgz` *validation*.
+        *   Dummy credentials or endpoints needed only to pass template rendering checks.
+    *   **Solver Role:** The solver *may* identify these as necessary to pass its internal `irr validate` step.
+    *   **IRR Action:** These parameters **must NOT** be included in the final `override.yaml` generated by `irr override`. Hardcoding them would override real cluster values or add unnecessary configuration. They are relevant only for the *testing* or *validation* environment.
 
-7. **Resource Configurations**
-   - Memory requests/limits
-   - CPU requests/limits
-   - Storage quotas
+**Implications for Rule Generation:**
 
-## Algorithm Structure
+The rule generation system (Phase 6, Step 2) must explicitly filter solver results and analysis findings, creating rules *only* for Type 1 parameters destined for the override file. Information about necessary Type 2 parameters should be documented for testing procedures (e.g., noting that `irr validate` might require `--set kubeVersion=...` for certain charts) but not embedded in the override output.
 
-### 1. Initial Classification
-- Use existing chart classification (BITNAMI, STANDARD_MAP, etc.)
-- Add new classifications based on chart attributes
-- Group charts by common characteristics
+## Algorithm Structure (Conceptual)
 
-### 2. Configuration Space
-- Define all possible configuration parameters
-- Create parameter groups (security, storage, auth, etc.)
-- Define valid value ranges for each parameter
+### 1. Initial Classification & Grouping
+- Group charts based on metadata (provider, name patterns, dependencies) and observed failure patterns.
+- Create initial "buckets" of similar charts.
 
-### 3. Combinatorial Testing
-- Start with minimal configuration
-- Systematically add parameter combinations
-- Track success/failure for each combination
-- Use binary search to reduce testing space
+### 2. Configuration Space Exploration
+- Define a set of candidate parameters and potential values (see "Key Configuration Parameters").
+- Systematically test parameter combinations against charts within each bucket.
+- Prioritize parameters known to resolve common error categories (e.g., `kubeVersion` for compatibility errors).
 
-## Optimization Strategy
+### 3. Combinatorial Testing Strategy
+- Start testing with a minimal configuration (e.g., empty set, or only globally required parameters).
+- If minimal fails, explore combinations of parameters, potentially using strategies like:
+    - **Targeted:** Add parameters specifically suggested by the error category encountered.
+    - **Exhaustive (Limited):** Test combinations of a small number (1-3) of high-priority parameters.
+    - **Binary Search:** If a large set of parameters works, attempt to remove subsets to find a minimal working set.
+- Track success/failure for each combination tested per chart.
+
+### 4. Result Analysis & Rule Derivation
+- Analyze the results to find the smallest parameter set that achieved success for each chart.
+- Identify common minimal parameter sets across charts within the same bucket/classification.
+- Derive generalized rules based on these common sets (e.g., "Charts classified as 'BITNAMI' require parameter X").
+- Categorize required parameters as Type 1 (for override file) or Type 2 (for testing only).
+
+## Optimization Strategy (Conceptual)
 
 ### 1. Chart Bucketing
-- Create initial buckets based on chart source (bitnami, standard, etc.)
-- Sub-bucket based on common failure patterns
-- Track which configuration parameters affect each bucket
+- Group charts dynamically based on shared requirements discovered during testing.
+- Refine buckets iteratively as more data is gathered.
 
-### 2. Parameter Reduction
-- Start with all possible parameters
-- Remove parameters that don't affect success rate
-- Combine parameters that always work together
-- Find minimal parameter sets per bucket
+### 2. Parameter Prioritization & Pruning
+- Use error analysis to prioritize testing parameters most likely to resolve common failures first.
+- Avoid testing combinations known to be redundant or unlikely to succeed based on previous results.
 
 ### 3. Success Rate Optimization
-- Define minimum success threshold (e.g., 95%)
-- Balance between number of buckets and parameter combinations
-- Allow for bucket-specific parameter overrides
-- Maintain global vs. bucket-specific parameter sets
-
-## Implementation Design
-
-### Data Structures
-
-```python
-class ConfigParameter:
-    name: str
-    values: List[Any]
-    weight: float  # Impact on success rate
-    dependencies: List[str]  # Other parameters this depends on
-
-class ChartBucket:
-    name: str
-    charts: List[str]
-    required_params: List[ConfigParameter]
-    success_rate: float
-    failure_patterns: Dict[str, int]
-
-class SolverResult:
-    buckets: List[ChartBucket]
-    global_params: List[ConfigParameter]
-    success_rate: float
-    total_param_combinations: int
-```
-
-### Algorithm Flow
-1. Initial bucket creation
-2. Parameter space exploration
-3. Success rate optimization
-4. Bucket refinement
-5. Final parameter set minimization
+- Define a target success rate for chart validation.
+- Focus solver effort on the remaining failing charts/buckets.
+- Accept that some charts may require manual configuration beyond the scope of automated solving.
 
 ## Advantages and Considerations
 
 ### Advantages
-1. Systematic exploration of configuration space
-2. Data-driven optimization of parameter sets
-3. Reusable results for future chart processing
-4. Clear categorization of charts and their requirements
+1.  Systematic approach to discovering chart configuration requirements.
+2.  Data-driven basis for generating automated rules within IRR.
+3.  Reduces the need for manual, per-chart configuration analysis.
+4.  Provides insights into common Helm chart patterns and failure modes.
+5.  Highlights the distinction between validation needs and deployment needs.
 
 ### Challenges to Address
-1. Computational complexity with large parameter spaces
-2. Need for intelligent pruning of parameter combinations
-3. Handling of chart-specific edge cases
-4. Balancing granularity vs. maintainability
+1.  The potential complexity of the parameter space.
+2.  Need for effective heuristics or strategies to limit testing combinations.
+3.  Handling charts with highly unique or complex configuration requirements.
+4.  Ensuring accurate categorization of parameters into Type 1 vs. Type 2.
+5.  Managing the performance of running numerous validation tests.
 
-## Integration with test-charts.py
+## Questions to Consider (Design Level)
 
-### New Command-Line Options
-```bash
-test-charts.py --solver-mode [options]
-  --solver-threshold FLOAT    Minimum success rate threshold (default: 0.95)
-  --solver-max-buckets INT   Maximum number of chart buckets (default: 10)
-  --solver-max-params INT    Maximum parameters per bucket (default: 5)
-  --solver-output FILE       Output file for solver results (default: solver-results.json)
-```
+1.  How can we most reliably distinguish Type 1 (Deployment-Critical) from Type 2 (Test/Validation-Only) parameters through analysis?
+2.  What is the most effective strategy for exploring the parameter space (targeted, exhaustive limited, binary search) to balance coverage and performance?
+3.  What chart metadata (provider, annotations, dependencies, template content patterns) is most predictive of specific parameter requirements?
+4.  How should the derived rules be structured and stored for consumption by the IRR Go application?
+5.  What is an acceptable success rate for the automated rule system, acknowledging some charts will always need manual intervention?
 
-### Example Usage
-```bash
-# Run solver on local charts
-test-charts.py --local --solver-mode --solver-threshold 0.98
+## Next Steps (Conceptual)
 
-# Run solver with custom parameters
-test-charts.py --local --solver-mode \
-  --solver-threshold 0.95 \
-  --solver-max-buckets 15 \
-  --solver-max-params 7 \
-  --solver-output custom-results.json
-```
-
-## Future Improvements
-
-1. **Parameter Space Optimization**
-   - Implement smarter pruning algorithms
-   - Add parameter importance weighting
-   - Develop heuristics for parameter combinations
-
-2. **Bucket Refinement**
-   - Add automatic bucket splitting/merging
-   - Implement bucket similarity analysis
-   - Add support for hierarchical buckets
-
-3. **Result Analysis**
-   - Add detailed success rate analysis
-   - Generate parameter impact reports
-   - Create visualization of bucket relationships
-
-4. **Performance Optimization**
-   - Implement parallel testing
-   - Add incremental solving capability
-   - Optimize parameter space exploration
-
-## Questions to Consider
-
-1. How do we handle charts that require unique configurations?
-2. What is the optimal balance between number of buckets and success rate?
-3. How do we validate the solver's results?
-4. Should we implement a feedback loop for continuous optimization?
-5. How do we handle parameter dependencies and conflicts?
-6. What metrics should we track to evaluate solver effectiveness?
-
-## Next Steps
-
-1. Implement basic solver infrastructure in test-charts.py
-2. Create initial parameter space definition
-3. Implement bucket management system
-4. Add combinatorial testing logic
-5. Develop result analysis and reporting
-6. Create validation framework for solver results
+1.  Refine the error analysis process to better link error messages to potential required parameters.
+2.  Develop the logic for categorizing parameters into Type 1 and Type 2.
+3.  Design the structure for the generalized rules file.
+4.  Define the specific chart analysis/detection logic needed within IRR (Go) to apply the rules.
+5.  Establish the testing methodology to validate the generated rules and the final override files.
 
 ## References
 
-- [TESTING.md](TESTING.md) - General testing guidelines
-- [CHART-TESTING-TARGETS.md](CHART-TESTING-TARGETS.md) - Chart testing strategy
-- [TESTING-COMPLEX-CHARTS.md](TESTING-COMPLEX-CHARTS.md) - Complex chart handling
-- [USE-CASES.md](USE-CASES.md) - Tool use cases and workflows 
+- [TODO.md](TODO.md) - Detailed implementation plan (Phase 6).
+- [TESTING.md](TESTING.md) - General testing guidelines.
+- [Parameter Categorization](#parameter-categorization-deployment-critical-vs-testvalidation-only) (This document) 
