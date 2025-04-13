@@ -5,7 +5,12 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/lalbers/irr/internal/helm"
+	"helm.sh/helm/v3/pkg/action"
+	"helm.sh/helm/v3/pkg/chart/loader"
+	"helm.sh/helm/v3/pkg/chartutil"
+	"helm.sh/helm/v3/pkg/cli"
+	"helm.sh/helm/v3/pkg/strvals"
+
 	"github.com/lalbers/irr/pkg/exitcodes"
 	"github.com/lalbers/irr/pkg/fileutil"
 	log "github.com/lalbers/irr/pkg/log"
@@ -15,26 +20,20 @@ import (
 // newValidateCmd creates a new validate command
 func newValidateCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "validate [flags]",
+		Use:   "validate",
 		Short: "Validate a Helm chart with override values",
-		Long: "Validates a Helm chart after applying override values files. " +
-			"This command executes 'helm template' with the specified values to ensure " +
-			"that the chart can be successfully rendered with the provided overrides.",
-		Args: cobra.NoArgs,
+		Long: `Validate a Helm chart with override values.
+This command validates that the chart can be templated with the provided values.`,
 		RunE: runValidate,
 	}
 
-	// Add flags
-	cmd.Flags().StringP("chart-path", "c", "", "Path to the Helm chart directory or tarball (default: auto-detect)")
-	cmd.Flags().StringP("release-name", "n", "release", "Release name to use for templating")
-	cmd.Flags().StringSliceP("values", "f", []string{}, "One or more values files to use for validation (can be specified multiple times)")
+	cmd.Flags().String("chart-path", "", "Path to the Helm chart")
+	cmd.Flags().String("release-name", "release", "Release name to use for templating")
+	cmd.Flags().StringSlice("values", []string{}, "Values files to use (can be specified multiple times)")
 	cmd.Flags().StringSlice("set", []string{}, "Set values on the command line (can be specified multiple times)")
-	cmd.Flags().StringP("output-file", "o", "", "Output file for helm template result (default: discard)")
-	cmd.Flags().Bool("debug-template", false, "Show full helm template output even on success")
-	cmd.Flags().String("namespace", "", "Namespace to use for release (only when used with --release-name)")
-
-	// Mark required flags
-	mustMarkFlagRequired(cmd, "values")
+	cmd.Flags().String("output-file", "", "Write template output to file instead of validating")
+	cmd.Flags().Bool("debug-template", false, "Print template output for debugging")
+	cmd.Flags().String("namespace", "", "Namespace to use for templating")
 
 	return cmd
 }
@@ -79,12 +78,11 @@ func detectChartInCurrentDirectoryIfNeeded(chartPath string) (string, error) {
 	return "", fmt.Errorf("no Helm chart found in current directory")
 }
 
-// runValidate implements the validate command logic
-func runValidate(cmd *cobra.Command, _ []string) error {
-	// Get chart path
+// getChartPath gets and validates the chart path from command flags
+func getChartPath(cmd *cobra.Command) (string, error) {
 	chartPath, err := cmd.Flags().GetString("chart-path")
 	if err != nil {
-		return &exitcodes.ExitCodeError{
+		return "", &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitInputConfigurationError,
 			Err:  fmt.Errorf("failed to get chart-path flag: %w", err),
 		}
@@ -94,52 +92,48 @@ func runValidate(cmd *cobra.Command, _ []string) error {
 	if chartPath == "" {
 		chartPath, err = detectChartInCurrentDirectoryIfNeeded("")
 		if err != nil {
-			return &exitcodes.ExitCodeError{
+			return "", &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitChartNotFound,
 				Err:  fmt.Errorf("chart path not specified and %w", err),
 			}
 		}
 		log.Infof("Detected chart at %s", chartPath)
-	} else {
-		// Normalize chart path
-		chartPath, err = filepath.Abs(chartPath)
-		if err != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitInputConfigurationError,
-				Err:  fmt.Errorf("failed to get absolute path for chart: %w", err),
-			}
-		}
-
-		// Check if chart exists
-		_, err = os.Stat(chartPath)
-		if err != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitChartNotFound,
-				Err:  fmt.Errorf("chart path not found or inaccessible: %s", chartPath),
-			}
-		}
+		return chartPath, nil
 	}
 
-	// Get release name
-	releaseName, err := cmd.Flags().GetString("release-name")
+	// Normalize chart path
+	chartPath, err = filepath.Abs(chartPath)
 	if err != nil {
-		return &exitcodes.ExitCodeError{
+		return "", &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get release-name flag: %w", err),
+			Err:  fmt.Errorf("failed to get absolute path for chart: %w", err),
 		}
 	}
 
-	// Get values files
+	// Check if chart exists
+	_, err = os.Stat(chartPath)
+	if err != nil {
+		return "", &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitChartNotFound,
+			Err:  fmt.Errorf("chart path not found or inaccessible: %s", chartPath),
+		}
+	}
+
+	return chartPath, nil
+}
+
+// getValuesFiles gets and validates the values files from command flags
+func getValuesFiles(cmd *cobra.Command) ([]string, error) {
 	valuesFiles, err := cmd.Flags().GetStringSlice("values")
 	if err != nil {
-		return &exitcodes.ExitCodeError{
+		return nil, &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitInputConfigurationError,
 			Err:  fmt.Errorf("failed to get values flag: %w", err),
 		}
 	}
 
 	if len(valuesFiles) == 0 {
-		return &exitcodes.ExitCodeError{
+		return nil, &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitMissingRequiredFlag,
 			Err:  fmt.Errorf("at least one values file must be specified with --values"),
 		}
@@ -149,14 +143,87 @@ func runValidate(cmd *cobra.Command, _ []string) error {
 	for _, valueFile := range valuesFiles {
 		_, err := os.Stat(valueFile)
 		if err != nil {
-			return &exitcodes.ExitCodeError{
+			return nil, &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitChartNotFound,
 				Err:  fmt.Errorf("values file not found or inaccessible: %s", valueFile),
 			}
 		}
 	}
 
-	// Get set values
+	return valuesFiles, nil
+}
+
+// loadAndMergeValues loads values from files and merges them with set values
+func loadAndMergeValues(valuesFiles, setValues []string) (map[string]interface{}, error) {
+	finalValues := map[string]interface{}{}
+
+	// Load values from files
+	for _, valueFile := range valuesFiles {
+		currentValues, err := chartutil.ReadValuesFile(valueFile)
+		if err != nil {
+			return nil, &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitChartLoadFailed,
+				Err:  fmt.Errorf("failed to read values file %s: %w", valueFile, err),
+			}
+		}
+		finalValues = chartutil.CoalesceTables(finalValues, currentValues.AsMap())
+	}
+
+	// Handle set values
+	for _, value := range setValues {
+		if err := strvals.ParseInto(value, finalValues); err != nil {
+			return nil, &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitInputConfigurationError,
+				Err:  fmt.Errorf("failed to parse set value %q: %w", value, err),
+			}
+		}
+	}
+
+	return finalValues, nil
+}
+
+// handleOutput handles the output of the template validation
+func handleOutput(outputFile string, debugTemplate bool, manifest string) error {
+	switch {
+	case outputFile != "":
+		if err := os.WriteFile(outputFile, []byte(manifest), fileutil.ReadWriteUserPermission); err != nil {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitIOError,
+				Err:  fmt.Errorf("failed to write template output to file: %w", err),
+			}
+		}
+		log.Infof("Template output written to %s", outputFile)
+	case debugTemplate:
+		fmt.Println(manifest)
+	default:
+		log.Infof("Helm template validation completed successfully")
+	}
+	return nil
+}
+
+// runValidate implements the validate command logic
+func runValidate(cmd *cobra.Command, _ []string) error {
+	// Get chart path
+	chartPath, err := getChartPath(cmd)
+	if err != nil {
+		return err
+	}
+
+	// Get values files
+	valuesFiles, err := getValuesFiles(cmd)
+	if err != nil {
+		return err
+	}
+
+	// Get other flags
+	releaseName, err := cmd.Flags().GetString("release-name")
+	if err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get release-name flag: %w", err),
+		}
+	}
+
 	setValues, err := cmd.Flags().GetStringSlice("set")
 	if err != nil {
 		return &exitcodes.ExitCodeError{
@@ -165,7 +232,6 @@ func runValidate(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	// Get output file
 	outputFile, err := cmd.Flags().GetString("output-file")
 	if err != nil {
 		return &exitcodes.ExitCodeError{
@@ -174,7 +240,6 @@ func runValidate(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	// Get debug-template flag
 	debugTemplate, err := cmd.Flags().GetBool("debug-template")
 	if err != nil {
 		return &exitcodes.ExitCodeError{
@@ -183,7 +248,6 @@ func runValidate(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	// Get namespace
 	namespace, err := cmd.Flags().GetString("namespace")
 	if err != nil {
 		return &exitcodes.ExitCodeError{
@@ -192,86 +256,48 @@ func runValidate(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	// Check if we need to get values from a release
-	// If release-name is specified and doesn't equal the default, attempt to get values
-	if releaseName != "release" {
-		log.Infof("Getting values for release %s", releaseName)
+	// Initialize Helm environment
+	settings := cli.New()
 
-		// Get values from the release
-		valuesResult, err := helm.GetValues(&helm.GetValuesOptions{
-			ReleaseName: releaseName,
-			Namespace:   namespace,
-		})
-
-		if err != nil {
-			log.Warnf("Failed to get values for release %s: %v", releaseName, err)
-			log.Warnf("Continuing with validation using only provided values files")
-		} else {
-			// Write release values to temporary file
-			tempValuesFile, err := os.CreateTemp("", "release-values-*.yaml")
-			if err != nil {
-				return &exitcodes.ExitCodeError{
-					Code: exitcodes.ExitIOError,
-					Err:  fmt.Errorf("failed to create temporary file for release values: %w", err),
-				}
-			}
-			defer func() {
-				if err := os.Remove(tempValuesFile.Name()); err != nil {
-					log.Warnf("Failed to remove temporary file %s: %v", tempValuesFile.Name(), err)
-				}
-			}()
-
-			if _, err := tempValuesFile.WriteString(valuesResult.Stdout); err != nil {
-				return &exitcodes.ExitCodeError{
-					Code: exitcodes.ExitIOError,
-					Err:  fmt.Errorf("failed to write release values to temporary file: %w", err),
-				}
-			}
-
-			if err := tempValuesFile.Close(); err != nil {
-				return &exitcodes.ExitCodeError{
-					Code: exitcodes.ExitIOError,
-					Err:  fmt.Errorf("failed to close temporary file: %w", err),
-				}
-			}
-
-			// Add release values file to the beginning of the values files list
-			valuesFiles = append([]string{tempValuesFile.Name()}, valuesFiles...)
-			log.Infof("Added release values from %s to validation", releaseName)
+	// Create action config
+	actionConfig := new(action.Configuration)
+	if err := actionConfig.Init(settings.RESTClientGetter(), namespace, "", log.Infof); err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitHelmCommandFailed,
+			Err:  fmt.Errorf("failed to initialize Helm action config: %w", err),
 		}
 	}
 
-	// Execute helm template command
-	result, err := helm.Template(&helm.TemplateOptions{
-		ReleaseName: releaseName,
-		ChartPath:   chartPath,
-		ValuesFiles: valuesFiles,
-		SetValues:   setValues,
-	})
+	// Load chart
+	chart, err := loader.Load(chartPath)
+	if err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitChartLoadFailed,
+			Err:  fmt.Errorf("failed to load chart: %w", err),
+		}
+	}
 
-	// Check if command succeeded
+	// Load and merge values
+	finalValues, err := loadAndMergeValues(valuesFiles, setValues)
+	if err != nil {
+		return err
+	}
+
+	// Create install action for validation
+	install := action.NewInstall(actionConfig)
+	install.ReleaseName = releaseName
+	install.Namespace = namespace
+	install.DryRun = true
+	install.ClientOnly = true
+
+	// Run template validation
+	rel, err := install.Run(chart, finalValues)
 	if err != nil {
 		return &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitHelmCommandFailed,
-			Err:  fmt.Errorf("helm template failed: %w", err),
+			Err:  fmt.Errorf("helm template validation failed: %w", err),
 		}
 	}
 
-	// Handle output
-	switch {
-	case outputFile != "":
-		if err := os.WriteFile(outputFile, []byte(result.Stdout), fileutil.ReadWriteUserPermission); err != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitIOError,
-				Err:  fmt.Errorf("failed to write template output to file: %w", err),
-			}
-		}
-		log.Infof("Template output written to %s", outputFile)
-	case debugTemplate:
-		fmt.Println(result.Stdout)
-	default:
-		log.Infof("Helm template completed successfully")
-	}
-
-	return nil
+	return handleOutput(outputFile, debugTemplate, rel.Manifest)
 }

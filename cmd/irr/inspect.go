@@ -7,14 +7,18 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/spf13/cobra"
-	"sigs.k8s.io/yaml"
+	"gopkg.in/yaml.v3"
+	"helm.sh/helm/v3/pkg/action"
+	"helm.sh/helm/v3/pkg/chart"
+	"helm.sh/helm/v3/pkg/chart/loader"
+	"helm.sh/helm/v3/pkg/cli"
 
 	"github.com/lalbers/irr/pkg/analyzer"
-	"github.com/lalbers/irr/pkg/chart"
 	"github.com/lalbers/irr/pkg/exitcodes"
+	"github.com/lalbers/irr/pkg/fileutil"
 	"github.com/lalbers/irr/pkg/image"
 	log "github.com/lalbers/irr/pkg/log"
+	"github.com/spf13/cobra"
 )
 
 const (
@@ -22,7 +26,7 @@ const (
 	SecureFilePerms = 0o600
 )
 
-// ChartInfo holds the summarized chart information
+// ChartInfo represents basic chart information
 type ChartInfo struct {
 	Name         string `json:"name" yaml:"name"`
 	Version      string `json:"version" yaml:"version"`
@@ -30,7 +34,7 @@ type ChartInfo struct {
 	Dependencies int    `json:"dependencies" yaml:"dependencies"`
 }
 
-// ImageInfo holds information about an image reference
+// ImageInfo represents image information found in the chart
 type ImageInfo struct {
 	Registry   string `json:"registry" yaml:"registry"`
 	Repository string `json:"repository" yaml:"repository"`
@@ -39,7 +43,7 @@ type ImageInfo struct {
 	Source     string `json:"source" yaml:"source"`
 }
 
-// ImageAnalysis holds the comprehensive analysis results
+// ImageAnalysis represents the result of analyzing a chart for images
 type ImageAnalysis struct {
 	Chart    ChartInfo               `json:"chart" yaml:"chart"`
 	Images   []ImageInfo             `json:"images" yaml:"images"`
@@ -48,7 +52,7 @@ type ImageAnalysis struct {
 	Skipped  []string                `json:"skipped,omitempty" yaml:"skipped,omitempty"`
 }
 
-// InspectFlags holds all the flag values for the inspect command
+// InspectFlags holds the command line flags for the inspect command
 type InspectFlags struct {
 	ChartPath              string
 	OutputFormat           string
@@ -60,27 +64,157 @@ type InspectFlags struct {
 // newInspectCmd creates a new inspect command
 func newInspectCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "inspect [flags]",
-		Short: "Inspect a Helm chart and analyze container image references",
-		Long: "Analyze a Helm chart to identify all container image references, " +
-			"including direct string values and structured image definitions. " +
-			"Provides detailed information about detected images and their locations within the chart values.",
-		Args: cobra.NoArgs,
+		Use:   "inspect",
+		Short: "Inspect a Helm chart for image references",
+		Long: `Inspect a Helm chart to find all image references.
+This command analyzes the chart's values.yaml and templates to find image references.`,
 		RunE: runInspect,
 	}
 
-	// Add flags
-	cmd.Flags().StringP("chart-path", "c", "", "Path to the Helm chart directory or tarball (default: auto-detect)")
-	cmd.Flags().StringP("output-format", "f", "yaml", "Output format: yaml")
-	cmd.Flags().StringP("output-file", "o", "", "Output file path (default: stdout)")
-	cmd.Flags().Bool("generate-config-skeleton", false, "Generate a configuration skeleton based on analysis")
-
-	// Analysis control flags
-	cmd.Flags().StringSlice("include-pattern", nil, "Glob patterns for values paths to include during analysis")
-	cmd.Flags().StringSlice("exclude-pattern", nil, "Glob patterns for values paths to exclude during analysis")
-	cmd.Flags().StringSlice("known-image-paths", nil, "Specific dot-notation paths known to contain images")
+	cmd.Flags().String("chart-path", "", "Path to the Helm chart")
+	cmd.Flags().String("output-format", "yaml", "Output format (yaml or json)")
+	cmd.Flags().String("output-file", "", "Write output to file instead of stdout")
+	cmd.Flags().Bool("generate-config-skeleton", false, "Generate a config skeleton based on found images")
 
 	return cmd
+}
+
+// loadHelmChart loads and validates a Helm chart
+func loadHelmChart(chartPath string) (*chart.Chart, error) {
+	// Initialize Helm environment
+	settings := cli.New()
+
+	// Create action config
+	actionConfig := new(action.Configuration)
+	if err := actionConfig.Init(settings.RESTClientGetter(), "", "", log.Infof); err != nil {
+		return nil, &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitHelmCommandFailed,
+			Err:  fmt.Errorf("failed to initialize Helm action config: %w", err),
+		}
+	}
+
+	// Load chart
+	chart, err := loader.Load(chartPath)
+	if err != nil {
+		return nil, &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitChartLoadFailed,
+			Err:  fmt.Errorf("failed to load chart: %w", err),
+		}
+	}
+
+	return chart, nil
+}
+
+// analyzeChart analyzes a chart for image patterns
+func analyzeChart(chartData *chart.Chart, config *analyzer.Config) (*ImageAnalysis, error) {
+	// Extract chart info
+	chartInfo := ChartInfo{
+		Name:         chartData.Metadata.Name,
+		Version:      chartData.Metadata.Version,
+		Path:         chartData.ChartPath(),
+		Dependencies: len(chartData.Dependencies()),
+	}
+
+	// Analyze chart values
+	patterns, err := analyzer.AnalyzeHelmValues(chartData.Values, config)
+	if err != nil {
+		return nil, &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitChartProcessingFailed,
+			Err:  fmt.Errorf("chart analysis failed: %w", err),
+		}
+	}
+
+	// Process image patterns
+	images, skipped := processImagePatterns(patterns)
+
+	// Create analysis result
+	analysis := &ImageAnalysis{
+		Chart:    chartInfo,
+		Images:   images,
+		Patterns: patterns,
+		Skipped:  skipped,
+	}
+
+	return analysis, nil
+}
+
+// writeOutput writes the analysis output to file or stdout
+func writeOutput(analysis *ImageAnalysis, flags *InspectFlags) error {
+	// Handle generate-config-skeleton flag
+	if flags.GenerateConfigSkeleton {
+		skeletonFile := flags.OutputFile
+		if skeletonFile == "" {
+			skeletonFile = "irr-config.yaml"
+		}
+		if err := createConfigSkeleton(analysis.Images, skeletonFile); err != nil {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitIOError,
+				Err:  fmt.Errorf("failed to create config skeleton: %w", err),
+			}
+		}
+		return nil
+	}
+
+	// Marshal analysis to YAML
+	output, err := yaml.Marshal(analysis)
+	if err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitGeneralRuntimeError,
+			Err:  fmt.Errorf("failed to marshal analysis to YAML: %w", err),
+		}
+	}
+
+	// Write to file or stdout
+	if flags.OutputFile != "" {
+		if err := os.WriteFile(flags.OutputFile, output, fileutil.ReadWriteUserPermission); err != nil {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitIOError,
+				Err:  fmt.Errorf("failed to write analysis to file: %w", err),
+			}
+		}
+		log.Infof("Analysis written to %s", flags.OutputFile)
+	} else {
+		fmt.Println(string(output))
+	}
+
+	return nil
+}
+
+// runInspect implements the inspect command logic
+func runInspect(cmd *cobra.Command, _ []string) error {
+	// Get command flags
+	flags, err := getInspectFlags(cmd)
+	if err != nil {
+		return err
+	}
+
+	// If chart path is not specified, try to detect a chart in the current directory
+	if flags.ChartPath == "" {
+		chartPath, err := detectChartInCurrentDirectory()
+		if err != nil {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitChartNotFound,
+				Err:  fmt.Errorf("chart path not specified and %w", err),
+			}
+		}
+		flags.ChartPath = chartPath
+		log.Infof("Detected chart at %s", chartPath)
+	}
+
+	// Load chart
+	chartData, err := loadHelmChart(flags.ChartPath)
+	if err != nil {
+		return err
+	}
+
+	// Analyze chart
+	analysis, err := analyzeChart(chartData, flags.AnalyzerConfig)
+	if err != nil {
+		return err
+	}
+
+	// Write output
+	return writeOutput(analysis, flags)
 }
 
 // getInspectFlags retrieves flags from the command
@@ -348,106 +482,6 @@ func createConfigSkeleton(images []ImageInfo, outputFile string) error {
 		log.Infof("Configuration skeleton written to %s", outputFile)
 	} else {
 		fmt.Println(yamlWithComments)
-	}
-
-	return nil
-}
-
-// runInspect implements the inspect command logic
-func runInspect(cmd *cobra.Command, _ []string) error {
-	flags, err := getInspectFlags(cmd)
-	if err != nil {
-		return err
-	}
-
-	// If chart path is not specified, try to detect a chart in the current directory
-	if flags.ChartPath == "" {
-		chartPath, err := detectChartInCurrentDirectory()
-		if err != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitChartNotFound,
-				Err:  fmt.Errorf("chart path not specified and %w", err),
-			}
-		}
-		flags.ChartPath = chartPath
-		log.Infof("Detected chart at %s", chartPath)
-	}
-
-	// Create and initialize the analyzer
-	chartLoader := &chart.DefaultLoader{}
-	chartData, err := chartLoader.Load(flags.ChartPath)
-	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitChartLoadFailed,
-			Err:  fmt.Errorf("failed to initialize analyzer: %w", err),
-		}
-	}
-
-	// Extract chart info
-	chartInfo := ChartInfo{
-		Name:         chartData.Metadata.Name,
-		Version:      chartData.Metadata.Version,
-		Path:         flags.ChartPath,
-		Dependencies: len(chartData.Dependencies()),
-	}
-
-	// Analyze chart values
-	patterns, err := analyzer.AnalyzeHelmValues(chartData.Values, flags.AnalyzerConfig)
-	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitChartProcessingFailed,
-			Err:  fmt.Errorf("chart analysis failed: %w", err),
-		}
-	}
-
-	// Process image patterns
-	images, skipped := processImagePatterns(patterns)
-
-	// Create analysis result
-	analysis := ImageAnalysis{
-		Chart:    chartInfo,
-		Images:   images,
-		Patterns: patterns,
-		Skipped:  skipped,
-	}
-
-	// Handle generate-config-skeleton flag
-	if flags.GenerateConfigSkeleton {
-		skeletonFile := flags.OutputFile
-		if skeletonFile == "" {
-			skeletonFile = "irr-config.yaml"
-		}
-		err := createConfigSkeleton(images, skeletonFile)
-		if err != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitIOError,
-				Err:  fmt.Errorf("failed to create config skeleton: %w", err),
-			}
-		}
-		return nil
-	}
-
-	// Marshal analysis to YAML
-	output, err := yaml.Marshal(analysis)
-	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitGeneralRuntimeError,
-			Err:  fmt.Errorf("failed to marshal analysis to YAML: %w", err),
-		}
-	}
-
-	// Write to file or stdout
-	if flags.OutputFile != "" {
-		err := os.WriteFile(flags.OutputFile, output, SecureFilePerms)
-		if err != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitIOError,
-				Err:  fmt.Errorf("failed to write analysis to file: %w", err),
-			}
-		}
-		log.Infof("Analysis written to %s", flags.OutputFile)
-	} else {
-		fmt.Println(string(output))
 	}
 
 	return nil
