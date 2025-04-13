@@ -31,10 +31,14 @@ const (
 	ExitChartLoadFailed       = 14 // Failed to load chart
 	ExitChartProcessingFailed = 15 // Failed to process chart
 	ExitHelmCommandFailed     = 16 // Helm command execution failed
+	ExitHelmInteractionError  = 17 // Error during Helm SDK interaction
 
 	// Runtime Errors (20-29)
 	ExitGeneralRuntimeError = 20 // General runtime/system error
 	ExitIOError             = 21 // IO operation error
+
+	// Internal Errors (30-39)
+	ExitInternalError = 30 // Internal error in command execution
 )
 
 // ExitCodeError wraps an error with an exit code for consistent error handling.
@@ -61,4 +65,24 @@ func IsExitCodeError(err error) (int, bool) {
 		return exitErr.Code, true
 	}
 	return 0, false
+}
+
+// CodeDescriptions maps exit codes to their human-readable descriptions
+var CodeDescriptions = map[int]string{
+	ExitSuccess:                 "Success",
+	ExitMissingRequiredFlag:     "Required command flag not provided",
+	ExitInputConfigurationError: "General configuration error",
+	ExitCodeInvalidStrategy:     "Invalid path strategy specified",
+	ExitChartNotFound:           "Chart or values file not found",
+	ExitChartParsingError:       "Failed to parse or load chart",
+	ExitImageProcessingError:    "Failed to process image references",
+	ExitUnsupportedStructure:    "Unsupported structure found (e.g., templates in strict mode)",
+	ExitThresholdError:          "Failed to meet processing success threshold",
+	ExitChartLoadFailed:         "Failed to load chart",
+	ExitChartProcessingFailed:   "Failed to process chart",
+	ExitHelmCommandFailed:       "Helm command execution failed",
+	ExitHelmInteractionError:    "Error during Helm SDK interaction",
+	ExitGeneralRuntimeError:     "General runtime/system error",
+	ExitIOError:                 "IO operation error",
+	ExitInternalError:           "Internal error in command execution",
 }
