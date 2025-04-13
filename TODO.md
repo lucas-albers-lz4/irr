@@ -49,10 +49,10 @@ _**Goal:** Implement the Helm plugin interface that wraps around the core CLI fu
   - [x] Add Helm environment integration for configuration and auth.
   - [x] **[P1]** Refactor plugin to use Helm Go SDK instead of shelling out:
     - [x] Replace `exec.Command("helm", ...)` calls with Go SDK equivalents (`pkg/action`, `pkg/cli`)
-    - [ ] Audit remaining `exec.Command` calls to ensure they are necessary or replace them
-      - [ ] Create inventory of remaining exec calls
-      - [ ] Classify each by replaceability with SDK alternatives
-      - [ ] Prioritize replacements by risk/impact
+    - [x] Audit remaining `exec.Command` calls to ensure they are necessary or replace them
+      - [x] Create inventory of remaining exec calls
+      - [x] Classify each by replaceability with SDK alternatives
+      - [x] Prioritize replacements by risk/impact
     - [x] Use SDK for getting release info, values, and pulling charts
     - [x] **Ensure only read-only Helm actions are used:**
       - [x] *Allowed Read Actions:* `Get`, `GetValues`, `List`, `SearchRepo`, `SearchIndex`, `Pull` (for fetching chart data only), loading charts/values (`loader.Load`, `chartutil`), reading config (`cli.New`, `repo.LoadFile`).
@@ -60,13 +60,17 @@ _**Goal:** Implement the Helm plugin interface that wraps around the core CLI fu
       - [x] *Rationale:* IRR's purpose is to *generate* overrides, not apply changes or modify Helm state.
     - [x] Fix namespace handling in Helm template command
     - [x] Fix dependency issues to build with Helm SDK
-    - [ ] Add SDK integration to `inspect` and `validate` commands
-      - [ ] Replace command-line invocations with direct SDK calls
-      - [ ] Ensure error handling matches SDK error patterns
-      - [ ] Maintain backward compatibility with current output format
-    - [ ] Improve robustness and testability
-      - [ ] Add timeout handling for SDK operations
-      - [ ] Implement retry logic for transient failures
+    - [x] Add SDK integration to `inspect` and `validate` commands
+      - [x] Replace command-line invocations with direct SDK calls
+      - [x] Ensure error handling matches SDK error patterns
+      - [x] Maintain backward compatibility with current output format
+    - [x] Improve robustness and testability
+      - [x] Add timeout handling for SDK operations
+      - [x] Implement retry logic for transient failures
+    - [x] Fix Helm SDK imports and build errors
+      - [x] Replace old Helm v2 imports with Helm v3 equivalents
+      - [x] Update code to use correct Helm v3 package paths
+      - [x] Fix build errors related to missing or incorrect imports
   - [ ] **[P1]** Enhance Helm integration:
     - [ ] Add support for automatically detecting configured Helm repositories via SDK **(Post-Release Feature)**
       - [ ] Access repository config via Helm SDK
