@@ -304,31 +304,30 @@ func init() {
 	cobra.OnInitialize()
 
 	// Add global flags
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "Config file path (default is $HOME/.irr.yaml)")
-	rootCmd.PersistentFlags().StringSliceVarP(&sourceRegistries, "source-registries", "s", []string{}, "Source container registry URLs (comma-separated or multiple flags)")
-	rootCmd.PersistentFlags().StringVarP(&outputFile, "output-file", "o", "", "Output file path (default: stdout)")
-	rootCmd.PersistentFlags().BoolVarP(&debugEnabled, "debug", "d", false, "Enable debug output")
-	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "", "Set log level (debug, info, warn, error)")
-	rootCmd.PersistentFlags().StringVar(&registryFile, "registry-file", "", "Path to registry mappings file")
-	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output")
-	rootCmd.PersistentFlags().BoolVar(&strictMode, "strict", false, "Enable strict validation")
-	rootCmd.PersistentFlags().BoolVar(&integrationTestMode, "integration-test", false, "Enable integration test mode")
-	rootCmd.PersistentFlags().StringVar(&outputFormat, "output-format", "yaml", "Output format (yaml, json)")
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.irr.yaml)")
+	rootCmd.PersistentFlags().BoolVar(&debugEnabled, "debug", false, "enable debug logging")
+	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "set log level (debug, info, warn, error)")
+	rootCmd.PersistentFlags().BoolVar(&integrationTestMode, "integration-test", false, "enable integration test mode")
+	// For testing purposes
+	rootCmd.PersistentFlags().BoolVar(&TestAnalyzeMode, "test-analyze", false, "enable test mode for analyze command")
 
-	// Add commands to root
-	rootCmd.AddCommand(newInspectCmd())
-	rootCmd.AddCommand(newOverrideCmd())
-	rootCmd.AddCommand(newValidateCmd())
-
-	// Hidden testing flags
-	rootCmd.PersistentFlags().BoolVar(&TestAnalyzeMode, "test-analyze", false, "Enable test mode for analyze command")
+	// Hide the flags from regular usage
+	if err := rootCmd.PersistentFlags().MarkHidden("integration-test"); err != nil {
+		fmt.Printf("Warning: Failed to mark integration-test flag as hidden: %v\n", err)
+	}
 	if err := rootCmd.PersistentFlags().MarkHidden("test-analyze"); err != nil {
-		// Non-fatal error, just log
 		fmt.Printf("Warning: Failed to mark test-analyze flag as hidden: %v\n", err)
 	}
-	if err := rootCmd.PersistentFlags().MarkHidden("integration-test"); err != nil {
-		// Non-fatal error, just log
-		fmt.Printf("Warning: Failed to mark integration-test flag as hidden: %v\n", err)
+
+	// Add commands
+	rootCmd.AddCommand(newAnalyzeCmd())
+	rootCmd.AddCommand(newOverrideCmd())
+	rootCmd.AddCommand(newInspectCmd())
+	rootCmd.AddCommand(newValidateCmd())
+
+	// Check if running as Helm plugin
+	if isHelmPlugin {
+		initHelmPlugin()
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 )
 
 var version = "DEBUG v1"
+var isHelmPlugin bool
 
 // main is the entry point of the application.
 // It calls the Execute function defined locally (likely in root.go) to set up and run the commands.
@@ -30,6 +31,15 @@ func main() {
 		fmt.Println("IRR_DEBUG environment variable detected, enabling debug logs.")
 	}
 
+	// Check if we're running as a Helm plugin
+	isHelmPlugin = isRunningAsHelmPlugin()
+
+	// Initialize Helm plugin if necessary
+	if isHelmPlugin {
+		log.Debugf("Running as Helm plugin")
+		// initHelmPlugin will be called in init() of the root.go file
+	}
+
 	// Execute the root command (defined in root.go, package main)
 	// Cobra's Execute() handles its own error printing. We check the returned
 	// error to propagate the correct exit code.
@@ -42,4 +52,10 @@ func main() {
 		// Cobra likely printed the error already, use a generic failure code
 		os.Exit(1)
 	}
+}
+
+// isRunningAsHelmPlugin checks if the program is being run as a Helm plugin
+func isRunningAsHelmPlugin() bool {
+	// Check for environment variables set by Helm when running a plugin
+	return os.Getenv("HELM_PLUGIN_NAME") != "" || os.Getenv("HELM_PLUGIN_DIR") != ""
 }

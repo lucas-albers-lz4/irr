@@ -1,7 +1,8 @@
-.PHONY: build test lint clean run helm-lint test-charts test-integration test-cert-manager test-kube-prometheus-stack test-integration-specific test-integration-debug help
+.PHONY: build test lint clean run helm-lint test-charts test-integration test-cert-manager test-kube-prometheus-stack test-integration-specific test-integration-debug help helm-plugin helm-install
 
 BINARY_NAME=irr
 BUILD_DIR=bin
+HELM_PLUGIN_DIR=build/helm-plugin
 GO_FILES=$(shell find . -name "*.go" -type f)
 TEST_CHARTS_DIR=test-data/charts
 TEST_RESULTS_DIR=test/results
@@ -14,6 +15,24 @@ build:
 	@echo "Building..."
 	@mkdir -p $(BUILD_DIR)
 	@go build -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/irr
+
+# Build the Helm plugin
+helm-plugin: build
+	@echo "Building Helm plugin..."
+	@mkdir -p $(HELM_PLUGIN_DIR)/bin
+	@cp $(BUILD_DIR)/$(BINARY_NAME) $(HELM_PLUGIN_DIR)/bin/
+	@chmod +x $(HELM_PLUGIN_DIR)/bin/$(BINARY_NAME)
+
+# Install the Helm plugin
+helm-install: helm-plugin
+	@echo "Installing Helm plugin..."
+	@if command -v helm > /dev/null; then \
+		(cd $(HELM_PLUGIN_DIR) && ./install-plugin.sh); \
+	else \
+		echo "Helm not installed. Cannot install plugin."; \
+		echo "Install Helm with: brew install helm (macOS) or follow https://helm.sh/docs/intro/install/"; \
+		exit 1; \
+	fi
 
 test: build
 	@echo "Running unit tests..."
@@ -116,6 +135,8 @@ help:
 	@echo "Available targets:"
 	@echo "  all                Build and run all tests"
 	@echo "  build              Build the irr binary"
+	@echo "  helm-plugin        Build the Helm plugin"
+	@echo "  helm-install       Install the Helm plugin"
 	@echo "  test               Run all unit tests"
 	@echo "  test-json          Run unit tests with JSON output"
 	@echo "  test-packages      Run package tests (skipping cmd/irr)"
