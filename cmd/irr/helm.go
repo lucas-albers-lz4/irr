@@ -3,8 +3,10 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
-	"strings"
+
+	"helm.sh/helm/v3/pkg/action"
+	"helm.sh/helm/v3/pkg/cli"
+	"helm.sh/helm/v3/pkg/repo"
 
 	log "github.com/lalbers/irr/pkg/log"
 	"github.com/spf13/cobra"
@@ -21,24 +23,40 @@ func initHelmPlugin() {
 	addReleaseFlag(rootCmd)
 }
 
+// HelmChartInfo represents basic chart information
+type HelmChartInfo struct {
+	Name    string
+	Version string
+}
+
 // GetChartPathFromRelease attempts to get the chart path from a Helm release
-// #nosec G204 - Command arguments are controlled by the code
 func GetChartPathFromRelease(releaseName string) (string, error) {
 	if releaseName == "" {
 		return "", fmt.Errorf("release name is empty")
 	}
 
-	// Run helm get manifest command to get chart info
-	cmd := exec.Command("helm", "get", "manifest", releaseName)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("failed to get manifest for release %s: %w", releaseName, err)
+	// Initialize Helm environment
+	settings := cli.New()
+
+	// Create action config
+	actionConfig := new(action.Configuration)
+	if err := actionConfig.Init(settings.RESTClientGetter(), settings.Namespace(), "", log.Infof); err != nil {
+		return "", fmt.Errorf("failed to initialize Helm action config: %w", err)
 	}
 
-	// Parse output to find chart name and version
-	chartInfo := parseChartInfo(string(output))
-	if chartInfo.Name == "" {
-		return "", fmt.Errorf("could not determine chart name from release %s", releaseName)
+	// Create get action
+	get := action.NewGet(actionConfig)
+
+	// Get the release
+	rel, err := get.Run(releaseName)
+	if err != nil {
+		return "", fmt.Errorf("failed to get release %s: %w", releaseName, err)
+	}
+
+	// Extract chart info
+	chartInfo := HelmChartInfo{
+		Name:    rel.Chart.Metadata.Name,
+		Version: rel.Chart.Metadata.Version,
 	}
 
 	log.Infof("Found chart %s version %s for release %s", chartInfo.Name, chartInfo.Version, releaseName)
@@ -49,102 +67,54 @@ func GetChartPathFromRelease(releaseName string) (string, error) {
 		return "", fmt.Errorf("failed to create temp directory: %w", err)
 	}
 
-	// Use helm to pull the chart to the temp directory
-	// #nosec G204 - Command arguments are controlled by the code
-	chartURL := fmt.Sprintf("%s-%s.tgz", chartInfo.Name, chartInfo.Version)
-	pullCmd := exec.Command("helm", "pull", chartURL, "--destination", tempDir)
-	if err := pullCmd.Run(); err != nil {
-		// Try to pull using a repository search
-		// #nosec G204 - Command arguments are controlled by the code
-		searchCmd := exec.Command("helm", "search", "repo", chartInfo.Name, "-o", "json")
-		searchOutput, searchErr := searchCmd.CombinedOutput()
-		if searchErr != nil {
-			return "", fmt.Errorf("failed to search for chart %s: %w", chartInfo.Name, searchErr)
-		}
+	// Create pull action
+	pull := action.NewPull()
+	pull.Settings = settings
+	pull.DestDir = tempDir
+	pull.Version = chartInfo.Version
 
-		// Parse search results to find chart location
-		// This is simplified and would need to be expanded for robust implementation
-		chartRepo := parseChartRepo(string(searchOutput), chartInfo.Name)
-		if chartRepo != "" {
-			// #nosec G204 - Command arguments are controlled by the code
-			pullCmd = exec.Command("helm", "pull", chartRepo+"/"+chartInfo.Name, "--version", chartInfo.Version, "--destination", tempDir)
-			if err := pullCmd.Run(); err != nil {
-				return "", fmt.Errorf("failed to pull chart %s: %w", chartInfo.Name, err)
-			}
-		} else {
-			return "", fmt.Errorf("failed to pull chart %s and could not determine repository: %w", chartInfo.Name, err)
-		}
-	}
-
-	// Find chart file in temp directory
-	chartFile := fmt.Sprintf("%s/%s-%s.tgz", tempDir, chartInfo.Name, chartInfo.Version)
-	if _, err := os.Stat(chartFile); err != nil {
-		// Try to find any .tgz file
-		files, err := os.ReadDir(tempDir)
+	// Try to pull the chart
+	chartPath, err := pull.Run(chartInfo.Name)
+	if err != nil {
+		// Try to find the chart in repositories
+		repoFile := settings.RepositoryConfig
+		repos, err := repo.LoadFile(repoFile)
 		if err != nil {
-			return "", fmt.Errorf("failed to read temp directory: %w", err)
+			return "", fmt.Errorf("failed to load repositories: %w", err)
 		}
 
-		for _, file := range files {
-			if strings.HasSuffix(file.Name(), ".tgz") {
-				chartFile = tempDir + "/" + file.Name()
+		// Search for the chart in repositories
+		var chartRepo string
+		for _, r := range repos.Repositories {
+			// Update repository index
+			index := repo.NewIndexFile()
+			if index == nil {
+				log.Warnf("Failed to create index for repository %s", r.Name)
+				continue
+			}
+
+			// Check if chart exists in this repository
+			if _, exists := index.Entries[chartInfo.Name]; exists {
+				chartRepo = r.Name
 				break
 			}
+		}
+
+		if chartRepo == "" {
+			return "", fmt.Errorf("failed to find chart %s in any repository", chartInfo.Name)
+		}
+
+		// Try to pull with repository name
+		chartPath, err = pull.Run(fmt.Sprintf("%s/%s", chartRepo, chartInfo.Name))
+		if err != nil {
+			return "", fmt.Errorf("failed to pull chart %s: %w", chartInfo.Name, err)
 		}
 	}
 
 	// Return the path to the chart file
-	if _, err := os.Stat(chartFile); err != nil {
+	if _, err := os.Stat(chartPath); err != nil {
 		return "", fmt.Errorf("chart file not found: %w", err)
 	}
 
-	return chartFile, nil
-}
-
-// HelmChartInfo represents basic chart information
-type HelmChartInfo struct {
-	Name    string
-	Version string
-}
-
-// parseChartInfo parses chart name and version from helm manifest output
-func parseChartInfo(manifest string) HelmChartInfo {
-	info := HelmChartInfo{}
-
-	// Find chart: line
-	lines := strings.Split(manifest, "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "chart:") {
-			// Split on first colon
-			const splitLimit = 2
-			parts := strings.SplitN(line, ":", splitLimit)
-			if len(parts) == splitLimit {
-				chartInfo := strings.TrimSpace(parts[1])
-				// Parse chart info - could be 'name-version' or just 'name'
-				chartParts := strings.Split(chartInfo, "-")
-				if len(chartParts) > 1 {
-					info.Name = strings.Join(chartParts[:len(chartParts)-1], "-")
-					info.Version = chartParts[len(chartParts)-1]
-				} else {
-					info.Name = chartInfo
-					info.Version = "latest"
-				}
-				break
-			}
-		}
-	}
-
-	return info
-}
-
-// parseChartRepo parses chart repository from helm search output
-func parseChartRepo(searchOutput, chartName string) string {
-	// This is a simplified implementation
-	// For a robust implementation, proper JSON parsing would be needed
-	if strings.Contains(searchOutput, chartName) {
-		// Just return a placeholder - we would need to parse JSON properly
-		return "stableRepo"
-	}
-	return ""
+	return chartPath, nil
 }
