@@ -1,4 +1,4 @@
-.PHONY: build test lint clean run helm-lint test-charts test-integration test-cert-manager test-kube-prometheus-stack test-integration-specific test-integration-debug help helm-plugin helm-install
+.PHONY: build test lint clean run helm-lint test-charts test-integration test-cert-manager test-kube-prometheus-stack test-integration-specific test-integration-debug help helm-plugin helm-install build-platforms
 
 BINARY_NAME=irr
 BUILD_DIR=bin
@@ -9,6 +9,9 @@ TEST_RESULTS_DIR=test/results
 TEST_OVERRIDES_DIR=test/overrides
 TARGET_REGISTRY?=harbor.home.arpa
 
+# Platform-specific build settings
+PLATFORMS=darwin/amd64 darwin/arm64 linux/amd64 linux/arm64
+
 all: lint helm-lint test test-integration build
 
 build:
@@ -16,12 +19,27 @@ build:
 	@mkdir -p $(BUILD_DIR)
 	@go build -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/irr
 
+# Build for specific platform
+build-platform:
+	@echo "Building for $(GOOS)/$(GOARCH)..."
+	@mkdir -p $(BUILD_DIR)
+	@GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o $(BUILD_DIR)/$(BINARY_NAME)-$(GOOS)-$(GOARCH) ./cmd/irr
+
+# Build for all supported platforms
+build-platforms:
+	@echo "Building for all supported platforms..."
+	@for platform in $(PLATFORMS); do \
+		GOOS=$${platform%/*} GOARCH=$${platform#*/} $(MAKE) build-platform; \
+	done
+
 # Build the Helm plugin
-helm-plugin: build
+helm-plugin: build-platforms
 	@echo "Building Helm plugin..."
 	@mkdir -p $(HELM_PLUGIN_DIR)/bin
-	@cp $(BUILD_DIR)/$(BINARY_NAME) $(HELM_PLUGIN_DIR)/bin/
-	@chmod +x $(HELM_PLUGIN_DIR)/bin/$(BINARY_NAME)
+	@for platform in $(PLATFORMS); do \
+		cp $(BUILD_DIR)/$(BINARY_NAME)-$${platform%/*}-$${platform#*/} $(HELM_PLUGIN_DIR)/bin/$(BINARY_NAME)-$${platform%/*}-$${platform#*/}; \
+		chmod +x $(HELM_PLUGIN_DIR)/bin/$(BINARY_NAME)-$${platform%/*}-$${platform#*/}; \
+	done
 
 # Install the Helm plugin
 helm-install: helm-plugin
