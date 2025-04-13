@@ -1,0 +1,21 @@
+name: "irr"
+version: "0.1.0"
+usage: "A Helm plugin for inspecting and validating image references in releases"
+description: |-
+  This plugin helps inspect and validate image references in Helm releases,
+  ensuring proper image tag usage and registry configurations.
+command: "$HELM_PLUGIN_DIR/bin/irr"
+hooks:
+  install: "make install"
+  update: "make update"
+platformCommand:
+  - os: darwin
+    arch: amd64
+    command: "$HELM_PLUGIN_DIR/bin/irr"
+  - os: darwin
+    arch: arm64
+    command: "$HELM_PLUGIN_DIR/bin/irr"
+  - os: linux
+    arch: amd64
+    command: "$HELM_PLUGIN_DIR/bin/irr"
+helmVersion: ">=3.12.0" 
