@@ -1,10 +1,12 @@
 package helm
 
 import (
-	"bytes"
 	"fmt"
-	"os/exec"
 	"strings"
+
+	"helm.sh/helm/v3/pkg/action"
+	"helm.sh/helm/v3/pkg/chart/loader"
+	"helm.sh/helm/v3/pkg/cli"
 
 	log "github.com/lalbers/irr/pkg/log"
 )
@@ -72,32 +74,63 @@ func GetValues(options *GetValuesOptions) (*CommandResult, error) {
 	return executeHelmCommand(helmArgs)
 }
 
-// executeHelmCommand executes a helm command with the given arguments
+// executeHelmCommand executes a helm command with the given arguments using the Helm SDK
 func executeHelmCommand(args []string) (*CommandResult, error) {
 	log.Infof("Executing: helm %s", strings.Join(args, " "))
 
-	// #nosec G204 -- We need to allow variable arguments to helm command
-	cmd := exec.Command("helm", args...)
+	// Initialize Helm environment
+	settings := cli.New()
 
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	// Execute helm command
-	err := cmd.Run()
-
-	result := &CommandResult{
-		Success: err == nil,
-		Stdout:  stdout.String(),
-		Stderr:  stderr.String(),
-		Error:   err,
+	// Create action config
+	actionConfig := new(action.Configuration)
+	if err := actionConfig.Init(settings.RESTClientGetter(), settings.Namespace(), "", log.Infof); err != nil {
+		return nil, fmt.Errorf("failed to initialize Helm action config: %w", err)
 	}
 
-	// Check if command succeeded
-	if err != nil {
-		log.Errorf("Helm command failed: %v", err)
-		log.Errorf("Stderr: %s", stderr.String())
-		return result, fmt.Errorf("helm command failed: %w\n%s", err, stderr.String())
+	// Create appropriate action based on command
+	var result *CommandResult
+	switch args[0] {
+	case "template":
+		install := action.NewInstall(actionConfig)
+		install.ReleaseName = args[1]
+		install.Namespace = settings.Namespace()
+		install.DryRun = true
+		install.ClientOnly = true
+
+		// Load the chart
+		chartPath := args[2]
+		chart, err := loader.Load(chartPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load chart: %w", err)
+		}
+
+		// Execute template
+		rel, err := install.Run(chart, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to template chart: %w", err)
+		}
+
+		result = &CommandResult{
+			Success: true,
+			Stdout:  rel.Manifest,
+			Stderr:  "",
+		}
+
+	case "get":
+		get := action.NewGet(actionConfig)
+		rel, err := get.Run(args[1])
+		if err != nil {
+			return nil, fmt.Errorf("failed to get release: %w", err)
+		}
+
+		result = &CommandResult{
+			Success: true,
+			Stdout:  rel.Manifest,
+			Stderr:  "",
+		}
+
+	default:
+		return nil, fmt.Errorf("unsupported Helm command: %s", args[0])
 	}
 
 	return result, nil
