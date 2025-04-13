@@ -190,7 +190,8 @@ _**Goal:** Implement the Helm plugin interface that wraps around the core CLI fu
     - [ ] Define configuration versioning scheme
     - [ ] Create migration path for config changes
     - [ ] Add configuration validation during updates
-### 5.5 Test cases for P1 Features
+
+### 5.6 Test cases for P1 Features
 
 1. **Helm SDK Integration Tests**
    - Test chart path resolution from release name using SDK
@@ -230,14 +231,57 @@ _**Goal:** Implement the Helm plugin interface that wraps around the core CLI fu
 
 Note: Version compatibility tests are already well-covered in pkg/helm/version_test.go and don't need duplication.
 
-Test Implementation Guidelines:
-1. Use table-driven tests where appropriate
-2. Implement proper cleanup in teardown
-3. Mock external services using dependency injection
-4. Include both positive and negative test cases
-5. Add proper error message validation
-6. Follow Go testing best practices
-7. Maintain test isolation
+### 5.7 Update Test Scripts for New IRR Parameters
+_**Goal:** Update test-charts.py and pull-charts.py to work with the new IRR parameters while maintaining focus on testing downloaded chart.tgz files._
+
+1.  **Update IRR Command Parameters in `test-charts.py`**
+    *   [ ] **Audit:** Review the `test_chart_override` function in `test-charts.py`. Specifically check the parameters passed to the `irr override` command: `--chart-path`, `--target-registry`, `--source-registries`, `--output-file`, `--debug`.
+    *   [ ] **Verify/Update:**
+        *   Confirm if `--chart-path` should still point to the *extracted* chart directory or if IRR now accepts the `.tgz` file directly. Adjust the path passed in `test_chart_override`.
+        *   Verify if `--source-registries` is still used or if registry detection is now automatic via Helm config. Update the command construction accordingly.
+        *   Check if any parameters related to Helm configuration (e.g., `--kubeconfig`, `--namespace`, Helm context flags) are now required or supported, even if not strictly needed for `.tgz` processing, and decide if they should be added with default/empty values for compatibility.
+    *   [ ] **Remove Deprecated:** Identify and remove any parameters previously used that are no longer supported by the new `irr override` command.
+    *   [ ] **Update Docs:** Update the argparse help strings and comments in `test-charts.py` to reflect the current parameter set for `irr override`.
+
+2.  **Chart Processing Updates in `test-charts.py`**
+    *   [ ] **Verify Extraction:** Confirm that the existing `tarfile.extractall` logic in `test_chart_override` correctly extracts charts in a format still usable by the updated IRR's `--chart-path` parameter. No changes expected unless IRR's input requirement changed drastically.
+    *   [ ] **Verify Temp Dirs:** Ensure the temporary directory creation/cleanup for extracted charts remains robust. No changes expected.
+    *   [ ] **Verify Caching:** Ensure the `get_cached_chart` logic in `pull-charts.py` (used by `test-charts.py` indirectly) still correctly identifies cached `.tgz` files. No changes expected.
+
+3. **Error Handling Updates in `test-charts.py`**
+    *   [ ] **Analyze New Errors:** Anticipate potential new error message formats from the Go/Helm SDK based `irr` binary (e.g., Go panics, Helm SDK chart loading errors `helm.sh/helm/v3/pkg/chart/loader`, internal IRR processing errors).
+    *   [ ] **Update Categorization:** Review and update the `categorize_error` function. Add regex patterns to match new error types (e.g., `pattern = re.compile(r"helm.sh/helm/v3/pkg/chart/loader.*error")`).
+    *   [ ] **Maintain Existing:** Ensure existing chart-specific error categories (YAML_ERROR, SCHEMA_ERROR, REQUIRED_VALUE_ERROR, etc.) still function correctly.
+    *   [ ] **Refine Patterns:** Refine existing regex patterns in `categorize_error` if the format of known errors has changed slightly with the new IRR binary.
+
+4. **Testing Infrastructure in `test-charts.py`**
+    *   [ ] **Verify Output:** Check if the format or location of the generated override file (`output_file`) has changed.
+    *   [ ] **Update Criteria:** Adjust success/failure logic if the exit codes or stderr/stdout patterns for success/failure of `irr override` have changed.
+    *   [ ] **Maintain Categories:** Keep existing chart classification logic (`get_chart_classification`) and test result reporting structure (`TestResult` dataclass) unless fundamentally changed by IRR updates.
+
+5. **Documentation Updates (`test-charts.py`)**
+    *   [ ] **Update Script Help:** Update `argparse` descriptions for any changed command-line arguments for `test-charts.py` itself.
+    *   [ ] **Update README/Comments:** Update any internal comments or external documentation (like the main README) describing how to run `test-charts.py` and interpret its results, reflecting parameter changes.
+    *   [ ] **Update Error Docs:** Document any new error categories added in the `categorize_error` function.
+
+Implementation Notes:
+- Maintain existing chart.tgz processing workflow. The script's core purpose is unchanged.
+- Keep chart download (`pull-charts.py`) and caching mechanism unchanged.
+- Only update `test-charts.py` parameters and error handling as necessary to interface with the *new binary*, not to test *new Helm functionality*.
+- Preserve existing chart testing functionality and compatibility with the existing chart corpus.
+
+Testing Strategy:
+1. Test with a small subset of existing cached charts first.
+2. Verify the `override_cmd` construction is correct and the `irr` binary executes.
+3. Check if chart extraction and path passing work as expected.
+4. Run against charts known to cause specific errors (YAML, Schema, Required Value) to ensure existing error categorization still works.
+5. Run against the full corpus and compare success/failure rates and error category distribution to previous runs.
+
+Success Criteria:
+- `test-charts.py` runs successfully with the updated `irr` binary and necessary parameter adjustments.
+- Chart extraction and analysis workflow remains intact.
+- Error handling properly captures both existing chart-related issues and new IRR binary errors.
+- Compatibility with the existing chart corpus is maintained (success/failure rate should be similar, accounting for bug fixes in IRR).
 
 ## Phase 7: Test Framework Refactoring
 _**Goal:** Refactor the Python-based `test-charts.py` framework to use the new Phase 4/5 commands with the existing chart corpus._
@@ -396,9 +440,9 @@ _**Goal:** Improve testability of complex logic by refactoring key components to
      - Review and execute the git commit commands yourself, never change git branches stay in the branch you are in until feature completion ✓
 
 ### 5.7 Update Test Scripts for New IRR Parameters
-_**Goal:** Update test-charts.py and pull-charts.py to work with the new IRR parameters and Helm SDK integration._
+_**Goal:** Update test-charts.py and pull-charts.py to work with the new IRR parameters while maintaining focus on testing downloaded chart.tgz files._
 
-1. **Update Command Line Arguments**
+1. **Update IRR Command Parameters**
    - [ ] Audit current IRR command line parameters in test-charts.py
    - [ ] Update override command construction in test_chart_override function:
      ```python
@@ -406,67 +450,55 @@ _**Goal:** Update test-charts.py and pull-charts.py to work with the new IRR par
          str(irr_binary),
          "override",
          "--chart-path",
-         str(extracted_chart_dir),
+         str(extracted_chart_dir),  # Keep existing chart.tgz extraction logic
          "--target-registry",
          target_registry,
-         # Update parameters to match new IRR interface
+         # Only add necessary new parameters, maintain focus on chart testing
      ]
      ```
-   - [ ] Add new required parameters for Helm SDK integration
+   - [ ] Remove any deprecated parameters
    - [ ] Update parameter documentation in script headers
 
-2. **Environment Setup**
-   - [ ] Add Helm environment variable handling
-   - [ ] Add support for Helm configuration paths
-   - [ ] Update repository handling to use SDK-compatible paths
-   - [ ] Add proper cleanup for Helm environment resources
+2. **Chart Processing Updates**
+   - [ ] Verify chart.tgz extraction logic still works with new IRR
+   - [ ] Ensure temporary directory handling remains correct
+   - [ ] Maintain existing chart cache functionality
+   - [ ] Update chart path resolution if needed
 
 3. **Error Handling Updates**
-   - [ ] Update error categorization for new SDK error patterns
-   - [ ] Add new error categories for Helm SDK specific errors
+   - [ ] Update error categorization for new IRR error patterns
+   - [ ] Keep existing chart-specific error categories
    - [ ] Update error pattern matching in categorize_error function
-   - [ ] Add logging for Helm SDK specific issues
+   - [ ] Add any new IRR-specific error patterns
 
-4. **Chart Processing Updates**
-   - [ ] Update chart extraction logic to handle new Helm chart formats
-   - [ ] Modify chart path resolution to work with Helm SDK expectations
-   - [ ] Update chart validation steps to use new IRR validate command
-   - [ ] Add support for new chart metadata handling
+4. **Testing Infrastructure**
+   - [ ] Verify test results format still matches new IRR output
+   - [ ] Update success/failure criteria if needed
+   - [ ] Keep existing chart test categories
+   - [ ] Add any new relevant test result categories
 
-5. **Testing Infrastructure**
-   - [ ] Add test cases for new parameter combinations
-   - [ ] Create validation for Helm SDK integration
-   - [ ] Update success/failure criteria for new command behavior
-   - [ ] Add new test result categories for SDK-specific outcomes
-
-6. **Documentation Updates**
+5. **Documentation Updates**
    - [ ] Update script documentation with new parameters
-   - [ ] Add examples for common test scenarios
-   - [ ] Document new error categories and troubleshooting
-   - [ ] Update README with new testing procedures
-
-7. **Performance Optimization**
-   - [ ] Review and optimize chart processing with new SDK
-   - [ ] Update caching mechanisms for better performance
-   - [ ] Optimize parallel processing with SDK constraints
-   - [ ] Add new timing metrics for SDK operations
+   - [ ] Document any changes in behavior
+   - [ ] Update error category documentation
+   - [ ] Keep focus on chart testing in documentation
 
 Implementation Notes:
-- Keep backward compatibility where possible
-- Maintain existing test coverage while adding new tests
-- Document all parameter changes clearly
-- Add proper error handling for new failure modes
-- Ensure clean teardown of Helm SDK resources
+- Maintain existing chart.tgz processing workflow
+- Keep chart download and caching mechanism unchanged
+- Only update what's necessary for new IRR parameters
+- Preserve existing chart testing functionality
+- Focus on testing chart content, not Helm functionality
 
 Testing Strategy:
-1. Start with a small subset of charts to validate changes
-2. Gradually expand to full chart corpus
-3. Compare results with previous version
-4. Document any behavioral changes
+1. Test with existing cached charts first
+2. Verify chart extraction still works correctly
+3. Ensure all chart types still process properly
+4. Compare results with previous version
 
 Success Criteria:
-- Scripts successfully run with new IRR parameters
-- All existing test charts process correctly
-- Error handling captures new failure modes
-- Performance remains within acceptable bounds
-- Clear documentation of all changes
+- Scripts successfully process existing chart.tgz files
+- Chart extraction and analysis remains intact
+- Error handling properly captures chart-related issues
+- Performance matches or exceeds previous version
+- Maintains compatibility with existing chart corpus
