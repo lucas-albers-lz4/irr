@@ -20,13 +20,27 @@ _**Goal:** Implement the Helm plugin interface that wraps around the core CLI fu
     - [x] Implement command timeouts
     - [x] Format error output consistently, ideally matching Helm's CLI style for user familiarity
   - [ ] **[P2]** Improve plugin security:
-    - [ ] Add checksum verification for binary downloads/updates
     - [ ] Implement proper filesystem permissions model for the installed plugin binary and cache directories
+      - [ ] Add platform-specific permission settings (0755 for binaries, 0644 for configs)
+      - [ ] Verify permissions are correctly set after installation
     - [ ] Add plugin version validation against Helm version
+      - [ ] Implement version check against latest Helm version during plugin initialization
+    - [ ] Use standard GitHub mechanisms for security
+      - [ ] Rely on GitHub's release asset checksums and HTTPS
+      - [ ] Document release verification process for users
   - [ ] **[P1]** Create proper plugin distribution package:
     - [ ] Set up versioning for plugin releases
-    - [ ] Add basic update mechanism
+      - [ ] Define semantic versioning strategy (MAJOR.MINOR.PATCH)
+      - [ ] Create version bumping automation (via GitHub Actions)
+      - [ ] Ensure version is embedded in binary at build time
     - [ ] Create basic release automation (e.g., via Makefile/GitHub Actions)
+      - [ ] Set up GitHub Actions workflow for release creation on tags
+      - [ ] Automate binary building for supported platforms:
+        - [ ] Linux AMD64
+        - [ ] Linux ARM64
+        - [ ] macOS ARM64
+      - [ ] Generate checksums for all artifacts
+      - [ ] Use standard GitHub release mechanisms for publishing
     - [ ] We have a working code work flow to do this that we will copy from another project, so we can skip this portion for now until we do it.
     - [ ] For now we can just plugin install from local location.
 
@@ -35,6 +49,10 @@ _**Goal:** Implement the Helm plugin interface that wraps around the core CLI fu
   - [x] Add Helm environment integration for configuration and auth.
   - [x] **[P1]** Refactor plugin to use Helm Go SDK instead of shelling out:
     - [x] Replace `exec.Command("helm", ...)` calls with Go SDK equivalents (`pkg/action`, `pkg/cli`)
+    - [ ] Audit remaining `exec.Command` calls to ensure they are necessary or replace them
+      - [ ] Create inventory of remaining exec calls
+      - [ ] Classify each by replaceability with SDK alternatives
+      - [ ] Prioritize replacements by risk/impact
     - [x] Use SDK for getting release info, values, and pulling charts
     - [x] **Ensure only read-only Helm actions are used:**
       - [x] *Allowed Read Actions:* `Get`, `GetValues`, `List`, `SearchRepo`, `SearchIndex`, `Pull` (for fetching chart data only), loading charts/values (`loader.Load`, `chartutil`), reading config (`cli.New`, `repo.LoadFile`).
@@ -43,21 +61,60 @@ _**Goal:** Implement the Helm plugin interface that wraps around the core CLI fu
     - [x] Fix namespace handling in Helm template command
     - [x] Fix dependency issues to build with Helm SDK
     - [ ] Add SDK integration to `inspect` and `validate` commands
-    - [ ] Improve robustness, testability, and performance
+      - [ ] Replace command-line invocations with direct SDK calls
+      - [ ] Ensure error handling matches SDK error patterns
+      - [ ] Maintain backward compatibility with current output format
+    - [ ] Improve robustness and testability
+      - [ ] Add timeout handling for SDK operations
+      - [ ] Implement retry logic for transient failures
   - [ ] **[P1]** Enhance Helm integration:
-    - [ ] Add support for automatically detecting configured Helm repositories via SDK
-    - [ ] Implement Helm hooks support for pre/post operations
-      - [ ] Specifically support `pre-override` and `post-override` hooks for user customizations
-      - [ ] Add documentation on creating custom hook scripts
-    - [ ] Add Helm template debugging support
-  - [ ] **[P1]** Add Helm auth integration:
+    - [ ] Add support for automatically detecting configured Helm repositories via SDK **(Post-Release Feature)**
+      - [ ] Access repository config via Helm SDK
+      - [ ] Implement caching of repository data
+      - [ ] Support custom repository configurations
+    - [ ] **[P2]** Implement Helm hooks support for pre/post operations **(Post-Release Feature)**
+      - [ ] Define hook interface and discovery mechanism
+      - [ ] Create hook execution engine with proper error handling
+      - [ ] Implement hook timeout handling
+    - [ ] **[P2]** Define clear hook execution flow and environment variables available to hooks **(Post-Release Feature)**
+      - [ ] Document hook environment variables (HELM_PLUGIN_*, CHART_*, RELEASE_*)
+      - [ ] Create standard hook exit code handling
+      - [ ] Define hook execution order guarantees
+    - [ ] **[P2]** Specifically support `pre-override` and `post-override` hooks for user customizations **(Post-Release Feature)**
+      - [ ] Implement hook discovery in standard locations
+      - [ ] Pass appropriate context variables to hooks
+      - [ ] Allow hooks to modify override process
+    - [ ] **[P2]** Add documentation on creating custom hook scripts **(Post-Release Feature)**
+      - [ ] Create sample hooks for common use cases
+      - [ ] Document best practices for hook development
+    - [ ] **[P2]** Add Helm template debugging support **(Post-Release Feature)**
+      - [ ] Create debug output format matching Helm's
+      - [ ] Implement verbose logging of template operations
+    - [ ] **[P2]** Integrate with Helm's `--debug` flag or provide similar functionality **(Post-Release Feature)**
+      - [ ] Match Helm's debug output format and verbosity
+      - [ ] Add detailed SDK operation logging
+  - [ ] **[P2]** Add Helm auth integration: **(Future Feature - Not part of current development work - Post-Release Feature)**
     - [ ] Support Helm credential plugins via SDK
+      - [ ] Identify SDK interfaces for credential plugins
+      - [ ] Test with common credential plugins (AWS, Azure, GCP)
+      - [ ] Document supported credential plugin types
     - [ ] Handle private chart repository authentication via SDK
+      - [ ] Test with common private repo types (Harbor, Nexus, etc.)
+      - [ ] Add support for basic auth, token auth, and OAuth
     - [ ] Respect Helm's registry authentication configuration via SDK
+      - [ ] Support OCI registry authentication methods
+      - [ ] Test with popular container registries
+    - [ ] Ensure sensitive credential handling is secure
+      - [ ] Audit credential usage for leaks
+      - [ ] Use secure environment variables where possible
+      - [ ] Avoid logging sensitive information
   - [ ] **[P1]** Implement version compatibility checks:
-    - [ ] Add plugin version compatibility checking with Helm versions
+    - [ ] Add plugin version compatibility checking with latest Helm version
+      - [ ] Create version detection for latest Helm version
     - [ ] Gracefully handle version mismatches with clear error messages
-    - [ ] Document supported Helm version ranges
+      - [ ] Create user-friendly error messages when outdated Helm version detected
+    - [ ] Document latest Helm version support policy
+      - [ ] Clearly state that only the latest Helm version is supported
 
 - [x] Develop Helm plugin testing
   - [x] Implement basic E2E tests for core Helm Plugin workflows (happy path `inspect`, `override`, `validate`).
@@ -66,37 +123,69 @@ _**Goal:** Implement the Helm plugin interface that wraps around the core CLI fu
   - [ ] **[P1]** Expand test coverage:
     - [ ] **Note:** Focus tests on Helm integration points (install, SDK interactions, release handling) and avoid duplicating core logic tests covered elsewhere.
     - [ ] Implement plugin installation/uninstallation testing (scripting based)
+      - [ ] Create test fixtures for different installation scenarios
+      - [ ] Test installation idempotency
+      - [ ] Test clean uninstall/reinstall (no persistent configuration expected between versions)
+    - [ ] **[P2]** Test Helm SDK interactions with mocked SDK interfaces where appropriate **(Post-Release Feature)**
+      - [ ] Create SDK interface mocks for testing
+      - [ ] Test error handling scenarios with mocked errors
+      - [ ] Add negative test cases for all SDK interactions
   - [ ] **[P1]** Add chart variety tests:
-    - [ ] Test with charts using various image patterns (leverage existing test charts where applicable)
-    - [ ] Test with charts of different complexity levels (leverage existing test charts where applicable)
-    - [ ] Test with charts using custom template functions
-    - [ ] Test with deeply nested subcharts
+    - [ ] Test with a small focused set of charts that cover key image patterns
+    - [ ] Test with one complex chart (kube-prometheus-stack) as representative of deeply nested charts
+    - [ ] Focus on confirming basic functionality rather than exhaustive coverage
   - [ ] **[P1]** Implement failure mode testing (deterministic):
-    - [ ] Test graceful handling of invalid charts (e.g., bad format)
-    - [ ] Test handling of errors returned from mocked Helm Go SDK calls (simulating network/API issues)
-    - [ ] Verify correct error messages and exit codes are returned to the user
+    - [ ] Test handling of basic error cases:
+      - [ ] One invalid chart format test case 
+      - [ ] One connectivity issue simulation
+    - [ ] Verify appropriate error codes and messages for critical failures only
 
 - [x] Update documentation for Helm plugin usage
   - [x] Add Helm-specific examples and workflows.
   - [x] Document plugin installation and configuration.
   - [ ] **[P1]** Enhance user documentation:
     - [ ] Add examples for complex scenarios
+      - [ ] Multi-chart deployments
+      - [ ] Air-gapped environments
+      - [ ] Custom registry setups
     - [ ] Include troubleshooting guide specific to plugin usage
-    - [ ] Add FAQ section based on common issues
+      - [ ] Common error scenarios and resolutions
+      - [ ] Diagnostic procedures for plugin issues
+      - [ ] Environment setup troubleshooting
+    - [ ] **[P2]** Add FAQ section based on common issues **(Post-Release Feature)**
+      - [ ] Collect issues from GitHub and community feedback
+      - [ ] Provide clear, actionable answers
+    - [ ] Clearly document the read-only nature and security implications
+      - [ ] Explain RBAC requirements
+      - [ ] Document security best practices
   - [ ] **[P1]** Improve integration documentation:
     - [ ] Document CI/CD integration
     - [ ] Add examples for GitOps workflows
   - [ ] **[P2]** We only support cross-platform macos/linux
-    - [ ] document what we support.
+    - [ ] Document official support for macOS and Ubuntu LTS only
+    - [ ] Explicitly state that bash is the only supported shell, even though macOS defaults to zsh
+    - [ ] Add instructions for macOS users to run commands in bash instead of zsh
+    - [ ] Note that other environments may work but are not tested or supported
 
 - [ ] Implement cross-cutting improvements
   - [ ] **[P2]** Only support platform macos/linux support:
-    - Test with standard shell environments (bash, zsh, )
-    - Handle path differences across platforms
+    - [ ] Test only with bash on macOS (development environment)
+    - [ ] Ensure scripts specify #!/bin/bash rather than relying on default shell
+    - [ ] Include note in development docs about using bash explicitly on macOS
+    - [ ] Test only with bash on Ubuntu LTS (CI environment)
+    - [ ] Document specific supported environment limitations
+    - [ ] Handle basic path differences between macOS and Ubuntu
+      - [ ] Focus on standard installation locations only
   - [ ] **[P1]** Improve plugin lifecycle management:
-    - Add proper uninstallation support
-    - Implement clean update procedures
-    - Handle configuration persistence across updates
+    - [ ] Add proper uninstallation support
+      - [ ] Create uninstall script that cleans up all artifacts
+      - [ ] Handle configuration preservation options
+      - [ ] Test uninstall/reinstall scenarios
+    - [ ] Note: Plugin updates will rely on the standard `helm plugin update` command
+    - [ ] Handle configuration persistence across updates
+      - [ ] Define configuration versioning scheme
+      - [ ] Create migration path for config changes
+      - [ ] Add configuration validation during updates
 
 ## Phase 7: Test Framework Refactoring
 _**Goal:** Refactor the Python-based `test-charts.py` framework to use the new Phase 4/5 commands with the existing chart corpus._
@@ -107,11 +196,14 @@ _**Goal:** Refactor the Python-based `test-charts.py` framework to use the new P
   - Ensure script handles the new structured configuration format.
 - [ ] Analyze Failure Patterns (on existing corpus)
   - Use the refactored script's output (error reports, patterns) to identify common failure reasons.
+  - Leverage test-charts.py's data collection and analysis to drive improvements.
+  - Note: test-charts.py generates structured JSON data critical for identifying pattern-based improvements.
 - [ ] Improve Values Templates ("Bucket Solvers") (on existing corpus)
   - Iteratively refine the minimal values templates (`VALUES_TEMPLATE_...`) based on failure analysis to increase the success rate.
   - Consider adding new classifications/templates if warranted.
 - [ ] Generate Intermediate Compatibility Report
-  - Document the success rate achieved after refactoring and initial template improvements.
+  - Document the chart compatibility success rate (not version compatibility) achieved after refactoring and initial template improvements.
+  - Note: Compatibility here refers to how many charts our tool successfully processes, not version compatibility between different Helm versions.
 
 ## Phase 8: Test Corpus Expansion & Advanced Refinement
 _**Goal:** Expand the chart test set significantly and further refine compatibility based on broader testing._
@@ -121,10 +213,15 @@ _**Goal:** Expand the chart test set significantly and further refine compatibil
   - Update chart pulling/caching mechanism if necessary.
 - [ ] Re-Analyze Failure Patterns (on expanded corpus)
   - Identify new or more prevalent failure reasons with the larger chart set.
+  - Leverage test-charts.py's data collection and analysis to drive improvements.
+  - Note: test-charts.py generates structured JSON data critical for identifying pattern-based improvements.
 - [ ] Further Improve Values Templates
   - Make additional refinements to templates based on the expanded analysis.
+  - Use test-charts.py's bucket categorization to determine minimal configuration templates that maximize chart compatibility.
 - [ ] Generate Final Compatibility Report
-  - Document the final success rate across the expanded corpus.
+  - Document the final chart compatibility success rate across the expanded corpus.
+  - Focus on command-line reports that directly drive accuracy improvements and help prioritize future work.
+  - Note: This measures our tool's ability to successfully process charts, not version compatibility.
 
 ## Phase 9: `kind` Cluster Integration Testing
 _**Goal:** Implement end-to-end tests using `kind` to validate Helm plugin interactions with a live Kubernetes API and Helm release state, ensuring read-only behavior._
@@ -140,30 +237,30 @@ _**Goal:** Implement end-to-end tests using `kind` to validate Helm plugin inter
   - Configure tests to run with limited, read-only Kubernetes/Helm permissions via specific ServiceAccount/kubeconfig.
   - Assert that tests using limited permissions fail if any write operations are attempted.
   - Verify Helm release state (e.g., revision count, status) remains unchanged after plugin execution.
-- [ ] **[P1]** Test compatibility with relevant Helm versions in `kind`:
-  - Set up CI matrix or test configurations to run `kind` tests against different Helm 3.x versions.
-- [ ] **[P1]** Test Helm auth integration in `kind`:
-  - Test interactions with Helm credential plugins within the test environment.
-  - Test against private chart repositories requiring authentication (potentially using a local chart museum instance).
-- [ ] **[P2]** Performance and resource testing:
-  - Measure plugin performance metrics (execution time, memory usage) in realistic environments
-  - Test with various sized charts and releases to establish performance baselines
-  - Document resource requirements and performance characteristics
+- [ ] **[P1]** Test compatibility with latest Helm version in `kind`:
+  - Set up CI configuration to run `kind` tests with the latest Helm version.
+- [ ] **[P2]** Test Helm auth integration in `kind`:
+  - Test with a single credential plugin (preferably one used in our environment)
+  - Focus only on essential auth features that directly impact our functionality
 - [ ] **[P1]** CI/CD integration for `kind` tests:
-  - Set up automated CI workflows for running `kind` tests
+  - Set up automated CI workflow for running `kind` tests on Ubuntu LTS only
+  - Configure single environment with bash shell for all CI tests
   - Implement appropriate timeouts and resource constraints
   - Add caching mechanisms for Helm charts and images to speed up test runs
 - [ ] **[P2]** Test result reporting and metrics:
-  - Implement structured test result output (JSON format)
-  - Track metrics like test duration, success rates across different chart types
-  - Generate visual reports of test coverage and performance data
+  - [ ] Implement structured test result output (JSON format)
+  - [ ] Track metrics like test duration, success rates across different chart types
+  - [ ] Generate summaries of test coverage as command-line output for bucket category identification
 
 ## Phase 10: Testability Improvements via Dependency Injection
 _**Goal:** Improve testability of complex logic by refactoring key components to use dependency injection patterns, enabling isolated unit testing without extensive mocking frameworks._
 
 - [ ] **[P1]** Identify and refactor external service integrations:
   - [ ] Analyze code base for difficult-to-test integrations with external services, particularly:
-    - Helm SDK function calls (e.g., `Template`, `ValidateChart`, `GetValues`)
+    - Helm SDK function calls (e.g., 
+
+
+        - Helm SDK function calls (e.g., `Template`, `ValidateChart`, `GetValues`)
     - Filesystem operations
     - Network calls
     - Subprocess executions
