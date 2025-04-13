@@ -12,82 +12,82 @@
 _**Goal:** Implement the Helm plugin interface that wraps around the core CLI functionality._
 
 - [x] Create Helm plugin architecture
-  - Design plugin structure that wraps around core command logic.
-  - Implement plugin installation process and discovery.
-  - Ensure consistent command-line interface with standalone CLI.
+  - [x] Design plugin structure that wraps around core command logic.
+  - [x] Implement plugin installation process and discovery.
+  - [x] Ensure consistent command-line interface with standalone CLI.
   - [x] **[P1]** Enhance error handling in plugin wrapper script:
-    - Add robust error handling with proper exit codes
-    - Implement command timeouts
-    - Format error output consistently, ideally matching Helm's CLI style for user familiarity
+    - [x] Add robust error handling with proper exit codes
+    - [x] Implement command timeouts
+    - [x] Format error output consistently, ideally matching Helm's CLI style for user familiarity
   - [ ] **[P2]** Improve plugin security:
-    - Add checksum verification for binary downloads/updates
-    - Implement proper filesystem permissions model for the installed plugin binary and cache directories
-    - Add plugin version validation against Helm version
+    - [ ] Add checksum verification for binary downloads/updates
+    - [ ] Implement proper filesystem permissions model for the installed plugin binary and cache directories
+    - [ ] Add plugin version validation against Helm version
   - [ ] **[P1]** Create proper plugin distribution package:
-    - Set up versioning for plugin releases
-    - Add basic update mechanism
-    - Create basic release automation (e.g., via Makefile/GitHub Actions)
-    - We have a working code work flow to do this that we will copy from another project, so we can skip this portion for now until we do it.
-    - For now we can just plugin install from local location.
+    - [ ] Set up versioning for plugin releases
+    - [ ] Add basic update mechanism
+    - [ ] Create basic release automation (e.g., via Makefile/GitHub Actions)
+    - [ ] We have a working code work flow to do this that we will copy from another project, so we can skip this portion for now until we do it.
+    - [ ] For now we can just plugin install from local location.
 
 - [x] Implement Helm-specific functionality
-  - Add release name resolution to chart path.
-  - Add Helm environment integration for configuration and auth.
+  - [x] Add release name resolution to chart path.
+  - [x] Add Helm environment integration for configuration and auth.
   - [x] **[P1]** Refactor plugin to use Helm Go SDK instead of shelling out:
     - [x] Replace `exec.Command("helm", ...)` calls with Go SDK equivalents (`pkg/action`, `pkg/cli`)
     - [x] Use SDK for getting release info, values, and pulling charts
     - [x] **Ensure only read-only Helm actions are used:**
-      - *Allowed Read Actions:* `Get`, `GetValues`, `List`, `SearchRepo`, `SearchIndex`, `Pull` (for fetching chart data only), loading charts/values (`loader.Load`, `chartutil`), reading config (`cli.New`, `repo.LoadFile`).
-      - *Disallowed Write Actions:* `Install`, `Upgrade`, `Uninstall`, `Rollback`, `Push`, `RepoAdd`, `RepoRemove`, `RepoUpdate`, or any direct modification of Kubernetes resources via the SDK's client.
-      - *Rationale:* IRR's purpose is to *generate* overrides, not apply changes or modify Helm state.
+      - [x] *Allowed Read Actions:* `Get`, `GetValues`, `List`, `SearchRepo`, `SearchIndex`, `Pull` (for fetching chart data only), loading charts/values (`loader.Load`, `chartutil`), reading config (`cli.New`, `repo.LoadFile`).
+      - [x] *Disallowed Write Actions:* `Install`, `Upgrade`, `Uninstall`, `Rollback`, `Push`, `RepoAdd`, `RepoRemove`, `RepoUpdate`, or any direct modification of Kubernetes resources via the SDK's client.
+      - [x] *Rationale:* IRR's purpose is to *generate* overrides, not apply changes or modify Helm state.
     - [x] Fix namespace handling in Helm template command
     - [x] Fix dependency issues to build with Helm SDK
     - [ ] Add SDK integration to `inspect` and `validate` commands
     - [ ] Improve robustness, testability, and performance
   - [ ] **[P1]** Enhance Helm integration:
-    - Add support for automatically detecting configured Helm repositories via SDK
-    - Implement Helm hooks support for pre/post operations
-      - Specifically support `pre-override` and `post-override` hooks for user customizations
-      - Add documentation on creating custom hook scripts
-    - Add Helm template debugging support
+    - [ ] Add support for automatically detecting configured Helm repositories via SDK
+    - [ ] Implement Helm hooks support for pre/post operations
+      - [ ] Specifically support `pre-override` and `post-override` hooks for user customizations
+      - [ ] Add documentation on creating custom hook scripts
+    - [ ] Add Helm template debugging support
   - [ ] **[P1]** Add Helm auth integration:
-    - Support Helm credential plugins via SDK
-    - Handle private chart repository authentication via SDK
-    - Respect Helm's registry authentication configuration via SDK
+    - [ ] Support Helm credential plugins via SDK
+    - [ ] Handle private chart repository authentication via SDK
+    - [ ] Respect Helm's registry authentication configuration via SDK
   - [ ] **[P1]** Implement version compatibility checks:
-    - Add plugin version compatibility checking with Helm versions
-    - Gracefully handle version mismatches with clear error messages
-    - Document supported Helm version ranges
+    - [ ] Add plugin version compatibility checking with Helm versions
+    - [ ] Gracefully handle version mismatches with clear error messages
+    - [ ] Document supported Helm version ranges
 
 - [x] Develop Helm plugin testing
-  - Implement basic E2E tests for core Helm Plugin workflows (happy path `inspect`, `override`, `validate`).
-  - Test plugin installation and registration.
-  - Verify Helm release interaction.
+  - [x] Implement basic E2E tests for core Helm Plugin workflows (happy path `inspect`, `override`, `validate`).
+  - [x] Test plugin installation and registration.
+  - [x] Verify Helm release interaction.
   - [ ] **[P1]** Expand test coverage:
-    - **Note:** Focus tests on Helm integration points (install, SDK interactions, release handling) and avoid duplicating core logic tests covered elsewhere.
-    - Implement plugin installation/uninstallation testing (scripting based)
+    - [ ] **Note:** Focus tests on Helm integration points (install, SDK interactions, release handling) and avoid duplicating core logic tests covered elsewhere.
+    - [ ] Implement plugin installation/uninstallation testing (scripting based)
   - [ ] **[P1]** Add chart variety tests:
-    - Test with charts using various image patterns (leverage existing test charts where applicable)
-    - Test with charts of different complexity levels (leverage existing test charts where applicable)
-    - Test with charts using custom template functions
-    - Test with deeply nested subcharts
+    - [ ] Test with charts using various image patterns (leverage existing test charts where applicable)
+    - [ ] Test with charts of different complexity levels (leverage existing test charts where applicable)
+    - [ ] Test with charts using custom template functions
+    - [ ] Test with deeply nested subcharts
   - [ ] **[P1]** Implement failure mode testing (deterministic):
-    - Test graceful handling of invalid charts (e.g., bad format)
-    - Test handling of errors returned from mocked Helm Go SDK calls (simulating network/API issues)
-    - Verify correct error messages and exit codes are returned to the user
+    - [ ] Test graceful handling of invalid charts (e.g., bad format)
+    - [ ] Test handling of errors returned from mocked Helm Go SDK calls (simulating network/API issues)
+    - [ ] Verify correct error messages and exit codes are returned to the user
 
 - [x] Update documentation for Helm plugin usage
-  - Add Helm-specific examples and workflows.
-  - Document plugin installation and configuration.
+  - [x] Add Helm-specific examples and workflows.
+  - [x] Document plugin installation and configuration.
   - [ ] **[P1]** Enhance user documentation:
-    - Add examples for complex scenarios
-    - Include troubleshooting guide specific to plugin usage
-    - Add FAQ section based on common issues
+    - [ ] Add examples for complex scenarios
+    - [ ] Include troubleshooting guide specific to plugin usage
+    - [ ] Add FAQ section based on common issues
   - [ ] **[P1]** Improve integration documentation:
-    - Document CI/CD integration
-    - Add examples for GitOps workflows
+    - [ ] Document CI/CD integration
+    - [ ] Add examples for GitOps workflows
   - [ ] **[P2]** We only support cross-platform macos/linux
-    - document what we support.
+    - [ ] document what we support.
 
 - [ ] Implement cross-cutting improvements
   - [ ] **[P2]** Only support platform macos/linux support:
