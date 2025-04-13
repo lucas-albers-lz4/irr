@@ -235,34 +235,34 @@ Note: Version compatibility tests are already well-covered in pkg/helm/version_t
 _**Goal:** Update test-charts.py and pull-charts.py to work with the new IRR parameters while maintaining focus on testing downloaded chart.tgz files._
 
 1.  **Update IRR Command Parameters in `test-charts.py`**
-    *   [ ] **Audit:** Review the `test_chart_override` function in `test-charts.py`. Specifically check the parameters passed to the `irr override` command: `--chart-path`, `--target-registry`, `--source-registries`, `--output-file`, `--debug`.
-    *   [ ] **Verify/Update:**
+    *   [x] **Audit:** Review the `test_chart_override` function in `test-charts.py`. Specifically check the parameters passed to the `irr override` command: `--chart-path`, `--target-registry`, `--source-registries`, `--output-file`, `--debug`.
+    *   [x] **Verify/Update:**
         *   Confirm if `--chart-path` should still point to the *extracted* chart directory or if IRR now accepts the `.tgz` file directly. Adjust the path passed in `test_chart_override`.
         *   Verify if `--source-registries` is still used or if registry detection is now automatic via Helm config. Update the command construction accordingly.
         *   Check if any parameters related to Helm configuration (e.g., `--kubeconfig`, `--namespace`, Helm context flags) are now required or supported, even if not strictly needed for `.tgz` processing, and decide if they should be added with default/empty values for compatibility.
-    *   [ ] **Remove Deprecated:** Identify and remove any parameters previously used that are no longer supported by the new `irr override` command.
-    *   [ ] **Update Docs:** Update the argparse help strings and comments in `test-charts.py` to reflect the current parameter set for `irr override`.
+    *   [x] **Remove Deprecated:** Identify and remove any parameters previously used that are no longer supported by the new `irr override` command.
+    *   [x] **Update Docs:** Update the argparse help strings and comments in `test-charts.py` to reflect the current parameter set for `irr override`.
 
 2.  **Chart Processing Updates in `test-charts.py`**
-    *   [ ] **Verify Extraction:** Confirm that the existing `tarfile.extractall` logic in `test_chart_override` correctly extracts charts in a format still usable by the updated IRR's `--chart-path` parameter. No changes expected unless IRR's input requirement changed drastically.
-    *   [ ] **Verify Temp Dirs:** Ensure the temporary directory creation/cleanup for extracted charts remains robust. No changes expected.
-    *   [ ] **Verify Caching:** Ensure the `get_cached_chart` logic in `pull-charts.py` (used by `test-charts.py` indirectly) still correctly identifies cached `.tgz` files. No changes expected.
+    *   [x] **Verify Extraction:** Confirm that the existing `tarfile.extractall` logic in `test_chart_override` correctly extracts charts in a format still usable by the updated IRR's `--chart-path` parameter. No changes expected unless IRR's input requirement changed drastically.
+    *   [x] **Verify Temp Dirs:** Ensure the temporary directory creation/cleanup for extracted charts remains robust. No changes expected.
+    *   [x] **Verify Caching:** Ensure the `get_cached_chart` logic in `pull-charts.py` (used by `test-charts.py` indirectly) still correctly identifies cached `.tgz` files. No changes expected.
 
 3. **Error Handling Updates in `test-charts.py`**
-    *   [ ] **Analyze New Errors:** Anticipate potential new error message formats from the Go/Helm SDK based `irr` binary (e.g., Go panics, Helm SDK chart loading errors `helm.sh/helm/v3/pkg/chart/loader`, internal IRR processing errors).
-    *   [ ] **Update Categorization:** Review and update the `categorize_error` function. Add regex patterns to match new error types (e.g., `pattern = re.compile(r"helm.sh/helm/v3/pkg/chart/loader.*error")`).
-    *   [ ] **Maintain Existing:** Ensure existing chart-specific error categories (YAML_ERROR, SCHEMA_ERROR, REQUIRED_VALUE_ERROR, etc.) still function correctly.
-    *   [ ] **Refine Patterns:** Refine existing regex patterns in `categorize_error` if the format of known errors has changed slightly with the new IRR binary.
+    *   [x] **Analyze New Errors:** Anticipate potential new error message formats from the Go/Helm SDK based `irr` binary (e.g., Go panics, Helm SDK chart loading errors `helm.sh/helm/v3/pkg/chart/loader`, internal IRR processing errors).
+    *   [x] **Update Categorization:** Review and update the `categorize_error` function. Add regex patterns to match new error types (e.g., `pattern = re.compile(r"helm.sh/helm/v3/pkg/chart/loader.*error")`).
+    *   [x] **Maintain Existing:** Ensure existing chart-specific error categories (YAML_ERROR, SCHEMA_ERROR, REQUIRED_VALUE_ERROR, etc.) still function correctly.
+    *   [x] **Refine Patterns:** Refine existing regex patterns in `categorize_error` if the format of known errors has changed slightly with the new IRR binary.
 
 4. **Testing Infrastructure in `test-charts.py`**
-    *   [ ] **Verify Output:** Check if the format or location of the generated override file (`output_file`) has changed.
-    *   [ ] **Update Criteria:** Adjust success/failure logic if the exit codes or stderr/stdout patterns for success/failure of `irr override` have changed.
-    *   [ ] **Maintain Categories:** Keep existing chart classification logic (`get_chart_classification`) and test result reporting structure (`TestResult` dataclass) unless fundamentally changed by IRR updates.
+    *   [x] **Verify Output:** Check if the format or location of the generated override file (`output_file`) has changed.
+    *   [x] **Update Criteria:** Adjust success/failure logic if the exit codes or stderr/stdout patterns for success/failure of `irr override` have changed.
+    *   [x] **Maintain Categories:** Keep existing chart classification logic (`get_chart_classification`) and test result reporting structure (`TestResult` dataclass) unless fundamentally changed by IRR updates.
 
 5. **Documentation Updates (`test-charts.py`)**
-    *   [ ] **Update Script Help:** Update `argparse` descriptions for any changed command-line arguments for `test-charts.py` itself.
-    *   [ ] **Update README/Comments:** Update any internal comments or external documentation (like the main README) describing how to run `test-charts.py` and interpret its results, reflecting parameter changes.
-    *   [ ] **Update Error Docs:** Document any new error categories added in the `categorize_error` function.
+    *   [x] **Update Script Help:** Update `argparse` descriptions for any changed command-line arguments for `test-charts.py` itself.
+    *   [x] **Update README/Comments:** Update any internal comments or external documentation (like the main README) describing how to run `test-charts.py` and interpret its results, reflecting parameter changes.
+    *   [x] **Update Error Docs:** Document any new error categories added in the `categorize_error` function.
 
 Implementation Notes:
 - Maintain existing chart.tgz processing workflow. The script's core purpose is unchanged.
@@ -286,38 +286,38 @@ Success Criteria:
 ## Phase 7: Test Framework Refactoring
 _**Goal:** Refactor the Python-based `test-charts.py` framework to use the new Phase 4/5 commands with the existing chart corpus._
 
-- [ ] Refactor `test-charts.py` script
-  - Update script to call `irr inspect`, `irr override`, and `irr validate` commands using the finalized CLI.
-  - Adapt failure categorization and reporting for the new command structure.
-  - Ensure script handles the new structured configuration format.
-- [ ] Analyze Failure Patterns (on existing corpus)
-  - Use the refactored script's output (error reports, patterns) to identify common failure reasons.
-  - Leverage test-charts.py's data collection and analysis to drive improvements.
-  - Note: test-charts.py generates structured JSON data critical for identifying pattern-based improvements.
-- [ ] Improve Values Templates ("Bucket Solvers") (on existing corpus)
-  - Iteratively refine the minimal values templates (`VALUES_TEMPLATE_...`) based on failure analysis to increase the success rate.
-  - Consider adding new classifications/templates if warranted.
-- [ ] Generate Intermediate Compatibility Report
-  - Document the chart compatibility success rate (not version compatibility) achieved after refactoring and initial template improvements.
-  - Note: Compatibility here refers to how many charts our tool successfully processes, not version compatibility between different Helm versions.
+- [x] Refactor `test-charts.py` script
+  - [x] Update script to call `irr inspect`, `irr override`, and `irr validate` commands using the finalized CLI.
+  - [x] Adapt failure categorization and reporting for the new command structure.
+  - [x] Ensure script handles the new structured configuration format.
+- [x] Analyze Failure Patterns (on existing corpus)
+  - [x] Use the refactored script's output (error reports, patterns) to identify common failure reasons.
+  - [x] Leverage test-charts.py's data collection and analysis to drive improvements.
+  - [x] Note: test-charts.py generates structured JSON data critical for identifying pattern-based improvements.
+- [x] Improve Values Templates ("Bucket Solvers") (on existing corpus)
+  - [x] Iteratively refine the minimal values templates (`VALUES_TEMPLATE_...`) based on failure analysis to increase the success rate.
+  - [x] Consider adding new classifications/templates if warranted.
+- [x] Generate Intermediate Compatibility Report
+  - [x] Document the chart compatibility success rate (not version compatibility) achieved after refactoring and initial template improvements.
+  - [x] Note: Compatibility here refers to how many charts our tool successfully processes, not version compatibility between different Helm versions.
 
 ## Phase 8: Test Corpus Expansion & Advanced Refinement
 _**Goal:** Expand the chart test set significantly and further refine compatibility based on broader testing._
 
-- [ ] Expand Test Chart Corpus
-  - Increase the number and variety of charts tested (e.g., Top 200+, community requests, specific complex charts).
-  - Update chart pulling/caching mechanism if necessary.
-- [ ] Re-Analyze Failure Patterns (on expanded corpus)
-  - Identify new or more prevalent failure reasons with the larger chart set.
-  - Leverage test-charts.py's data collection and analysis to drive improvements.
-  - Note: test-charts.py generates structured JSON data critical for identifying pattern-based improvements.
-- [ ] Further Improve Values Templates
-  - Make additional refinements to templates based on the expanded analysis.
-  - Use test-charts.py's bucket categorization to determine minimal configuration templates that maximize chart compatibility.
-- [ ] Generate Final Compatibility Report
-  - Document the final chart compatibility success rate across the expanded corpus.
-  - Focus on command-line reports that directly drive accuracy improvements and help prioritize future work.
-  - Note: This measures our tool's ability to successfully process charts, not version compatibility.
+- [x] Expand Test Chart Corpus
+  - [x] Increase the number and variety of charts tested (e.g., Top 200+, community requests, specific complex charts).
+  - [x] Update chart pulling/caching mechanism if necessary.
+- [x] Re-Analyze Failure Patterns (on expanded corpus)
+  - [x] Identify new or more prevalent failure reasons with the larger chart set.
+  - [x] Leverage test-charts.py's data collection and analysis to drive improvements.
+  - [x] Note: test-charts.py generates structured JSON data critical for identifying pattern-based improvements.
+- [x] Further Improve Values Templates
+  - [x] Make additional refinements to templates based on the expanded analysis.
+  - [x] Use test-charts.py's bucket categorization to determine minimal configuration templates that maximize chart compatibility.
+- [x] Generate Final Compatibility Report
+  - [x] Document the final chart compatibility success rate across the expanded corpus.
+  - [x] Focus on command-line reports that directly drive accuracy improvements and help prioritize future work.
+  - [x] Note: This measures our tool's ability to successfully process charts, not version compatibility.
 
 ## Phase 9: `kind` Cluster Integration Testing
 _**Goal:** Implement end-to-end tests using `kind` to validate Helm plugin interactions with a live Kubernetes API and Helm release state, ensuring read-only behavior._
@@ -440,8 +440,8 @@ _**Goal:** Improve testability of complex logic by refactoring key components to
 _**Goal:** Update test-charts.py and pull-charts.py to work with the new IRR parameters while maintaining focus on testing downloaded chart.tgz files._
 
 1. **Update IRR Command Parameters**
-   - [ ] Audit current IRR command line parameters in test-charts.py
-   - [ ] Update override command construction in test_chart_override function:
+   - [x] Audit current IRR command line parameters in test-charts.py
+   - [x] Update override command construction in test_chart_override function:
      ```python
      override_cmd = [
          str(irr_binary),
@@ -453,32 +453,32 @@ _**Goal:** Update test-charts.py and pull-charts.py to work with the new IRR par
          # Only add necessary new parameters, maintain focus on chart testing
      ]
      ```
-   - [ ] Remove any deprecated parameters
-   - [ ] Update parameter documentation in script headers
+   - [x] Remove any deprecated parameters
+   - [x] Update parameter documentation in script headers
 
 2. **Chart Processing Updates**
-   - [ ] Verify chart.tgz extraction logic still works with new IRR
-   - [ ] Ensure temporary directory handling remains correct
-   - [ ] Maintain existing chart cache functionality
-   - [ ] Update chart path resolution if needed
+   - [x] Verify chart.tgz extraction logic still works with new IRR
+   - [x] Ensure temporary directory handling remains correct
+   - [x] Maintain existing chart cache functionality
+   - [x] Update chart path resolution if needed
 
 3. **Error Handling Updates**
-   - [ ] Update error categorization for new IRR error patterns
-   - [ ] Keep existing chart-specific error categories
-   - [ ] Update error pattern matching in categorize_error function
-   - [ ] Add any new IRR-specific error patterns
+   - [x] Update error categorization for new IRR error patterns
+   - [x] Keep existing chart-specific error categories
+   - [x] Update error pattern matching in categorize_error function
+   - [x] Add any new IRR-specific error patterns
 
 4. **Testing Infrastructure**
-   - [ ] Verify test results format still matches new IRR output
-   - [ ] Update success/failure criteria if needed
-   - [ ] Keep existing chart test categories
-   - [ ] Add any new relevant test result categories
+   - [x] Verify test results format still matches new IRR output
+   - [x] Update success/failure criteria if needed
+   - [x] Keep existing chart test categories
+   - [x] Add any new relevant test result categories
 
 5. **Documentation Updates**
-   - [ ] Update script documentation with new parameters
-   - [ ] Document any changes in behavior
-   - [ ] Update error category documentation
-   - [ ] Keep focus on chart testing in documentation
+   - [x] Update script documentation with new parameters
+   - [x] Document any changes in behavior
+   - [x] Update error category documentation
+   - [x] Keep focus on chart testing in documentation
 
 Implementation Notes:
 - Maintain existing chart.tgz processing workflow
