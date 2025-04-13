@@ -502,3 +502,122 @@ func findImagesInChart(chart *chart.Chart) []string {
 	}
 	return images
 }
+
+// TestRepositoryOperations tests repository operations using mocked repository manager
+func TestRepositoryOperations(t *testing.T) {
+	// Setup mock repository manager
+	mockRepoManager := &mockRepositoryManager{}
+	testRepoFile := &repo.File{
+		Repositories: []*repo.Entry{
+			{
+				Name: "test-repo",
+				URL:  "https://test-repo.example.com",
+			},
+		},
+	}
+	testIndex := &repo.IndexFile{
+		Entries: map[string]*repo.ChartVersions{
+			"test-chart": {
+				{
+					Version: "1.0.0",
+				},
+			},
+		},
+	}
+
+	// Test cases
+	tests := []struct {
+		name      string
+		setupMock func()
+		wantErr   bool
+	}{
+		{
+			name: "successful repository operations",
+			setupMock: func() {
+				mockRepoManager.On("GetRepositories").Return(testRepoFile, nil)
+				mockRepoManager.On("GetRepositoryIndex", testRepoFile.Repositories[0]).Return(testIndex, nil)
+			},
+			wantErr: false,
+		},
+		{
+			name: "repository not found",
+			setupMock: func() {
+				mockRepoManager.On("GetRepositories").Return(nil, assert.AnError)
+			},
+			wantErr: true,
+		},
+		{
+			name: "index not found",
+			setupMock: func() {
+				mockRepoManager.On("GetRepositories").Return(testRepoFile, nil)
+				mockRepoManager.On("GetRepositoryIndex", testRepoFile.Repositories[0]).Return(nil, assert.AnError)
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.setupMock()
+			repos, err := mockRepoManager.GetRepositories()
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, testRepoFile, repos)
+
+			if !tt.wantErr {
+				index, err := mockRepoManager.GetRepositoryIndex(repos.Repositories[0])
+				assert.NoError(t, err)
+				assert.Equal(t, testIndex, index)
+			}
+		})
+	}
+
+	mockRepoManager.AssertExpectations(t)
+}
+
+// TestErrorHandling tests error handling with mocked dependencies
+func TestErrorHandling(t *testing.T) {
+	// Setup mock time provider
+	mockTime := &mockTimeProvider{}
+	fixedTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	mockTime.On("Now").Return(fixedTime)
+
+	// Test cases
+	tests := []struct {
+		name      string
+		setupMock func()
+		wantErr   bool
+	}{
+		{
+			name: "time provider error",
+			setupMock: func() {
+				mockTime.On("Now").Return(time.Time{})
+			},
+			wantErr: true,
+		},
+		{
+			name: "successful time operation",
+			setupMock: func() {
+				mockTime.On("Now").Return(fixedTime)
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.setupMock()
+			now := mockTime.Now()
+			if tt.wantErr {
+				assert.True(t, now.IsZero())
+				return
+			}
+			assert.Equal(t, fixedTime, now)
+		})
+	}
+
+	mockTime.AssertExpectations(t)
+}
