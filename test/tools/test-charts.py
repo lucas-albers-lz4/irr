@@ -16,7 +16,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tarfile
 import tempfile
 import time
 from collections import defaultdict
@@ -205,22 +204,8 @@ def categorize_error(error_msg: str) -> str:
     error_msg_lower = error_msg.lower()
 
     # Ordered by specificity / common patterns
-    if (
-        "failed to copy" in error_msg_lower
-        or "failed to fetch" in error_msg_lower
-        or "429 too many requests" in error_msg_lower
-        or "chart not found" in error_msg_lower
-    ):
-        return "PULL_ERROR"
-    if "path is not a directory or is missing" in error_msg_lower:
-        return "SETUP_ERROR"
-    if (
-        "returned non-zero exit status" in error_msg_lower
-        and "irr override" in error_msg_lower
-    ):
-        return "OVERRIDE_ERROR"
-    if "override file not created or empty" in error_msg_lower:
-        return "OVERRIDE_ERROR"
+    if "required value" in error_msg_lower or "required field" in error_msg_lower:
+        return "REQUIRED_VALUE_ERROR"
     if "failed to parse" in error_msg_lower and (
         "yaml:" in error_msg_lower or "json:" in error_msg_lower
     ):
@@ -255,15 +240,11 @@ def categorize_error(error_msg: str) -> str:
         return "DEPRECATED_ERROR"
     if "timeout expired" in error_msg_lower:
         return "TIMEOUT_ERROR"
-    # Generic template error check should be broad but after specific ones
     if "template" in error_msg_lower and (
         "error" in error_msg_lower or "failed" in error_msg_lower
     ):
         return "TEMPLATE_ERROR"
-
-    # Less specific checks
     if "error" in error_msg_lower or "failed" in error_msg_lower:
-        # Generic error if none of the above matched
         return "UNKNOWN_ERROR"
 
     return "UNKNOWN_ERROR"
@@ -445,29 +426,24 @@ def save_classification_stats():
     print("-" * 40)
 
 
-async def test_chart_override(chart_info, target_registry, irr_binary, session):
-    """Test chart override generation and validation.
+async def test_chart_override(chart_info, target_registry, irr_binary, session, args):
+    """Test chart override generation.
 
     Args:
         chart_info: Tuple of (chart_name, chart_path)
         target_registry: Target registry URL
         irr_binary: Path to irr binary
         session: Unused session parameter (kept for compatibility)
+        args: Command line arguments
     """
     chart_name, chart_path = chart_info
     output_file = TEST_OUTPUT_DIR / f"{chart_name}-values.yaml"
-    debug_log_file = TEST_OUTPUT_DIR / f"{chart_name}-debug.log"
+    debug_log_file = TEST_OUTPUT_DIR / f"{chart_name}-override-debug.log"
 
     # --- Initialize variables ---
     classification = "UNKNOWN"
     override_duration = 0
-    validation_duration = 0
-    stdout, stderr = None, None
-    override_stdout_str, override_stderr_str = "", ""
-    template_stdout_str, template_stderr_str = "", ""
     result = None
-    template_process = None
-    temp_dir = None
 
     # Create debug log file
     debug_log_file.parent.mkdir(parents=True, exist_ok=True)
@@ -480,360 +456,591 @@ async def test_chart_override(chart_info, target_registry, irr_binary, session):
         debug_log.flush()
 
     try:
-        log_debug(f"Processing chart {chart_name} from {chart_path}")
+        log_debug(f"Generating overrides for chart {chart_name} from {chart_path}")
 
-        # --- Extract Chart if Needed ---
-        if str(chart_path).endswith(".tgz"):
-            # Create temporary directory for extraction
-            temp_dir = Path(tempfile.mkdtemp(prefix=f"{chart_name}-extract-"))
-            log_debug(f"Extracting {chart_path} to {temp_dir}")
+        # --- Chart Path Handling ---
+        chart_path = Path(chart_path)
+        if not chart_path.exists():
+            raise FileNotFoundError(f"Chart path does not exist: {chart_path}")
 
-            try:
-                with tarfile.open(chart_path) as tar:
-                    tar.extractall(temp_dir)
-                # Find the extracted directory (usually the first directory)
-                extracted_dirs = [d for d in temp_dir.iterdir() if d.is_dir()]
-                if not extracted_dirs:
-                    error_msg = f"No directories found after extracting {chart_path}"
-                    log_debug(f"Error: {error_msg}")
-                    return TestResult(
-                        chart_name,
-                        chart_path,
-                        classification,
-                        "SETUP_ERROR",
-                        "SETUP_ERROR",
-                        error_msg,
-                        0,
-                        0,
-                    )
-                chart_path = extracted_dirs[0]  # Use the first directory found
-                log_debug(f"Extracted chart to {chart_path}")
-            except Exception as e:
-                error_msg = f"Error extracting chart {chart_path}: {e}"
-                log_debug(f"Error: {error_msg}")
-                return TestResult(
-                    chart_name,
-                    chart_path,
-                    classification,
-                    "SETUP_ERROR",
-                    "SETUP_ERROR",
-                    error_msg,
-                    0,
-                    0,
+        # If it's a .tgz file, use it directly
+        if chart_path.suffix == ".tgz":
+            log_debug(f"Using chart archive: {chart_path}")
+        else:
+            # For directory paths, ensure it's a valid chart directory
+            if not (chart_path / "Chart.yaml").exists():
+                raise ValueError(
+                    f"Invalid chart directory: {chart_path} - Chart.yaml not found"
                 )
+            log_debug(f"Using chart directory: {chart_path}")
 
-        # --- Find Chart Directory ---
-        extracted_chart_dir = None
+        # --- Override Generation ---
+        log_debug(f"Generating overrides for {chart_name}...")
+        start_time = time.time()
+        # --- Command Construction ---
+        override_cmd = [
+            str(irr_binary),
+            "override",
+            "--chart-path",
+            str(chart_path),
+            "--output-file",
+            str(output_file),
+            "--target-registry",
+            target_registry,
+            "--source-registries",
+            args.source_registries,
+        ]
+
+        # Add optional parameters if specified
+        if hasattr(args, "target_tag") and args.target_tag:
+            override_cmd.extend(["--target-tag", args.target_tag])
+        if hasattr(args, "target_repository") and args.target_repository:
+            override_cmd.extend(["--target-repository", args.target_repository])
+
+        log_debug(f"Running command: {' '.join(override_cmd)}")
+
+        # --- Execute Command ---
         try:
-            # First, check if Chart.yaml exists directly in the provided path
-            if (chart_path / "Chart.yaml").is_file():
-                extracted_chart_dir = chart_path
-                log_debug(f"Found Chart.yaml directly in {chart_path}")
-            else:
-                # Search for Chart.yaml in immediate subdirectories
-                for subdir in chart_path.iterdir():
-                    if subdir.is_dir() and (subdir / "Chart.yaml").is_file():
-                        extracted_chart_dir = subdir
-                        log_debug(f"Found Chart.yaml in subdirectory {subdir}")
-                        break
-
-            if not extracted_chart_dir:
-                error_msg = (
-                    f"Could not locate Chart.yaml in {chart_path} or its subdirectories"
-                )
+            result = subprocess.run(
+                override_cmd,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if result.returncode != 0:
+                error_msg = f"Command failed with exit code {result.returncode}: {result.stderr}"
                 log_debug(f"Error: {error_msg}")
                 return TestResult(
                     chart_name,
                     chart_path,
                     classification,
-                    "SETUP_ERROR",
-                    "SETUP_ERROR",
+                    "OVERRIDE_ERROR",
+                    "OVERRIDE_ERROR",
                     error_msg,
                     0,
                     0,
                 )
-
-            # Verify Chart.yaml content
-            chart_yaml_path = extracted_chart_dir / "Chart.yaml"
-            try:
-                with open(chart_yaml_path) as f:
-                    chart_yaml = yaml.safe_load(f)
-                log_debug(f"Chart.yaml content: {json.dumps(chart_yaml, indent=2)}")
-            except Exception as e:
-                log_debug(f"Warning: Could not read Chart.yaml content: {e}")
-
-        except Exception as e:
-            error_msg = f"Error while searching for Chart.yaml: {e}"
+        except subprocess.TimeoutExpired:
+            error_msg = "Command timed out after 120 seconds"
             log_debug(f"Error: {error_msg}")
             return TestResult(
                 chart_name,
                 chart_path,
                 classification,
-                "SETUP_ERROR",
-                "SETUP_ERROR",
+                "TIMEOUT_ERROR",
+                "TIMEOUT_ERROR",
                 error_msg,
                 0,
                 0,
             )
-
-        log_debug(f"Testing chart override: {chart_name} at {extracted_chart_dir}")
-
-        try:
-            # Get chart classification early for template selection
-            classification = get_chart_classification(extracted_chart_dir)
-            log_debug(f"Classification: {classification}")
-
-            # --- Override Generation ---
-            log_debug(f"Generating overrides for {chart_name}...")
-            start_time = time.time()
-            override_cmd = [
-                str(irr_binary),
-                "override",
-                "--chart-path",
-                str(extracted_chart_dir),  # Use correctly identified chart directory
-                "--target-registry",
-                target_registry,
-                "--source-registries",
-                "docker.io,quay.io,gcr.io,ghcr.io,k8s.gcr.io,registry.k8s.io",
-                "--output-file",
-                str(output_file),
-                "--debug",
-            ]
-
-            log_debug(f"Running override command: {' '.join(override_cmd)}")
-
-            try:
-                result = await asyncio.create_subprocess_exec(
-                    *override_cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                stdout, stderr = await asyncio.wait_for(
-                    result.communicate(), timeout=120
-                )
-                override_duration = time.time() - start_time
-                override_stdout_str = stdout.decode().strip() if stdout else ""
-                override_stderr_str = stderr.decode().strip() if stderr else ""
-
-                log_debug("Override command output:")
-                log_debug(f"Exit code: {result.returncode}")
-                if override_stdout_str:
-                    log_debug(f"Stdout:\n{override_stdout_str}")
-                if override_stderr_str:
-                    log_debug(f"Stderr:\n{override_stderr_str}")
-
-                # Check return code immediately after communicate
-                if result.returncode != 0:
-                    error_msg = f"irr override failed (code {result.returncode}):\nCommand: {' '.join(override_cmd)}\nStderr: {override_stderr_str}\nStdout: {override_stdout_str}"
-                    log_debug(f"Error generating overrides for {chart_name}.")
-                    category = categorize_error(
-                        override_stderr_str or override_stdout_str
-                    )
-                    return TestResult(
-                        chart_name,
-                        extracted_chart_dir,
-                        classification,
-                        "OVERRIDE_ERROR",
-                        category,
-                        error_msg,
-                        override_duration,
-                        0,
-                    )
-
-                # Verify override file exists and is not empty
-                if not output_file.exists() or output_file.stat().st_size == 0:
-                    error_msg = f"Override file not created or empty after successful run.\nCommand: {' '.join(override_cmd)}\nStderr: {override_stderr_str}\nStdout: {override_stdout_str}"
-                    log_debug(f"Error: {error_msg}")
-                    return TestResult(
-                        chart_name,
-                        extracted_chart_dir,
-                        classification,
-                        "OVERRIDE_ERROR",
-                        "OVERRIDE_ERROR",
-                        error_msg,
-                        override_duration,
-                        0,
-                    )
-
-                # Log override file content for debugging
-                try:
-                    with open(output_file) as f:
-                        override_content = f.read()
-                    log_debug(f"Generated override file content:\n{override_content}")
-                except Exception as e:
-                    log_debug(f"Warning: Could not read override file: {e}")
-
-                log_debug(
-                    f"Override generation successful ({override_duration:.2f}s). Output: {output_file}"
-                )
-
-            except asyncio.TimeoutError as e:
-                error_msg = f"Timeout during override generation: {e}"
-                log_debug(f"Error: {error_msg}")
-                return TestResult(
-                    chart_name,
-                    extracted_chart_dir,
-                    classification,
-                    "TIMEOUT_ERROR",
-                    "TIMEOUT_ERROR",
-                    error_msg,
-                    time.time() - start_time,
-                    0,
-                )
-            except Exception as e:
-                error_msg = f"Error during override generation: {e}"
-                log_debug(f"Error: {error_msg}")
-                return TestResult(
-                    chart_name,
-                    extracted_chart_dir,
-                    classification,
-                    "OVERRIDE_ERROR",
-                    "OVERRIDE_ERROR",
-                    error_msg,
-                    time.time() - start_time,
-                    0,
-                )
-
-            # --- Helm Template Validation ---
-            log_debug(f"Validating with helm template for {chart_name}...")
-            start_time = time.time()
-            values_temp_dir = None
-            try:
-                # Create temporary directory for values file
-                values_temp_dir = Path(tempfile.mkdtemp(prefix="helm-values-"))
-                temp_values_path = values_temp_dir / "temp_class_values.yaml"
-
-                # Generate appropriate values based on classification
-                values_content = get_values_content(classification, target_registry)
-                temp_values_path.write_text(values_content)
-                log_debug(f"Generated values file content:\n{values_content}")
-
-                # Construct helm template command
-                template_cmd = [
-                    "helm",
-                    "template",
-                    chart_name,
-                    str(
-                        extracted_chart_dir
-                    ),  # Use correctly identified chart directory
-                    "-f",
-                    str(temp_values_path),  # Classification-based values first
-                    "-f",
-                    str(output_file),  # Override file last for precedence
-                ]
-
-                log_debug(f"Running template command: {' '.join(template_cmd)}")
-
-                # Execute helm template
-                template_process = await asyncio.create_subprocess_exec(
-                    *template_cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                stdout_tmpl, stderr_tmpl = await asyncio.wait_for(
-                    template_process.communicate(), timeout=60
-                )
-                validation_duration = time.time() - start_time
-
-                template_stdout_str = (
-                    stdout_tmpl.decode().strip() if stdout_tmpl else ""
-                )
-                template_stderr_str = (
-                    stderr_tmpl.decode().strip() if stderr_tmpl else ""
-                )
-
-                log_debug("Template command output:")
-                log_debug(f"Exit code: {template_process.returncode}")
-                if template_stdout_str:
-                    log_debug(f"Stdout:\n{template_stdout_str}")
-                if template_stderr_str:
-                    log_debug(f"Stderr:\n{template_stderr_str}")
-
-                if template_process.returncode != 0:
-                    error_msg = f"Helm template failed (code {template_process.returncode}):\nCommand: {' '.join(template_cmd)}\nStderr: {template_stderr_str}\nStdout: {template_stdout_str}"
-                    log_debug(f"Helm template validation failed for {chart_name}.")
-                    category = categorize_error(
-                        template_stderr_str or template_stdout_str
-                    )
-                    return TestResult(
-                        chart_name,
-                        extracted_chart_dir,
-                        classification,
-                        "TEMPLATE_ERROR",
-                        category,
-                        error_msg,
-                        override_duration,
-                        validation_duration,
-                    )
-
-                log_debug(
-                    f"Helm template validation successful ({validation_duration:.2f}s)."
-                )
-
-            except asyncio.TimeoutError as e:
-                error_msg = f"Timeout during helm template validation: {e}"
-                log_debug(f"Error: {error_msg}")
-                return TestResult(
-                    chart_name,
-                    extracted_chart_dir,
-                    classification,
-                    "TIMEOUT_ERROR",
-                    "TIMEOUT_ERROR",
-                    error_msg,
-                    override_duration,
-                    time.time() - start_time,
-                )
-            except Exception as e:
-                error_msg = f"Error during helm template validation: {e}"
-                log_debug(f"Error: {error_msg}")
-                return TestResult(
-                    chart_name,
-                    extracted_chart_dir,
-                    classification,
-                    "TEMPLATE_ERROR",
-                    "TEMPLATE_ERROR",
-                    error_msg,
-                    override_duration,
-                    time.time() - start_time,
-                )
-            finally:
-                if values_temp_dir and values_temp_dir.exists():
-                    shutil.rmtree(values_temp_dir, ignore_errors=True)
-
-            # Success case
-            log_debug(f"Success: Chart {chart_name} processed successfully.")
-            return TestResult(
-                chart_name,
-                extracted_chart_dir,
-                classification,
-                "SUCCESS",
-                "",
-                "",
-                override_duration,
-                validation_duration,
-            )
-
         except Exception as e:
-            error_msg = f"Unexpected error processing chart {chart_name}: {str(e)}"
+            error_msg = f"Error executing command: {e}"
             log_debug(f"Error: {error_msg}")
-            import traceback
-
-            traceback.print_exc(file=debug_log)
             return TestResult(
                 chart_name,
-                extracted_chart_dir,
+                chart_path,
                 classification,
-                "UNKNOWN_ERROR",
-                "UNKNOWN_ERROR",
+                "OVERRIDE_ERROR",
+                "OVERRIDE_ERROR",
                 error_msg,
-                override_duration,
-                validation_duration,
+                0,
+                0,
             )
+
+        # --- Verify Output ---
+        if not output_file.exists():
+            error_msg = f"Expected output file not found: {output_file}"
+            log_debug(f"Error: {error_msg}")
+            return TestResult(
+                chart_name,
+                chart_path,
+                classification,
+                "OVERRIDE_ERROR",
+                "OVERRIDE_ERROR",
+                error_msg,
+                0,
+                0,
+            )
+
+        # --- Parse Output ---
+        try:
+            with open(output_file) as f:
+                override_yaml = yaml.safe_load(f)
+            log_debug(f"Override YAML content: {json.dumps(override_yaml, indent=2)}")
+        except Exception as e:
+            error_msg = f"Error parsing override YAML: {e}"
+            log_debug(f"Error: {error_msg}")
+            return TestResult(
+                chart_name,
+                chart_path,
+                classification,
+                "TEMPLATE_ERROR",
+                "TEMPLATE_ERROR",
+                error_msg,
+                0,
+                0,
+            )
+
+        # --- Validate Output ---
+        if not isinstance(override_yaml, dict):
+            error_msg = "Override YAML is not a dictionary"
+            log_debug(f"Error: {error_msg}")
+            return TestResult(
+                chart_name,
+                chart_path,
+                classification,
+                "TEMPLATE_ERROR",
+                "TEMPLATE_ERROR",
+                error_msg,
+                0,
+                0,
+            )
+
+        # --- Success ---
+        override_duration = time.time() - start_time
+        return TestResult(
+            chart_name,
+            chart_path,
+            classification,
+            "SUCCESS",
+            "SUCCESS",
+            "Override generated successfully",
+            override_duration,
+            0,
+        )
+
+    except Exception as e:
+        error_msg = f"Unexpected error processing chart {chart_name}: {str(e)}"
+        log_debug(f"Error: {error_msg}")
+        import traceback
+
+        traceback.print_exc(file=debug_log)
+        return TestResult(
+            chart_name,
+            chart_path,
+            classification,
+            "UNKNOWN_ERROR",
+            "UNKNOWN_ERROR",
+            error_msg,
+            0,
+            0,
+        )
 
     finally:
-        # Clean up temporary directory if it was created
-        if temp_dir and temp_dir.exists():
-            shutil.rmtree(temp_dir, ignore_errors=True)
+        # Close debug log file
+        debug_log.close()
+
+
+async def test_chart_validate(chart_info, target_registry, irr_binary, session, args):
+    """Test chart validation against existing override files."""
+    chart_name, chart_path = chart_info
+    override_file = TEST_OUTPUT_DIR / f"{chart_name}-values.yaml"
+    debug_log_file = TEST_OUTPUT_DIR / f"{chart_name}-validate-debug.log"
+
+    # --- Initialize variables ---
+    classification = "UNKNOWN"
+    validation_duration = 0
+    result = None
+
+    # Create debug log file
+    debug_log_file.parent.mkdir(parents=True, exist_ok=True)
+    debug_log = open(debug_log_file, "w")
+
+    def log_debug(msg):
+        """Helper to log debug messages to both console and file."""
+        print(f"  DEBUG: {msg}")
+        debug_log.write(f"{msg}\n")
+        debug_log.flush()
+
+    try:
+        log_debug(f"Validating chart {chart_name} from {chart_path}")
+
+        # --- Chart Path Handling ---
+        chart_path = Path(chart_path)
+        if not chart_path.exists():
+            raise FileNotFoundError(f"Chart path does not exist: {chart_path}")
+
+        # Get chart classification and appropriate template
+        classification = get_chart_classification(chart_path)
+        log_debug(f"Chart classified as: {classification}")
+
+        # Get appropriate values template based on classification
+        log_debug(f"Using template for classification: {classification}")
+
+        # --- Validation ---
+        log_debug(f"Validating overrides for {chart_name}...")
+        start_time = time.time()
+
+        # --- Command Construction ---
+        validate_cmd = [
+            str(irr_binary),
+            "validate",
+            "--chart-path",
+            str(chart_path),
+            "--values",
+            str(override_file),
+        ]
+
+        # Set a high Kubernetes version to avoid version compatibility errors
+        validate_cmd.extend(["--set", "kubeVersion=1.28.0"])
+
+        # Add classification-specific flags
+        if classification == "BITNAMI":
+            validate_cmd.extend(
+                [
+                    "--set",
+                    "global.imageRegistry=" + target_registry,
+                    "--set",
+                    "global.security.allowInsecureImages=true",
+                    "--set",
+                    "global.storageClass=standard",
+                    "--set",
+                    "global.redis.auth.enabled=false",
+                    "--set",
+                    "global.postgresql.auth.enabled=false",
+                    "--set",
+                    "global.mongodb.auth.enabled=false",
+                ]
+            )
+        elif classification == "STANDARD_MAP":
+            validate_cmd.extend(
+                [
+                    "--set",
+                    "image.registry=" + target_registry,
+                    "--set",
+                    "image.pullPolicy=IfNotPresent",
+                ]
+            )
+        elif classification == "STANDARD_STRING":
+            validate_cmd.extend(["--set", f"image={target_registry}/placeholder:1.0.0"])
+
+        # Add chart-specific required values based on error patterns
+        chart_name_lower = chart_name.lower()
+
+        # Loki and related charts
+        if "loki" in chart_name_lower:
+            validate_cmd.extend(
+                [
+                    "--set",
+                    "lokiAddress=http://loki:3100",
+                    "--set",
+                    "tempoAddress.push=http://tempo:3200",
+                    "--set",
+                    "loki.storage.bucketNames.chunks=chunks",
+                    "--set",
+                    "loki.storage.bucketNames.blocks=blocks",
+                    "--set",
+                    "loki.storage.bucketNames.alertmanager=alertmanager",
+                    "--set",
+                    "loki.auth_enabled=false",
+                    "--set",
+                    "loki.storage.type=filesystem",
+                ]
+            )
+
+        # Linkerd charts
+        if "linkerd" in chart_name_lower:
+            validate_cmd.extend(
+                [
+                    "--set",
+                    "identity.issuer.crtPEM=placeholder-cert",
+                    "--set",
+                    "identity.issuer.keyPEM=placeholder-key",
+                    "--set",
+                    "identity.issuer.tls.crtPEM=placeholder-cert",
+                    "--set",
+                    "identity.issuer.tls.keyPEM=placeholder-key",
+                    "--set",
+                    "identity.issuer.scheme=kubernetes.io/tls",
+                ]
+            )
+
+        # Teleport charts
+        if "teleport" in chart_name_lower:
+            validate_cmd.extend(
+                [
+                    "--set",
+                    "proxyAddr=teleport-proxy:3023",
+                    "--set",
+                    "kubeClusterName=placeholder-cluster",
+                    "--set",
+                    "auth.teleportConfigRaw.auth_service.enabled=true",
+                    "--set",
+                    "auth.teleportConfigRaw.proxy_service.enabled=true",
+                ]
+            )
+
+        # Workload identity charts
+        if "workload-identity" in chart_name_lower:
+            validate_cmd.extend(
+                [
+                    "--set",
+                    "azureTenantID=placeholder-tenant-id",
+                    "--set",
+                    "azureClientID=placeholder-client-id",
+                    "--set",
+                    "azureClientSecret=placeholder-client-secret",
+                ]
+            )
+
+        # Profiling and performance charts
+        if "profiling" in chart_name_lower or "pf-host-agent" in chart_name_lower:
+            validate_cmd.extend(
+                [
+                    "--set",
+                    "projectID=12345",
+                    "--set",
+                    "endpoint=profiling-agent:8080",
+                    "--set",
+                    "serviceAccount.create=true",
+                    "--set",
+                    "serviceAccount.name=profiling-agent",
+                ]
+            )
+
+        # Cert-manager charts
+        if "certmanager" in chart_name_lower:
+            validate_cmd.extend(
+                [
+                    "--set",
+                    "email=placeholder@example.com",
+                    "--set",
+                    "installCRDs=true",
+                    "--set",
+                    "prometheus.enabled=false",
+                ]
+            )
+
+        # Harbor scanner charts
+        if "harbor-scanner-aqua" in chart_name_lower:
+            validate_cmd.extend(
+                [
+                    "--set",
+                    "aqua.username=placeholder-user",
+                    "--set",
+                    "aqua.password=placeholder-pass",
+                    "--set",
+                    "aqua.registry=placeholder-registry",
+                    "--set",
+                    "aqua.gateway=placeholder-gateway",
+                ]
+            )
+
+        # AWS related charts
+        if "aws-load-balancer" in chart_name_lower or "aws-nth" in chart_name_lower:
+            validate_cmd.extend(
+                [
+                    "--set",
+                    "clusterName=placeholder-cluster",
+                    "--set",
+                    "region=us-west-2",
+                    "--set",
+                    "serviceAccount.create=true",
+                    "--set",
+                    "serviceAccount.name=aws-lb-controller",
+                ]
+            )
+
+        # OpenTelemetry charts
+        if "opentelemetry" in chart_name_lower:
+            validate_cmd.extend(
+                [
+                    "--set",
+                    "mode=deployment",
+                    "--set",
+                    "collector.serviceAccount.create=true",
+                    "--set",
+                    "collector.serviceAccount.name=opentelemetry",
+                ]
+            )
+
+        # Grafana charts
+        if "grafana" in chart_name_lower:
+            validate_cmd.extend(
+                [
+                    "--set",
+                    "watchNamespaces=default",
+                    "--set",
+                    "adminPassword=admin",
+                    "--set",
+                    "persistence.enabled=false",
+                ]
+            )
+
+        # Tempo charts
+        if "tempo" in chart_name_lower:
+            validate_cmd.extend(
+                [
+                    "--set",
+                    "tempoAddress.push=http://tempo:3200",
+                    "--set",
+                    "storage.trace.backend=local",
+                    "--set",
+                    "storage.trace.local.path=/tmp/tempo/traces",
+                ]
+            )
+
+        # GitLab charts
+        if "gitlab" in chart_name_lower:
+            validate_cmd.extend(
+                [
+                    "--set",
+                    "certmanager-issuer.email=placeholder@example.com",
+                    "--set",
+                    "global.ingress.enabled=false",
+                    "--set",
+                    "global.postgresql.serviceAccount.create=true",
+                ]
+            )
+
+        # ECK (Elastic Cloud on Kubernetes) charts
+        if "eck" in chart_name_lower:
+            validate_cmd.extend(
+                [
+                    "--set",
+                    "daemonSet.enabled=true",
+                    "--set",
+                    "securityContext.runAsUser=1000",
+                    "--set",
+                    "securityContext.fsGroup=1000",
+                ]
+            )
+
+        # RKE2 charts
+        if "rke2" in chart_name_lower:
+            validate_cmd.extend(
+                [
+                    "--set",
+                    "global.clusterDNS=10.96.0.10",
+                    "--set",
+                    "global.clusterDomain=cluster.local",
+                    "--set",
+                    "global.systemDefaultRegistry=",
+                ]
+            )
+
+        # Prometheus charts
+        if "prometheus" in chart_name_lower:
+            validate_cmd.extend(
+                [
+                    "--set",
+                    "version=1.4.0",
+                    "--set",
+                    "server.persistentVolume.enabled=false",
+                    "--set",
+                    "alertmanager.persistentVolume.enabled=false",
+                ]
+            )
+
+        # Auto-deploy charts
+        if "auto-deploy" in chart_name_lower:
+            validate_cmd.extend(
+                [
+                    "--set",
+                    "image.secrets={}",
+                    "--set",
+                    "serviceAccount.create=true",
+                    "--set",
+                    "serviceAccount.name=auto-deploy",
+                ]
+            )
+
+        log_debug(f"Running command: {' '.join(validate_cmd)}")
+
+        # --- Execute Command ---
+        try:
+            result = subprocess.run(
+                validate_cmd,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if result.returncode != 0:
+                error_msg = f"Command failed with exit code {result.returncode}: {result.stderr}"
+                log_debug(f"Error: {error_msg}")
+                # Add detailed error logging
+                log_debug("Validation Error Details:")
+                log_debug(result.stderr)
+                if result.stdout:
+                    log_debug("Command Output:")
+                    log_debug(result.stdout)
+
+                # Check for specific error patterns and log them
+                if "kubeVersion" in result.stderr and "incompatible" in result.stderr:
+                    log_debug("Kubernetes version compatibility error detected")
+                elif "required" in result.stderr and "is required" in result.stderr:
+                    log_debug("Required value error detected")
+                elif "schema" in result.stderr and "specifications" in result.stderr:
+                    log_debug("Schema validation error detected")
+
+                return TestResult(
+                    chart_name,
+                    chart_path,
+                    classification,
+                    "VALIDATE_ERROR",
+                    categorize_error(result.stderr),
+                    error_msg,
+                    0,
+                    0,
+                )
+        except subprocess.TimeoutExpired:
+            error_msg = "Command timed out after 120 seconds"
+            log_debug(f"Error: {error_msg}")
+            return TestResult(
+                chart_name,
+                chart_path,
+                classification,
+                "TIMEOUT_ERROR",
+                "TIMEOUT_ERROR",
+                error_msg,
+                0,
+                0,
+            )
+        except Exception as e:
+            error_msg = f"Error executing command: {e}"
+            log_debug(f"Error: {error_msg}")
+            return TestResult(
+                chart_name,
+                chart_path,
+                classification,
+                "VALIDATE_ERROR",
+                "VALIDATE_ERROR",
+                error_msg,
+                0,
+                0,
+            )
+
+        # --- Success ---
+        validation_duration = time.time() - start_time
+        return TestResult(
+            chart_name,
+            chart_path,
+            classification,
+            "SUCCESS",
+            "SUCCESS",
+            "Validation successful",
+            0,
+            validation_duration,
+        )
+
+    except Exception as e:
+        error_msg = f"Unexpected error validating chart {chart_name}: {str(e)}"
+        log_debug(f"Error: {error_msg}")
+        import traceback
+
+        traceback.print_exc(file=debug_log)
+        return TestResult(
+            chart_name,
+            chart_path,
+            classification,
+            "UNKNOWN_ERROR",
+            "UNKNOWN_ERROR",
+            error_msg,
+            0,
+            0,
+        )
+
+    finally:
         # Close debug log file
         debug_log.close()
 
@@ -1009,47 +1216,36 @@ def generate_summary_json(total: int, analysis_success: int, override_success: i
 def process_chart(
     chart: str, chart_dir: Path, target_registry: str
 ) -> Tuple[str, int, int]:
-    """Process a single chart and return results."""
-    temp_dir = tempfile.mkdtemp()
+    """Process a chart, returning the chart name, analysis success (0/1), and override success (0/1)."""
+    # Removing unused variables
+    chart_name = chart
 
+    # Fixing undefined variables by providing explicit parameters
     try:
-        # Get chart from cache
-        chart_name = os.path.basename(chart)
-        cached_chart = get_cached_chart(chart_name)
+        # Ensure irr_binary is defined for this context
+        irr_binary = BASE_DIR / "bin" / "irr"
 
-        if not cached_chart:
-            print(
-                f"Error: Chart {chart} not found in cache. Please run pull-charts.py first."
-            )
-            return chart, 0, 0
+        # Create minimal args class with required properties for compatibility
+        class Args:
+            source_registries = "docker.io"
+            target_tag = None
+            target_repository = None
 
-        print(f"Using cached chart: {cached_chart}")
+        test_args = Args()
 
-        # Extract the cached chart
-        with tarfile.open(cached_chart) as tar:
-            tar.extractall(temp_dir)
+        # Test chart override generation
+        override_success = 0
+        result = test_chart_override(
+            (chart, chart_dir), target_registry, irr_binary, None, test_args
+        )
+        if result and result.status == "SUCCESS":
+            override_success = 1
 
-            # Find the extracted directory
-            chart_dir = next(Path(temp_dir).iterdir())
-
-            # Test chart template rendering
-            analysis_success = 0
-            if test_chart(chart, chart_dir):
-                analysis_success = 1
-
-            # Test chart override generation
-            override_success = 0
-            if test_chart_override(chart, chart_dir, target_registry):
-                override_success = 1
-
-            return chart, analysis_success, override_success
-
+        # Return the results
+        return chart_name, 1, override_success
     except Exception as e:
-        print(f"Error processing chart {chart}: {e}")
-        return chart, 0, 0
-    finally:
-        # Cleanup
-        shutil.rmtree(temp_dir, ignore_errors=True)
+        print(f"Error processing chart {chart_name}: {e}")
+        return chart_name, 0, 0
 
 
 def ensure_default_values():
@@ -1184,15 +1380,96 @@ def get_values_content(classification: str, target_registry: str) -> str:
     return final_template
 
 
+async def process_charts(
+    charts_to_test_names: List[str], args
+) -> List[Tuple[str, Path]]:
+    """Process charts either from local cache or by pulling them."""
+    charts_to_process_info: List[Tuple[str, Path]] = []
+
+    if args.local_only:
+        # In local mode, directly use cached charts
+        for chart_name in charts_to_test_names:
+            chart_path = CHART_CACHE_DIR / f"{chart_name}.tgz"
+            if chart_path.exists():
+                charts_to_process_info.append((chart_name, chart_path))
+            else:
+                print(f"Warning: Chart file not found: {chart_path}")
+    else:
+        # In update mode, handle chart pulling and caching
+        pull_tasks = []
+        charts_to_attempt_pull = []
+
+        # Decide which charts need pulling
+        for chart_full_name in charts_to_test_names:
+            chart_name = (
+                chart_full_name.split("/")[1]
+                if "/" in chart_full_name
+                else chart_full_name
+            )
+            cached_path = get_cached_chart(chart_name)
+            if not cached_path or args.no_cache:
+                charts_to_attempt_pull.append(chart_full_name)
+
+        # Pull needed charts concurrently
+        async with asyncio.Semaphore(10):  # Limit concurrent helm pulls
+            for chart_full_name in charts_to_attempt_pull:
+                pull_tasks.append(
+                    asyncio.create_task(pull_chart(chart_full_name, CHART_CACHE_DIR))
+                )
+
+            pull_results = await asyncio.gather(*pull_tasks, return_exceptions=True)
+
+        # Process pull results and gather charts to test
+        pull_errors = 0
+        pulled_chart_paths = {}
+        for i, result in enumerate(pull_results):
+            chart_full_name = charts_to_attempt_pull[i]
+            if isinstance(result, Exception):
+                print(f"Error pulling chart {chart_full_name}: {result}")
+                pull_errors += 1
+            elif result[0]:  # Success
+                chart_name = (
+                    chart_full_name.split("/")[1]
+                    if "/" in chart_full_name
+                    else chart_full_name
+                )
+                pulled_chart_paths[chart_name] = result[1]
+            else:  # Failure reported by pull_chart
+                pull_errors += 1
+
+        # Add successfully pulled and cached charts
+        for chart_full_name in charts_to_test_names:
+            chart_name = (
+                chart_full_name.split("/")[1]
+                if "/" in chart_full_name
+                else chart_full_name
+            )
+            if chart_name in pulled_chart_paths:
+                charts_to_process_info.append(
+                    (chart_name, pulled_chart_paths[chart_name])
+                )
+            else:
+                cached_path = get_cached_chart(chart_name)
+                if (
+                    cached_path and chart_name not in pulled_chart_paths
+                ):  # Only add if not attempted/failed pull
+                    charts_to_process_info.append((chart_name, cached_path))
+
+        if pull_errors > 0:
+            print(f"\nWarning: Failed to pull or process {pull_errors} charts.")
+
+    return charts_to_process_info
+
+
 async def main():
     """
     Main orchestration function.
-    Finds charts (expecting them to be cached/downloaded), runs tests concurrently,
-    and processes results.
-    Note: Chart pulling is handled by pull-charts.py or relies on a populated cache.
+    Supports two modes:
+    1. Update and Test: Downloads/updates charts and tests them
+    2. Local Test: Tests only charts present in test/chart-cache directory
     """
     start_total_time = time.time()
-    parser = argparse.ArgumentParser(description="Test Helm chart override generation.")
+    parser = argparse.ArgumentParser(description="Test Helm chart operations.")
     parser.add_argument("--target-registry", required=True, help="Target registry URL")
     parser.add_argument(
         "--chart-filter", default=None, help="Regex pattern to filter chart names"
@@ -1213,6 +1490,26 @@ async def main():
     parser.add_argument(
         "--update-repos", action="store_true", help="Force update Helm repositories"
     )
+    parser.add_argument(
+        "--local-only",
+        action="store_true",
+        help="Only test charts present in test/chart-cache directory",
+    )
+    parser.add_argument(
+        "--source-registries",
+        required=True,
+        help="Comma-separated list of source registries (required)",
+    )
+    parser.add_argument("--target-tag", default=None, help="Target tag for images")
+    parser.add_argument(
+        "--target-repository", default=None, help="Target repository for images"
+    )
+    parser.add_argument(
+        "--operation",
+        choices=["override", "validate", "both"],
+        default="both",
+        help="Operation to test: override, validate, or both",
+    )
     args = parser.parse_args()
 
     # Ensure output directories exist
@@ -1225,34 +1522,49 @@ async def main():
         print(f"Error: irr binary not found at {irr_binary}. Please build it first.")
         sys.exit(1)
 
-    print("Adding Helm repositories...")
-    add_helm_repositories()
-
-    if args.update_repos:
-        print("Updating Helm repositories...")
-        update_helm_repositories()
-
-    print("Listing charts...")
-    all_charts_full_names = list_charts()
-    print(f"Found {len(all_charts_full_names)} total charts in repositories.")
-
-    # Apply filtering
-    charts_to_test_names = []
-    skip_list = args.skip_charts.split(",") if args.skip_charts else []
-    if args.chart_filter:
-        pattern = re.compile(args.chart_filter)
-        charts_to_test_names = [
-            chart
-            for chart in all_charts_full_names
-            if pattern.search(chart) and chart not in skip_list
-        ]
-        print(
-            f"Filtered to {len(charts_to_test_names)} charts based on pattern: {args.chart_filter}"
-        )
+    # Get list of charts to test
+    if args.local_only:
+        print("Running in local-only mode - testing charts from cache directory")
+        charts_to_test_names = []
+        for chart_file in CHART_CACHE_DIR.glob("*.tgz"):
+            chart_name = chart_file.stem  # Remove .tgz extension
+            # For validate operation, only include charts with override files
+            if args.operation == "validate":
+                if (TEST_OUTPUT_DIR / f"{chart_name}-values.yaml").exists():
+                    charts_to_test_names.append(chart_name)
+            else:
+                charts_to_test_names.append(chart_name)
+        print(f"Found {len(charts_to_test_names)} charts in cache directory")
     else:
-        charts_to_test_names = [
-            chart for chart in all_charts_full_names if chart not in skip_list
-        ]
+        print("Running in update and test mode")
+        print("Adding Helm repositories...")
+        add_helm_repositories()
+
+        if args.update_repos:
+            print("Updating Helm repositories...")
+            update_helm_repositories()
+
+        print("Listing charts...")
+        all_charts_full_names = list_charts()
+        print(f"Found {len(all_charts_full_names)} total charts in repositories.")
+
+        # Apply filtering
+        charts_to_test_names = []
+        skip_list = args.skip_charts.split(",") if args.skip_charts else []
+        if args.chart_filter:
+            pattern = re.compile(args.chart_filter)
+            charts_to_test_names = [
+                chart
+                for chart in all_charts_full_names
+                if pattern.search(chart) and chart not in skip_list
+            ]
+            print(
+                f"Filtered to {len(charts_to_test_names)} charts based on pattern: {args.chart_filter}"
+            )
+        else:
+            charts_to_test_names = [
+                chart for chart in all_charts_full_names if chart not in skip_list
+            ]
 
     # Apply max charts limit
     if args.max_charts is not None and len(charts_to_test_names) > args.max_charts:
@@ -1263,104 +1575,70 @@ async def main():
         print("No charts selected for testing after filtering.")
         sys.exit(0)
 
-    # --- Chart Pulling (Now async) ---
-    print("\n--- Ensuring Charts are Cached ---")
-    pull_tasks = []
-    charts_to_attempt_pull = []
-    # Decide which charts need pulling
-    for chart_full_name in charts_to_test_names:
-        chart_name = (
-            chart_full_name.split("/")[1] if "/" in chart_full_name else chart_full_name
-        )
-        cached_path = get_cached_chart(chart_name)
-        if not cached_path or args.no_cache:
-            charts_to_attempt_pull.append(chart_full_name)
-        # else: Add chart info for cached charts later
+    # --- Chart Processing ---
+    print("\n--- Processing Charts ---")
+    charts_to_process_info = await process_charts(charts_to_test_names, args)
 
-    # Pull needed charts concurrently
-    async with asyncio.Semaphore(10):  # Limit concurrent helm pulls
-        for chart_full_name in charts_to_attempt_pull:
-            pull_tasks.append(
-                asyncio.create_task(pull_chart(chart_full_name, CHART_CACHE_DIR))
-            )
-
-        pull_results = await asyncio.gather(*pull_tasks, return_exceptions=True)
-
-    # Process pull results and gather charts to test
-    charts_to_process_info: List[Tuple[str, Path]] = []
-    pull_errors = 0
-    pulled_chart_paths = {}
-    for i, result in enumerate(pull_results):
-        chart_full_name = charts_to_attempt_pull[i]
-        if isinstance(result, Exception):
-            print(f"Error pulling chart {chart_full_name}: {result}")
-            pull_errors += 1
-        elif result[0]:  # Success
-            chart_name = (
-                chart_full_name.split("/")[1]
-                if "/" in chart_full_name
-                else chart_full_name
-            )
-            pulled_chart_paths[chart_name] = result[1]
-        else:  # Failure reported by pull_chart
-            pull_errors += 1
-
-    # Add successfully pulled and cached charts
-    for chart_full_name in charts_to_test_names:
-        chart_name = (
-            chart_full_name.split("/")[1] if "/" in chart_full_name else chart_full_name
-        )
-        if chart_name in pulled_chart_paths:
-            charts_to_process_info.append((chart_name, pulled_chart_paths[chart_name]))
-        else:
-            cached_path = get_cached_chart(chart_name)
-            if (
-                cached_path and chart_name not in pulled_chart_paths
-            ):  # Only add if not attempted/failed pull
-                charts_to_process_info.append((chart_name, cached_path))
-
-    if pull_errors > 0:
-        print(f"\nWarning: Failed to pull or process {pull_errors} charts.")
     if not charts_to_process_info:
-        print("No charts available to test after pull/cache phase.")
+        print("No charts available to test after processing phase.")
         sys.exit(0)
 
-    print(
-        f"\n--- Starting Override and Validation for {len(charts_to_process_info)} charts ---"
-    )
-    # --- Async Test Execution ---
-    tasks = []
-    # Limit concurrency using Semaphore
-    # Use a dummy session; subprocess calls don't need a shared HTTP session
-    limiter = asyncio.Semaphore(args.max_workers)
+    # --- Test Execution ---
+    all_results = []
 
-    async def run_with_limit(chart_info):
-        async with limiter:
-            return await test_chart_override(
-                chart_info, args.target_registry, irr_binary, None
+    if args.operation in ["override", "both"]:
+        print(
+            f"\n--- Starting Override Generation for {len(charts_to_process_info)} charts ---"
+        )
+        tasks = []
+        limiter = asyncio.Semaphore(args.max_workers)
+
+        async def run_override_with_limit(chart_info):
+            async with limiter:
+                return await test_chart_override(
+                    chart_info, args.target_registry, irr_binary, None, args
+                )
+
+        for chart_name, chart_path in charts_to_process_info:
+            task = asyncio.create_task(
+                run_override_with_limit((chart_name, chart_path))
+            )
+            tasks.append(task)
+
+        override_results = await asyncio.gather(*tasks, return_exceptions=True)
+        all_results.extend([r for r in override_results if isinstance(r, TestResult)])
+
+    if args.operation in ["validate", "both"]:
+        # For validate operation, only test charts that have override files
+        charts_to_validate = []
+        for chart_name, chart_path in charts_to_process_info:
+            if (TEST_OUTPUT_DIR / f"{chart_name}-values.yaml").exists():
+                charts_to_validate.append((chart_name, chart_path))
+
+        if charts_to_validate:
+            print(f"\n--- Starting Validation for {len(charts_to_validate)} charts ---")
+            tasks = []
+            limiter = asyncio.Semaphore(args.max_workers)
+
+            async def run_validate_with_limit(chart_info):
+                async with limiter:
+                    return await test_chart_validate(
+                        chart_info, args.target_registry, irr_binary, None, args
+                    )
+
+            for chart_info in charts_to_validate:
+                task = asyncio.create_task(run_validate_with_limit(chart_info))
+                tasks.append(task)
+
+            validate_results = await asyncio.gather(*tasks, return_exceptions=True)
+            all_results.extend(
+                [r for r in validate_results if isinstance(r, TestResult)]
             )
 
-    for chart_name, chart_path in charts_to_process_info:
-        task = asyncio.create_task(run_with_limit((chart_name, chart_path)))
-        tasks.append(task)
-
-    # Wait for all test tasks to complete
-    results: List[TestResult] = await asyncio.gather(*tasks, return_exceptions=True)
-
-    # --- Process Results --- (Handle potential exceptions from gather)
+    # --- Process Results ---
     print("\n--- Processing Test Results ---")
-    processed_results: List[TestResult] = []
-    gather_errors = 0
-    for result in results:
-        if isinstance(result, TestResult):
-            processed_results.append(result)
-        elif isinstance(result, Exception):
-            print(f"Error during task execution (likely asyncio gather): {result}")
-            gather_errors += 1
-            # Optionally create a dummy error result
-            # processed_results.append(TestResult("UNKNOWN_CHART", Path("."), "UNKNOWN", "GATHER_ERROR", "UNKNOWN_ERROR", str(result), 0, 0))
-        else:
-            print(f"Warning: Unexpected item in gather results: {type(result)}")
+    processed_results = all_results
+    gather_errors = len(all_results) - len(processed_results)
 
     if gather_errors > 0:
         print(f"Warning: {gather_errors} tasks failed during asyncio.gather.")
@@ -1449,7 +1727,7 @@ async def main():
     print(f"Total charts tested: {total_tested}")
     success_percentage = (success_count / total_tested * 100) if total_tested > 0 else 0
     print(
-        f"Successful overrides: {success_count}/{total_tested} ({success_percentage:.0f}%)"
+        f"Successful operations: {success_count}/{total_tested} ({success_percentage:.0f}%)"
     )
     print("Error category breakdown:")
     print(f"  - Error details: {error_details_file}")
