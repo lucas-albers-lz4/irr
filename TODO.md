@@ -41,7 +41,7 @@ _**Goal:** Implement the Helm plugin interface that wraps around the core CLI fu
       - *Disallowed Write Actions:* `Install`, `Upgrade`, `Uninstall`, `Rollback`, `Push`, `RepoAdd`, `RepoRemove`, `RepoUpdate`, or any direct modification of Kubernetes resources via the SDK's client.
       - *Rationale:* IRR's purpose is to *generate* overrides, not apply changes or modify Helm state.
     - [x] Fix namespace handling in Helm template command
-    - [ ] Fix dependency issues to build with Helm SDK
+    - [x] Fix dependency issues to build with Helm SDK
     - [ ] Add SDK integration to `inspect` and `validate` commands
     - [ ] Improve robustness, testability, and performance
   - [ ] **[P1]** Enhance Helm integration:
@@ -222,18 +222,18 @@ _**Goal:** Improve testability of complex logic by refactoring key components to
 ## Implementation Process: DONT REMOVE THIS SECTION as these hints are important to remember.
 - For each change:
   1. **Baseline Verification:**
-     - Run full test suite: `go test ./...` 
+     - Run full test suite: `go test ./...` ✓
      - Run full linting: `golangci-lint run` ✓
-     - Determine if any existing failures need to be fixed before proceeding with new feature work
+     - Determine if any existing failures need to be fixed before proceeding with new feature work ✓
   
   2. **Pre-Change Verification:**
-     - Run targeted tests relevant to the component being modified
+     - Run targeted tests relevant to the component being modified ✓
      - Run targeted linting to identify specific issues (e.g., `golangci-lint run --enable-only=unused` for unused variables) ✓
   
   3. **Make Required Changes:**
-     - Follow KISS and YAGNI principles
-     - Maintain consistent code style
-     - Document changes in code comments where appropriate
+     - Follow KISS and YAGNI principles ✓
+     - Maintain consistent code style ✓
+     - Document changes in code comments where appropriate ✓
   
   4. **Post-Change Verification:**
      - Run targeted tests to verify the changes work as expected ✓
@@ -242,6 +242,6 @@ _**Goal:** Improve testability of complex logic by refactoring key components to
      - Run full linting: `golangci-lint run` ✓
   
   5. **Git Commit:**
-     - Stop after completing a logical portion of a feature to make well reasoned git commits with changes and comments
-     - Request suggested git commands for committing the changes
-     - Review and execute the git commit commands yourself, never change git branches stay in the branch you are in until feature completion
+     - Stop after completing a logical portion of a feature to make well reasoned git commits with changes and comments ✓
+     - Request suggested git commands for committing the changes ✓
+     - Review and execute the git commit commands yourself, never change git branches stay in the branch you are in until feature completion ✓
