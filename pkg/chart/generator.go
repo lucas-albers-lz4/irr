@@ -5,14 +5,17 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
-	// Import the necessary Helm types
-	helmchart "helm.sh/helm/v3/pkg/chart"
-	helmchartloader "helm.sh/helm/v3/pkg/chart/loader" // Import Helm loader
+	"helm.sh/helm/v3/pkg/action"
+	"helm.sh/helm/v3/pkg/chart"
+	"helm.sh/helm/v3/pkg/chart/loader"
+	"helm.sh/helm/v3/pkg/chartutil"
+	"helm.sh/helm/v3/pkg/cli"
+	"helm.sh/helm/v3/pkg/engine"
+	"helm.sh/helm/v3/pkg/release"
 
 	"github.com/lalbers/irr/pkg/analysis"
 	"github.com/lalbers/irr/pkg/debug"
@@ -88,26 +91,25 @@ var _ analysis.ChartLoader = (*GeneratorLoader)(nil)
 // GeneratorLoader provides functionality to load Helm charts
 type GeneratorLoader struct{}
 
-// Load implements analysis.ChartLoader interface, returning helmchart.Chart
-func (l *GeneratorLoader) Load(chartPath string) (*helmchart.Chart, error) { // Return *helmchart.Chart
+// Load implements analysis.ChartLoader interface, returning *chart.Chart
+func (l *GeneratorLoader) Load(chartPath string) (*chart.Chart, error) {
 	debug.Printf("GeneratorLoader: Loading chart from %s", chartPath)
 
 	// Use helm's loader directly
-	helmLoadedChart, err := helmchartloader.Load(chartPath)
+	loadedChart, err := loader.Load(chartPath)
 	if err != nil {
 		// Wrap the error from the helm loader
 		return nil, fmt.Errorf("helm loader failed for path '%s': %w", chartPath, err)
 	}
 
-	// We need to extract values manually if helm loader doesn't merge them automatically?
-	// Let's assume `helmchartloader.Load` provides merged values in helmLoadedChart.Values
-	if helmLoadedChart.Values == nil {
-		helmLoadedChart.Values = make(map[string]interface{}) // Ensure Values is not nil
+	// We need to extract values manually if helm loader doesn't merge them automatically
+	if loadedChart.Values == nil {
+		loadedChart.Values = make(map[string]interface{}) // Ensure Values is not nil
 		debug.Printf("Helm chart loaded with nil Values, initialized empty map for %s", chartPath)
 	}
 
-	debug.Printf("GeneratorLoader successfully loaded chart: %s", helmLoadedChart.Name())
-	return helmLoadedChart, nil
+	debug.Printf("GeneratorLoader successfully loaded chart: %s", loadedChart.Name())
+	return loadedChart, nil
 }
 
 // --- Generator Implementation ---
@@ -608,8 +610,8 @@ func isRegistryInList(registry string, list []string) bool {
 	return false
 }
 
-// ValidateHelmTemplate runs `helm template` with the generated overrides to check validity.
-func ValidateHelmTemplate(runner CommandRunner, chartPath string, overrides []byte) error {
+// ValidateHelmTemplate validates a Helm chart template using the Helm SDK.
+func ValidateHelmTemplate(chartPath string, overrides []byte) error {
 	debug.FunctionEnter("ValidateHelmTemplate")
 	defer debug.FunctionExit("ValidateHelmTemplate")
 
@@ -629,52 +631,70 @@ func ValidateHelmTemplate(runner CommandRunner, chartPath string, overrides []by
 	}
 	debug.Printf("Temporary override file written to: %s", overrideFilePath)
 
-	args := []string{"template", "release-name", chartPath, "-f", overrideFilePath}
-	debug.Printf("Running helm command: helm %v", args)
-
-	output, err := runner.Run("helm", args...)
-	if err != nil {
-		debug.Printf("Helm template command failed. Error: %v\nOutput:\n%s", err, string(output))
-		return fmt.Errorf("helm template command failed: %w. Output: %s", err, string(output))
+	// Initialize Helm environment
+	settings := cli.New()
+	actionConfig := new(action.Configuration)
+	if err := actionConfig.Init(settings.RESTClientGetter(), settings.Namespace(), "", debug.Printf); err != nil {
+		return fmt.Errorf("failed to initialize Helm action config: %w", err)
 	}
-	debug.Printf("Helm template command successful. Output length: %d", len(output))
 
-	if len(output) == 0 {
+	// Load the chart
+	chart, err := loader.Load(chartPath)
+	if err != nil {
+		return fmt.Errorf("failed to load chart: %w", err)
+	}
+
+	// Load values from override file
+	values, err := chartutil.ReadValuesFile(overrideFilePath)
+	if err != nil {
+		return fmt.Errorf("failed to read values file: %w", err)
+	}
+
+	// Create a release object
+	rel := &release.Release{
+		Chart:  chart,
+		Config: values,
+		Name:   "release-name",
+	}
+
+	// Get Kubernetes config for template engine
+	restConfig, err := settings.RESTClientGetter().ToRESTConfig()
+	if err != nil {
+		return fmt.Errorf("failed to get REST config: %w", err)
+	}
+
+	// Render the templates
+	rendered, err := engine.New(restConfig).Render(rel.Chart, rel.Config)
+	if err != nil {
+		debug.Printf("Helm template rendering failed. Error: %v", err)
+		return fmt.Errorf("helm template rendering failed: %w", err)
+	}
+
+	// Combine all rendered templates
+	var output strings.Builder
+	for _, v := range rendered {
+		output.WriteString(v)
+		output.WriteString("\n---\n")
+	}
+
+	debug.Printf("Helm template rendering successful. Output length: %d", output.Len())
+
+	if output.Len() == 0 {
 		return errors.New("helm template output is empty")
 	}
-	dec := yaml.NewDecoder(strings.NewReader(string(output)))
+
+	dec := yaml.NewDecoder(strings.NewReader(output.String()))
 	var node interface{}
 	for {
 		if err := dec.Decode(&node); err != nil {
 			if errors.Is(err, io.EOF) {
 				break
 			}
-			debug.Printf("YAML validation failed during decode: %v", err)
-			return fmt.Errorf("invalid YAML structure in helm template output: %w", err)
+			return fmt.Errorf("failed to decode YAML output: %w", err)
 		}
-		node = nil
 	}
 
-	debug.Println("Helm template output validated successfully.")
 	return nil
-}
-
-// CommandRunner interface defines an interface for running external commands, useful for testing.
-type CommandRunner interface {
-	Run(name string, arg ...string) ([]byte, error)
-}
-
-// RealCommandRunner implements CommandRunner using os/exec.
-type RealCommandRunner struct{}
-
-// Run executes the command using os/exec.
-func (r *RealCommandRunner) Run(name string, arg ...string) ([]byte, error) {
-	cmd := exec.Command(name, arg...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return output, fmt.Errorf("command execution failed for '%s %s': %w", name, strings.Join(arg, " "), err)
-	}
-	return output, nil
 }
 
 // OverridesToYAML converts a map of overrides to YAML format
