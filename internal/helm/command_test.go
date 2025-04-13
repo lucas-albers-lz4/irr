@@ -25,6 +25,18 @@ func TestTemplateShort(t *testing.T) {
 	assert.Contains(t, options.ValuesFiles, "values2.yaml")
 	assert.Contains(t, options.SetValues, "key1=value1")
 	assert.Contains(t, options.SetValues, "key2=value2")
+
+	// Test options with namespace
+	optionsWithNamespace := &TemplateOptions{
+		ReleaseName: "test-release",
+		ChartPath:   "./test-chart",
+		ValuesFiles: []string{"values.yaml"},
+		SetValues:   []string{"key=value"},
+		Namespace:   "test-namespace",
+	}
+
+	// Verify namespace is included in the options structure
+	assert.Equal(t, "test-namespace", optionsWithNamespace.Namespace)
 }
 
 // TestGetValuesShort is a short-running test for the GetValues function

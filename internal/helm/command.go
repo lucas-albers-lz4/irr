@@ -23,6 +23,7 @@ type TemplateOptions struct {
 	ChartPath   string
 	ValuesFiles []string
 	SetValues   []string
+	Namespace   string
 }
 
 // GetValuesOptions represents options for helm get values command
@@ -45,6 +46,11 @@ func Template(options *TemplateOptions) (*CommandResult, error) {
 	// Add set values
 	for _, setValue := range options.SetValues {
 		helmArgs = append(helmArgs, "--set", setValue)
+	}
+
+	// Add namespace if specified
+	if options.Namespace != "" {
+		helmArgs = append(helmArgs, "--namespace", options.Namespace)
 	}
 
 	return executeHelmCommand(helmArgs)
