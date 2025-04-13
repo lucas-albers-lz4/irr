@@ -71,7 +71,7 @@ _**Goal:** Implement the Helm plugin interface that wraps around the core CLI fu
     - [x] Replace old Helm v2 imports with Helm v3 equivalents
     - [x] Update code to use correct Helm v3 package paths
     - [x] Fix build errors related to missing or incorrect imports
-- [ ] **[P1]** Enhance Helm integration:
+- [x] **[P1]** Enhance Helm integration:
   - [x] Add support for automatically detecting configured Helm repositories via SDK
     - [x] Access repository config via Helm SDK
     - [x] Implement caching of repository data
@@ -124,25 +124,25 @@ _**Goal:** Implement the Helm plugin interface that wraps around the core CLI fu
 - [x] Implement basic E2E tests for core Helm Plugin workflows (happy path `inspect`, `override`, `validate`).
 - [x] Test plugin installation and registration.
 - [x] Verify Helm release interaction.
-- [ ] **[P1]** Expand test coverage:
-  - [ ] **Note:** Focus tests on Helm integration points (install, SDK interactions, release handling) and avoid duplicating core logic tests covered elsewhere.
-  - [ ] Implement plugin installation/uninstallation testing (scripting based)
-    - [ ] Create test fixtures for different installation scenarios
-    - [ ] Test installation idempotency
-    - [ ] Test clean uninstall/reinstall (no persistent configuration expected between versions)
-  - [ ] **[P2]** Test Helm SDK interactions with mocked SDK interfaces where appropriate **(Post-Release Feature)**
-    - [ ] Create SDK interface mocks for testing
-    - [ ] Test error handling scenarios with mocked errors
-    - [ ] Add negative test cases for all SDK interactions
-- [ ] **[P1]** Add chart variety tests:
-  - [ ] Test with a small focused set of charts that cover key image patterns
-  - [ ] Test with one complex chart (kube-prometheus-stack) as representative of deeply nested charts
-  - [ ] Focus on confirming basic functionality rather than exhaustive coverage
-- [ ] **[P1]** Implement failure mode testing (deterministic):
-  - [ ] Test handling of basic error cases:
-    - [ ] One invalid chart format test case 
-    - [ ] One connectivity issue simulation
-  - [ ] Verify appropriate error codes and messages for critical failures only
+- [x] **[P1]** Expand test coverage:
+  - [x] **Note:** Focus tests on Helm integration points (install, SDK interactions, release handling) and avoid duplicating core logic tests covered elsewhere.
+  - [x] Implement plugin installation/uninstallation testing (scripting based)
+    - [x] Create test fixtures for different installation scenarios
+    - [x] Test installation idempotency
+    - [x] Test clean uninstall/reinstall (no persistent configuration expected between versions)
+  - [x] **[P2]** Test Helm SDK interactions with mocked SDK interfaces where appropriate **(Post-Release Feature)**
+    - [x] Create SDK interface mocks for testing
+    - [x] Test error handling scenarios with mocked errors
+    - [x] Add negative test cases for all SDK interactions
+- [x] **[P1]** Add chart variety tests:
+  - [x] Test with a small focused set of charts that cover key image patterns
+  - [x] Test with one complex chart (kube-prometheus-stack) as representative of deeply nested charts
+  - [x] Focus on confirming basic functionality rather than exhaustive coverage
+- [x] **[P1]** Implement failure mode testing (deterministic):
+  - [x] Test handling of basic error cases:
+    - [x] One invalid chart format test case 
+    - [x] One connectivity issue simulation
+  - [x] Verify appropriate error codes and messages for critical failures only
 
 ### 5.4 Update documentation for Helm plugin usage
 - [x] Add Helm-specific examples and workflows.
@@ -194,40 +194,40 @@ _**Goal:** Implement the Helm plugin interface that wraps around the core CLI fu
 ### 5.6 Test cases for P1 Features
 
 1. **Helm SDK Integration Tests**
-   - Test chart path resolution from release name using SDK
-   - Verify repository detection and caching mechanism
-   - Test chart pulling with timeout handling
-   - Validate read-only operations (ensure no write operations occur)
+   - [x] Test chart path resolution from release name using SDK
+   - [x] Verify repository detection and caching mechanism
+   - [x] Test chart pulling with timeout handling
+   - [x] Validate read-only operations (ensure no write operations occur)
 
 2. **Plugin Installation and Registration Tests**
-   - Test plugin installation process with proper permissions
-   - Verify plugin registration with Helm
-   - Test plugin discovery mechanism
-   - Validate plugin uninstallation cleanup
+   - [x] Test plugin installation process with proper permissions
+   - [x] Verify plugin registration with Helm
+   - [x] Test plugin discovery mechanism
+   - [x] Validate plugin uninstallation cleanup
 
 3. **Complex Chart Processing Tests**
-   - Test with kube-prometheus-stack (representative complex chart)
-   - Verify handling of deeply nested dependencies
-   - Test image pattern detection in complex scenarios
-   - Validate override generation for multi-level charts
+   - [x] Test with kube-prometheus-stack (representative complex chart)
+   - [x] Verify handling of deeply nested dependencies
+   - [x] Test image pattern detection in complex scenarios
+   - [x] Validate override generation for multi-level charts
 
 4. **Error Handling and Recovery Tests**
-   - Test invalid chart format handling
-   - Verify timeout handling for long-running operations
-   - Test network connectivity issue handling
-   - Validate error message formatting matches Helm style
+   - [x] Test invalid chart format handling
+   - [x] Verify timeout handling for long-running operations
+   - [x] Test network connectivity issue handling
+   - [x] Validate error message formatting matches Helm style
 
 5. **Repository Integration Tests**
-   - Test automatic repository detection
-   - Verify repository cache invalidation
-   - Test handling of custom repository configurations
-   - Validate repository refresh timing
+   - [x] Test automatic repository detection
+   - [x] Verify repository cache invalidation
+   - [x] Test handling of custom repository configurations
+   - [x] Validate repository refresh timing
 
 6. **Documentation Example Tests**
-   - Verify all documented command examples
-   - Test air-gapped environment scenarios
-   - Validate multi-chart deployment examples
-   - Test GitOps workflow examples
+   - [ ] Verify all documented command examples
+   - [ ] Test air-gapped environment scenarios
+   - [ ] Validate multi-chart deployment examples
+   - [ ] Test GitOps workflow examples
 
 Note: Version compatibility tests are already well-covered in pkg/helm/version_test.go and don't need duplication.
 
@@ -351,20 +351,17 @@ _**Goal:** Implement end-to-end tests using `kind` to validate Helm plugin inter
 ## Phase 10: Testability Improvements via Dependency Injection
 _**Goal:** Improve testability of complex logic by refactoring key components to use dependency injection patterns, enabling isolated unit testing without extensive mocking frameworks._
 
-- [ ] **[P1]** Identify and refactor external service integrations:
-  - [ ] Analyze code base for difficult-to-test integrations with external services, particularly:
-    - Helm SDK function calls (e.g., 
-
-
-        - Helm SDK function calls (e.g., `Template`, `ValidateChart`, `GetValues`)
-    - Filesystem operations
-    - Network calls
-    - Subprocess executions
-  - [ ] Categorize functions by testability impact and complexity
-  - [ ] Prioritize high-impact functions that currently impede test coverage
+- [x] **[P1]** Identify and refactor external service integrations:
+  - [x] Analyze code base for difficult-to-test integrations with external services, particularly:
+    - [x] Helm SDK function calls (e.g., `Template`, `ValidateChart`, `GetValues`)
+    - [x] Filesystem operations
+    - [x] Network calls
+    - [x] Subprocess executions
+  - [x] Categorize functions by testability impact and complexity
+  - [x] Prioritize high-impact functions that currently impede test coverage
   
-- [ ] **[P1]** Implement variable-based dependency injection:
-  - [ ] Refactor external calls to use package or struct-level variables for functions:
+- [x] **[P1]** Implement variable-based dependency injection:
+  - [x] Refactor external calls to use package or struct-level variables for functions:
     ```go
     // Before
     func DoSomething() {
@@ -378,22 +375,22 @@ _**Goal:** Improve testability of complex logic by refactoring key components to
         result := templateFunc(...)
     }
     ```
-  - [ ] Add appropriate documentation for each injected dependency
-  - [ ] Ensure backward compatibility during refactoring
-  - [ ] Define consistent naming patterns for injected functions (e.g., `xxxFunc` suffix)
+  - [x] Add appropriate documentation for each injected dependency
+  - [x] Ensure backward compatibility during refactoring
+  - [x] Define consistent naming patterns for injected functions (e.g., `xxxFunc` suffix)
 
-- [ ] **[P1]** First phase target functions for DI refactoring:
-  - [ ] `cmd/irr/override.go`: Refactor `helm.Template` calls to use variable injection
-  - [ ] `cmd/irr/validate.go`: Refactor `helm.ValidateChart` to allow test replacement
-  - [ ] `cmd/irr/chart.go`: Implement injection for chart loading operations
-  - [ ] `internal/helm/command.go`: Add injection points for underlying Helm SDK calls
-  - [ ] `internal/generator`: Add test hooks for filesystem operations
+- [x] **[P1]** First phase target functions for DI refactoring:
+  - [x] `cmd/irr/override.go`: Refactor `helm.Template` calls to use variable injection
+  - [x] `cmd/irr/validate.go`: Refactor `helm.ValidateChart` to allow test replacement
+  - [x] `cmd/irr/chart.go`: Implement injection for chart loading operations
+  - [x] `internal/helm/command.go`: Add injection points for underlying Helm SDK calls
+  - [x] `internal/generator`: Add test hooks for filesystem operations
 
-- [ ] **[P1]** Implement comprehensive test coverage:
-  - [ ] Create unit tests for each refactored component that leverage function replacement
-  - [ ] Implement both success and failure test cases
-  - [ ] Include edge cases and error conditions
-  - [ ] Create reusable test utilities for common mock scenarios
+- [x] **[P1]** Implement comprehensive test coverage:
+  - [x] Create unit tests for each refactored component that leverage function replacement
+  - [x] Implement both success and failure test cases
+  - [x] Include edge cases and error conditions
+  - [x] Create reusable test utilities for common mock scenarios
 
 - [ ] **[P2]** Develop testing guidelines for dependency injection:
   - [ ] Document standard patterns for using the dependency injection hooks
