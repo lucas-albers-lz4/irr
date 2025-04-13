@@ -6,8 +6,8 @@ import (
 
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/cli"
-	"helm.sh/helm/v3/pkg/repo"
 
+	"github.com/lalbers/irr/pkg/helm"
 	log "github.com/lalbers/irr/pkg/log"
 	"github.com/spf13/cobra"
 )
@@ -61,8 +61,8 @@ func GetChartPathFromRelease(releaseName string) (string, error) {
 
 	log.Infof("Found chart %s version %s for release %s", chartInfo.Name, chartInfo.Version, releaseName)
 
-	// Create temporary directory to download chart
-	tempDir, err := os.MkdirTemp("", "irr-helm-release-")
+	// Create temp directory for chart
+	tempDir, err := os.MkdirTemp("", "irr-chart-*")
 	if err != nil {
 		return "", fmt.Errorf("failed to create temp directory: %w", err)
 	}
@@ -77,31 +77,10 @@ func GetChartPathFromRelease(releaseName string) (string, error) {
 	chartPath, err := pull.Run(chartInfo.Name)
 	if err != nil {
 		// Try to find the chart in repositories
-		repoFile := settings.RepositoryConfig
-		repos, err := repo.LoadFile(repoFile)
+		repoManager := helm.NewRepositoryManager(settings)
+		chartRepo, err := repoManager.FindChartInRepositories(chartInfo.Name)
 		if err != nil {
-			return "", fmt.Errorf("failed to load repositories: %w", err)
-		}
-
-		// Search for the chart in repositories
-		var chartRepo string
-		for _, r := range repos.Repositories {
-			// Update repository index
-			index := repo.NewIndexFile()
-			if index == nil {
-				log.Warnf("Failed to create index for repository %s", r.Name)
-				continue
-			}
-
-			// Check if chart exists in this repository
-			if _, exists := index.Entries[chartInfo.Name]; exists {
-				chartRepo = r.Name
-				break
-			}
-		}
-
-		if chartRepo == "" {
-			return "", fmt.Errorf("failed to find chart %s in any repository", chartInfo.Name)
+			return "", fmt.Errorf("failed to find chart %s in any repository: %w", chartInfo.Name, err)
 		}
 
 		// Try to pull with repository name

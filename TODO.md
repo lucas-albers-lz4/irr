@@ -72,10 +72,10 @@ _**Goal:** Implement the Helm plugin interface that wraps around the core CLI fu
       - [x] Update code to use correct Helm v3 package paths
       - [x] Fix build errors related to missing or incorrect imports
   - [ ] **[P1]** Enhance Helm integration:
-    - [ ] Add support for automatically detecting configured Helm repositories via SDK **(Post-Release Feature)**
-      - [ ] Access repository config via Helm SDK
-      - [ ] Implement caching of repository data
-      - [ ] Support custom repository configurations
+    - [x] Add support for automatically detecting configured Helm repositories via SDK
+      - [x] Access repository config via Helm SDK
+      - [x] Implement caching of repository data
+      - [x] Support custom repository configurations
     - [ ] **[P2]** Implement Helm hooks support for pre/post operations **(Post-Release Feature)**
       - [ ] Define hook interface and discovery mechanism
       - [ ] Create hook execution engine with proper error handling
