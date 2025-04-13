@@ -8,10 +8,11 @@ import (
 	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/exitcodes"
 	log "github.com/lalbers/irr/pkg/log"
+	"github.com/lalbers/irr/pkg/version"
 	// Removed cmd import to break cycle
 )
 
-var version = "DEBUG v1"
+var binaryVersion = "DEBUG v1"
 var isHelmPlugin bool
 
 // main is the entry point of the application.
@@ -22,7 +23,7 @@ func main() {
 
 	// Use stdLog for consistency, check if debug is enabled
 	if log.IsDebugEnabled() {
-		log.Debugf("--- IRR BINARY VERSION: %s ---", version)
+		log.Debugf("--- IRR BINARY VERSION: %s ---", binaryVersion)
 	}
 
 	// Check for IRR_DEBUG environment variable for potential future debug setup
@@ -37,6 +38,13 @@ func main() {
 	// Initialize Helm plugin if necessary
 	if isHelmPlugin {
 		log.Debugf("Running as Helm plugin")
+		// Check Helm version compatibility
+		if err := version.CheckHelmVersion(); err != nil {
+			if code, ok := exitcodes.IsExitCodeError(err); ok {
+				os.Exit(code)
+			}
+			os.Exit(1)
+		}
 		// initHelmPlugin will be called in init() of the root.go file
 	}
 
