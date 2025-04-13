@@ -1,3 +1,9 @@
+// Package main provides CLI commands for the irr tool.
+//
+// IMPORTANT: This file imports Helm SDK packages that require additional dependencies.
+// To resolve the missing go.sum entries, run:
+//
+//	go get helm.sh/helm/v3@v3.14.2
 package main
 
 import (
@@ -18,6 +24,10 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
+
+	// Helm SDK imports
+	helmAction "helm.sh/helm/v3/pkg/action"
+	helmCli "helm.sh/helm/v3/pkg/cli"
 )
 
 const (
@@ -25,6 +35,10 @@ const (
 	DirPermissions = 0o755
 	// FilePermissions represents file permissions (rw-r--r--)
 	FilePermissions = 0o644
+	// ExitHelmInteractionError is returned when there's an error during Helm SDK interaction
+	ExitHelmInteractionError = 17
+	// ExitInternalError is returned when there's an internal error in command execution
+	ExitInternalError = 30
 )
 
 // GeneratorConfig holds all configuration for the generator
@@ -54,6 +68,9 @@ type GeneratorConfig struct {
 	// KnownImagePaths contains specific dot-notation paths known to contain images
 	KnownImagePaths []string
 }
+
+// For testing purposes - allows overriding in tests
+var chartLoader = loadChart
 
 // newOverrideCmd creates the cobra command for the 'override' operation.
 // This command uses centralized exit codes from pkg/exitcodes for consistent error handling:
@@ -443,27 +460,169 @@ func setupGeneratorConfig(cmd *cobra.Command) (config GeneratorConfig, err error
 	return
 }
 
+// createAndExecuteGenerator creates a generator with the given config and executes it to generate overrides
+func createAndExecuteGenerator(chartSource string, config *GeneratorConfig) ([]byte, error) {
+	// --- Create Override Generator ---
+	log.Infof("Initializing override generator for %s", chartSource)
+	generator := chart.NewGenerator(
+		config.ChartPath,
+		config.TargetRegistry,
+		config.SourceRegistries,
+		config.ExcludeRegistries,
+		config.Strategy,
+		config.Mappings,
+		config.ConfigMappings,
+		config.StrictMode,
+		config.Threshold,
+		nil, // Use default loader
+		config.IncludePatterns,
+		config.ExcludePatterns,
+		config.KnownImagePaths,
+	)
+
+	// Generate overrides
+	overrideFile, err := generator.Generate()
+	if err != nil {
+		return nil, handleGenerateError(err) // Use existing error handler
+	}
+
+	// Convert to YAML
+	yamlBytes, err := yaml.Marshal(overrideFile.Values)
+	if err != nil {
+		return nil, &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitGeneralRuntimeError,
+			Err:  fmt.Errorf("failed to marshal overrides to YAML: %w", err),
+		}
+	}
+
+	return yamlBytes, nil
+}
+
+// loadChart loads a chart from either a release or a path
+func loadChart(config *GeneratorConfig, loadFromRelease, loadFromPath bool, releaseName, namespace string) (string, error) {
+	var chartSource string
+	var releaseValuesCacheDir string
+
+	switch {
+	case loadFromRelease:
+		// Get chart and values from Helm release
+		log.Infof("Loading chart and values from release '%s'", releaseName)
+		chartSource = fmt.Sprintf("Helm release '%s'", releaseName)
+
+		// Fetch the release using Helm SDK with proper context
+		helmSettings := helmCli.New()
+
+		actionConfig := new(helmAction.Configuration)
+		// Get values from release
+		// Use debugf as the log function for Helm SDK
+		debugf := func(format string, v ...interface{}) {
+			log.Debugf(format, v...)
+		}
+		if err := actionConfig.Init(helmSettings.RESTClientGetter(), namespace, os.Getenv("HELM_DRIVER"), debugf); err != nil {
+			return "", &exitcodes.ExitCodeError{
+				Code: ExitHelmInteractionError,
+				Err:  fmt.Errorf("failed to initialize Helm configuration: %w", err),
+			}
+		}
+
+		// Create Get client to get the release
+		client := helmAction.NewGet(actionConfig)
+		release, err := client.Run(releaseName)
+		if err != nil {
+			return "", &exitcodes.ExitCodeError{
+				Code: ExitHelmInteractionError,
+				Err:  fmt.Errorf("failed to get release '%s': %w", releaseName, err),
+			}
+		}
+
+		// Create a temporary directory to store chart files from release
+		releaseValuesCacheDir, err = afero.TempDir(AppFs, "", "irr-release-cache-")
+		if err != nil {
+			return "", &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitIOError,
+				Err:  fmt.Errorf("failed to create temporary directory for release cache: %w", err),
+			}
+		}
+
+		// Save chart path for the generator to use
+		config.ChartPath = releaseValuesCacheDir
+
+		// Use these values when initializing the generator
+		if release.Chart.Values == nil {
+			release.Chart.Values = release.Config
+		}
+
+		log.Infof("Successfully retrieved chart and values from release '%s'", releaseName)
+
+	case loadFromPath:
+		// Normalize and check chart path (moved from getInspectFlags logic for consistency)
+		if config.ChartPath == "" {
+			// Try to detect chart if path is empty (might be redundant with PreRunE checks)
+			detectedPath, err := detectChartInCurrentDirectoryIfNeeded("")
+			if err != nil {
+				return "", &exitcodes.ExitCodeError{
+					Code: exitcodes.ExitChartNotFound,
+					Err:  fmt.Errorf("chart path not specified and %w", err),
+				}
+			}
+			config.ChartPath = detectedPath
+			log.Infof("Detected chart at %s", config.ChartPath)
+		}
+
+		// Make path absolute
+		absPath, err := filepath.Abs(config.ChartPath)
+		if err != nil {
+			return "", &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitInputConfigurationError,
+				Err:  fmt.Errorf("failed to get absolute path for chart: %w", err),
+			}
+		}
+		config.ChartPath = absPath // Use absolute path going forward
+
+		// Check existence
+		if _, err := AppFs.Stat(config.ChartPath); err != nil {
+			if os.IsNotExist(err) {
+				return "", &exitcodes.ExitCodeError{
+					Code: exitcodes.ExitChartNotFound,
+					Err:  fmt.Errorf("chart path not found: %s", config.ChartPath),
+				}
+			}
+			return "", &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitInputConfigurationError,
+				Err:  fmt.Errorf("failed to access chart path %s: %w", config.ChartPath, err),
+			}
+		}
+
+		log.Infof("Loading chart from path: %s", config.ChartPath)
+		chartSource = fmt.Sprintf("path %s", config.ChartPath)
+
+		// Use our package's chart loading functionality - DefaultLoader is the correct type to use
+		chartLoader := &chart.DefaultLoader{}
+		// Note: we're not storing loadedChart since it's not used later
+		_, err = chartLoader.Load(config.ChartPath)
+		if err != nil {
+			return "", handleChartLoadError(err, config.ChartPath)
+		}
+	default:
+		// This case should be caught by PreRunE, but handle defensively
+		return "", &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  errors.New("internal error: either chart path or release name should be set"),
+		}
+	}
+
+	return chartSource, nil
+}
+
 // runOverride implements the override command logic
 func runOverride(cmd *cobra.Command, _ []string) error {
+	// Get configuration from flags
 	config, err := setupGeneratorConfig(cmd)
 	if err != nil {
 		return err
 	}
 
-	// If chart path is not specified, try to detect a chart in the current directory
-	if config.ChartPath == "" {
-		chartPath, err := detectChartInCurrentDirectoryIfNeeded("")
-		if err != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitChartNotFound,
-				Err:  fmt.Errorf("chart path not specified and %w", err),
-			}
-		}
-		config.ChartPath = chartPath
-		log.Infof("Detected chart at %s", chartPath)
-	}
-
-	// Check if we need to get values from a release
+	// Get release name and namespace if specified
 	releaseName, err := cmd.Flags().GetString("release-name")
 	if err != nil {
 		return &exitcodes.ExitCodeError{
@@ -480,63 +639,20 @@ func runOverride(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	// If release-name is specified and doesn't equal the default, attempt to get values
-	var releaseValues map[string]interface{}
-	if releaseName != "" {
-		log.Infof("Getting values for release %s", releaseName)
+	// Determine if we load from release or path
+	loadFromRelease := releaseName != "" && config.ChartPath == ""
+	loadFromPath := config.ChartPath != ""
 
-		// Call 'helm get values' to get the existing values
-		valuesResult, err := helm.GetValues(&helm.GetValuesOptions{
-			ReleaseName: releaseName,
-			Namespace:   namespace,
-		})
-
-		if err != nil {
-			log.Warnf("Failed to get values for release %s: %v", releaseName, err)
-			log.Warnf("Continuing with chart values only")
-		} else {
-			// Parse YAML values
-			err = yaml.Unmarshal([]byte(valuesResult.Stdout), &releaseValues)
-			if err != nil {
-				return &exitcodes.ExitCodeError{
-					Code: exitcodes.ExitIOError,
-					Err:  fmt.Errorf("failed to parse release values: %w", err),
-				}
-			}
-			log.Infof("Successfully retrieved release values from %s", releaseName)
-		}
+	// Load chart from either release or path
+	chartSource, err := chartLoader(&config, loadFromRelease, loadFromPath, releaseName, namespace)
+	if err != nil {
+		return err
 	}
-
-	// Create overrides generator
-	generator := currentGeneratorFactory(
-		config.ChartPath,
-		config.TargetRegistry,
-		config.SourceRegistries,
-		config.ExcludeRegistries,
-		config.Strategy,
-		config.Mappings,
-		config.ConfigMappings,
-		config.StrictMode,
-		config.Threshold,
-		nil, // Use default chart loader
-		config.IncludePatterns,
-		config.ExcludePatterns,
-		config.KnownImagePaths,
-	)
 
 	// Generate overrides
-	overrideFile, err := generator.Generate()
+	yamlBytes, err := createAndExecuteGenerator(chartSource, &config)
 	if err != nil {
-		return handleGenerateError(err)
-	}
-
-	// Convert to YAML
-	yamlBytes, err := yaml.Marshal(overrideFile.Values)
-	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitGeneralRuntimeError,
-			Err:  fmt.Errorf("failed to generate YAML: %w", err),
-		}
+		return err
 	}
 
 	// Get output file and dry-run flag
@@ -558,7 +674,7 @@ func runOverride(cmd *cobra.Command, _ []string) error {
 
 	// Output the overrides
 	if err := outputOverrides(cmd, yamlBytes, outputFile, dryRun); err != nil {
-		return err
+		return err // Pass through error from output helper
 	}
 
 	// Validate the chart with overrides if requested
@@ -571,62 +687,136 @@ func runOverride(cmd *cobra.Command, _ []string) error {
 	}
 
 	if shouldValidate {
-		overridesFile := outputFile
-		// If dry-run or no output file specified, write to temporary file
-		if dryRun || overridesFile == "" {
-			tempFile, err := os.CreateTemp("", "irr-overrides-*.yaml")
-			if err != nil {
-				return &exitcodes.ExitCodeError{
-					Code: exitcodes.ExitIOError,
-					Err:  fmt.Errorf("failed to create temporary file for validation: %w", err),
-				}
-			}
-			defer func() {
-				if err := os.Remove(tempFile.Name()); err != nil {
-					log.Warnf("Failed to remove temporary file %s: %v", tempFile.Name(), err)
-				}
-			}()
-
-			if _, err := tempFile.Write(yamlBytes); err != nil {
-				return &exitcodes.ExitCodeError{
-					Code: exitcodes.ExitIOError,
-					Err:  fmt.Errorf("failed to write to temporary file: %w", err),
-				}
-			}
-
-			if err := tempFile.Close(); err != nil {
-				return &exitcodes.ExitCodeError{
-					Code: exitcodes.ExitIOError,
-					Err:  fmt.Errorf("failed to close temporary file: %w", err),
-				}
-			}
-
-			overridesFile = tempFile.Name()
-		}
-
-		// Execute helm template command to validate overrides
-		log.Infof("Validating chart with overrides...")
-		_, err := helm.Template(&helm.TemplateOptions{
-			ReleaseName: releaseName,
-			ChartPath:   config.ChartPath,
-			ValuesFiles: []string{overridesFile},
-		})
-
-		if err != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitHelmCommandFailed,
-				Err:  fmt.Errorf("validation failed: %w", err),
-			}
-		}
-
-		log.Infof("Validation successful: chart renders correctly with overrides")
+		return validateChart(cmd, yamlBytes, &config, loadFromPath, loadFromRelease, releaseName, namespace)
 	}
 
-	// Display counts
-	log.Infof("Processed %d/%d images (%.1f%% success rate)",
-		overrideFile.ProcessedCount,
-		overrideFile.TotalCount,
-		overrideFile.SuccessRate)
+	return nil
+}
 
+// handleChartLoadError converts chart loading errors to ExitCodeErrors
+func handleChartLoadError(err error, chartPath string) error {
+	// Customize based on error types returned by loader.LoadChart
+	if errors.Is(err, os.ErrNotExist) { // Example check
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitChartNotFound,
+			Err:  fmt.Errorf("chart not found at %s: %w", chartPath, err),
+		}
+	}
+	// Add more specific error checks if loader provides typed errors
+
+	// Default chart loading error
+	return &exitcodes.ExitCodeError{
+		Code: exitcodes.ExitChartParsingError, // Or ExitChartLoadFailed?
+		Err:  fmt.Errorf("failed to load chart from %s: %w", chartPath, err),
+	}
+}
+
+// validateChart performs Helm template validation of a chart with the provided overrides
+func validateChart(cmd *cobra.Command, yamlBytes []byte, config *GeneratorConfig, loadFromPath, loadFromRelease bool, releaseName, namespace string) error {
+	log.Infof("Validating chart renderability with generated overrides...")
+
+	// Prepare validation options
+	// Need a temporary file for the generated overrides if not writing to stdout or a file
+	outputFile, err := cmd.Flags().GetString("output-file")
+	if err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get output-file flag: %w", err),
+		}
+	}
+
+	dryRun, err := cmd.Flags().GetBool("dry-run")
+	if err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get dry-run flag: %w", err),
+		}
+	}
+
+	overrideFilePath := outputFile
+	if outputFile == "" || dryRun { // If output went to stdout or was dry-run
+		// Use TempFile instead of CreateTemp which may not be available in all afero versions
+		tempFile, err := afero.TempFile(AppFs, "", "irr-override-*.yaml")
+		if err != nil {
+			return &exitcodes.ExitCodeError{Code: exitcodes.ExitIOError, Err: fmt.Errorf("failed to create temp file for validation: %w", err)}
+		}
+		defer func() {
+			// In a defer function, we'll log errors but can't return them
+			if err := tempFile.Close(); err != nil {
+				log.Warnf("Failed to close temporary file: %v", err)
+			}
+			if err := AppFs.Remove(tempFile.Name()); err != nil {
+				log.Warnf("Failed to remove temporary file: %v", err)
+			}
+		}() // Cleanup temp file
+		if _, err := tempFile.Write(yamlBytes); err != nil {
+			return &exitcodes.ExitCodeError{Code: exitcodes.ExitIOError, Err: fmt.Errorf("failed to write to temp file for validation: %w", err)}
+		}
+		overrideFilePath = tempFile.Name()
+	}
+
+	// Get other necessary flags for helm template call
+	// Note: We use the originally loaded chart source (path or release name)
+	var validateChartSource string
+	switch {
+	case loadFromPath:
+		validateChartSource = config.ChartPath
+	case loadFromRelease:
+		// When loading from release, `helm template` needs the chart reference
+		// or path. The original release name implies the chart is available
+		// to Helm (e.g., in a repo or cluster). Using the release name itself
+		// for `helm template` usually means "template the chart used by this release".
+		validateChartSource = releaseName
+	default:
+		// Should not happen due to earlier checks
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitGeneralRuntimeError,
+			Err:  errors.New("cannot determine chart source for validation"),
+		}
+	}
+
+	validateReleaseName := releaseName // Use provided release name or default? Helm template needs *a* name.
+	if validateReleaseName == "" {
+		validateReleaseName = "irr-validation" // Default if no release name was involved
+	}
+
+	// Get --set flags if any
+	setValues, err := cmd.Flags().GetStringSlice("set")
+	if err != nil {
+		log.Debugf("Failed to get --set values: %v", err)
+		setValues = []string{} // Default to empty if error
+	}
+
+	// Add namespace if specified
+	templateOptions := &helm.TemplateOptions{
+		ChartPath:   validateChartSource,
+		ReleaseName: validateReleaseName,
+		ValuesFiles: []string{overrideFilePath},
+		SetValues:   setValues,
+		Namespace:   namespace,
+	}
+
+	// Log namespace if specified
+	if namespace != "" {
+		log.Debugf("Using namespace '%s' for validation", namespace)
+	}
+
+	// Execute Helm template command with namespace support
+	result, err := helm.Template(templateOptions)
+
+	if err != nil {
+		log.Errorf("Validation failed: Helm template command returned an error.")
+		// Print Helm's stderr for debugging
+		if result != nil && result.Stderr != "" {
+			fmt.Fprintf(os.Stderr, "--- Helm Error ---\n%s\n------------------\n", result.Stderr)
+		}
+		// Return a specific validation failure code
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitHelmCommandFailed,
+			Err:  fmt.Errorf("chart validation failed: %w", err),
+		}
+	}
+
+	log.Infof("Validation successful: Chart rendered successfully with overrides.")
 	return nil
 }
