@@ -15,7 +15,7 @@ _**Goal:** Implement the Helm plugin interface that wraps around the core CLI fu
   - Design plugin structure that wraps around core command logic.
   - Implement plugin installation process and discovery.
   - Ensure consistent command-line interface with standalone CLI.
-  - [ ] **[P1]** Enhance error handling in plugin wrapper script:
+  - [x] **[P1]** Enhance error handling in plugin wrapper script:
     - Add robust error handling with proper exit codes
     - Implement command timeouts
     - Format error output consistently, ideally matching Helm's CLI style for user familiarity
@@ -33,14 +33,17 @@ _**Goal:** Implement the Helm plugin interface that wraps around the core CLI fu
 - [x] Implement Helm-specific functionality
   - Add release name resolution to chart path.
   - Add Helm environment integration for configuration and auth.
-  - [ ] **[P1]** Refactor plugin to use Helm Go SDK instead of shelling out:
-    - Replace `exec.Command("helm", ...)` calls with Go SDK equivalents (`pkg/action`, `pkg/cli`)
-    - Use SDK for getting release info, values, and pulling charts
-    - **Ensure only read-only Helm actions are used:**
+  - [x] **[P1]** Refactor plugin to use Helm Go SDK instead of shelling out:
+    - [x] Replace `exec.Command("helm", ...)` calls with Go SDK equivalents (`pkg/action`, `pkg/cli`)
+    - [x] Use SDK for getting release info, values, and pulling charts
+    - [x] **Ensure only read-only Helm actions are used:**
       - *Allowed Read Actions:* `Get`, `GetValues`, `List`, `SearchRepo`, `SearchIndex`, `Pull` (for fetching chart data only), loading charts/values (`loader.Load`, `chartutil`), reading config (`cli.New`, `repo.LoadFile`).
       - *Disallowed Write Actions:* `Install`, `Upgrade`, `Uninstall`, `Rollback`, `Push`, `RepoAdd`, `RepoRemove`, `RepoUpdate`, or any direct modification of Kubernetes resources via the SDK's client.
       - *Rationale:* IRR's purpose is to *generate* overrides, not apply changes or modify Helm state.
-    - Improve robustness, testability, and performance
+    - [x] Fix namespace handling in Helm template command
+    - [ ] Fix dependency issues to build with Helm SDK
+    - [ ] Add SDK integration to `inspect` and `validate` commands
+    - [ ] Improve robustness, testability, and performance
   - [ ] **[P1]** Enhance Helm integration:
     - Add support for automatically detecting configured Helm repositories via SDK
     - Implement Helm hooks support for pre/post operations
@@ -155,16 +158,77 @@ _**Goal:** Implement end-to-end tests using `kind` to validate Helm plugin inter
   - Track metrics like test duration, success rates across different chart types
   - Generate visual reports of test coverage and performance data
 
+## Phase 10: Testability Improvements via Dependency Injection
+_**Goal:** Improve testability of complex logic by refactoring key components to use dependency injection patterns, enabling isolated unit testing without extensive mocking frameworks._
+
+- [ ] **[P1]** Identify and refactor external service integrations:
+  - [ ] Analyze code base for difficult-to-test integrations with external services, particularly:
+    - Helm SDK function calls (e.g., `Template`, `ValidateChart`, `GetValues`)
+    - Filesystem operations
+    - Network calls
+    - Subprocess executions
+  - [ ] Categorize functions by testability impact and complexity
+  - [ ] Prioritize high-impact functions that currently impede test coverage
+  
+- [ ] **[P1]** Implement variable-based dependency injection:
+  - [ ] Refactor external calls to use package or struct-level variables for functions:
+    ```go
+    // Before
+    func DoSomething() {
+        result := helm.Template(...)
+    }
+    
+    // After 
+    var templateFunc = helm.Template
+    
+    func DoSomething() {
+        result := templateFunc(...)
+    }
+    ```
+  - [ ] Add appropriate documentation for each injected dependency
+  - [ ] Ensure backward compatibility during refactoring
+  - [ ] Define consistent naming patterns for injected functions (e.g., `xxxFunc` suffix)
+
+- [ ] **[P1]** First phase target functions for DI refactoring:
+  - [ ] `cmd/irr/override.go`: Refactor `helm.Template` calls to use variable injection
+  - [ ] `cmd/irr/validate.go`: Refactor `helm.ValidateChart` to allow test replacement
+  - [ ] `cmd/irr/chart.go`: Implement injection for chart loading operations
+  - [ ] `internal/helm/command.go`: Add injection points for underlying Helm SDK calls
+  - [ ] `internal/generator`: Add test hooks for filesystem operations
+
+- [ ] **[P1]** Implement comprehensive test coverage:
+  - [ ] Create unit tests for each refactored component that leverage function replacement
+  - [ ] Implement both success and failure test cases
+  - [ ] Include edge cases and error conditions
+  - [ ] Create reusable test utilities for common mock scenarios
+
+- [ ] **[P2]** Develop testing guidelines for dependency injection:
+  - [ ] Document standard patterns for using the dependency injection hooks
+  - [ ] Create examples of proper test setup and teardown with injected dependencies
+  - [ ] Define testing anti-patterns to avoid
+  - [ ] Add guidance for when to use DI vs. other mocking approaches
+
+- [ ] **[P1]** Implement CI verification of test coverage:
+  - [ ] Set coverage thresholds for refactored components
+  - [ ] Add CI steps to verify coverage meets thresholds
+  - [ ] Generate and publish test coverage reports
+
+- [ ] **[P2]** Balance production code and test code:
+  - [ ] Follow "minimal impact to production code" principle
+  - [ ] Ensure production code remains readable and maintainable
+  - [ ] Favor simple dependency injection over complex test frameworks
+  - [ ] Document rationale for each injection point
+
 ## Implementation Process: DONT REMOVE THIS SECTION as these hints are important to remember.
 - For each change:
   1. **Baseline Verification:**
      - Run full test suite: `go test ./...` 
-     - Run full linting: `golangci-lint run`
+     - Run full linting: `golangci-lint run` ✓
      - Determine if any existing failures need to be fixed before proceeding with new feature work
   
   2. **Pre-Change Verification:**
      - Run targeted tests relevant to the component being modified
-     - Run targeted linting to identify specific issues (e.g., `golangci-lint run --enable-only=unused` for unused variables)
+     - Run targeted linting to identify specific issues (e.g., `golangci-lint run --enable-only=unused` for unused variables) ✓
   
   3. **Make Required Changes:**
      - Follow KISS and YAGNI principles
@@ -172,10 +236,10 @@ _**Goal:** Implement end-to-end tests using `kind` to validate Helm plugin inter
      - Document changes in code comments where appropriate
   
   4. **Post-Change Verification:**
-     - Run targeted tests to verify the changes work as expected
-     - Run targeted linting to confirm specific issues are resolved
-     - Run full test suite: `go test ./...`
-     - Run full linting: `golangci-lint run`
+     - Run targeted tests to verify the changes work as expected ✓
+     - Run targeted linting to confirm specific issues are resolved ✓
+     - Run full test suite: `go test ./...` ✓
+     - Run full linting: `golangci-lint run` ✓
   
   5. **Git Commit:**
      - Stop after completing a logical portion of a feature to make well reasoned git commits with changes and comments

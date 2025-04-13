@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"testing"
 
@@ -26,6 +25,8 @@ func setupTestFS(t *testing.T) (fs afero.Fs, tempDir string) {
 */
 
 // createDummyChart creates basic Chart.yaml and values.yaml in the specified directory on the given FS.
+// Note: This function is currently unused but kept for potential future use.
+/*
 func createDummyChart(fs afero.Fs, dir string) error {
 	chartYaml := `apiVersion: v2
 name: test-chart
@@ -42,6 +43,7 @@ version: 0.1.0`
 	}
 	return nil
 }
+*/
 
 // setupMemoryFSContext sets up an in-memory filesystem with a temporary directory
 func setupMemoryFSContext(t *testing.T) (fs afero.Fs, tempDir string, cleanup func()) {

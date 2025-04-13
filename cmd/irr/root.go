@@ -22,12 +22,10 @@ import (
 	log "github.com/lalbers/irr/pkg/log"
 
 	"github.com/lalbers/irr/pkg/analysis"
-	"github.com/lalbers/irr/pkg/chart"
 	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/exitcodes"
 	"github.com/lalbers/irr/pkg/override"
 	"github.com/lalbers/irr/pkg/registry"
-	"github.com/lalbers/irr/pkg/strategy"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 )
@@ -147,42 +145,6 @@ type GeneratorInterface interface {
 	// the override file structure or an error if generation fails.
 	Generate() (*override.File, error)
 }
-
-// Allows overriding for testing
-type generatorFactoryFunc func(
-	chartPath, targetRegistry string,
-	sourceRegistries, excludeRegistries []string,
-	pathStrategy strategy.PathStrategy,
-	mappings *registry.Mappings,
-	configMappings map[string]string,
-	strict bool,
-	threshold int,
-	loader analysis.ChartLoader,
-	includePatterns, excludePatterns, knownPaths []string,
-) GeneratorInterface
-
-// Default factory creates the real generator
-var defaultGeneratorFactory generatorFactoryFunc = func(
-	chartPath, targetRegistry string,
-	sourceRegistries, excludeRegistries []string,
-	pathStrategy strategy.PathStrategy,
-	mappings *registry.Mappings,
-	configMappings map[string]string,
-	strict bool,
-	threshold int,
-	loader analysis.ChartLoader,
-	includePatterns, excludePatterns, knownPaths []string,
-) GeneratorInterface {
-	return chart.NewGenerator(
-		chartPath, targetRegistry,
-		sourceRegistries, excludeRegistries,
-		pathStrategy, mappings, configMappings, strict, threshold, loader,
-		includePatterns, excludePatterns, knownPaths,
-	)
-}
-
-// Keep track of the current factory (can be replaced in tests)
-var currentGeneratorFactory = defaultGeneratorFactory
 
 // Regular expression for validating registry names (simplified based on common usage)
 // var registryRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9](:\\d+)?$`)
