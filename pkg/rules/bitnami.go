@@ -5,6 +5,8 @@ import (
 	"helm.sh/helm/v3/pkg/chart"
 )
 
+const BitnamiSecurityBypassPriority = 100
+
 // BitnamiSecurityBypassRule implements a rule that adds global.security.allowInsecureImages=true
 // to override files for Bitnami charts
 type BitnamiSecurityBypassRule struct {
@@ -25,7 +27,7 @@ func NewBitnamiSecurityBypassRule() *BitnamiSecurityBypassRule {
 					Description: "Bypasses Bitnami security checks for modified image references",
 				},
 			},
-			100, // High priority
+			BitnamiSecurityBypassPriority,
 		),
 	}
 }

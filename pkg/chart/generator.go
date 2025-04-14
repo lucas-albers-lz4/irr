@@ -593,14 +593,18 @@ func (g *Generator) Generate() (*override.File, error) {
 
 		// Apply rules from the registry if it's initialized
 		if g.rulesRegistry != nil {
-			registry := g.rulesRegistry.(*rules.Registry)
-			rulesApplied, err = registry.ApplyRules(loadedChart, overrides)
-			if err != nil {
-				log.Warnf("Error applying rules to chart: %v", err)
-				// Continue with the overrides we have
-			}
-			if rulesApplied {
-				debug.Printf("Successfully applied rules to chart: %s", g.chartPath)
+			registry, ok := g.rulesRegistry.(*rules.Registry)
+			if !ok {
+				log.Warnf("Rules registry type assertion failed")
+			} else {
+				rulesApplied, err = registry.ApplyRules(loadedChart, overrides)
+				if err != nil {
+					log.Warnf("Error applying rules to chart: %v", err)
+					// Continue with the overrides we have
+				}
+				if rulesApplied {
+					debug.Printf("Successfully applied rules to chart: %s", g.chartPath)
+				}
 			}
 		}
 	}

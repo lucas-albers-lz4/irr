@@ -7,6 +7,8 @@ import (
 	"helm.sh/helm/v3/pkg/chart"
 )
 
+const bitnamiMediumConfidenceIndicatorCount = 2
+
 // DetectChartProvider analyzes chart metadata to determine the provider type
 // and returns a Detection with confidence level and supporting indicators
 func DetectChartProvider(ch *chart.Chart) Detection {
@@ -95,7 +97,7 @@ func detectBitnamiChart(ch *chart.Chart) Detection {
 		confidence = ConfidenceNone
 	case 1:
 		confidence = ConfidenceLow
-	case 2:
+	case bitnamiMediumConfidenceIndicatorCount:
 		confidence = ConfidenceMedium
 	default:
 		confidence = ConfidenceHigh

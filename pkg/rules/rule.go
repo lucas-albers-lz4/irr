@@ -162,3 +162,7 @@ func setValueInMap(m map[string]interface{}, parts []string, value interface{}) 
 	// Recursively set in the sub-map
 	return setValueInMap(subMap, rest, value)
 }
+
+func (r *BaseRule) SetChart(_ *chart.Chart) {
+	// Implementation of SetChart method
+}

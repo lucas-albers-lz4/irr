@@ -167,10 +167,19 @@ Implementation steps:
    - [x] **[P1]** Create configuration options to control rule application
    - [ ] **[P1]** Create test script to extract and analyze metadata from test chart corpus
      - [ ] Develop script to process Chart.yaml files from test corpus
+     - [Note: The existing test/tools/test-charts.py script processes charts and could be adapted or leveraged for this analysis.]
      - [ ] Generate statistics on different chart providers based on metadata patterns
      - [ ] Produce report identifying reliable detection patterns for major providers
    - [x] **[P2]** Add test-only parameter handling for validation (Type 2)
    - [ ] **[P2]** Implement chart grouping based on shared parameter requirements
+   - [ ] **[P1]** Enhance log output for applied rules:
+     - [ ] When a rule adds a Type 1 parameter (e.g., Bitnami rule adding `global.security.allowInsecureImages`), log an `INFO` message.
+     - [ ] Log message should include: Rule Name, Parameter Path/Value, Brief Reason/Description, and Reference URL (e.g., Bitnami GitHub issue).
+     - [ ] Implement by adding logging logic within the rule application function (e.g., `ApplyRulesToMap`).
+     - [ ] Consider adding a `ReferenceURL` or `Explanation` field/method to the `Rule` interface for better context sourcing.
+     - [ ] Update tests (e.g., integration tests) to assert the presence and content of this log message.
+     - [ ] Update documentation (`docs/RULES.md`) to mention this log output.
+     - [ ] Ensure `README.md` prominently links to `docs/RULES.md`.
 
 3. **Chart Provider Detection System**
    - [x] **[P1]** Implement metadata-based chart provider detection:
@@ -194,6 +203,18 @@ Implementation steps:
    - [x] **[P2]** Implement test framework for Type 2 parameters in validation context
    - [ ] **[P2]** Measure improvement in chart validation success rate with rules system
    - [x] **[P2]** Create automated tests for rule application logic
+
+   # Prioritized Additional Test Cases for Rules System
+   - [ ] **Integration (Core + Disable):** Run `irr override` on real Bitnami charts (e.g., nginx) and non-Bitnami charts to verify:
+     - [ ] Override file contains `global.security.allowInsecureImages: true` only for detected Bitnami charts (medium/high confidence)
+     - [ ] The CLI flag `--disable-rules` prevents rule application
+   - [ ] **Unit Coverage (Detection & Application):**
+     - [ ] Verify core detection logic handles different metadata combinations correctly (covering confidence levels)
+     - [ ] Test rule application logic merges parameters correctly into simple and complex existing override maps
+     - [ ] Include checks for case sensitivity and whitespace variations in metadata
+   - [ ] **Type 2 Exclusion:** Validate that parameters from rules marked as `TypeValidationOnly` are never included in the final override map (can use a dummy rule for testing)
+   - [ ] **Negative/Edge (No Metadata):** Test charts with empty/nil metadata; ensure no panics occur and no rules are applied
+   - [ ] **Error Handling:** Unit test graceful failure (log warning, continue) if the rules registry is misconfigured or type assertion fails
 
 5. **Documentation & Maintainability**
    - [x] **[P1]** Document the distinction between Type 1 and Type 2 parameters
