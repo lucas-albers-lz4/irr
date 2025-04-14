@@ -22,13 +22,14 @@ These flags are available for all commands:
 Analyzes a Helm chart for image references without generating overrides.
 
 ```bash
-irr analyze [flags] CHART
+irr analyze --chart-path CHART_PATH --source-registries REGISTRIES CHART_PATH
 ```
 
 #### Flags for analyze
 
 | Flag | Description | Default | Example |
 |------|-------------|---------|---------|
+| `-c, --chart-path` | Path to the Helm chart (required) | | `--chart-path ./my-chart` |
 | `-h, --help` | Show help for analyze | | `--help` |
 | `-m, --mappings` | Registry mappings file | | `--mappings mappings.yaml` |
 | `-o, --output` | Output format | text | `--output yaml` |
@@ -42,7 +43,7 @@ irr analyze [flags] CHART
 Inspects a Helm chart for image references with enhanced analysis and configuration generation capabilities.
 
 ```bash
-irr inspect [flags]
+irr inspect --chart-path CHART_PATH
 ```
 
 #### Flags for inspect
@@ -51,16 +52,53 @@ irr inspect [flags]
 |------|-------------|---------|---------|
 | `--chart-path` | Path to the Helm chart (required) | | `--chart-path ./my-chart` |
 | `--generate-config-skeleton` | Generate skeleton config file | | `--generate-config-skeleton config.yaml` |
-| `--format` | Output format | yaml | `--format yaml` |
-| `-o, --output-file` | Output file path | stdout | `--output-file analysis.yaml` |
+| `--output-format` | Output format | yaml | `--output-format yaml` |
+| `--output-file` | Output file path | stdout | `--output-file analysis.yaml` |
+| `--include-pattern` | Glob patterns for values paths to include during analysis | | `--include-pattern "*.image"` |
+| `--exclude-pattern` | Glob patterns for values paths to exclude during analysis | | `--exclude-pattern "*.test.*"` |
+| `--known-image-paths` | Specific dot-notation paths known to contain images | | `--known-image-paths "containers[].image"` |
 | `-h, --help` | Show help for inspect | | `--help` |
+
+### Basic Inspection
+```bash
+irr inspect --chart-path ./nginx
+```
+
+### Generate Config Skeleton
+```bash
+irr inspect \
+  --chart-path ./my-chart \
+  --generate-config-skeleton my-config.yaml
+```
+
+### Advanced Inspection with Pattern Filters
+```bash
+irr inspect \
+  --chart-path ./my-chart \
+  --include-pattern "*.image" \
+  --exclude-pattern "*.test.*" \
+  --known-image-paths "containers[].image" \
+  --output-file filtered-analysis.yaml
+```
+
+### Complex Example with All Options
+```bash
+irr inspect \
+  --chart-path ./prometheus \
+  --include-pattern "*.image" \
+  --exclude-pattern "*.test.*" \
+  --known-image-paths "containers[].image" \
+  --generate-config-skeleton config.yaml \
+  --output-format yaml \
+  --output-file analysis.yaml
+```
 
 ### override
 
 Generates override values for redirecting images to the target registry.
 
 ```bash
-irr override [flags]
+irr override --chart-path CHART_PATH --source-registries REGISTRIES --target-registry TARGET_REGISTRY [flags]
 ```
 
 #### Flags for override
@@ -89,7 +127,7 @@ irr override [flags]
 Validates a Helm chart with the generated overrides by running `helm template`.
 
 ```bash
-irr validate [flags]
+irr validate --chart-path CHART_PATH --values VALUES_FILE
 ```
 
 #### Flags for validate
@@ -104,110 +142,12 @@ irr validate [flags]
 | `--debug-template` | Show full template output | false | `--debug-template` |
 | `-h, --help` | Show help for validate | | `--help` |
 
-## Flag Details
-
-### --chart-path (-c)
-- Accepts both directory paths and .tgz archives
-- Must contain a valid Chart.yaml
-- Supports subcharts in charts/ directory
-- Example: `--chart-path ./charts/nginx`
-
-### --target-registry (-t)
-- Registry URL where images will be redirected
-- Can include port number
-- No trailing slash
-- Examples:
-  - `--target-registry harbor.example.com`
-  - `--target-registry localhost:5000`
-
-### --source-registries (-s)
-- Comma-separated list of registries to process
-- Registry names are normalized (e.g., "docker.io" = "index.docker.io")
-- Examples:
-  - `--source-registries docker.io`
-  - `--source-registries docker.io,quay.io,gcr.io`
-
-### --strategy (-p)
-- Controls how image paths are constructed in target registry
-- Available strategies:
-  - `prefix-source-registry` (default): Preserves source registry as path prefix
-  - `flat` (planned): Removes source registry from path
-
-### --verbose (-v)
-- Enables detailed logging
-- Shows:
-  - Image detection process
-  - Path construction
-  - Registry matching
-  - Type detection
-  - Template variable handling
-
-### --dry-run
-- Previews changes without writing files
-- Useful for:
-  - Validating override structure
-  - Checking path strategy results
-  - Verifying registry transformations
-
-### --strict (-s)
-- Fails if unrecognized image structures found
-- Useful for:
-  - CI/CD pipelines
-  - Validation workflows
-  - Ensuring complete processing
-
-### --exclude-registries
-- Registries to skip during processing
-- Useful for:
-  - Keeping certain images unchanged
-  - Handling special cases
-  - Example: `--exclude-registries k8s.gcr.io,registry.k8s.io`
-
-### --threshold
-- Success percentage required to generate output
-- Range: 0-100
-- Example: `--threshold 90` (allow 10% failure)
-
-### --validate
-- Runs `helm template` with generated overrides
-- Confirms chart remains renderable
-- Useful for validating changes before applying
-
-### --generate-config-skeleton (inspect command)
-- Generates a skeleton configuration file
-- Automatically includes detected source registries
-- Creates structured YAML format with empty target fields for completion
-
-## Output Formats
-
-All structured data output is now provided in YAML format only for better readability and consistency. This applies to:
-
-- The `analyze` command output (`--output yaml`, default)
-- The `inspect` command output (always YAML)
-- The `override` command output (always YAML for structured data)
-
-JSON output format has been deprecated and is no longer supported.
-
-## Exit Codes
-
-| Code | Meaning |
-|------|---------|
-| 0 | Success |
-| 1 | Missing required flag |
-| 2 | Input/Configuration error |
-| 3 | Invalid strategy |
-| 4 | Chart not found |
-| 10 | Chart parsing error |
-| 11 | Image processing error |
-| 12 | Unsupported structure (strict mode) |
-| 13 | Threshold not met |
-| 14 | Chart load failed |
-| 15 | Chart processing failed |
-| 16 | Helm command failed |
-| 20 | General runtime error |
-| 21 | I/O error |
-
 ## Examples
+
+### Basic Analysis
+```bash
+irr analyze --chart-path ./nginx --source-registries docker.io,quay.io ./nginx
+```
 
 ### Basic Inspection
 ```bash
@@ -226,7 +166,7 @@ irr inspect \
 irr override \
   --chart-path ./nginx \
   --target-registry harbor.example.com \
-  --source-registries docker.io
+  --source-registries docker.io,quay.io
 ```
 
 ### Complex Example with Configuration
@@ -252,3 +192,22 @@ irr validate \
   --chart-path ./my-chart \
   --values overrides.yaml
 ```
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | Missing required flag |
+| 2 | Input/Configuration error |
+| 3 | Invalid strategy |
+| 4 | Chart not found |
+| 10 | Chart parsing error |
+| 11 | Image processing error |
+| 12 | Unsupported structure (strict mode) |
+| 13 | Threshold not met |
+| 14 | Chart load failed |
+| 15 | Chart processing failed |
+| 16 | Helm command failed |
+| 20 | General runtime error |
+| 21 | I/O error |

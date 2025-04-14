@@ -75,6 +75,9 @@ This command analyzes the chart's values.yaml and templates to find image refere
 	cmd.Flags().String("output-format", "yaml", "Output format (yaml or json)")
 	cmd.Flags().String("output-file", "", "Write output to file instead of stdout")
 	cmd.Flags().Bool("generate-config-skeleton", false, "Generate a config skeleton based on found images")
+	cmd.Flags().StringSlice("include-pattern", nil, "Glob patterns for values paths to include during analysis")
+	cmd.Flags().StringSlice("exclude-pattern", nil, "Glob patterns for values paths to exclude during analysis")
+	cmd.Flags().StringSlice("known-image-paths", nil, "Specific dot-notation paths known to contain images")
 
 	return cmd
 }
