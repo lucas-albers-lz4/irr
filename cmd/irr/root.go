@@ -3,27 +3,24 @@
 // container image references from public registries to a target private registry.
 //
 // The main CLI commands are:
-//   - analyze: Analyze a Helm chart to identify image references
+//   - inspect: Inspect a Helm chart to identify image references
 //   - override: Generate override values to redirect images to a target registry
+//   - validate: Validate generated overrides with Helm template
 //
 // Each command has various flags for configuration. See the help output for details.
 package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"strconv"
-	"strings"
 
 	log "github.com/lalbers/irr/pkg/log"
 
 	"github.com/lalbers/irr/pkg/analysis"
 	"github.com/lalbers/irr/pkg/debug"
-	"github.com/lalbers/irr/pkg/exitcodes"
 	"github.com/lalbers/irr/pkg/override"
 	"github.com/lalbers/irr/pkg/registry"
 	"github.com/spf13/afero"
@@ -32,54 +29,20 @@ import (
 
 // Global flag variables
 var (
-	cfgFile          string
-	sourceRegistries []string
-	outputFile       string
-	debugEnabled     bool
-	logLevel         string
+	cfgFile      string
+	debugEnabled bool
+	logLevel     string
 	// analyze command flags
-	outputFormat string
-	// For analyze command
-	// includePatterns []string
-	// excludePatterns []string
-	// knownPaths      []string
+	// outputFormat string
 
 	// Output and mode flags
 	registryFile string
 
-	// Behavior flags
-	verbose    bool
-	strictMode bool
-
 	// IntegrationTestMode controls behavior specific to integration tests
 	integrationTestMode bool
 
-	// Configuration variables (populated by flags or config file)
-	// These seem unused according to the linter, removing them for now.
-	// includePatterns []string
-	// excludePatterns []string
-	// knownPaths      []string
-	// targetRegistry string
-	// excludeRegistries []string
-	// pathStrategy  string
-	// printPatterns bool
-	// templateMode  bool
-
 	// TestAnalyzeMode is a global flag to enable test mode for analyze command
 	TestAnalyzeMode bool
-)
-
-// Helper to panic on required flag errors (indicates programmer error)
-func mustMarkFlagRequired(cmd *cobra.Command, flagName string) {
-	if err := cmd.MarkFlagRequired(flagName); err != nil {
-		panic(fmt.Sprintf("failed to mark flag '%s' as required: %v", flagName, err))
-	}
-}
-
-const (
-	// Standard file permissions
-	defaultFilePerm       fs.FileMode = 0o600 // Read/write for owner
-	defaultOutputFilePerm fs.FileMode = 0o644 // Read/write for owner, read for group/others
 )
 
 // AppFs defines the filesystem interface to use, allows mocking in tests.
@@ -100,40 +63,13 @@ func (e *ExitCodeError) ExitCode() int {
 	return e.exitCode
 }
 
-func wrapExitCodeError(err error, code int) error {
-	if err == nil {
-		return nil
-	}
-	var exitErr *ExitCodeError
-	if errors.As(err, &exitErr) {
-		return exitErr
-	}
-	return &ExitCodeError{err: err, exitCode: code}
-}
-
-// --- Factory for Analyzer ---
-// Allows overriding for testing
-type analyzerFactoryFunc func(chartPath string) AnalyzerInterface
-
-// Default factory creates the real analyzer
-var defaultAnalyzerFactory analyzerFactoryFunc = func(chartPath string) AnalyzerInterface {
-	// Pass nil loader to use the default Helm loader
-	return analysis.NewAnalyzer(chartPath, nil)
-}
-
-// Keep track of the current factory (can be replaced in tests)
-var currentAnalyzerFactory = defaultAnalyzerFactory
-
-// AnalyzerInterface defines the methods expected from an analyzer.
-// This interface is used to allow mocking in tests and to provide a clean
-// abstraction between the CLI and the analysis package.
+// AnalyzerInterface defines methods for chart analysis.
+// This interface allows for chart analysis functionality to be mocked in tests.
 type AnalyzerInterface interface {
 	// Analyze performs chart analysis and returns the detected image patterns
 	// or an error if the analysis fails.
 	Analyze() (*analysis.ChartAnalysis, error)
 }
-
-// --- End Factory ---
 
 // --- Factory for Generator ---
 
@@ -282,7 +218,7 @@ func init() {
 	}
 
 	// Add commands
-	rootCmd.AddCommand(newAnalyzeCmd())
+	// rootCmd.AddCommand(newAnalyzeCmd()) // Removed as part of Phase 3
 	rootCmd.AddCommand(newOverrideCmd())
 	rootCmd.AddCommand(newInspectCmd())
 	rootCmd.AddCommand(newValidateCmd())
@@ -295,179 +231,8 @@ func init() {
 
 // --- Analyze Command --- Moved from analyze.go
 
-func newAnalyzeCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "analyze [flags] CHART",
-		Short: "Analyze a Helm chart for image references",
-		Long: `Analyze a Helm chart to identify container image references.
-		
-This command will scan a Helm chart for container image references and report them.
-It can output in text or JSON format and supports filtering by source registry.`,
-		Args: func(cmd *cobra.Command, args []string) error {
-			// Skip argument validation in test mode
-			testAnalyze, err := cmd.Flags().GetBool("test-analyze")
-			if err != nil {
-				return fmt.Errorf("failed to get test-analyze flag: %w", err)
-			}
-			if testAnalyze {
-				return nil
-			}
-			return cobra.ExactArgs(1)(cmd, args)
-		},
-		RunE: runAnalyze,
-	}
-
-	// Add flags
-	cmd.Flags().StringVarP(&outputFormat, "output", "o", "text", "Output format (text or json)")
-	cmd.Flags().StringVarP(&outputFile, "output-file", "f", "", "File to write output to (defaults to stdout)")
-	cmd.Flags().StringVarP(&registryFile, "mappings", "m", "", "Registry mappings file")
-	cmd.Flags().BoolVarP(&strictMode, "strict", "s", false, "Enable strict mode")
-	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output")
-	cmd.Flags().StringSliceVarP(&sourceRegistries, "source-registries", "r", nil, "Source registries to analyze")
-	cmd.Flags().StringP("chart-path", "c", "", "Path to the Helm chart directory or tarball (required)")
-
-	// Mark required flags
-	mustMarkFlagRequired(cmd, "source-registries")
-	mustMarkFlagRequired(cmd, "chart-path")
-
-	return cmd
-}
-
-// formatJSONOutput formats the analysis result as JSON
-func formatJSONOutput(result *analysis.ChartAnalysis) (string, error) {
-	jsonBytes, err := json.MarshalIndent(result, "", "  ")
-	if err != nil {
-		return "", wrapExitCodeError(err, exitcodes.ExitGeneralRuntimeError)
-	}
-	return string(jsonBytes) + "\n", nil // Add newline for JSON output
-}
-
-// formatTextOutput formats the analysis result as human-readable text
-func formatTextOutput(result *analysis.ChartAnalysis) string {
-	var sb strings.Builder
-	sb.WriteString("Chart Analysis\n\n")
-	sb.WriteString(fmt.Sprintf("Total image patterns found: %d\n", len(result.ImagePatterns)))
-	sb.WriteString(fmt.Sprintf("Total global patterns found: %d\n\n", len(result.GlobalPatterns)))
-
-	if len(result.ImagePatterns) > 0 {
-		sb.WriteString("Detected Image Patterns:\n")
-		for _, pattern := range result.ImagePatterns {
-			sb.WriteString(fmt.Sprintf("  - Path: %s\n", pattern.Path))
-			sb.WriteString(fmt.Sprintf("    Type: %s\n", pattern.Type))
-			// Use %+v for potentially complex values like maps
-			formattedValue := fmt.Sprintf("%+v", pattern.Value)
-			sb.WriteString(fmt.Sprintf("    Value: %s\n", formattedValue))
-		}
-		sb.WriteString("\n")
-	}
-
-	if len(result.GlobalPatterns) > 0 {
-		sb.WriteString("Detected Global Patterns:\n")
-		for _, pattern := range result.GlobalPatterns {
-			sb.WriteString(fmt.Sprintf("  - Path: %s\n", pattern.Path))
-		}
-		sb.WriteString("\n")
-	}
-	return sb.String()
-}
-
-// writeAnalysisOutput writes the analysis output to a file or stdout
-func writeAnalysisOutput(cmd *cobra.Command, output, outputFile string) error {
-	if outputFile != "" {
-		debug.Printf("Writing analysis output to file: %s", outputFile)
-		if err := afero.WriteFile(AppFs, outputFile, []byte(output), defaultOutputFilePerm); err != nil {
-			return wrapExitCodeError(err, exitcodes.ExitGeneralRuntimeError)
-		}
-		return nil
-	}
-
-	debug.Println("Writing analysis output to stdout")
-	_, err := cmd.OutOrStdout().Write([]byte(output))
-	if err != nil {
-		return fmt.Errorf("writing analysis output: %w", err)
-	}
-	return nil
-}
-
-// runAnalyze implements the analyze command functionality
-func runAnalyze(cmd *cobra.Command, args []string) error {
-	// Check if we're in test mode
-	testAnalyze, err := cmd.Flags().GetBool("test-analyze")
-	if err != nil {
-		return fmt.Errorf("failed to get test-analyze flag: %w", err)
-	}
-	debug.Printf("Running analyze command in test mode: %v", testAnalyze)
-
-	// Check required args in normal mode
-	if !testAnalyze && len(args) != 1 {
-		return fmt.Errorf("accepts 1 arg(s), received %d", len(args))
-	}
-
-	// Check required flags in normal mode
-	if !testAnalyze {
-		sourceRegistries, err := cmd.Flags().GetStringSlice("source-registries")
-		if err != nil || len(sourceRegistries) == 0 {
-			return fmt.Errorf("required flag(s) \"source-registries\" not set")
-		}
-
-		chartPathFlag, err := cmd.Flags().GetString("chart-path")
-		if err != nil || chartPathFlag == "" {
-			return fmt.Errorf("required flag(s) \"chart-path\" not set")
-		}
-	}
-
-	// Set up the analyzer
-	var chartPath string
-	switch {
-	case len(args) > 0:
-		chartPath = args[0]
-	case testAnalyze:
-		// Use a placeholder in test mode if no args provided
-		chartPath = "test-chart"
-	default:
-		return fmt.Errorf("chart path argument required")
-	}
-
-	analyzer := currentAnalyzerFactory(chartPath)
-
-	// Get output format (text or json)
-	outputFormat, err := cmd.Flags().GetString("output")
-	if err != nil {
-		return fmt.Errorf("failed to get output flag: %w", err)
-	}
-	outputFile, err := cmd.Flags().GetString("output-file")
-	if err != nil {
-		return fmt.Errorf("failed to get output-file flag: %w", err)
-	}
-
-	// Perform analysis
-	result, err := analyzer.Analyze()
-	if err != nil {
-		return wrapExitCodeError(err, exitcodes.ExitChartParsingError)
-	}
-
-	// Format output based on format flag
-	var output string
-	if outputFormat == "json" {
-		output, err = formatJSONOutput(result)
-		if err != nil {
-			return err
-		}
-	} else {
-		output = formatTextOutput(result)
-	}
-
-	// Write output to file or stdout
-	return writeAnalysisOutput(cmd, output, outputFile)
-}
-
-// initConfig reads in config file and ENV variables if set.
-// NOTE: We are not currently using a config file or environment variables beyond LOG_LEVEL/IRR_DEBUG (handled in packages).
-// func initConfig() {
-// ... implementation ...
-// }
-
-// Override command implementation moved to override.go
+// Analysis related functions and command implementation have been removed as part of Phase 3.
+// The functionality has been consolidated into the inspect command.
 
 // Get the root command - useful for testing
 func getRootCmd() *cobra.Command {

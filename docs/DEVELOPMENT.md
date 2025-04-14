@@ -285,9 +285,10 @@ The Phase 4 implementation focuses on a standalone CLI with three core commands:
 
 ### 7.1. `irr inspect`
 
-*   **Purpose:** Analyze a chart's values to discover container images without modification.
+*   **Purpose:** Inspect a chart's values to discover container images without modification. Optionally filter results by source registry.
 *   **Inputs:**
-    *   `--chart-path <path>` OR `--release-name <name>` (plus optional `--namespace`)
+    *   `--chart-path <path>` OR `--release-name <n>` (plus optional `--namespace`)
+    *   Optional: `--source-registries <list>` (filter results to these registries)
     *   Optional: `--generate-config-skeleton <output_path>`
     *   Optional: `--output-file <path>` (defaults to stdout)
     *   Optional: `--config <path>` (to identify excluded registries during analysis)

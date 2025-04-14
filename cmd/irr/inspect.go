@@ -59,6 +59,7 @@ type InspectFlags struct {
 	OutputFile             string
 	GenerateConfigSkeleton bool
 	AnalyzerConfig         *analyzer.Config
+	SourceRegistries       []string
 }
 
 // newInspectCmd creates a new inspect command
@@ -78,6 +79,7 @@ This command analyzes the chart's values.yaml and templates to find image refere
 	cmd.Flags().StringSlice("include-pattern", nil, "Glob patterns for values paths to include during analysis")
 	cmd.Flags().StringSlice("exclude-pattern", nil, "Glob patterns for values paths to exclude during analysis")
 	cmd.Flags().StringSlice("known-image-paths", nil, "Specific dot-notation paths known to contain images")
+	cmd.Flags().StringSliceP("source-registries", "r", nil, "Source registries to filter results (optional)")
 
 	return cmd
 }
@@ -216,6 +218,28 @@ func runInspect(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
+	// Filter images if source registries are provided
+	if len(flags.SourceRegistries) > 0 {
+		var filteredImages []ImageInfo
+
+		// Create a map for O(1) lookups
+		registryMap := make(map[string]bool)
+		for _, reg := range flags.SourceRegistries {
+			registryMap[reg] = true
+		}
+
+		// Filter images
+		for _, img := range analysis.Images {
+			if registryMap[img.Registry] {
+				filteredImages = append(filteredImages, img)
+			}
+		}
+
+		// Update the analysis with filtered images
+		analysis.Images = filteredImages
+		log.Infof("Filtered images to %d registries", len(flags.SourceRegistries))
+	}
+
 	// Write output
 	return writeOutput(analysis, flags)
 }
@@ -298,12 +322,22 @@ func getInspectFlags(cmd *cobra.Command) (*InspectFlags, error) {
 		KnownPaths:      knownPaths,
 	}
 
+	// Get source registries
+	sourceRegistries, err := cmd.Flags().GetStringSlice("source-registries")
+	if err != nil {
+		return nil, &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get source-registries flag: %w", err),
+		}
+	}
+
 	return &InspectFlags{
 		ChartPath:              chartPath,
 		OutputFormat:           outputFormat,
 		OutputFile:             outputFile,
 		GenerateConfigSkeleton: generateConfigSkeleton,
 		AnalyzerConfig:         analyzerConfig,
+		SourceRegistries:       sourceRegistries,
 	}, nil
 }
 

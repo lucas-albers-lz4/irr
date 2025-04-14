@@ -41,23 +41,26 @@ helm irr --version
 
 ### 1. Initial Chart Analysis
 
-When working with a new chart, first analyze it to understand its image structure:
+When working with a new chart, first inspect it to understand its image structure:
 
 #### Using Standalone CLI:
 ```bash
-# Analyze local chart
+# Inspect local chart
 irr inspect --chart-path ./my-chart
 
 # Generate detailed report
 irr inspect --chart-path ./my-chart --output-file report.yaml --format yaml
+
+# Filter images by registry
+irr inspect --chart-path ./my-chart --source-registries docker.io,quay.io
 ```
 
 #### Using Helm Plugin:
 ```bash
-# Analyze installed chart
+# Inspect installed chart
 helm irr inspect my-release
 
-# Analyze chart before installation
+# Inspect chart before installation
 helm irr inspect --chart-path ./my-chart
 ```
 

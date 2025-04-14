@@ -2,7 +2,7 @@
 
 ## Command Overview
 
-The `irr` (Image Relocation and Rewrite) tool provides commands and options for analyzing and modifying image references in Helm charts.
+The `irr` (Image Relocation and Rewrite) tool provides commands and options for inspecting, overriding, and validating image references in Helm charts.
 
 ## Global Flags
 
@@ -17,33 +17,12 @@ These flags are available for all commands:
 
 ## Commands
 
-### analyze
-
-Analyzes a Helm chart for image references without generating overrides.
-
-```bash
-irr analyze --chart-path CHART_PATH --source-registries REGISTRIES CHART_PATH
-```
-
-#### Flags for analyze
-
-| Flag | Description | Default | Example |
-|------|-------------|---------|---------|
-| `-c, --chart-path` | Path to the Helm chart (required) | | `--chart-path ./my-chart` |
-| `-h, --help` | Show help for analyze | | `--help` |
-| `-m, --mappings` | Registry mappings file | | `--mappings mappings.yaml` |
-| `-o, --output` | Output format | text | `--output yaml` |
-| `-f, --output-file` | Output file | stdout | `--output-file analysis.yaml` |
-| `-r, --source-registries` | Source registries to analyze (required) | | `--source-registries docker.io,quay.io` |
-| `-s, --strict` | Enable strict mode | false | `--strict` |
-| `-v, --verbose` | Enable verbose output | false | `--verbose` |
-
 ### inspect
 
 Inspects a Helm chart for image references with enhanced analysis and configuration generation capabilities.
 
 ```bash
-irr inspect --chart-path CHART_PATH
+irr inspect --chart-path CHART_PATH [--source-registries REGISTRIES]
 ```
 
 #### Flags for inspect
@@ -57,11 +36,17 @@ irr inspect --chart-path CHART_PATH
 | `--include-pattern` | Glob patterns for values paths to include during analysis | | `--include-pattern "*.image"` |
 | `--exclude-pattern` | Glob patterns for values paths to exclude during analysis | | `--exclude-pattern "*.test.*"` |
 | `--known-image-paths` | Specific dot-notation paths known to contain images | | `--known-image-paths "containers[].image"` |
+| `-r, --source-registries` | Source registries to filter results (optional) | | `--source-registries docker.io,quay.io` |
 | `-h, --help` | Show help for inspect | | `--help` |
 
 ### Basic Inspection
 ```bash
 irr inspect --chart-path ./nginx
+```
+
+### Inspection with Registry Filtering
+```bash
+irr inspect --chart-path ./nginx --source-registries docker.io,quay.io
 ```
 
 ### Generate Config Skeleton
@@ -115,51 +100,14 @@ irr override --chart-path CHART_PATH --source-registries REGISTRIES --target-reg
 | `--known-image-paths` | Specific paths with images | | `--known-image-paths "containers[].image"` |
 | `-o, --output-file` | Output file path | stdout | `--output-file overrides.yaml` |
 | `--registry-file` | YAML file with registry mappings | | `--registry-file mappings.yaml` |
+| `-r, --release-name` | Helm release name to get values from | | `--release-name my-release` |
 | `-s, --source-registries` | Source registries (required) | | `--source-registries docker.io,quay.io` |
 | `-p, --strategy` | Path generation strategy | prefix-source-registry | `--strategy prefix-source-registry` |
 | `--strict` | Fail on any parsing error | false | `--strict` |
 | `-t, --target-registry` | Target registry URL (required) | | `--target-registry harbor.example.com` |
 | `--threshold` | Success percentage required | 0 | `--threshold 90` |
 | `--validate` | Run helm template to validate | false | `--validate` |
-
-### validate
-
-Validates a Helm chart with the generated overrides by running `helm template`.
-
-```bash
-irr validate --chart-path CHART_PATH --values VALUES_FILE
-```
-
-#### Flags for validate
-
-| Flag | Description | Default | Example |
-|------|-------------|---------|---------|
-| `--chart-path` | Path to the Helm chart (required) | | `--chart-path ./my-chart` |
-| `--release-name` | Release name for validation | | `--release-name my-release` |
-| `--values` | Values files to use (can specify multiple) | | `--values overrides.yaml` |
-| `--namespace` | Namespace for validation | default | `--namespace my-namespace` |
-| `--output-file` | Output file for template result | | `--output-file template.yaml` |
-| `--debug-template` | Show full template output | false | `--debug-template` |
-| `-h, --help` | Show help for validate | | `--help` |
-
-## Examples
-
-### Basic Analysis
-```bash
-irr analyze --chart-path ./nginx --source-registries docker.io,quay.io ./nginx
-```
-
-### Basic Inspection
-```bash
-irr inspect --chart-path ./nginx
-```
-
-### Generate Config Skeleton
-```bash
-irr inspect \
-  --chart-path ./my-chart \
-  --generate-config-skeleton my-config.yaml
-```
+| `--namespace` | Kubernetes namespace for the Helm release | | `--namespace my-namespace` |
 
 ### Basic Override Generation
 ```bash
@@ -174,11 +122,34 @@ irr override \
 irr override \
   --chart-path ./prometheus \
   --config registry-config.yaml \
+  --target-registry harbor.example.com \
+  --source-registries docker.io,quay.io \
   --threshold 90 \
   --output-file overrides.yaml
 ```
 
-### Validation
+### validate
+
+Validates a Helm chart with the generated overrides by running `helm template`.
+
+```bash
+irr validate --chart-path CHART_PATH --values VALUES_FILE
+```
+
+#### Flags for validate
+
+| Flag | Description | Default | Example |
+|------|-------------|---------|---------|
+| `--chart-path` | Path to the Helm chart (required) | | `--chart-path ./my-chart` |
+| `--release-name` | Release name for validation | release | `--release-name my-release` |
+| `--values` | Values files to use (can specify multiple) | | `--values overrides.yaml` |
+| `--set` | Set values on the command line (can specify multiple) | | `--set image.repository=nginx` |
+| `--namespace` | Namespace for validation | default | `--namespace my-namespace` |
+| `--output-file` | Output file for template result | | `--output-file template.yaml` |
+| `--debug-template` | Show full template output | false | `--debug-template` |
+| `-h, --help` | Show help for validate | | `--help` |
+
+### Validation Example
 ```bash
 irr validate \
   --chart-path ./my-chart \

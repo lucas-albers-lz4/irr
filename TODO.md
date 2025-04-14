@@ -3,19 +3,51 @@
 ## Completed Phases
 - Phase 1: Core Implementation & Stabilization
 - Phase 2: Configuration & Support Features
-- Phase 3: Component-Group Testing Framework
+- Phase 3: Combine Inspect and Analyze
 - Phase 5: Helm Plugin Integration (Core functionality)
 - Phase 7: Test Framework Refactoring
 - Phase 8: Test Corpus Expansion & Advanced Refinement
 - Phase 10: Testability Improvements via Dependency Injection (Core functionality)
 
-## Phase 4: Fix cli issues
+## Phase 3: Combine Inspect and Analyze
+_**Goal:** Simplify the CLI interface by consolidating image analysis functionality into the `inspect` command, making it a unified entry point for chart analysis, and remove the `analyze` command._
+
+- [x] **[P1]** Enhance `inspect` command (`cmd/irr/inspect.go`):
+    - [x] Add `--source-registries` as an *optional* string slice flag.
+    - [x] Modify flag retrieval logic (`getInspectFlags` or similar) to handle the optional flag.
+    - [x] Update core `runInspect` logic: If `--source-registries` is provided and not empty, filter reported images to match those registries. Otherwise, report all images.
+
+- [x] **[P1]** Remove `analyze` command completely:
+    - [x] Delete `cmd/irr/analyze.go` file.
+    - [x] Remove `analyzeCmd` addition from `cmd/irr/root.go` (or equivalent).
+
+- [x] **[P1]** Update Go Tests (`cmd/irr/cli_test.go` or similar):
+    - [x] Identify all existing tests for the `analyze` command.
+    - [x] **Adapt/Reuse** tests verifying `analyze` execution and output filtering: Modify them to target `inspect` *with* the `--source-registries` flag.
+    - [x] **Adapt/Reuse** tests for `analyze` with optional flags (e.g., `--output-file`): Modify them to target `inspect` *with* `--source-registries`.
+    - [x] **Adapt/Reuse** error tests for invalid registries/paths: Modify them to target `inspect`.
+    - [x] **Delete** tests checking for *missing* required `--source-registries` on `analyze` (no longer relevant).
+    - [x] **Add new** tests for `inspect` *without* `--source-registries` to verify it reports all images.
+
+- [x] **[P1]** Update Python Test Framework (`test/tools/test-charts.py`):
+    - [x] Replace calls to `irr analyze ... --source-registries <regs>` with `irr inspect ... --source-registries <regs>`.
+    - [x] Verify any result parsing logic still works correctly.
+
+- [x] **[P1]** Update Documentation:
+    - [x] Remove `analyze` section from `docs/cli-reference.md`.
+    - [x] Update `inspect` description in `docs/cli-reference.md` to include optional `--source-registries` filtering.
+    - [x] Update/add examples in `docs/cli-reference.md` and `docs/USE-CASES.md` showing `inspect` with/without `--source-registries`.
+    - [x] Remove `analyze` references from `docs/DEVELOPMENT.md` and other relevant docs.
+
+- [x] **[P2]** Streamline flags across commands (Review during implementation):
+    - [x] Ensure flag names/behavior are consistent between `inspect`, `override`, `validate`.
+    - [x] Ensure help text and error messages use consistent terminology.
 
 ## Phase 4: Basic CLI Syntax Testing
-_**Goal:** Ensure all CLI commands and essential flags execute without basic parsing or validation errors. Focus on basic functionality with minimal refactoring needed._
+_**Goal:** Ensure all CLI commands (post-Phase 3) and essential flags execute without basic parsing or validation errors. Focus on basic functionality with minimal refactoring needed._
 
 - [ ] **[P1]** Define focused test scope: 
-    - [ ] Cover all commands: `analyze`, `inspect`, `override`, `validate`, `completion`, `help`
+    - [ ] Cover remaining commands: `inspect`, `override`, `validate`, `completion`, `help`
     - [ ] Test essential global flags: `--debug`, `--log-level`
     - [ ] Focus on command parsing and basic validation, not deep functionality
 
@@ -29,39 +61,31 @@ _**Goal:** Ensure all CLI commands and essential flags execute without basic par
     - [ ] Implement test fixture setup/teardown (chart path, temp files, etc.)
     - [ ] Create helper for finding `bin/irr` regardless of test execution directory
 
-- [ ] **[P1]** Implement success case tests:
-    - [ ] `analyze` with minimal required flags (`--chart-path`, `--source-registries`)
-    - [ ] `analyze` with optional flags (`--output-format`, `--output-file`, etc.)
-    - [ ] `inspect` with minimal required flags (`--chart-path`)
-    - [ ] `inspect` with all pattern flags (`--include-pattern`, `--exclude-pattern`, `--known-image-paths`)
-    - [ ] `inspect` with `--generate-config-skeleton` to temporary file
-    - [ ] `inspect` with different `--output-format` values (yaml, json)
-    - [ ] `override` with minimal required flags (`--chart-path`, `--source-registries`, `--target-registry`)
+- [ ] **[P2]** Implement success case tests:
+    - [ ] `inspect` with required flag (`--chart-path`) (no source-registries)
+    - [ ] `inspect` with required flag and `--source-registries`
+    - [ ] `inspect` with pattern flags (`--include-pattern`, etc.)
+    - [ ] `inspect` with `--generate-config-skeleton`
+    - [ ] `override` with required flags (`--chart-path`, `--source-registries`, `--target-registry`)
     - [ ] `override` with pattern flags and output to file
     - [ ] `override` with different `--strategy` values 
     - [ ] `validate` with minimal flags (`--chart-path`, `--values`)
     - [ ] `validate` with multiple values files
-    - [ ] `completion` for all supported shells (bash, zsh)
-    - [ ] `help` and `help <command>` for each command
+    - [ ] `completion` for bash shell
+    - [ ] `help` and `help <command>` for each remaining command
 
 - [ ] **[P1]** Implement global flag tests:
-    - [ ] Test `--debug` with verify debug output appears
-    - [ ] Test `--log-level` with different levels (debug, info, warn, error)
-    - [ ] Test `--config` with a valid config file
+    - [ ] Test `--debug` with `inspect` or `override`
+    - [ ] Test `--log-level` with `inspect` or `override`
+    - [ ] Test `--config` with a valid config file (using `inspect` or `override`)
 
 - [ ] **[P1]** Implement error case tests:
-    - [ ] Each command without required flags (should fail with appropriate message)
-    - [ ] `analyze` with invalid source registries
-    - [ ] `inspect` with non-existent chart path
+    - [ ] Each command without its *required* flags (e.g., `inspect` without `--chart-path`, `override` without `--chart-path` or `--target-registry` or `--source-registries`)
+    - [ ] `inspect` with invalid `--source-registries` format (when provided)
+    - [ ] `inspect`/`override`/`validate` with non-existent chart path
     - [ ] `override` with invalid target registry format
     - [ ] `override` with incompatible flags
     - [ ] `validate` with missing or invalid values file
-    - [ ] Test with invalid chart path for all commands
-
-- [ ] **[P1]** Essential error case tests:
-    - [ ] Commands missing required flags (verify non-zero exit code)
-    - [ ] Non-existent chart path
-    - [ ] Invalid registry format for `analyze`/`override`
 
 - [ ] **[P1]** Simple integration:
     - [ ] Ensure tests run with standard `go test ./...`
