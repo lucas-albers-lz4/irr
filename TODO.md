@@ -9,6 +9,67 @@
 - Phase 8: Test Corpus Expansion & Advanced Refinement
 - Phase 10: Testability Improvements via Dependency Injection (Core functionality)
 
+## Phase 4: Fix cli issues
+
+## Phase 4: Basic CLI Syntax Testing
+_**Goal:** Ensure all CLI commands and essential flags execute without basic parsing or validation errors. Focus on basic functionality with minimal refactoring needed._
+
+- [ ] **[P1]** Define focused test scope: 
+    - [ ] Cover all commands: `analyze`, `inspect`, `override`, `validate`, `completion`, `help`
+    - [ ] Test essential global flags: `--debug`, `--log-level`
+    - [ ] Focus on command parsing and basic validation, not deep functionality
+
+- [ ] **[P1]** Choose testing approach: 
+    - [ ] Use Go tests (`_test.go` files) leveraging the `os/exec` package
+    - [ ] Implement table-driven tests for similar command variations
+    - [ ] Create test helpers for common operations (e.g., binary path resolution, temp file creation)
+
+- [ ] **[P1]** Setup test environment:
+    - [ ] Create a dedicated Go test package (e.g., `cmd/irr/cli_test.go`)
+    - [ ] Implement test fixture setup/teardown (chart path, temp files, etc.)
+    - [ ] Create helper for finding `bin/irr` regardless of test execution directory
+
+- [ ] **[P1]** Implement success case tests:
+    - [ ] `analyze` with minimal required flags (`--chart-path`, `--source-registries`)
+    - [ ] `analyze` with optional flags (`--output-format`, `--output-file`, etc.)
+    - [ ] `inspect` with minimal required flags (`--chart-path`)
+    - [ ] `inspect` with all pattern flags (`--include-pattern`, `--exclude-pattern`, `--known-image-paths`)
+    - [ ] `inspect` with `--generate-config-skeleton` to temporary file
+    - [ ] `inspect` with different `--output-format` values (yaml, json)
+    - [ ] `override` with minimal required flags (`--chart-path`, `--source-registries`, `--target-registry`)
+    - [ ] `override` with pattern flags and output to file
+    - [ ] `override` with different `--strategy` values 
+    - [ ] `validate` with minimal flags (`--chart-path`, `--values`)
+    - [ ] `validate` with multiple values files
+    - [ ] `completion` for all supported shells (bash, zsh)
+    - [ ] `help` and `help <command>` for each command
+
+- [ ] **[P1]** Implement global flag tests:
+    - [ ] Test `--debug` with verify debug output appears
+    - [ ] Test `--log-level` with different levels (debug, info, warn, error)
+    - [ ] Test `--config` with a valid config file
+
+- [ ] **[P1]** Implement error case tests:
+    - [ ] Each command without required flags (should fail with appropriate message)
+    - [ ] `analyze` with invalid source registries
+    - [ ] `inspect` with non-existent chart path
+    - [ ] `override` with invalid target registry format
+    - [ ] `override` with incompatible flags
+    - [ ] `validate` with missing or invalid values file
+    - [ ] Test with invalid chart path for all commands
+
+- [ ] **[P1]** Essential error case tests:
+    - [ ] Commands missing required flags (verify non-zero exit code)
+    - [ ] Non-existent chart path
+    - [ ] Invalid registry format for `analyze`/`override`
+
+- [ ] **[P1]** Simple integration:
+    - [ ] Ensure tests run with standard `go test ./...`
+
+- [ ] **[P2]** Create helpers for error message validation:
+    - [ ] Helper to validate stderr output against expected patterns
+    - [ ] Helper to check for specific known error messages
+
 ## Phase 5: Helm Plugin Integration - Remaining Items
 _**Goal:** Implement the Helm plugin interface that wraps around the core CLI functionality._
 
@@ -209,60 +270,4 @@ _**Goal:** Implement end-to-end tests using `kind` to validate Helm plugin inter
   - [ ] Assert that tests with limited permissions fail if write operations are attempted
   - [ ] Verify Helm release state remains unchanged after plugin execution
 - [ ] **[P1]** Test compatibility with latest Helm version in `kind`:
-  - [ ] Set up CI configuration to run `kind` tests with the latest Helm version
-- [ ] **[P2]** Test Helm auth integration in `kind`:
-  - [ ] Test with a single credential plugin
-  - [ ] Focus only on essential auth features
-- [ ] **[P1]** CI/CD integration for `kind` tests:
-  - [ ] Set up automated CI workflow for running `kind` tests on Ubuntu LTS only
-  - [ ] Configure single environment with bash shell for all CI tests
-  - [ ] Implement appropriate timeouts and resource constraints
-  - [ ] Add caching mechanisms for Helm charts and images to speed up test runs
-- [ ] **[P2]** Test result reporting and metrics:
-  - [ ] Implement structured test result output (JSON format)
-  - [ ] Track metrics like test duration, success rates across different chart types
-  - [ ] Generate summaries of test coverage as command-line output for bucket category identification
-
-## Phase 10: Testability Improvements - Remaining Items
-- [ ] **[P2]** Develop testing guidelines for dependency injection:
-  - [ ] Document standard patterns for using the dependency injection hooks
-  - [ ] Create examples of proper test setup and teardown with injected dependencies
-  - [ ] Define testing anti-patterns to avoid
-  - [ ] Add guidance for when to use DI vs. other mocking approaches
-- [ ] **[P1]** Implement CI verification of test coverage:
-  - [ ] Set coverage thresholds for refactored components
-  - [ ] Add CI steps to verify coverage meets thresholds
-  - [ ] Generate and publish test coverage reports
-- [ ] **[P2]** Balance production code and test code:
-  - [ ] Follow "minimal impact to production code" principle
-  - [ ] Ensure production code remains readable and maintainable
-  - [ ] Favor simple dependency injection over complex test frameworks
-  - [ ] Document rationale for each injection point
-
-## Implementation Process
-- For each change:
-  1. **Baseline Verification:**
-     - Run full test suite: `go test ./...` 
-     - Run full linting: `golangci-lint run` 
-     - Determine if any existing failures need to be fixed before proceeding with new feature work 
-  
-  2. **Pre-Change Verification:**
-     - Run targeted tests relevant to the component being modified 
-     - Run targeted linting to identify specific issues (e.g., `golangci-lint run --enable-only=unused` for unused variables) 
-  
-  3. **Make Required Changes:**
-     - Follow KISS and YAGNI principles 
-     - Maintain consistent code style 
-     - Document changes in code comments where appropriate 
-  
-  4. **Post-Change Verification:**
-     - Run targeted tests to verify the changes work as expected 
-     - Run targeted linting to confirm specific issues are resolved 
-     - Run full test suite: `go test ./...` 
-     - Run full linting: `golangci-lint run` 
-  
-  5. **Git Commit:**
-     - Stop after completing a logical portion of a feature to make well reasoned git commits with changes and comments 
-     - Request suggested git commands for committing the changes 
-     - Review and execute the git commit commands yourself, never change git branches stay in the branch you are in until feature completion
-
+  - [ ] Set up CI configuration to run `
