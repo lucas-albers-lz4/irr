@@ -55,6 +55,8 @@ helm-install: helm-plugin
 test: build
 	@echo "Running unit tests..."
 	@IRR_TESTING=true go test ./... -v 
+	@echo "Running CLI syntax tests..."
+	@IRR_TESTING=true go test -v ./cmd/irr/cli_test.go
 
 test-json: build
 	@echo "Running unit tests..."
@@ -63,6 +65,10 @@ test-json: build
 test-packages: build
 	@echo "Running package tests (skipping cmd/irr)..."
 	@IRR_TESTING=true go test -v ./pkg/... ./test/...
+
+test-cli: build
+	@echo "Running CLI syntax tests..."
+	@IRR_TESTING=true go test -v ./cmd/irr/cli_test.go
 
 test-pkg-image: build
 	@echo "Running image package tests..."
@@ -158,6 +164,7 @@ help:
 	@echo "  test               Run all unit tests"
 	@echo "  test-json          Run unit tests with JSON output"
 	@echo "  test-packages      Run package tests (skipping cmd/irr)"
+	@echo "  test-cli           Run CLI syntax tests"
 	@echo "  test-pkg-image     Run image package tests"
 	@echo "  test-pkg-override  Run override package tests"
 	@echo "  test-pkg-strategy  Run strategy package tests"
