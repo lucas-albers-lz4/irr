@@ -23,6 +23,7 @@ import (
 	log "github.com/lalbers/irr/pkg/log"
 	"github.com/lalbers/irr/pkg/override"
 	"github.com/lalbers/irr/pkg/registry"
+	"github.com/lalbers/irr/pkg/rules"
 	"github.com/lalbers/irr/pkg/strategy"
 )
 
@@ -173,6 +174,8 @@ type Generator struct {
 	knownPaths        []string // Passed to detector context
 	threshold         int
 	loader            analysis.ChartLoader // Use analysis.ChartLoader interface
+	rulesEnabled      bool                 // Whether to apply rules
+	rulesRegistry     interface{}          // Rules registry (will be *rules.Registry)
 }
 
 // NewGenerator creates a new Generator with the provided configuration
@@ -187,9 +190,11 @@ func NewGenerator(
 	chartLoader analysis.ChartLoader,
 	includePatterns, excludePatterns, knownPaths []string,
 ) *Generator {
+	// Set up a default chart loader if none was provided
 	if chartLoader == nil {
-		chartLoader = &GeneratorLoader{}
+		chartLoader = &DefaultLoader{}
 	}
+
 	return &Generator{
 		chartPath:         chartPath,
 		targetRegistry:    targetRegistry,
@@ -204,6 +209,8 @@ func NewGenerator(
 		knownPaths:        knownPaths,
 		threshold:         threshold,
 		loader:            chartLoader,
+		rulesEnabled:      true, // Enable rules by default
+		rulesRegistry:     nil,  // Will be initialized on first use
 	}
 }
 
@@ -568,6 +575,36 @@ func (g *Generator) Generate() (*override.File, error) {
 		}
 	}
 
+	// Load the chart to access metadata for rule application
+	loadedChart, err := g.loader.Load(g.chartPath)
+	if err != nil {
+		log.Warnf("Failed to load chart for rule application: %v", err)
+		// Continue without applying rules
+	} else if g.rulesEnabled {
+		// Apply rules if enabled and chart loaded successfully
+		rulesApplied := false
+
+		// Import rules package only when needed
+		if g.rulesRegistry == nil {
+			// Use the default registry
+			debug.Printf("Initializing rules registry")
+			g.initRulesRegistry()
+		}
+
+		// Apply rules from the registry if it's initialized
+		if g.rulesRegistry != nil {
+			registry := g.rulesRegistry.(*rules.Registry)
+			rulesApplied, err = registry.ApplyRules(loadedChart, overrides)
+			if err != nil {
+				log.Warnf("Error applying rules to chart: %v", err)
+				// Continue with the overrides we have
+			}
+			if rulesApplied {
+				debug.Printf("Successfully applied rules to chart: %s", g.chartPath)
+			}
+		}
+	}
+
 	return &override.File{
 		ChartPath:      g.chartPath,
 		ChartName:      filepath.Base(g.chartPath),
@@ -577,6 +614,18 @@ func (g *Generator) Generate() (*override.File, error) {
 		TotalCount:     len(detectedImages),
 		SuccessRate:    float64(processedCount) / float64(len(detectedImages)) * PercentageMultiplier,
 	}, nil
+}
+
+// initRulesRegistry initializes the rules registry
+func (g *Generator) initRulesRegistry() {
+	// Lazy-load the rules package
+	g.rulesRegistry = rules.DefaultRegistry
+}
+
+// SetRulesEnabled enables or disables rule application
+func (g *Generator) SetRulesEnabled(enabled bool) {
+	g.rulesEnabled = enabled
+	debug.Printf("Rules system enabled: %v", enabled)
 }
 
 // --- Helper methods (isSourceRegistry, isExcluded) ---

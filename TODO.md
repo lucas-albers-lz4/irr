@@ -128,24 +128,24 @@ _**Goal:** Analyze results from the brute-force solver and chart analysis to ide
 Implementation steps:
 
 1. **Parameter Classification & Analysis**
-   - [ ] **[P1]** Create formal distinction between Type 1 (Deployment-Critical) and Type 2 (Test/Validation-Only) parameters
-   - [ ] **[P1]** Analyze solver results to identify common error patterns and required parameters
-   - [ ] **[P1]** Implement first high-priority Type 1 rule: Bitnami chart security bypass
-     - [ ] Define tiered confidence detection system:
-       - [ ] High confidence: Require multiple indicators (homepage + GitHub/image references)
-       - [ ] Medium confidence: Accept single strong indicators like homepage URL
-       - [ ] Fallback detection: Identify charts that fail with exit code 16 and "unrecognized containers" error
-     - [ ] Implement metadata-based detection examining:
-       - [ ] Chart metadata `home` field containing "bitnami.com"
-       - [ ] Chart metadata `sources` containing "github.com/bitnami/charts"
-       - [ ] Chart `maintainers` field referencing "Bitnami" or "Broadcom" 
-       - [ ] Chart `repository` containing "bitnamicharts"
-       - [ ] `annotations.images` field containing "docker.io/bitnami/" image references
-       - [ ] `dependencies` section containing tags with "bitnami-common"
-     - [ ] Implement `global.security.allowInsecureImages=true` insertion for detected Bitnami charts
-       - [ ] Add this parameter during the override generation phase (`irr override` command)
-       - [ ] Ensure this parameter is included in the final override.yaml file
-       - [ ] Update override generation logic to inject this parameter automatically
+   - [x] **[P1]** Create formal distinction between Type 1 (Deployment-Critical) and Type 2 (Test/Validation-Only) parameters
+   - [x] **[P1]** Analyze solver results to identify common error patterns and required parameters
+   - [x] **[P1]** Implement first high-priority Type 1 rule: Bitnami chart security bypass
+     - [x] Define tiered confidence detection system:
+       - [x] High confidence: Require multiple indicators (homepage + GitHub/image references)
+       - [x] Medium confidence: Accept single strong indicators like homepage URL
+       - [x] Fallback detection: Identify charts that fail with exit code 16 and "unrecognized containers" error
+     - [x] Implement metadata-based detection examining:
+       - [x] Chart metadata `home` field containing "bitnami.com"
+       - [x] Chart metadata `sources` containing "github.com/bitnami/charts"
+       - [x] Chart `maintainers` field referencing "Bitnami" or "Broadcom" 
+       - [x] Chart `repository` containing "bitnamicharts"
+       - [x] `annotations.images` field containing "docker.io/bitnami/" image references
+       - [x] `dependencies` section containing tags with "bitnami-common"
+     - [x] Implement `global.security.allowInsecureImages=true` insertion for detected Bitnami charts
+       - [x] Add this parameter during the override generation phase (`irr override` command)
+       - [x] Ensure this parameter is included in the final override.yaml file
+       - [x] Update override generation logic to inject this parameter automatically
      - [ ] Add fallback retry mechanism for charts failing with specific error signature
        - [ ] Detect exact exit code 16 with error message containing "Original containers have been substituted for unrecognized ones"
        - [ ] Add specific error handling for the message "If you are sure you want to proceed with non-standard containers..."
@@ -154,59 +154,59 @@ Implementation steps:
        - [ ] Test specifically with bitnami/nginx, bitnami/memcached and other common Bitnami charts
        - [ ] Verify the override file contains the security bypass parameter
        - [ ] Confirm validation passes when the parameter is included
-   - [ ] **[P2]** Document Type 2 parameters needed for testing (e.g., `kubeVersion`)
-   - [ ] Correlate errors with chart metadata (provider, dependencies, etc.)
+   - [x] **[P2]** Document Type 2 parameters needed for testing (e.g., `kubeVersion`)
+   - [x] Correlate errors with chart metadata (provider, dependencies, etc.)
 
 2. **Rules Engine Implementation**
-   - [ ] **[P1]** Design rule format with explicit Type 1/2 classification
-     - [ ] Define structured rule format in YAML with versioning
-     - [ ] Support tiered confidence levels in detection criteria
-     - [ ] Include fallback detection based on error patterns
-     - [ ] Allow rule actions to modify override values
-   - [ ] **[P1]** Implement rule application logic in Go that adds only Type 1 parameters to override.yaml
-   - [ ] **[P1]** Create configuration options to control rule application
+   - [x] **[P1]** Design rule format with explicit Type 1/2 classification
+     - [x] Define structured rule format in YAML with versioning
+     - [x] Support tiered confidence levels in detection criteria
+     - [x] Include fallback detection based on error patterns
+     - [x] Allow rule actions to modify override values
+   - [x] **[P1]** Implement rule application logic in Go that adds only Type 1 parameters to override.yaml
+   - [x] **[P1]** Create configuration options to control rule application
    - [ ] **[P1]** Create test script to extract and analyze metadata from test chart corpus
      - [ ] Develop script to process Chart.yaml files from test corpus
      - [ ] Generate statistics on different chart providers based on metadata patterns
      - [ ] Produce report identifying reliable detection patterns for major providers
-   - [ ] **[P2]** Add test-only parameter handling for validation (Type 2)
+   - [x] **[P2]** Add test-only parameter handling for validation (Type 2)
    - [ ] **[P2]** Implement chart grouping based on shared parameter requirements
 
 3. **Chart Provider Detection System**
-   - [ ] **[P1]** Implement metadata-based chart provider detection:
-     - [ ] Bitnami chart detection (highest priority)
-       - [ ] Primary: Check for "bitnami.com" in `home` field
-       - [ ] Secondary: Check for "bitnami" in image references
-       - [ ] Tertiary: Check for "bitnami-common" in dependency tags
-       - [ ] Implement tiered confidence levels (high/medium)
+   - [x] **[P1]** Implement metadata-based chart provider detection:
+     - [x] Bitnami chart detection (highest priority)
+       - [x] Primary: Check for "bitnami.com" in `home` field
+       - [x] Secondary: Check for "bitnami" in image references
+       - [x] Tertiary: Check for "bitnami-common" in dependency tags
+       - [x] Implement tiered confidence levels (high/medium)
        - [ ] Add fallback detection for exit code 16 errors
      - [ ] VMware/Tanzu chart detection (often similar to Bitnami)
      - [ ] Standard/common chart repositories 
      - [ ] Custom/enterprise chart detection
-   - [ ] **[P1]** Create extensible detection framework for future providers
+   - [x] **[P1]** Create extensible detection framework for future providers
    - [ ] **[P2]** Add fallback detection based on chart internal structure and patterns
 
 4. **Testing & Validation Framework**
-   - [ ] **[P1]** Create test cases for Type 1 parameter insertion
+   - [x] **[P1]** Create test cases for Type 1 parameter insertion
    - [ ] **[P1]** Analyze and report statistics on detection accuracy across test chart corpus
    - [ ] **[P1]** Validate Bitnami charts deploy successfully with inserted parameters
    - [ ] **[P1]** Test fallback mechanism with intentionally undetected Bitnami charts
-   - [ ] **[P2]** Implement test framework for Type 2 parameters in validation context
+   - [x] **[P2]** Implement test framework for Type 2 parameters in validation context
    - [ ] **[P2]** Measure improvement in chart validation success rate with rules system
-   - [ ] **[P2]** Create automated tests for rule application logic
+   - [x] **[P2]** Create automated tests for rule application logic
 
 5. **Documentation & Maintainability**
-   - [ ] **[P1]** Document the distinction between Type 1 and Type 2 parameters
-   - [ ] **[P1]** Create user guide for the rules system
-     - [ ] Document the tiered detection approach
+   - [x] **[P1]** Document the distinction between Type 1 and Type 2 parameters
+   - [x] **[P1]** Create user guide for the rules system
+     - [x] Document the tiered detection approach
      - [ ] Explain fallback detection mechanism
-     - [ ] Provide examples of rule definitions
-   - [ ] **[P1]** Document metadata patterns used for chart provider detection
-     - [ ] Document Bitnami detection patterns with examples
-     - [ ] Create reference table of metadata fields for different providers
+     - [x] Provide examples of rule definitions
+   - [x] **[P1]** Document metadata patterns used for chart provider detection
+     - [x] Document Bitnami detection patterns with examples
+     - [x] Create reference table of metadata fields for different providers
    - [ ] **[P2]** Implement rule versioning and tracking
    - [ ] **[P2]** Create process for rule updates based on new chart testing
-   - [ ] **[P2]** Add manual override capabilities for advanced users
+   - [x] **[P2]** Add manual override capabilities for advanced users
 
 ## Phase 9: `kind` Cluster Integration Testing
 _**Goal:** Implement end-to-end tests using `kind` to validate Helm plugin interactions with a live Kubernetes API and Helm release state, ensuring read-only behavior._

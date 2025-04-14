@@ -67,6 +67,8 @@ type GeneratorConfig struct {
 	ExcludePatterns []string
 	// KnownImagePaths contains specific dot-notation paths known to contain images
 	KnownImagePaths []string
+	// RulesEnabled controls whether the chart parameter rules system is enabled
+	RulesEnabled bool
 }
 
 // For testing purposes - allows overriding in tests
@@ -167,6 +169,7 @@ func setupOverrideFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("validate", false, "Run 'helm template' with generated overrides to validate chart renderability")
 	cmd.Flags().StringP("release-name", "n", "", "Helm release name to get values from before generating overrides (optional)")
 	cmd.Flags().String("namespace", "", "Kubernetes namespace for the Helm release (only used with --release-name)")
+	cmd.Flags().Bool("disable-rules", false, "Disable the chart parameter rules system (default: enabled)")
 
 	// Analysis control flags
 	cmd.Flags().StringSlice("include-pattern", nil, "Glob patterns for values paths to include during analysis")
@@ -441,6 +444,13 @@ func setupGeneratorConfig(cmd *cobra.Command) (config GeneratorConfig, err error
 		return
 	}
 
+	// Get rules enabled flag
+	disableRules, err := getBoolFlag(cmd, "disable-rules")
+	if err != nil {
+		return
+	}
+	config.RulesEnabled = !disableRules
+
 	// Get analysis control flags
 	config.IncludePatterns, err = getStringSliceFlag(cmd, "include-pattern")
 	if err != nil {
@@ -479,6 +489,12 @@ func createAndExecuteGenerator(chartSource string, config *GeneratorConfig) ([]b
 		config.ExcludePatterns,
 		config.KnownImagePaths,
 	)
+
+	// Configure rules system
+	generator.SetRulesEnabled(config.RulesEnabled)
+	if !config.RulesEnabled {
+		log.Infof("Chart parameter rules system is disabled")
+	}
 
 	// Generate overrides
 	overrideFile, err := generator.Generate()
