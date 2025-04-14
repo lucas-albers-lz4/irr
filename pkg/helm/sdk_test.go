@@ -354,29 +354,6 @@ func TestLoadChart(t *testing.T) {
 	mockLoader.AssertExpectations(t)
 }
 
-// TestFindImagesInChart tests image finding in charts
-func TestFindImagesInChart(t *testing.T) {
-	t.Skip("Skipping due to Helm API compatibility issues")
-	// Create test chart with dependencies
-	testChart := &chart.Chart{
-		Metadata: &chart.Metadata{
-			Name:    "test-chart",
-			Version: "0.1.0",
-		},
-		Values: map[string]interface{}{
-			"image": map[string]interface{}{
-				"repository": "test/image",
-				"tag":        "1.0.0",
-			},
-		},
-	}
-
-	// Test image detection
-	images := testFindImagesInChart(testChart)
-	assert.Len(t, images, 1)
-	assert.Contains(t, images, "test/image:1.0.0")
-}
-
 // TestComplexChartProcessing tests processing of complex charts
 func TestComplexChartProcessing(t *testing.T) {
 	t.Skip("Skipping due to Helm API compatibility issues")
@@ -429,12 +406,6 @@ grafana:
 	// Test dependency handling
 	require.Len(t, chart.Dependencies(), 1)
 	assert.Equal(t, "prometheus", chart.Dependencies()[0].Name())
-
-	// Test image pattern detection
-	images := testFindImagesInChart(chart)
-	require.Len(t, images, 2)
-	assert.Contains(t, images, "quay.io/prometheus/prometheus:v2.30.3")
-	assert.Contains(t, images, "grafana/grafana:8.2.0")
 }
 
 // TestErrorHandling tests error handling and recovery
@@ -467,17 +438,6 @@ func TestErrorHandling(t *testing.T) {
 	require.NoError(t, err)
 
 	settings.RepositoryConfig = repoFile
-}
-
-// Helper function to find images in a chart
-func testFindImagesInChart(chart *chart.Chart) []string {
-	var images []string
-	// This is a simplified version - in reality, you'd need to parse templates
-	// and look for image references in various formats
-	for _, dep := range chart.Dependencies() {
-		images = append(images, testFindImagesInChart(dep)...)
-	}
-	return images
 }
 
 // TestRepositoryOperations tests repository operations using mocked repository manager

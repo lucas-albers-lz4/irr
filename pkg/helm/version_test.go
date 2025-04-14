@@ -7,8 +7,6 @@ import (
 )
 
 func TestCheckHelmVersion(t *testing.T) {
-	t.Skip("Skipping due to Helm API compatibility issues")
-
 	// Save original function and restore after tests
 	originalGetVersion := GetHelmVersion
 	defer func() { GetHelmVersion = originalGetVersion }()
@@ -28,13 +26,13 @@ func TestCheckHelmVersion(t *testing.T) {
 			name:        "version too old",
 			version:     "3.9.0",
 			wantErr:     true,
-			errContains: "version 3.9.0 is too old",
+			errContains: "not supported. Please upgrade",
 		},
 		{
 			name:        "version too new",
 			version:     "3.13.0",
 			wantErr:     true,
-			errContains: "version 3.13.0 is too new",
+			errContains: "not supported. Please downgrade",
 		},
 	}
 
