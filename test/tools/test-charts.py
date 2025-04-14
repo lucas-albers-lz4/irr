@@ -10,6 +10,7 @@ It does NOT pull charts from repositories.
 import argparse
 import asyncio
 import csv
+import importlib.util
 import json
 import os
 import re
@@ -25,6 +26,21 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 import yaml
+
+# --- Import Solver Module ---
+try:
+    # Handle importing solver.py using importlib
+    solver_path = Path(__file__).parent / "solver.py"
+    if solver_path.exists():
+        spec = importlib.util.spec_from_file_location("solver", solver_path)
+        solver_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(solver_module)
+        ChartSolver = solver_module.ChartSolver  # Get the class
+    else:
+        ChartSolver = None  # Define as None if solver doesn't exist
+except ImportError as e:
+    print(f"Warning: Could not import solver module: {e}")
+    ChartSolver = None
 
 # Define configuration
 BASE_DIR = Path(__file__).parent.parent.parent.absolute()
@@ -450,10 +466,19 @@ async def test_chart_override(chart_info, target_registry, irr_binary, session, 
     debug_log = open(debug_log_file, "w")
 
     def log_debug(msg):
-        """Helper to log debug messages to both console and file."""
-        print(f"  DEBUG: {msg}")
+        """Helper to log debug messages selectively."""
+        # Always write to log file
         debug_log.write(f"{msg}\n")
         debug_log.flush()
+
+        # Only print to console if debug flag is enabled
+        if args.debug:
+            # For large JSON/YAML content, truncate console output
+            if len(msg) > 200 and ("JSON" in msg or "YAML" in msg):
+                truncated = msg[:197] + "..."
+                print(f"  DEBUG: {truncated} (full content in log file)")
+            else:
+                print(f"  DEBUG: {msg}")
 
     try:
         log_debug(f"Generating overrides for chart {chart_name} from {chart_path}")
@@ -647,10 +672,19 @@ async def test_chart_validate(chart_info, target_registry, irr_binary, session, 
     debug_log = open(debug_log_file, "w")
 
     def log_debug(msg):
-        """Helper to log debug messages to both console and file."""
-        print(f"  DEBUG: {msg}")
+        """Helper to log debug messages selectively."""
+        # Always write to log file
         debug_log.write(f"{msg}\n")
         debug_log.flush()
+
+        # Only print to console if debug flag is enabled
+        if args.debug:
+            # For large JSON/YAML content, truncate console output
+            if len(msg) > 200 and ("JSON" in msg or "YAML" in msg):
+                truncated = msg[:197] + "..."
+                print(f"  DEBUG: {truncated} (full content in log file)")
+            else:
+                print(f"  DEBUG: {msg}")
 
     try:
         log_debug(f"Validating chart {chart_name} from {chart_path}")
@@ -1510,6 +1544,42 @@ async def main():
         default="both",
         help="Operation to test: override, validate, or both",
     )
+    parser.add_argument(
+        "--debug", action="store_true", help="Enable debug output to console"
+    )
+
+    # Solver-specific arguments
+    parser.add_argument("--solver-mode", action="store_true", help="Run in solver mode")
+    parser.add_argument(
+        "--solver-parallel",
+        type=int,
+        default=os.cpu_count(),
+        help="Number of parallel solver workers",
+    )
+    parser.add_argument(
+        "--solver-resume", action="store_true", help="Resume from previous solver run"
+    )
+    parser.add_argument(
+        "--solver-output",
+        default="solver-results.json",
+        help="Output file for solver results",
+    )
+    parser.add_argument(
+        "--solver-threshold",
+        type=float,
+        default=0.95,
+        help="Minimum success rate threshold",
+    )
+    parser.add_argument(
+        "--solver-max-attempts", type=int, default=25, help="Maximum attempts per chart"
+    )
+    parser.add_argument(
+        "--solver-strategy",
+        choices=["exhaustive", "binary", "genetic"],
+        default="binary",
+        help="Solver strategy",
+    )
+
     args = parser.parse_args()
 
     # Ensure output directories exist
@@ -1575,13 +1645,39 @@ async def main():
         print("No charts selected for testing after filtering.")
         sys.exit(0)
 
-    # --- Chart Processing ---
+    # --- Process charts ---
     print("\n--- Processing Charts ---")
     charts_to_process_info = await process_charts(charts_to_test_names, args)
 
     if not charts_to_process_info:
         print("No charts available to test after processing phase.")
         sys.exit(0)
+
+    # Check if running in solver mode
+    if args.solver_mode:
+        print("\n--- Running in Solver Mode ---")
+        if not args.local_only:
+            print("Error: Solver mode only works with --local-only flag")
+            sys.exit(1)
+
+        if ChartSolver is None:
+            print(f"Error: Solver module ({solver_path}) not found or failed to load.")
+            sys.exit(1)
+
+        try:
+            # Use the solver to find minimal configurations
+            solver = ChartSolver(args)
+            print(f"Starting solver with {len(charts_to_process_info)} charts...")
+            solver.solve(charts_to_process_info)
+
+            print("Solver execution completed.")
+            sys.exit(0)
+        except Exception as e:
+            print(f"Error running solver: {e}")
+            import traceback
+
+            traceback.print_exc()
+            sys.exit(1)
 
     # --- Test Execution ---
     all_results = []
