@@ -1666,9 +1666,14 @@ async def main():
 
         try:
             # Use the solver to find minimal configurations
-            solver = ChartSolver(args)
+            solver = ChartSolver(
+                max_workers=args.solver_parallel,
+                output_dir=TEST_OUTPUT_DIR,
+                debug=args.debug,
+                checkpoint_interval=50,
+            )
             print(f"Starting solver with {len(charts_to_process_info)} charts...")
-            solver.solve(charts_to_process_info)
+            solver.solve(charts_to_process_info, output_file=args.solver_output)
 
             print("Solver execution completed.")
             sys.exit(0)

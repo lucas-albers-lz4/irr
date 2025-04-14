@@ -16,7 +16,7 @@ from collections import Counter, defaultdict
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import yaml
 
@@ -237,6 +237,10 @@ def categorize_error(error_msg: str) -> str:
 # Function to get chart classification - simplified version
 def get_chart_classification(chart_path: Path) -> str:
     """Determine the classification of a chart based on its path and contents."""
+    # Ensure we have a Path object
+    if not isinstance(chart_path, Path):
+        chart_path = Path(chart_path)
+
     # Check if the chart is from Bitnami based on path or Chart.yaml
     chart_yaml_path = chart_path
     if chart_path.is_dir():
@@ -286,6 +290,10 @@ def get_chart_classification(chart_path: Path) -> str:
 
 def _test_chart_with_params_task(chart_path, params, irr_binary):
     """Top-level function to test a chart with a specific parameter set."""
+    # Ensure chart_path is a Path object
+    if not isinstance(chart_path, Path):
+        chart_path = Path(chart_path)
+
     # Prepare the command
     validate_cmd = [str(irr_binary), "validate", "--chart-path", str(chart_path)]
 
@@ -353,6 +361,10 @@ def _find_minimal_recursive(
     chart_path, candidate_params, current_best_params, irr_binary
 ):
     """Recursive helper function for binary search minimization."""
+    # Ensure chart_path is a Path object
+    if not isinstance(chart_path, Path):
+        chart_path = Path(chart_path)
+
     if not candidate_params:
         return {}  # Should not happen if initial params worked
 
@@ -424,6 +436,10 @@ def _find_minimal_recursive(
 
 def _minimize_parameter_set_task(chart_path, params, irr_binary):
     """Top-level function to find minimal successful parameter set."""
+    # Ensure chart_path is a Path object
+    if not isinstance(chart_path, Path):
+        chart_path = Path(chart_path)
+
     if not params:
         return {}
 
@@ -494,7 +510,12 @@ def _extract_provider(chart_name):
 def _create_all_params(parameter_matrix, target_registry):
     """Create a dictionary with all parameters set to their first non-None value."""
     params = {}
-    for param, values in parameter_matrix["parameters"].items():
+
+    # Handle parameter matrix directly without expecting 'parameters' key
+    for param, values in parameter_matrix.items():
+        if not isinstance(values, list):
+            continue
+
         # Replace placeholder in values if necessary
         processed_values = []
         for v in values:
@@ -514,12 +535,14 @@ def _create_all_params(parameter_matrix, target_registry):
 
 def _create_parameter_combinations(parameter_matrix, target_registry, max_params=2):
     """Create parameter combinations with bounded complexity."""
-    params_def = parameter_matrix["parameters"]
     combinations = []
 
     # Process parameters, replacing placeholders
     processed_params = {}
-    for param, values in params_def.items():
+    for param, values in parameter_matrix.items():
+        if not isinstance(values, list):
+            continue
+
         processed_values = []
         for v in values:
             value_to_add = v
@@ -669,6 +692,10 @@ def _process_chart_binary_search_task(
 ):
     """Top-level function for processing chart using binary search strategy. Includes extraction."""
     chart_name, tgz_path = chart_info
+    # Ensure tgz_path is a Path object
+    if not isinstance(tgz_path, Path):
+        tgz_path = Path(tgz_path)
+
     temp_dir = None
     extracted_chart_path = None
 
@@ -878,6 +905,10 @@ def _process_chart_exhaustive_task(
 ):
     """Top-level function for processing chart using exhaustive brute force strategy. Includes extraction."""
     chart_name, tgz_path = chart_info
+    # Ensure tgz_path is a Path object
+    if not isinstance(tgz_path, Path):
+        tgz_path = Path(tgz_path)
+
     temp_dir = None
     extracted_chart_path = None
 
@@ -1013,45 +1044,41 @@ def _process_chart_exhaustive_task(
             shutil.rmtree(temp_dir)
 
 
-def _process_chart_task(
-    chart_info,
-    solver_strategy,
-    irr_binary,
-    parameter_matrix,
-    max_attempts_per_chart,
-    target_registry,
-):
-    """Top-level dispatcher function for processing a chart based on the selected strategy."""
-    # Note: Classification is now determined *inside* the strategy-specific tasks
-    chart_name, tgz_path = chart_info
+def _process_chart_task(chart_info, solver_config):
+    """Top-level function for processing chart based on selected strategy. Dispatches to appropriate strategy."""
+    chart_name, chart_path = chart_info
+    # Ensure chart_path is a Path object
+    if not isinstance(chart_path, Path):
+        chart_path = Path(chart_path)
 
     try:
-        if solver_strategy == "binary":
+        # Get strategy execution function
+        if solver_config["strategy"] == "binary":
             return _process_chart_binary_search_task(
                 chart_info,
-                irr_binary,
-                parameter_matrix,
-                max_attempts_per_chart,
-                target_registry,
+                solver_config["irr_binary"],
+                solver_config["parameter_matrix"],
+                solver_config["max_attempts_per_chart"],
+                solver_config["target_registry"],
             )
-        elif solver_strategy == "exhaustive":
+        elif solver_config["strategy"] == "exhaustive":
             return _process_chart_exhaustive_task(
                 chart_info,
-                irr_binary,
-                parameter_matrix,
-                max_attempts_per_chart,
-                target_registry,
+                solver_config["irr_binary"],
+                solver_config["parameter_matrix"],
+                solver_config["max_attempts_per_chart"],
+                solver_config["target_registry"],
             )
         else:  # Default to binary search
             print(
-                f"Warning: Unknown solver strategy '{solver_strategy}', defaulting to binary search."
+                f"Warning: Unknown solver strategy '{solver_config['strategy']}', defaulting to binary search."
             )
             return _process_chart_binary_search_task(
                 chart_info,
-                irr_binary,
-                parameter_matrix,
-                max_attempts_per_chart,
-                target_registry,
+                solver_config["irr_binary"],
+                solver_config["parameter_matrix"],
+                solver_config["max_attempts_per_chart"],
+                solver_config["target_registry"],
             )
     except Exception as e:
         # Handle any exceptions that might occur during processing
@@ -1115,6 +1142,17 @@ class ChartSolver:
         )
         self.logger = logging.getLogger("ChartSolver")
 
+    def __reduce__(self):
+        """
+        Make ChartSolver picklable for multiprocessing.
+        Returns a tuple of (callable, args) that allows the instance to be recreated.
+        """
+        # Return a tuple with the class and the arguments needed to recreate this instance
+        return (
+            self.__class__,
+            (self.max_workers, self.output_dir, self.debug, self.checkpoint_interval),
+        )
+
     def _build_parameter_matrix(self) -> Dict[str, List[Any]]:
         """
         Build a matrix of parameters to test.
@@ -1171,12 +1209,16 @@ class ChartSolver:
 
         return matrix
 
-    def solve(self, chart_paths: List[Path], output_file: Optional[str] = None) -> Dict:
+    def solve(
+        self,
+        chart_paths: List[Union[Path, Tuple[str, Path]]],
+        output_file: Optional[str] = None,
+    ) -> Dict:
         """
         Find the minimal parameter set required for each chart.
 
         Args:
-            chart_paths: List of paths to charts to solve
+            chart_paths: List of chart paths or tuples of (chart_name, chart_path)
             output_file: Optional path to save results
 
         Returns:
@@ -1187,70 +1229,108 @@ class ChartSolver:
         if loaded_checkpoint:
             self.results = loaded_checkpoint
             # Filter out charts that have already been processed
-            chart_paths = [p for p in chart_paths if str(p) not in self.results]
+            chart_paths = [
+                p
+                for p in chart_paths
+                if (
+                    str(p) not in self.results
+                    if not isinstance(p, tuple)
+                    else str(p[1]) not in self.results
+                )
+            ]
             self.logger.info(
                 f"Loaded checkpoint with {len(self.results)} charts. {len(chart_paths)} charts remaining."
             )
 
         if not chart_paths:
-            self.logger.info("No charts to process.")
+            self.logger.info("No charts to process!")
             return self.results
 
-        # Group charts by classification for more efficient processing
-        grouped_charts = self._group_charts_by_classification(chart_paths)
+        # Process chart paths and convert to (name, path) tuples if needed
+        processed_chart_paths = []
+        for chart_path in chart_paths:
+            if isinstance(chart_path, tuple):
+                chart_name, path = chart_path
+                # Ensure path is a Path object
+                if not isinstance(path, Path):
+                    path = Path(path)
+                processed_chart_paths.append((chart_name, path))
+            else:
+                # Ensure chart_path is a Path object
+                if not isinstance(chart_path, Path):
+                    chart_path = Path(chart_path)
+                chart_name = chart_path.stem
+                processed_chart_paths.append((chart_name, chart_path))
 
+        # Now use processed_chart_paths for actual processing
+        # Get the absolute path to the irr binary
+        irr_binary = Path(os.path.join(BASE_DIR, "bin", "irr")).absolute()
+        if not irr_binary.exists():
+            self.logger.error(f"irr binary not found at {irr_binary}")
+            return self.results
+
+        # Process charts using top-level functions
         start_time = time.time()
         processed_count = 0
 
-        # Process charts by classification group
-        for classification, charts in grouped_charts.items():
-            self.logger.info(
-                f"Processing {len(charts)} charts of type {classification}"
-            )
+        # Get parameter matrix once to avoid pickling issues
+        parameter_matrix = self._build_parameter_matrix()
+        target_registry = "docker.io"  # Default target registry
+        max_attempts = 10  # Default max attempts per chart
 
-            # Create parameter batches for this classification
-            parameter_batches = self._create_parameter_batches(classification)
+        # Process charts with ProcessPoolExecutor
+        with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
+            # Submit jobs
+            future_to_chart = {}
+            for chart_path in processed_chart_paths:
+                # Use a top-level function instead of a class method
+                future = executor.submit(
+                    _process_chart_task,
+                    chart_path,
+                    {
+                        "strategy": "binary",  # Default strategy
+                        "irr_binary": irr_binary,
+                        "parameter_matrix": parameter_matrix,
+                        "max_attempts_per_chart": max_attempts,
+                        "target_registry": target_registry,
+                    },
+                )
+                future_to_chart[future] = chart_path
 
-            # Process charts with parameter batches
-            with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
-                # Submit all chart parameter combinations for processing
-                future_to_chart = {}
-                for chart_path in charts:
-                    future = executor.submit(
-                        self._process_chart_parameters, chart_path, parameter_batches
-                    )
-                    future_to_chart[future] = chart_path
+            # Process results as they complete
+            for future in future_to_chart:
+                chart_path = future_to_chart[future]
+                chart_key = (
+                    str(chart_path[1])
+                    if isinstance(chart_path, tuple)
+                    else str(chart_path)
+                )
 
-                # Process results as they complete
-                for future in future_to_chart:
-                    chart_path = future_to_chart[future]
-                    try:
-                        chart_results = future.result()
-                        self.results[str(chart_path)] = chart_results
-                        processed_count += 1
+                try:
+                    chart_name, chart_results = future.result()
+                    self.results[chart_key] = chart_results
+                    processed_count += 1
 
-                        # Log progress
-                        if processed_count % 10 == 0:
-                            elapsed = time.time() - start_time
-                            charts_per_second = (
-                                processed_count / elapsed if elapsed > 0 else 0
-                            )
-                            self.logger.info(
-                                f"Processed {processed_count}/{len(chart_paths)} charts. "
-                                f"({charts_per_second:.2f} charts/s)"
-                            )
-
-                        # Save checkpoint periodically
-                        if processed_count % self.checkpoint_interval == 0:
-                            self._save_checkpoint()
-                    except Exception as e:
-                        self.logger.error(
-                            f"Error processing chart {chart_path}: {str(e)}"
+                    # Log progress
+                    if processed_count % 10 == 0:
+                        elapsed = time.time() - start_time
+                        charts_per_second = (
+                            processed_count / elapsed if elapsed > 0 else 0
                         )
-                        self.results[str(chart_path)] = {
-                            "status": "ERROR",
-                            "error": str(e),
-                        }
+                        self.logger.info(
+                            f"Processed {processed_count}/{len(processed_chart_paths)} charts. "
+                            f"({charts_per_second:.2f} charts/s)"
+                        )
+
+                    # Save checkpoint periodically
+                    if processed_count % self.checkpoint_interval == 0:
+                        self._save_checkpoint()
+                except Exception as e:
+                    self.logger.error(f"Error processing chart {chart_path}: {str(e)}")
+                    self.results[chart_key] = {
+                        "status": "ERROR",
+                        "error": str(e),
+                    }
 
         # Save final results
         self._save_checkpoint()
@@ -1264,346 +1344,6 @@ class ChartSolver:
             f"Completed processing {processed_count} charts in {total_time:.2f}s"
         )
         return self.results
-
-    def _process_chart_parameters(
-        self, chart_path: Path, parameter_batches: List[Dict]
-    ) -> Dict:
-        """
-        Process a chart with different parameter combinations using binary search approach.
-        This function runs in a separate process.
-
-        Args:
-            chart_path: Path to the chart
-            parameter_batches: List of parameter dictionaries to test
-
-        Returns:
-            Dictionary with results for the chart
-        """
-        chart_name = chart_path.name
-        classification = get_chart_classification(chart_path)
-
-        results = {
-            "chart_name": chart_name,
-            "classification": classification,
-            "path": str(chart_path),
-            "tested_params": [],
-            "successful_params": [],
-            "minimal_params": None,
-            "error_categories": Counter(),
-        }
-
-        # Start with all parameters (first batch has everything)
-        all_params = parameter_batches[0]
-
-        # First, check if the chart works with all parameters
-        test_result = self._test_chart_with_params(chart_path, all_params)
-        results["tested_params"].append(
-            {
-                "params": all_params,
-                "status": test_result.status,
-                "category": test_result.category,
-                "details": test_result.details,
-            }
-        )
-
-        if test_result.status == "SUCCESS":
-            results["successful_params"].append(all_params)
-
-            # Now use binary search to find minimal parameter set
-            minimal_params = self._binary_search_params(chart_path, all_params)
-            results["minimal_params"] = minimal_params
-        else:
-            # If chart fails with all parameters, try individual batches
-            for batch in parameter_batches[1:]:
-                test_result = self._test_chart_with_params(chart_path, batch)
-                results["tested_params"].append(
-                    {
-                        "params": batch,
-                        "status": test_result.status,
-                        "category": test_result.category,
-                        "details": test_result.details,
-                    }
-                )
-
-                if test_result.status == "SUCCESS":
-                    results["successful_params"].append(batch)
-
-                    # Found a successful batch, find minimal parameters within it
-                    minimal_params = self._binary_search_params(chart_path, batch)
-                    results["minimal_params"] = minimal_params
-                    break
-                else:
-                    # Track error categories to help identify needed parameters
-                    results["error_categories"][test_result.category] = (
-                        results["error_categories"].get(test_result.category, 0) + 1
-                    )
-
-                    # If we get a specific error, try adding parameters to address it
-                    if test_result.category in [
-                        "KUBE_VERSION_ERROR",
-                        "REGISTRY_ERROR",
-                        "STORAGE_ERROR",
-                        "AUTH_ERROR",
-                    ]:
-                        targeted_params = self._build_targeted_params(
-                            batch, test_result.category
-                        )
-                        targeted_result = self._test_chart_with_params(
-                            chart_path, targeted_params
-                        )
-                        results["tested_params"].append(
-                            {
-                                "params": targeted_params,
-                                "status": targeted_result.status,
-                                "category": targeted_result.category,
-                                "details": targeted_result.details,
-                            }
-                        )
-
-                        if targeted_result.status == "SUCCESS":
-                            results["successful_params"].append(targeted_params)
-                            minimal_params = self._binary_search_params(
-                                chart_path, targeted_params
-                            )
-                            results["minimal_params"] = minimal_params
-                            break
-
-        return results
-
-    def _build_targeted_params(self, base_params: Dict, error_category: str) -> Dict:
-        """
-        Build targeted parameters based on error category.
-
-        Args:
-            base_params: Base parameter dictionary
-            error_category: Error category to address
-
-        Returns:
-            Parameter dictionary with targeted fixes
-        """
-        targeted_params = base_params.copy()
-
-        if error_category == "KUBE_VERSION_ERROR":
-            # Try a different Kubernetes version
-            targeted_params["kubeVersion"] = "1.25.0"  # Try a more recent version
-
-        elif error_category == "REGISTRY_ERROR":
-            # Add registry configuration
-            targeted_params["registry"] = {"insecure": True}
-            if "global" not in targeted_params or targeted_params["global"] is None:
-                targeted_params["global"] = {}
-            targeted_params["global"]["imageRegistry"] = "docker.io"
-
-        elif error_category == "STORAGE_ERROR":
-            # Disable persistence
-            targeted_params["persistence"] = {"enabled": False}
-
-        elif error_category == "AUTH_ERROR":
-            # Disable authentication
-            targeted_params["auth"] = {"enabled": False}
-
-        return targeted_params
-
-    def _binary_search_params(self, chart_path: Path, params: Dict) -> Dict:
-        """
-        Use binary search to find minimal required parameters.
-
-        Args:
-            chart_path: Path to the chart
-            params: Parameter dictionary that works
-
-        Returns:
-            Minimal parameter dictionary that works
-        """
-        # Start with a copy of the working parameters
-        minimal_params = {}
-
-        # Get all parameter keys that have values
-        param_keys = [k for k, v in params.items() if v is not None]
-
-        # Test with no parameters first
-        empty_test = self._test_chart_with_params(chart_path, {})
-        if empty_test.status == "SUCCESS":
-            return {}  # No parameters needed
-
-        # Test each parameter individually
-        required_keys = []
-        for key in param_keys:
-            # Test with just this parameter
-            single_param = {key: params[key]}
-            test_result = self._test_chart_with_params(chart_path, single_param)
-
-            if test_result.status == "SUCCESS":
-                # This parameter alone is sufficient
-                return single_param
-
-            # Test with all parameters except this one
-            except_param = {
-                k: v for k, v in params.items() if k != key and v is not None
-            }
-            test_result = self._test_chart_with_params(chart_path, except_param)
-
-            if test_result.status != "SUCCESS":
-                # This parameter is required
-                required_keys.append(key)
-
-        # Build minimal parameter set with required keys
-        for key in required_keys:
-            minimal_params[key] = params[key]
-
-        # Verify minimal params work
-        final_test = self._test_chart_with_params(chart_path, minimal_params)
-        if final_test.status == "SUCCESS":
-            return minimal_params
-        else:
-            # If minimal params don't work, return original params
-            return params
-
-    def _test_chart_with_params(self, chart_path: Path, params: Dict) -> TestResult:
-        """
-        Test a chart with specific parameters.
-
-        Args:
-            chart_path: Path to the chart
-            params: Parameter dictionary
-
-        Returns:
-            TestResult object with validation results
-        """
-        chart_name = chart_path.name
-        classification = get_chart_classification(chart_path)
-
-        # Convert params to command line format
-        cmd_params = []
-        for key, value in params.items():
-            if value is not None:
-                if key == "kubeVersion" and isinstance(value, str):
-                    cmd_params.extend(["--kube-version", value])
-                elif isinstance(value, dict):
-                    for subkey, subvalue in value.items():
-                        cmd_params.extend(["--set", f"{key}.{subkey}={subvalue}"])
-                else:
-                    cmd_params.extend(["--set", f"{key}={value}"])
-
-        # Build validation command
-        cmd = ["helm", "template", str(chart_path)] + cmd_params
-
-        # Run validation
-        start_time = time.time()
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-            error_msg = result.stderr if result.returncode != 0 else ""
-            validation_duration = time.time() - start_time
-
-            if result.returncode == 0:
-                return TestResult(
-                    chart_name=chart_name,
-                    chart_path=chart_path,
-                    classification=classification,
-                    status="SUCCESS",
-                    category="",
-                    details="",
-                    override_duration=0.0,
-                    validation_duration=validation_duration,
-                )
-            else:
-                error_category = categorize_error(error_msg)
-                return TestResult(
-                    chart_name=chart_name,
-                    chart_path=chart_path,
-                    classification=classification,
-                    status="FAILURE",
-                    category=error_category,
-                    details=error_msg,
-                    override_duration=0.0,
-                    validation_duration=validation_duration,
-                )
-        except Exception as e:
-            validation_duration = time.time() - start_time
-            return TestResult(
-                chart_name=chart_name,
-                chart_path=chart_path,
-                classification=classification,
-                status="ERROR",
-                category="SETUP_ERROR",
-                details=str(e),
-                override_duration=0.0,
-                validation_duration=validation_duration,
-            )
-
-    def _create_parameter_batches(self, classification: str) -> List[Dict]:
-        """
-        Create batches of parameters to test for a specific chart classification.
-
-        Args:
-            classification: Chart classification (e.g., BITNAMI, STANDARD)
-
-        Returns:
-            List of parameter dictionaries to test
-        """
-        batches = []
-
-        # Full parameter set (everything)
-        full_params = {}
-        for param, values in self.parameter_matrix.items():
-            if values and values[0] is not None:
-                full_params[param] = values[
-                    -1
-                ]  # Use the last (typically most complete) value
-        batches.append(full_params)
-
-        # Classification-specific batches
-        if classification == "BITNAMI":
-            # Bitnami typically needs insecure registry
-            bitnami_params = {
-                "registry": {"insecure": True},
-                "global": {"imageRegistry": "docker.io"},
-            }
-            batches.append(bitnami_params)
-
-            # Bitnami with Kubernetes version
-            bitnami_kube_params = {
-                "registry": {"insecure": True},
-                "global": {"imageRegistry": "docker.io"},
-                "kubeVersion": "1.25.0",
-            }
-            batches.append(bitnami_kube_params)
-
-        # Basic parameter batches for all chart types
-        # Just Kubernetes version
-        batches.append({"kubeVersion": "1.25.0"})
-
-        # Just registry config
-        batches.append({"registry": {"insecure": True}})
-
-        # Just persistence disabled
-        batches.append({"persistence": {"enabled": False}})
-
-        # Kubernetes version + persistence disabled
-        batches.append({"kubeVersion": "1.25.0", "persistence": {"enabled": False}})
-
-        # Empty parameters (minimal test)
-        batches.append({})
-
-        return batches
-
-    def _group_charts_by_classification(
-        self, chart_paths: List[Path]
-    ) -> Dict[str, List[Path]]:
-        """
-        Group charts by their classification for more efficient processing.
-
-        Args:
-            chart_paths: List of chart paths
-
-        Returns:
-            Dictionary mapping classifications to lists of chart paths
-        """
-        grouped = defaultdict(list)
-        for chart_path in chart_paths:
-            classification = get_chart_classification(chart_path)
-            grouped[classification].append(chart_path)
-        return grouped
 
     def _load_checkpoint(self) -> Dict:
         """

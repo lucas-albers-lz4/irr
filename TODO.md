@@ -11,133 +11,8 @@
 
 ## Phase 3: Combine Inspect and Analyze
 _**Goal:** Simplify the CLI interface by consolidating image analysis functionality into the `inspect` command, making it a unified entry point for chart analysis, and remove the `analyze` command._
-
-- [x] **[P1]** Enhance `inspect` command (`cmd/irr/inspect.go`):
-    - [x] Add `--source-registries` as an *optional* string slice flag.
-    - [x] Modify flag retrieval logic (`getInspectFlags` or similar) to handle the optional flag.
-    - [x] Update core `runInspect` logic: If `--source-registries` is provided and not empty, filter reported images to match those registries. Otherwise, report all images.
-
-- [x] **[P1]** Remove `analyze` command completely:
-    - [x] Delete `cmd/irr/analyze.go` file.
-    - [x] Remove `analyzeCmd` addition from `cmd/irr/root.go` (or equivalent).
-
-- [x] **[P1]** Update Go Tests (`cmd/irr/cli_test.go` or similar):
-    - [x] Identify all existing tests for the `analyze` command.
-    - [x] **Adapt/Reuse** tests verifying `analyze` execution and output filtering: Modify them to target `inspect` *with* the `--source-registries` flag.
-    - [x] **Adapt/Reuse** tests for `analyze` with optional flags (e.g., `--output-file`): Modify them to target `inspect` *with* `--source-registries`.
-    - [x] **Adapt/Reuse** error tests for invalid registries/paths: Modify them to target `inspect`.
-    - [x] **Delete** tests checking for *missing* required `--source-registries` on `analyze` (no longer relevant).
-    - [x] **Add new** tests for `inspect` *without* `--source-registries` to verify it reports all images.
-
-- [x] **[P1]** Update Python Test Framework (`test/tools/test-charts.py`):
-    - [x] Replace calls to `irr analyze ... --source-registries <regs>` with `irr inspect ... --source-registries <regs>`.
-    - [x] Verify any result parsing logic still works correctly.
-
-- [x] **[P1]** Update Documentation:
-    - [x] Remove `analyze` section from `docs/cli-reference.md`.
-    - [x] Update `inspect` description in `docs/cli-reference.md` to include optional `--source-registries` filtering.
-    - [x] Update/add examples in `docs/cli-reference.md` and `docs/USE-CASES.md` showing `inspect` with/without `--source-registries`.
-    - [x] Remove `analyze` references from `docs/DEVELOPMENT.md` and other relevant docs.
-
-- [x] **[P2]** Streamline flags across commands (Review during implementation):
-    - [x] Ensure flag names/behavior are consistent between `inspect`, `override`, `validate`.
-    - [x] Ensure help text and error messages use consistent terminology.
-
 ## Phase 4: Basic CLI Syntax Testing
 _**Goal:** Ensure all CLI commands (post-Phase 3) and essential flags execute without basic parsing or validation errors. Focus on basic functionality with minimal refactoring needed._
-
-- [x] **[P1]** Define focused test scope:
-    - [x] Identify target commands: `inspect`, `override`, `validate`, `completion`, `help`.
-    - [x] Identify essential global flags: `--debug`, `--log-level`, `--config`.
-    - [x] Confirm focus on command parsing and flag validation, not deep chart processing logic.
-
-- [x] **[P1]** Choose testing approach:
-    - [x] Decide on using Go tests (`_test.go`) with `os/exec` to invoke the `bin/irr` binary.
-    - [x] Plan extensive use of table-driven tests for DRYness and maintainability.
-    - [x] Design test helpers for common actions (running commands, checking exit codes, validating output).
-    - [x] Identify and plan reuse of relevant helper code from `test/integration` (e.g., binary location, project root finding).
-
-- [x] **[P1]** Setup test environment:
-    - [x] Create the dedicated Go test package: `cmd/irr/cli_test.go`.
-    - [x] Implement basic test fixture setup/teardown (e.g., creating temporary directories if needed).
-    - [x] Implement the helper function for locating `bin/irr`, potentially adapting from integration tests.
-    - [x] Ensure test environment setup is minimal and fast, avoiding complex chart setup unless strictly necessary for a syntax test.
-
-- [x] **[P2]** Implement success case tests:
-    - [x] **`inspect` command:**
-        - [x] `inspect --chart-path <path>` (no source-registries).
-        - [x] `inspect --chart-path <path> --source-registries <regs>`.
-        - [x] `inspect --chart-path <path>` with pattern flags (`--include-pattern`, etc.).
-        - [x] `inspect --generate-config-skeleton`.
-    - [x] **`override` command:**
-        - [x] `override --chart-path <path> --source-registries <regs> --target-registry <reg>`.
-        - [x] `override` with pattern flags and `--output-file <file>`.
-        - [x] `override` with different `--strategy` values.
-        - [x] `override` with `--output -` (output to stdout).
-    - [x] **`validate` command:**
-        - [x] `validate --chart-path <path> --values <file>`.
-        - [x] `validate --chart-path <path>` with multiple `--values` files.
-    - [x] **Other commands:**
-        - [x] `completion bash`.
-        - [x] `help`.
-        - [x] `help inspect`, `help override`, etc. for each command.
-    - [x] **Flag combinations:**
-        - [x] Test combinations of compatible optional flags for key commands (e.g., `inspect --chart-path X --source-registries Y --include-pattern Z`).
-    - [x] **General:**
-        - [x] Apply table-driven test structure where beneficial.
-
-- [x] **[P1]** Implement global flag and environment variable tests:
-    - [x] Test `--debug` flag enables debug output (check stderr).
-    - [x] Test `IRR_DEBUG=true` environment variable enables debug output.
-    - [x] Test `--debug` flag overrides `IRR_DEBUG=false`.
-    - [x] Test `--log-level` flag with different valid levels (e.g., `warn`, `error`).
-    - [x] Test `IRR_LOG_LEVEL` environment variable (if implemented).
-    - [x] Test flag/env precedence for `--log-level` / `IRR_LOG_LEVEL`.
-    - [x] Test `--config` flag with a minimal, valid config file.
-    - [x] Test `IRR_CONFIG` environment variable (if implemented).
-    - [x] Test flag/env precedence for `--config` / `IRR_CONFIG`.
-
-- [x] **[P1]** Implement error case tests:
-    - [x] **Missing required flags:**
-        - [x] `inspect` without `--chart-path`.
-        - [x] `override` without `--chart-path`.
-        - [x] `override` without `--source-registries`.
-        - [x] `override` without `--target-registry`.
-        - [x] `validate` without `--chart-path`.
-        - [x] `validate` without `--values` (if required).
-    - [x] **Invalid flag formats:**
-        - [x] `inspect` with invalid `--source-registries` format.
-        - [x] `override` with invalid `--target-registry` format.
-        - [x] `override` with invalid `--strategy` value.
-        - [x] Global flags with invalid values (e.g., `--log-level=invalid`).
-    - [x] **Path errors:**
-        - [x] `inspect`/`override`/`validate` with non-existent `--chart-path`.
-        - [x] `validate` with non-existent `--values` file path.
-        - [x] `--config` with non-existent file path.
-    - [x] **Incompatible flags:**
-        - [x] Test combinations of flags documented as mutually exclusive (if any).
-    - [x] **General:**
-        - [x] Verify appropriate non-zero exit codes for all error cases.
-        - [x] Apply table-driven test structure where beneficial.
-
-- [x] **[P1]** Simple integration with build process:
-    - [x] Ensure tests are discovered and run with standard `go test ./...` or specific package target `go test ./cmd/irr/...`.
-
-- [x] **[P2]** Create helpers for output validation:
-    - [x] Develop helper to capture and validate stderr content against expected patterns/substrings.
-    - [x] Develop helper to capture and validate stdout content against expected patterns/substrings (for commands like `help`, `completion`, `--output -`).
-    - [x] Design helpers to check for specific known error messages or success messages.
-
-- [x] **[P1]** Implement help text validation:
-    - [x] **Content Accuracy:**
-        - [x] Verify basic description in `help` output.
-        - [x] Verify descriptions for each command (`help <command>`).
-    - [x] **Flag Details:**
-        - [x] Check required flags are marked correctly (e.g., `(required)`).
-        - [x] Check default values are displayed correctly for optional flags.
-        - [x] Validate consistency of flag names and descriptions across commands where applicable.
-    - [x] **Examples:**
-        - [x] Ensure any examples provided in help text use valid syntax.
 
 ## Phase 5: Helm Plugin Integration - Remaining Items
 _**Goal:** Implement the Helm plugin interface that wraps around the core CLI functionality._
@@ -268,8 +143,17 @@ Implementation steps:
        - [ ] `annotations.images` field containing "docker.io/bitnami/" image references
        - [ ] `dependencies` section containing tags with "bitnami-common"
      - [ ] Implement `global.security.allowInsecureImages=true` insertion for detected Bitnami charts
+       - [ ] Add this parameter during the override generation phase (`irr override` command)
+       - [ ] Ensure this parameter is included in the final override.yaml file
+       - [ ] Update override generation logic to inject this parameter automatically
      - [ ] Add fallback retry mechanism for charts failing with specific error signature
+       - [ ] Detect exact exit code 16 with error message containing "Original containers have been substituted for unrecognized ones"
+       - [ ] Add specific error handling for the message "If you are sure you want to proceed with non-standard containers..."
+       - [ ] If validation fails with this specific error, retry with `global.security.allowInsecureImages=true`
      - [ ] Test with representative Bitnami charts to verify detection accuracy and deployment success
+       - [ ] Test specifically with bitnami/nginx, bitnami/memcached and other common Bitnami charts
+       - [ ] Verify the override file contains the security bypass parameter
+       - [ ] Confirm validation passes when the parameter is included
    - [ ] **[P2]** Document Type 2 parameters needed for testing (e.g., `kubeVersion`)
    - [ ] Correlate errors with chart metadata (provider, dependencies, etc.)
 
