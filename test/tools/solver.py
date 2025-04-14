@@ -10,6 +10,7 @@ import os
 import subprocess
 import tarfile
 import tempfile
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List
@@ -290,21 +291,36 @@ def _test_chart_with_params_task(chart_path, params, irr_binary):
     if not isinstance(chart_path, Path):
         chart_path = Path(chart_path)
 
-    # Prepare the command
-    validate_cmd = [str(irr_binary), "validate", "--chart-path", str(chart_path)]
+    # Create a temporary values.yaml file
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
+        # Write params as YAML
+        yaml.safe_dump(params, tmp)
+        tmp_path = tmp.name
 
-    # Add parameters as --set args
-    for param, value in params.items():
-        validate_cmd.extend(["--set", f"{param}={value}"])
-
-    # Run the command
     try:
+        # Prepare the command with values file
+        validate_cmd = [
+            str(irr_binary),
+            "validate",
+            "--chart-path",
+            str(chart_path),
+            "--values",
+            tmp_path,
+        ]
+
+        # Run the command
         result = subprocess.run(
             validate_cmd,
             capture_output=True,
             text=True,
             timeout=60,  # 1-minute timeout
         )
+
+        # Clean up the temporary file
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass  # Ignore errors during cleanup
 
         if result.returncode == 0:
             return TestResult(
@@ -330,6 +346,12 @@ def _test_chart_with_params_task(chart_path, params, irr_binary):
                 validation_duration=0,
             )
     except subprocess.TimeoutExpired:
+        # Clean up the temporary file
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass  # Ignore errors during cleanup
+
         return TestResult(
             chart_name=chart_path.stem,
             chart_path=chart_path,
@@ -341,6 +363,12 @@ def _test_chart_with_params_task(chart_path, params, irr_binary):
             validation_duration=0,
         )
     except Exception as e:
+        # Clean up the temporary file
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass  # Ignore errors during cleanup
+
         return TestResult(
             chart_name=chart_path.stem,
             chart_path=chart_path,
@@ -748,7 +776,19 @@ def _process_chart_binary_search_task(
             seen.add(params_key)
             unique_combinations.append(params)
 
-    return unique_combinations
+    # Try each parameter combination until one works
+    errors = []
+    for params in unique_combinations:
+        result = _test_chart_with_params_task(chart_path, params, irr_binary)
+        if result.status == "SUCCESS":
+            # Return the successful parameter combination with success indicator
+            return {"success": True, "parameters": params, "errors": None}
+        else:
+            # Keep track of errors
+            errors.append(f"{result.category}: {result.details}")
+
+    # If no combination worked, return failure with error information
+    return {"success": False, "parameters": None, "errors": errors}
 
 
 def _process_chart_exhaustive_task(chart_path, parameter_matrix, irr_binary):
@@ -769,7 +809,7 @@ def _process_chart_exhaustive_task(chart_path, parameter_matrix, irr_binary):
     # Try with empty parameters first - minimal case
     empty_result = _test_chart_with_params_task(chart_path, {}, irr_binary)
     if empty_result.status == "SUCCESS":
-        return {}
+        return {"success": True, "parameters": {}, "errors": None}
 
     # Generate more targeted parameter combinations similar to binary search
     # This is just a starting point; in a true exhaustive approach we would
@@ -798,10 +838,13 @@ def _process_chart_exhaustive_task(chart_path, parameter_matrix, irr_binary):
     )
 
     # Try each parameter combination
+    errors = []
     for params in parameter_combinations:
         result = _test_chart_with_params_task(chart_path, params, irr_binary)
         if result.status == "SUCCESS":
-            return params
+            return {"success": True, "parameters": params, "errors": None}
+        else:
+            errors.append(f"{result.category}: {result.details}")
 
     # If none of the simple combinations worked, try a more complex one
     complex_params = {
@@ -812,10 +855,12 @@ def _process_chart_exhaustive_task(chart_path, parameter_matrix, irr_binary):
     }
     result = _test_chart_with_params_task(chart_path, complex_params, irr_binary)
     if result.status == "SUCCESS":
-        return complex_params
+        return {"success": True, "parameters": complex_params, "errors": None}
+    else:
+        errors.append(f"{result.category}: {result.details}")
 
     # No successful parameters found
-    return None
+    return {"success": False, "parameters": None, "errors": errors}
 
 
 def _binary_search_params(chart_path, all_params, irr_binary):
@@ -947,6 +992,7 @@ class ChartSolver:
         output_dir: Path = TEST_OUTPUT_DIR,
         debug: bool = False,
         checkpoint_interval: int = 50,
+        solver_output: str = None,
     ):
         """
         Initialize the solver.
@@ -956,6 +1002,7 @@ class ChartSolver:
             output_dir: Directory to store results
             debug: Whether to enable debug output
             checkpoint_interval: How often to save checkpoints (number of charts)
+            solver_output: Path to the output file (overrides the default)
         """
         self.max_workers = max_workers
         self.output_dir = output_dir
@@ -963,11 +1010,24 @@ class ChartSolver:
         self.checkpoint_interval = checkpoint_interval
         self.parameter_matrix = self._build_parameter_matrix()
         self.results = {}
-        self.checkpoint_path = output_dir / "solver_checkpoint.json"
+
+        # Set up output and checkpoint paths
+        if solver_output:
+            solver_output_path = Path(solver_output)
+            # Use the directory of the specified output file
+            self.output_dir = solver_output_path.parent
+            # Create a checkpoint in the same directory
+            self.checkpoint_path = self.output_dir / "solver_checkpoint.json"
+            # Set the report path to the specified output file
+            self.report_path = solver_output_path
+        else:
+            self.checkpoint_path = output_dir / "solver_checkpoint.json"
+            self.report_path = output_dir / "solver_report.json"
+
         self.chart_paths = []
 
         # Set irr_binary to a default value
-        self.irr_binary = Path("/usr/local/bin/irr")
+        self.irr_binary = Path(BASE_DIR) / "bin" / "irr"
         if not self.irr_binary.exists():
             # Look for irr in the current directory
             self.irr_binary = Path("./irr")
@@ -979,11 +1039,26 @@ class ChartSolver:
                     irr_path = shutil.which("irr")
                     if irr_path:
                         self.irr_binary = Path(irr_path)
+                    else:
+                        # If we still can't find it, look in a few common locations
+                        common_locations = [
+                            Path.home() / "bin" / "irr",
+                            Path.home() / "go" / "bin" / "irr",
+                            Path("/usr/local/bin") / "irr",
+                        ]
+                        for loc in common_locations:
+                            if loc.exists():
+                                self.irr_binary = loc
+                                break
                 except (ImportError, OSError):
                     pass
 
+        print(f"Using irr binary at {self.irr_binary}")
+        if not self.irr_binary.exists():
+            print("WARNING: irr binary not found! Solver will likely fail.")
+
         # Create output directory if it doesn't exist
-        os.makedirs(output_dir, exist_ok=True)
+        os.makedirs(self.output_dir, exist_ok=True)
 
         # Setup logging
         logging.basicConfig(
@@ -1002,9 +1077,18 @@ class ChartSolver:
         Returns a tuple of (callable, args) that allows the instance to be recreated.
         """
         # Return a tuple with the class and the arguments needed to recreate this instance
+        solver_output = getattr(self, "report_path", None)
+        solver_output_str = str(solver_output) if solver_output else None
+
         return (
             self.__class__,
-            (self.max_workers, self.output_dir, self.debug, self.checkpoint_interval),
+            (
+                self.max_workers,
+                self.output_dir,
+                self.debug,
+                self.checkpoint_interval,
+                solver_output_str,
+            ),
         )
 
     def _build_parameter_matrix(self) -> Dict[str, List[Any]]:
@@ -1263,16 +1347,201 @@ class ChartSolver:
         return report
 
     def _load_checkpoint(self) -> Dict:
+        print(f"Looking for checkpoint at {self.checkpoint_path}")
         if self.checkpoint_path.exists():
-            with open(self.checkpoint_path, "r") as f:
-                return json.load(f)
+            print("Found checkpoint file, loading it")
+            try:
+                with open(self.checkpoint_path, "r") as f:
+                    checkpoint_data = json.load(f)
+                    print(f"Loaded checkpoint with {len(checkpoint_data)} entries")
+                    return checkpoint_data
+            except Exception as e:
+                self.logger.error(f"Error loading checkpoint: {e}")
+                print(f"Error loading checkpoint: {e}")
+                return {}
         else:
+            print("Checkpoint file not found, starting fresh")
             return {}
 
     def _save_checkpoint(self, checkpoint_data):
-        with open(self.checkpoint_path, "w") as f:
-            json.dump(checkpoint_data, f)
+        try:
+            print(
+                f"Saving checkpoint to {self.checkpoint_path} with {len(checkpoint_data)} entries"
+            )
+            with open(self.checkpoint_path, "w") as f:
+                json.dump(checkpoint_data, f)
+            print("Checkpoint saved successfully")
+        except Exception as e:
+            self.logger.error(f"Error saving checkpoint: {e}")
+            print(f"Error saving checkpoint: {e}")
 
     def _generate_report(self, results):
-        # Implementation of _generate_report method
-        pass
+        """Generate a report summarizing the charts and parameters that worked.
+
+        Args:
+            results: Dictionary mapping chart names to result dictionaries
+
+        Returns:
+            Dictionary with summary statistics and details
+        """
+        report = {
+            "summary": {
+                "total_charts": len(results),
+                "successful_charts": 0,
+                "success_rate": 0.0,
+            },
+            "classification_stats": defaultdict(
+                lambda: {"total": 0, "success": 0, "success_rate": 0.0}
+            ),
+            "provider_stats": defaultdict(
+                lambda: {"total": 0, "success": 0, "success_rate": 0.0}
+            ),
+            "parameter_stats": {},  # Use regular dict instead of defaultdict
+            "error_stats": defaultdict(int),
+        }
+
+        # Process results
+        for chart_name, result in results.items():
+            # Get chart classification
+            chart_path = next(
+                (
+                    p
+                    for p in self.chart_paths
+                    if isinstance(p, tuple) and p[0] == chart_name
+                ),
+                None,
+            )
+            if chart_path is None:
+                chart_path = next(
+                    (
+                        p
+                        for p in self.chart_paths
+                        if isinstance(p, Path) and p.stem == chart_name
+                    ),
+                    None,
+                )
+
+            if chart_path is None:
+                classification = "UNKNOWN"
+                provider = None
+            else:
+                if isinstance(chart_path, tuple):
+                    classification = get_chart_classification(chart_path[1])
+                    provider = _extract_provider(chart_name)
+                else:
+                    classification = get_chart_classification(chart_path)
+                    provider = _extract_provider(chart_name)
+
+            # Update classification stats
+            report["classification_stats"][classification]["total"] += 1
+
+            # Update provider stats
+            report["provider_stats"][provider or "null"]["total"] += 1
+
+            # Check if the chart was successful
+            if "success" in result and result["success"]:
+                # Only count as successful if the parameters were actually successful too
+                parameter_success = False
+
+                if "parameters" in result and result["parameters"] is not None:
+                    # Handle the new result structure correctly
+                    if (
+                        isinstance(result["parameters"], dict)
+                        and "success" in result["parameters"]
+                    ):
+                        parameter_success = result["parameters"]["success"]
+                    else:
+                        # For backwards compatibility with older result format
+                        parameter_success = True
+
+                if parameter_success:
+                    report["summary"]["successful_charts"] += 1
+                    report["classification_stats"][classification]["success"] += 1
+                    report["provider_stats"][provider or "null"]["success"] += 1
+
+                    # Count parameter usage for successful charts
+                    parameters = result.get("parameters", {})
+
+                    # Navigate nested parameter structure
+                    if isinstance(parameters, dict):
+                        # If parameters has its own 'parameters' field (nested structure)
+                        if (
+                            "parameters" in parameters
+                            and parameters["parameters"] is not None
+                        ):
+                            parameters = parameters["parameters"]
+
+                        # Process each parameter individually
+                        for param_name, param_value in parameters.items():
+                            # Convert param_value to string if it's not a simple type
+                            if (
+                                not isinstance(param_value, (str, int, float, bool))
+                                and param_value is not None
+                            ):
+                                param_value = str(param_value)
+
+                            # Create the key as "param_name: param_value"
+                            param_key = f"{param_name}: {param_value}"
+
+                            # Increment the count for this parameter
+                            if param_key not in report["parameter_stats"]:
+                                report["parameter_stats"][param_key] = 0
+                            report["parameter_stats"][param_key] += 1
+                else:
+                    # Parameter success was false
+                    error_type = "PARAMETER_ERROR"
+
+                    # Try to extract more specific parameter error information
+                    if "parameters" in result and isinstance(
+                        result["parameters"], dict
+                    ):
+                        if (
+                            "errors" in result["parameters"]
+                            and result["parameters"]["errors"]
+                        ):
+                            error_type = categorize_error(
+                                str(result["parameters"]["errors"])
+                            )
+
+                    report["error_stats"][error_type] += 1
+            else:
+                # Chart was not successful at all
+                error_type = "UNKNOWN_ERROR"
+
+                # Try to extract a more specific error type from errors
+                if "errors" in result and result["errors"]:
+                    error_type = categorize_error(str(result["errors"]))
+
+                report["error_stats"][error_type] += 1
+
+        # Calculate success rates
+        if report["summary"]["total_charts"] > 0:
+            report["summary"]["success_rate"] = (
+                report["summary"]["successful_charts"]
+                / report["summary"]["total_charts"]
+            )
+
+        for classification, stats in report["classification_stats"].items():
+            if stats["total"] > 0:
+                stats["success_rate"] = stats["success"] / stats["total"]
+
+        for provider, stats in report["provider_stats"].items():
+            if stats["total"] > 0:
+                stats["success_rate"] = stats["success"] / stats["total"]
+
+        # Convert error stats to percentages
+        error_stats_with_percents = {}
+        for error_type, count in report["error_stats"].items():
+            error_stats_with_percents[error_type] = {
+                "count": count,
+                "percent": (count / report["summary"]["total_charts"]) * 100
+                if report["summary"]["total_charts"] > 0
+                else 0,
+            }
+        report["error_stats"] = error_stats_with_percents
+
+        # Save the report to disk
+        with open(self.report_path, "w") as f:
+            json.dump(report, f, indent=2)
+
+        return report

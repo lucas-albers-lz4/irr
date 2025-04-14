@@ -1671,6 +1671,7 @@ async def main():
                 output_dir=TEST_OUTPUT_DIR,
                 debug=args.debug,
                 checkpoint_interval=50,
+                solver_output=args.solver_output,
             )
             print(f"Starting solver with {len(charts_to_process_info)} charts...")
             # Set the chart_paths attribute before calling solve
