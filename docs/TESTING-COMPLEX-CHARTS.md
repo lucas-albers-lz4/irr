@@ -2,6 +2,65 @@
 
 This document details the approach for testing complex Helm charts with the `irr` tool, focusing on the component-group testing methodology.
 
+## Kubernetes Version Compatibility
+
+Many Helm charts require specific Kubernetes versions. During testing, we use the following approach to handle Kubernetes version compatibility:
+
+### Setting Kubernetes Version for Testing
+
+When testing charts with `irr validate` or using the `test-charts.py` script, we set these parameters:
+
+```bash
+--set kubeVersion=1.29.0
+--set Capabilities.KubeVersion.Major=1
+--set Capabilities.KubeVersion.Minor=29
+--set Capabilities.KubeVersion.GitVersion=v1.29.0
+```
+
+These settings work in two ways:
+1. `kubeVersion` is a chart parameter sometimes used to override the default Kubernetes version
+2. The `Capabilities.KubeVersion.*` parameters directly inject values into the Helm templating engine's `.Capabilities.KubeVersion` object
+
+Using both approaches ensures maximum compatibility with different chart implementation styles.
+
+### Advanced Fallback Mechanisms
+
+For charts that still have Kubernetes version compatibility issues, our test framework implements:
+
+1. **Multiple Version Attempts**: When a chart fails validation with a Kubernetes version error, the script automatically tries with multiple versions (1.29.0, 1.28.0, 1.27.0, etc.) until it finds one that works.
+
+2. **Targeted Chart Handling**: Certain charts with specific version requirements (like sonarqube, eck-*, traefik) get custom Kubernetes version settings (up to v1.30.0) during testing.
+
+3. **Required Version Extraction**: The framework tries to parse the required version from error messages and prioritizes trying that specific version.
+
+### Why This Works
+
+The key to solving Kubernetes version compatibility issues is setting the `Capabilities.KubeVersion.*` parameters directly. This is especially effective because:
+
+1. Many charts use the `.Capabilities.KubeVersion` object in template conditionals like:
+   ```
+   {{- if semverCompare ">=1.25.0-0" (include "common.capabilities.kubeVersion" .) -}}
+   ```
+
+2. By directly setting values in this object, we ensure these comparisons use our specified version rather than the default that Helm might use.
+
+3. This approach works without requiring changes to the `irr` tool itself.
+
+### Important Notes on Kubernetes Version Settings
+
+1. The `kubeVersion` parameter is a Type 2 parameter (validation-only) as described in [RULES.md](RULES.md) - it should NOT be included in the final override file used for deployment.
+
+2. When using `test-charts.py`, it automatically adds these version settings during validation.
+
+3. When manually validating a chart, you should include these settings if you encounter version compatibility errors.
+
+4. Different charts may have different minimum version requirements. Our testing standardizes on 1.29.0 but can use versions up to 1.30.0 for challenging charts.
+
+5. For particularly stubborn charts, using the direct Helm command with `--kube-version` flag may be more effective:
+   ```bash
+   helm template release-name chart-path --kube-version v1.30.0 --values values-file.yaml
+   ```
+
 ## Component-Group Testing Approach
 
 When testing complex charts like `cert-manager` or `kube-prometheus-stack`, we use a specialized testing approach that breaks down testing into logical component groups. This improves:
