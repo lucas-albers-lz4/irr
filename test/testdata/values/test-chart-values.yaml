@@ -1,0 +1,24 @@
+# Test values file with various image formats for testing the inspect command
+
+# Simple image strings
+image: docker.io/library/nginx:latest
+redis:
+  image: docker.io/bitnami/redis:6.2.7
+
+# Map-based images
+postgresql:
+  image:
+    registry: docker.io
+    repository: bitnami/postgresql
+    tag: 15.2.0
+
+# Images from different registries
+prometheus:
+  image: quay.io/prometheus/prometheus:v2.40.0
+
+grafana:
+  image: grafana/grafana:9.3.0  # Implicit docker.io
+
+# Template variable image
+template:
+  image: "{{ .Values.global.registry }}/custom-app:{{ .Values.global.tag }}"
