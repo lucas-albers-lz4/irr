@@ -32,7 +32,7 @@ var (
 	cfgFile      string
 	debugEnabled bool
 	logLevel     string
-	// analyze command flags
+	// Previous analyze command flags (now integrated with inspect)
 	// outputFormat string
 
 	// Output and mode flags
@@ -41,7 +41,7 @@ var (
 	// IntegrationTestMode controls behavior specific to integration tests
 	integrationTestMode bool
 
-	// TestAnalyzeMode is a global flag to enable test mode for analyze command
+	// TestAnalyzeMode is a global flag to enable test mode (originally for analyze command, now for inspect)
 	TestAnalyzeMode bool
 )
 
@@ -207,7 +207,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "set log level (debug, info, warn, error)")
 	rootCmd.PersistentFlags().BoolVar(&integrationTestMode, "integration-test", false, "enable integration test mode")
 	// For testing purposes
-	rootCmd.PersistentFlags().BoolVar(&TestAnalyzeMode, "test-analyze", false, "enable test mode for analyze command")
+	rootCmd.PersistentFlags().BoolVar(&TestAnalyzeMode, "test-analyze", false, "enable test mode (originally for analyze command, now for inspect)")
 
 	// Hide the flags from regular usage
 	if err := rootCmd.PersistentFlags().MarkHidden("integration-test"); err != nil {
@@ -229,10 +229,7 @@ func init() {
 	}
 }
 
-// --- Analyze Command --- Moved from analyze.go
-
-// Analysis related functions and command implementation have been removed as part of Phase 3.
-// The functionality has been consolidated into the inspect command.
+// --- Analyze Command Functionality --- Now integrated into inspect command
 
 // Get the root command - useful for testing
 func getRootCmd() *cobra.Command {

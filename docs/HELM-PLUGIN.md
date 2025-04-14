@@ -114,7 +114,7 @@ path_strategy: "prefix-source-registry"  # default
 # 1. Install a chart normally
 helm install my-app ./charts/my-app
 
-# 2. Analyze the installed chart
+# 2. Inspect the installed chart
 helm irr inspect my-app
 
 # 3. Generate registry overrides
