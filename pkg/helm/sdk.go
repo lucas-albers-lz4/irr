@@ -8,7 +8,6 @@ import (
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
-	"helm.sh/helm/v3/pkg/repo"
 )
 
 // ChartLoader interface for loading Helm charts
@@ -19,12 +18,6 @@ type ChartLoader interface {
 // TimeProvider interface for time-based operations
 type TimeProvider interface {
 	Now() time.Time
-}
-
-// RepositoryManager interface for managing Helm repositories
-type RepositoryManager interface {
-	GetRepositories() (*repo.File, error)
-	GetRepositoryIndex(entry *repo.Entry) (*repo.IndexFile, error)
 }
 
 // defaultChartLoader implements ChartLoader using Helm's loader
@@ -43,6 +36,11 @@ func (d *defaultTimeProvider) Now() time.Time {
 
 // FileSystem abstraction
 var fs = afero.NewOsFs()
+
+// SetFileSystem allows overriding the default filesystem for testing
+func SetFileSystem(newFs afero.Fs) {
+	fs = newFs
+}
 
 // ResolveChartPath resolves a chart path from a release name using the Helm SDK
 func ResolveChartPath(actionConfig *action.Configuration, releaseName, chartPath string) (string, error) {

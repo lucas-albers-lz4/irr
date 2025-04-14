@@ -40,7 +40,7 @@ func TestRepositoryManager_GetRepositories(t *testing.T) {
 	settings.RepositoryConfig = repoFile
 
 	// Create repository manager
-	rm := NewRepositoryManager(settings)
+	rm := NewHelmRepositoryManager(settings)
 
 	// Test GetRepositories
 	repos, err := rm.GetRepositories()
@@ -88,7 +88,7 @@ func TestRepositoryManager_FindChartInRepositories(t *testing.T) {
 	settings.RepositoryConfig = repoFile
 
 	// Create repository manager
-	rm := NewRepositoryManager(settings)
+	rm := NewHelmRepositoryManager(settings)
 
 	// Test finding non-existent chart (should return error)
 	_, err = rm.FindChartInRepositories("non-existent-chart")
@@ -99,15 +99,19 @@ func TestRepositoryManager_FindChartInRepositories(t *testing.T) {
 	rm.cache.repos = &repo.File{
 		Repositories: []*repo.Entry{},
 	}
+	// Make sure cache doesn't expire during test
+	rm.cache.lastSync = time.Now()
 	_, err = rm.FindChartInRepositories("any-chart")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no repositories configured")
 
-	// Test with nil repository list
+	// Test with nil repository list - we'll use a mock repoFile that doesn't exist
+	rm.settings.RepositoryConfig = "/does/not/exist.yaml"
 	rm.cache.repos = nil
+	rm.cache.lastSync = time.Time{} // Expired cache, force reload
 	_, err = rm.FindChartInRepositories("any-chart")
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "no repositories configured")
+	assert.Contains(t, err.Error(), "failed to load repositories")
 }
 
 func TestRepositoryManager_ClearCache(t *testing.T) {
@@ -136,7 +140,7 @@ func TestRepositoryManager_ClearCache(t *testing.T) {
 	settings.RepositoryConfig = repoFile
 
 	// Create repository manager
-	rm := NewRepositoryManager(settings)
+	rm := NewHelmRepositoryManager(settings)
 
 	// Get repositories to populate cache
 	repos, err := rm.GetRepositories()
