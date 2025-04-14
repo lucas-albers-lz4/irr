@@ -498,6 +498,23 @@ func (h *TestHarness) getOverrides() (overrides map[string]interface{}, err erro
 	return overrides, nil
 }
 
+// GetValueFromOverrides retrieves a value from the overrides map using a path.
+func (h *TestHarness) GetValueFromOverrides(overrides map[string]interface{}, path ...string) (interface{}, bool) {
+	var current interface{} = overrides
+	for _, key := range path {
+		currentMap, ok := current.(map[string]interface{})
+		if !ok {
+			return nil, false // Path doesn't lead to a map intermediate
+		}
+		value, exists := currentMap[key]
+		if !exists {
+			return nil, false // Key doesn't exist at this level
+		}
+		current = value
+	}
+	return current, true
+}
+
 // WalkImageFields recursively walks through a map/slice structure and calls the visitor function
 // for any field that represents an image (either a string or a map with expected keys).
 // This is a simplified walker, assuming overrides structure.

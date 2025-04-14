@@ -3,6 +3,7 @@ package chart
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -379,6 +380,93 @@ func TestGenerateOverrides_Integration(t *testing.T) {
 	//	nil, // No mock chart loader needed
 	//	nil, nil, nil,
 	// )
+}
+
+// TestValidateHelmTemplateWithFallback tests the fallback retry mechanism in ValidateHelmTemplate
+// for Bitnami security errors (exit code 16)
+func TestValidateHelmTemplateWithFallback(t *testing.T) {
+	// Mock the validateHelmTemplateInternalFunc variable to simulate different behaviors
+	originalValidateFunc := validateHelmTemplateInternalFunc
+	defer func() {
+		// Restore the original function after the test
+		validateHelmTemplateInternalFunc = originalValidateFunc
+	}()
+
+	// Test cases
+	testCases := []struct {
+		name           string
+		firstError     error
+		secondError    error
+		expectedResult error
+	}{
+		{
+			name:           "No error on first try",
+			firstError:     nil,
+			secondError:    nil,
+			expectedResult: nil,
+		},
+		{
+			name: "Bitnami error on first try, success on retry",
+			firstError: errors.New(`exit code 16: helm template rendering failed: template: test-chart/templates/pod.yaml:10: ` +
+				`executing "test-chart/templates/pod.yaml" at <include "common.errors.upgrade.containerChanged">: ` +
+				`error calling include: template: test-chart/charts/common/templates/_errors.tpl:66: ` +
+				`Original containers have been substituted for unrecognized ones. Deploying this chart with non-standard containers ` +
+				`is likely to cause degraded security and performance.` +
+				`If you are sure you want to proceed with non-standard containers, you can skip container image verification by ` +
+				`setting the global parameter 'global.security.allowInsecureImages' to true.`),
+			secondError:    nil,
+			expectedResult: nil,
+		},
+		{
+			name: "Bitnami error on first try, different error on retry",
+			firstError: errors.New(`exit code 16: helm template rendering failed: template: test-chart/templates/pod.yaml:10: ` +
+				`executing "test-chart/templates/pod.yaml" at <include "common.errors.upgrade.containerChanged">: ` +
+				`error calling include: template: test-chart/charts/common/templates/_errors.tpl:66: ` +
+				`Original containers have been substituted for unrecognized ones. Deploying this chart with non-standard containers ` +
+				`is likely to cause degraded security and performance.` +
+				`If you are sure you want to proceed with non-standard containers, you can skip container image verification by ` +
+				`setting the global parameter 'global.security.allowInsecureImages' to true.`),
+			secondError:    errors.New("different error after retry"),
+			expectedResult: errors.New("different error after retry"),
+		},
+		{
+			name:           "Non-Bitnami error",
+			firstError:     errors.New("general helm error"),
+			secondError:    nil, // This should not be used
+			expectedResult: errors.New("general helm error"),
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			callCount := 0
+			validateHelmTemplateInternalFunc = func(_ string, _ []byte) error {
+				callCount++
+				if callCount == 1 {
+					return tc.firstError
+				}
+				return tc.secondError
+			}
+
+			// Call the function with dummy values
+			result := ValidateHelmTemplate("test-chart", []byte("foo: bar"))
+
+			// Check the result
+			if tc.expectedResult == nil {
+				assert.NoError(t, result)
+			} else {
+				assert.Error(t, result)
+				assert.Equal(t, tc.expectedResult.Error(), result.Error())
+			}
+
+			// Verify that retry only happened for Bitnami security errors
+			if tc.firstError != nil && strings.Contains(tc.firstError.Error(), "Original containers have been substituted for unrecognized ones") {
+				assert.Equal(t, 2, callCount, "Should have called validateHelmTemplateInternalFunc twice for Bitnami security errors")
+			} else {
+				assert.Equal(t, 1, callCount, "Should have called validateHelmTemplateInternalFunc only once for non-Bitnami errors")
+			}
+		})
+	}
 }
 
 // Helper function to create a temporary Helm chart directory

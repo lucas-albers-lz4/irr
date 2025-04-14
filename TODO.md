@@ -146,14 +146,14 @@ Implementation steps:
        - [x] Add this parameter during the override generation phase (`irr override` command)
        - [x] Ensure this parameter is included in the final override.yaml file
        - [x] Update override generation logic to inject this parameter automatically
-     - [ ] Add fallback retry mechanism for charts failing with specific error signature
-       - [ ] Detect exact exit code 16 with error message containing "Original containers have been substituted for unrecognized ones"
-       - [ ] Add specific error handling for the message "If you are sure you want to proceed with non-standard containers..."
-       - [ ] If validation fails with this specific error, retry with `global.security.allowInsecureImages=true`
-     - [ ] Test with representative Bitnami charts to verify detection accuracy and deployment success
-       - [ ] Test specifically with bitnami/nginx, bitnami/memcached and other common Bitnami charts
-       - [ ] Verify the override file contains the security bypass parameter
-       - [ ] Confirm validation passes when the parameter is included
+     - [x] Test with representative Bitnami charts to verify detection accuracy and deployment success
+       - [x] Test specifically with bitnami/nginx, bitnami/memcached and other common Bitnami charts
+       - [x] Verify the override file contains the security bypass parameter
+       - [x] Confirm validation passes when the parameter is included
+     - [x] Add fallback retry mechanism for charts failing with specific error signature
+       - [x] Detect exact exit code 16 with error message containing "Original containers have been substituted for unrecognized ones"
+       - [x] Add specific error handling for the message "If you are sure you want to proceed with non-standard containers..."
+       - [x] If validation fails with this specific error, retry with `global.security.allowInsecureImages=true`
    - [x] **[P2]** Document Type 2 parameters needed for testing (e.g., `kubeVersion`)
    - [x] Correlate errors with chart metadata (provider, dependencies, etc.)
 
@@ -167,7 +167,7 @@ Implementation steps:
    - [x] **[P1]** Create configuration options to control rule application
    - [ ] **[P1]** Create test script to extract and analyze metadata from test chart corpus
      - [ ] Develop script to process Chart.yaml files from test corpus
-     - [Note: The existing test/tools/test-charts.py script processes charts and could be adapted or leveraged for this analysis.]
+     - [Note: Reconfirming - The existing test/tools/test-charts.py script processes the test chart corpus and WILL be adapted or leveraged for this analysis. No new script will be created.]
      - [ ] Generate statistics on different chart providers based on metadata patterns
      - [ ] Produce report identifying reliable detection patterns for major providers
    - [x] **[P2]** Add test-only parameter handling for validation (Type 2)

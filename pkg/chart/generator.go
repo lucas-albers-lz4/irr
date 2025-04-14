@@ -593,11 +593,11 @@ func (g *Generator) Generate() (*override.File, error) {
 
 		// Apply rules from the registry if it's initialized
 		if g.rulesRegistry != nil {
-			registry, ok := g.rulesRegistry.(*rules.Registry)
+			regInstance, ok := g.rulesRegistry.(*rules.Registry)
 			if !ok {
 				log.Warnf("Rules registry type assertion failed")
 			} else {
-				rulesApplied, err = registry.ApplyRules(loadedChart, overrides)
+				rulesApplied, err = regInstance.ApplyRules(loadedChart, overrides)
 				if err != nil {
 					log.Warnf("Error applying rules to chart: %v", err)
 					// Continue with the overrides we have
@@ -652,10 +652,71 @@ func (g *Generator) isExcluded(regStr string) bool {
 }
 
 // ValidateHelmTemplate validates a Helm chart template using the Helm SDK.
+// If validation fails with a Bitnami-specific security error (exit code 16),
+// it will automatically retry with global.security.allowInsecureImages=true.
 func ValidateHelmTemplate(chartPath string, overrides []byte) error {
 	debug.FunctionEnter("ValidateHelmTemplate")
 	defer debug.FunctionExit("ValidateHelmTemplate")
 
+	// First try - without any modification
+	err := validateHelmTemplateInternalFunc(chartPath, overrides)
+	if err == nil {
+		return nil
+	}
+
+	// If we get an error, check if it's the specific Bitnami security error (exit code 16)
+	// that can be fixed by adding global.security.allowInsecureImages=true
+	handler := rules.NewBitnamiFallbackHandler()
+	if handler.ShouldRetryWithSecurityBypass(err) {
+		debug.Printf("Detected Bitnami security error, retrying with security bypass")
+
+		// Parse the original overrides
+		var overrideMap map[string]interface{}
+		if unmarshalErr := yaml.Unmarshal(overrides, &overrideMap); unmarshalErr != nil {
+			// If we can't parse the overrides, return the original error
+			debug.Printf("Failed to parse overrides for security bypass: %v", unmarshalErr)
+			return err
+		}
+
+		// Add the security bypass parameter
+		if applyErr := handler.ApplySecurityBypass(overrideMap); applyErr != nil {
+			// If we can't apply the bypass, return the original error
+			debug.Printf("Failed to apply security bypass: %v", applyErr)
+			return err
+		}
+
+		// Marshal the updated overrides back to YAML
+		updatedOverrides, marshalErr := yaml.Marshal(overrideMap)
+		if marshalErr != nil {
+			// If we can't marshal the updated overrides, return the original error
+			debug.Printf("Failed to marshal updated overrides: %v", marshalErr)
+			return err
+		}
+
+		// Try again with the updated overrides
+		debug.Printf("Retrying validation with security bypass parameter")
+		retryErr := validateHelmTemplateInternalFunc(chartPath, updatedOverrides)
+		if retryErr == nil {
+			log.Infof("Successfully validated chart with security bypass parameter")
+			return nil
+		}
+
+		// If the retry fails, return the new error
+		debug.Printf("Retry with security bypass failed: %v", retryErr)
+		return retryErr
+	}
+
+	// For any other error, return it as is
+	return err
+}
+
+// validateHelmTemplateInternalFunc is a variable holding the function that performs
+// the actual Helm template validation without any retry logic. This is defined as a
+// variable to allow mocking in tests.
+var validateHelmTemplateInternalFunc = validateHelmTemplateInternal
+
+// validateHelmTemplateInternal is the internal implementation function
+func validateHelmTemplateInternal(chartPath string, overrides []byte) error {
 	tempDir, err := os.MkdirTemp("", "irr-validate-")
 	if err != nil {
 		return fmt.Errorf("failed to create temp directory: %w", err)

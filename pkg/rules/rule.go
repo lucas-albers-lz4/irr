@@ -17,7 +17,7 @@ type Rule interface {
 	Description() string
 
 	// AppliesTo determines if this rule applies to the given chart
-	AppliesTo(ch *chart.Chart) (Detection, bool)
+	AppliesTo(*chart.Chart) (Detection, bool)
 
 	// Parameters returns the parameters that should be set if this rule
 	// is applied to a chart
@@ -66,7 +66,7 @@ func (r BaseRule) Priority() int {
 }
 
 // AppliesTo base implementation always returns false - should be overridden
-func (r BaseRule) AppliesTo(ch *chart.Chart) (Detection, bool) {
+func (r BaseRule) AppliesTo(*chart.Chart) (Detection, bool) {
 	return Detection{
 		Provider:   ProviderUnknown,
 		Confidence: ConfidenceNone,
@@ -163,6 +163,17 @@ func setValueInMap(m map[string]interface{}, parts []string, value interface{}) 
 	return setValueInMap(subMap, rest, value)
 }
 
-func (r *BaseRule) SetChart(_ *chart.Chart) {
-	// Implementation of SetChart method
+// GetPriority returns the rule's priority (higher numbers have higher priority)
+func (r BaseRule) GetPriority() int {
+	return r.priority
 }
+
+// SetChart associates the chart with the rule instance.
+// This base implementation is a placeholder. Embedding structs can override this
+// method if they need to store or process the associated chart.
+func (r *BaseRule) SetChart(_ *chart.Chart) {
+	// Default implementation: Do nothing. Embedding structs can override this.
+}
+
+// SimpleRule is a basic implementation of the Rule interface using BaseRule.
+// ... existing code ...
