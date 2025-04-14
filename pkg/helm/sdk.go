@@ -24,11 +24,11 @@ type TimeProvider interface {
 type defaultChartLoader struct{}
 
 func (l *defaultChartLoader) Load(path string) (*chart.Chart, error) {
-	chart, err := loader.Load(path)
+	loadedChart, err := loader.Load(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load chart: %w", err)
 	}
-	return chart, nil
+	return loadedChart, nil
 }
 
 // FileSystem abstraction
@@ -88,10 +88,10 @@ func DiscoverPlugins(pluginDir string) ([]*Plugin, error) {
 
 // LoadChart loads a chart from the given path
 func LoadChart(chartPath string) (*chart.Chart, error) {
-	loader := &defaultChartLoader{}
-	chart, err := loader.Load(chartPath)
+	chartLoader := &defaultChartLoader{}
+	loadedChart, err := chartLoader.Load(chartPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load chart: %w", err)
 	}
-	return chart, nil
+	return loadedChart, nil
 }

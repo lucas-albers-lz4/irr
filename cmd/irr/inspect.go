@@ -99,7 +99,7 @@ func loadHelmChart(chartPath string) (*chart.Chart, error) {
 	}
 
 	// Load chart
-	chart, err := loader.Load(chartPath)
+	loadedChart, err := loader.Load(chartPath)
 	if err != nil {
 		return nil, &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitChartLoadFailed,
@@ -107,7 +107,7 @@ func loadHelmChart(chartPath string) (*chart.Chart, error) {
 		}
 	}
 
-	return chart, nil
+	return loadedChart, nil
 }
 
 // analyzeChart analyzes a chart for image patterns

@@ -341,13 +341,13 @@ func TestLoadChart(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.mockSetup()
-			chart, err := LoadChart(tt.chartPath)
+			testChartObj, err := LoadChart(tt.chartPath)
 			if tt.wantErr {
 				assert.Error(t, err)
 				return
 			}
 			assert.NoError(t, err)
-			assert.Equal(t, testChart, chart)
+			assert.Equal(t, testChart, testChartObj)
 		})
 	}
 
@@ -399,13 +399,13 @@ grafana:
 	require.NoError(t, err)
 
 	// Test chart loading
-	chart, err := loader.Load(chartDir)
+	loadedChart, err := loader.Load(chartDir)
 	require.NoError(t, err)
-	assert.Equal(t, "kube-prometheus-stack", chart.Metadata.Name)
+	assert.Equal(t, "kube-prometheus-stack", loadedChart.Metadata.Name)
 
 	// Test dependency handling
-	require.Len(t, chart.Dependencies(), 1)
-	assert.Equal(t, "prometheus", chart.Dependencies()[0].Name())
+	require.Len(t, loadedChart.Dependencies(), 1)
+	assert.Equal(t, "prometheus", loadedChart.Dependencies()[0].Name())
 }
 
 // TestErrorHandling tests error handling and recovery

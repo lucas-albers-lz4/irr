@@ -51,18 +51,18 @@ type Analyzer struct {
 //
 // Parameters:
 //   - chartPath: Path to the Helm chart to analyze
-//   - loader: Implementation of ChartLoader to use for loading the chart (optional)
+//   - chartLoader: Implementation of ChartLoader to use for loading the chart (optional)
 //
 // Returns:
 //   - A configured Analyzer instance ready to perform chart analysis
-func NewAnalyzer(chartPath string, loader ChartLoader) *Analyzer {
+func NewAnalyzer(chartPath string, chartLoader ChartLoader) *Analyzer {
 	// If no loader provided, use the default Helm loader.
-	if loader == nil {
-		loader = &HelmChartLoader{}
+	if chartLoader == nil {
+		chartLoader = &HelmChartLoader{}
 	}
 	return &Analyzer{
 		chartPath: chartPath,
-		loader:    loader,
+		loader:    chartLoader,
 	}
 }
 

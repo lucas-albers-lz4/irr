@@ -16,13 +16,13 @@ func TestGenerate(t *testing.T) {
 	testValues := map[string]interface{}{
 		"image": "old-registry.com/my-app:v1",
 	}
-	strategy := strategy.NewPrefixSourceRegistryStrategy()
+	testStrategy := strategy.NewPrefixSourceRegistryStrategy()
 	// Provide minimal non-nil mappings struct
 	mappings := &registry.Mappings{}
 
 	generator := NewGenerator(
 		mappings,
-		strategy,
+		testStrategy,
 		[]string{"old-registry.com"}, // sourceRegistries
 		[]string{},                   // excludeRegistries
 		false,                        // strictMode
@@ -75,7 +75,7 @@ func TestGenerate_WithMappings(t *testing.T) {
 			"config": "excluded.com/app3:v3", // Should be ignored (not an image path)
 		},
 	}
-	strategy := strategy.NewPrefixSourceRegistryStrategy()
+	testStrategy := strategy.NewPrefixSourceRegistryStrategy()
 	mappings := &registry.Mappings{
 		Entries: []registry.Mapping{
 			{Source: "old-registry.com", Target: "mapped-registry.com/oldreg"},
@@ -85,7 +85,7 @@ func TestGenerate_WithMappings(t *testing.T) {
 
 	generator := NewGenerator(
 		mappings,
-		strategy,
+		testStrategy,
 		[]string{"old-registry.com", "other-registry.com"}, // sourceRegistries
 		[]string{}, // excludeRegistries
 		false,      // strictMode

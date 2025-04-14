@@ -1673,7 +1673,9 @@ async def main():
                 checkpoint_interval=50,
             )
             print(f"Starting solver with {len(charts_to_process_info)} charts...")
-            solver.solve(charts_to_process_info, output_file=args.solver_output)
+            # Set the chart_paths attribute before calling solve
+            solver.chart_paths = charts_to_process_info
+            solver.solve(charts_to_process_info)
 
             print("Solver execution completed.")
             sys.exit(0)

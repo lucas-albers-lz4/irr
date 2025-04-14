@@ -184,11 +184,11 @@ func NewGenerator(
 	configMappings map[string]string,
 	strict bool,
 	threshold int,
-	loader analysis.ChartLoader,
+	chartLoader analysis.ChartLoader,
 	includePatterns, excludePatterns, knownPaths []string,
 ) *Generator {
-	if loader == nil {
-		loader = &GeneratorLoader{}
+	if chartLoader == nil {
+		chartLoader = &GeneratorLoader{}
 	}
 	return &Generator{
 		chartPath:         chartPath,
@@ -203,7 +203,7 @@ func NewGenerator(
 		excludePatterns:   excludePatterns,
 		knownPaths:        knownPaths,
 		threshold:         threshold,
-		loader:            loader,
+		loader:            chartLoader,
 	}
 }
 
@@ -247,7 +247,7 @@ func (g *Generator) findUnsupportedPatterns(detectedImages []analysis.ImagePatte
 func (g *Generator) filterEligibleImages(detectedImages []analysis.ImagePattern) []analysis.ImagePattern {
 	eligibleImages := []analysis.ImagePattern{}
 	for _, pattern := range detectedImages {
-		var registry string
+		var imgRegistry string
 
 		switch pattern.Type {
 		case analysis.PatternTypeString:
@@ -256,10 +256,10 @@ func (g *Generator) filterEligibleImages(detectedImages []analysis.ImagePattern)
 				debug.Printf("Skipping pattern at path %s due to parse error on value '%s': %v", pattern.Path, pattern.Value, err)
 				continue
 			}
-			registry = imgRef.Registry
+			imgRegistry = imgRef.Registry
 		case analysis.PatternTypeMap:
 			if regVal, ok := pattern.Structure["registry"].(string); ok {
-				registry = regVal
+				imgRegistry = regVal
 			} else {
 				debug.Printf("Skipping map pattern at path %s due to missing registry in structure: %+v", pattern.Path, pattern.Structure)
 				continue
@@ -269,17 +269,17 @@ func (g *Generator) filterEligibleImages(detectedImages []analysis.ImagePattern)
 			continue
 		}
 
-		if registry == "" {
+		if imgRegistry == "" {
 			debug.Printf("Skipping pattern at path %s due to empty registry", pattern.Path)
 			continue
 		}
 
-		if g.isExcluded(registry) {
-			debug.Printf("Skipping image pattern from excluded registry '%s' at path %s", registry, pattern.Path)
+		if g.isExcluded(imgRegistry) {
+			debug.Printf("Skipping image pattern from excluded registry '%s' at path %s", imgRegistry, pattern.Path)
 			continue
 		}
-		if len(g.sourceRegistries) > 0 && !g.isSourceRegistry(registry) {
-			debug.Printf("Skipping image pattern from non-source registry '%s' at path %s", registry, pattern.Path)
+		if len(g.sourceRegistries) > 0 && !g.isSourceRegistry(imgRegistry) {
+			debug.Printf("Skipping image pattern from non-source registry '%s' at path %s", imgRegistry, pattern.Path)
 			continue
 		}
 		eligibleImages = append(eligibleImages, pattern)
@@ -291,26 +291,26 @@ func (g *Generator) filterEligibleImages(detectedImages []analysis.ImagePattern)
 func (g *Generator) createOverride(pattern analysis.ImagePattern, imgRef *image.Reference, targetReg, newPath string) interface{} {
 	if pattern.Type == analysis.PatternTypeString {
 		// For string type, generate a full image reference string
-		override := fmt.Sprintf("%s/%s", targetReg, newPath)
+		overrideValue := fmt.Sprintf("%s/%s", targetReg, newPath)
 		if imgRef.Tag != "" {
-			override = fmt.Sprintf("%s:%s", override, imgRef.Tag)
+			overrideValue = fmt.Sprintf("%s:%s", overrideValue, imgRef.Tag)
 		}
-		return override
+		return overrideValue
 	}
 
 	// For map type, update the map structure
-	override := map[string]interface{}{
+	overrideMap := map[string]interface{}{
 		"registry":   targetReg,
 		"repository": newPath,
 	}
 	if imgRef.Tag != "" {
-		override["tag"] = imgRef.Tag
+		overrideMap["tag"] = imgRef.Tag
 	}
-	return override
+	return overrideMap
 }
 
 // setOverridePath sets the override value at the correct path in the overrides map
-func (g *Generator) setOverridePath(overrides map[string]interface{}, pattern analysis.ImagePattern, override interface{}) error {
+func (g *Generator) setOverridePath(overrides map[string]interface{}, pattern analysis.ImagePattern, overrideValue interface{}) error {
 	pathParts := strings.Split(pattern.Path, ".")
 	current := overrides
 	for i := 0; i < len(pathParts)-1; i++ {
@@ -328,7 +328,7 @@ func (g *Generator) setOverridePath(overrides map[string]interface{}, pattern an
 			return fmt.Errorf("internal error: unexpected type at path %s in overrides map", strings.Join(pathParts[:i+1], "."))
 		}
 	}
-	current[pathParts[len(pathParts)-1]] = override
+	current[pathParts[len(pathParts)-1]] = overrideValue
 	return nil // Indicate success for this helper modification
 }
 
@@ -348,14 +348,14 @@ func (g *Generator) processImagePattern(pattern analysis.ImagePattern) (*image.R
 	}
 
 	// Handle PatternTypeMap
-	var registry, repository, tag string
+	var imgRegistry, repository, tag string
 	var ok bool
 
 	registryVal, exists := pattern.Structure["registry"]
 	if !exists {
 		return nil, fmt.Errorf("missing 'registry' key in image map at path %s", pathForError)
 	}
-	registry, ok = registryVal.(string)
+	imgRegistry, ok = registryVal.(string)
 	if !ok {
 		return nil, fmt.Errorf("invalid type for 'registry' key (expected string) in image map at path %s", pathForError)
 	}
@@ -376,25 +376,16 @@ func (g *Generator) processImagePattern(pattern analysis.ImagePattern) (*image.R
 	} else {
 		tag, ok = tagVal.(string)
 		if !ok {
-			return nil, fmt.Errorf("invalid type for 'tag' key (expected string) in image map at path %s", pathForError)
+			tag = ""
 		}
 	}
 
-	// Construct the image string to leverage ParseImageReference for validation/normalization
-	imgStr := registry + "/" + repository
-	if tag != "" {
-		imgStr += ":" + tag
-	}
-
-	// Parse the constructed string to get a validated Reference object
-	ref, err := image.ParseImageReference(imgStr)
-	if err != nil {
-		// Wrap the error with context about the map structure
-		return nil, fmt.Errorf("failed to parse constructed image string '%s' from map at path %s: %w", imgStr, pathForError, err)
-	}
-	// Store the original path info, split into segments
-	ref.Path = strings.Split(pattern.Path, ".") // Split the string path here
-	return ref, nil
+	return &image.Reference{
+		Registry:   imgRegistry,
+		Repository: repository,
+		Tag:        tag,
+		Path:       strings.Split(pattern.Path, "."),
+	}, nil
 }
 
 // determineTargetPathAndRegistry determines the target registry and path for an image reference
@@ -589,21 +580,18 @@ func (g *Generator) Generate() (*override.File, error) {
 }
 
 // --- Helper methods (isSourceRegistry, isExcluded) ---
-func (g *Generator) isSourceRegistry(registry string) bool {
-	return isRegistryInList(registry, g.sourceRegistries)
-}
-
-func (g *Generator) isExcluded(registry string) bool {
-	return isRegistryInList(registry, g.excludeRegistries)
-}
-
-func isRegistryInList(registry string, list []string) bool {
-	if len(list) == 0 {
-		return false
+func (g *Generator) isSourceRegistry(regStr string) bool {
+	for _, src := range g.sourceRegistries {
+		if regStr == src {
+			return true
+		}
 	}
-	normalizedRegistry := image.NormalizeRegistry(registry)
-	for _, r := range list {
-		if normalizedRegistry == image.NormalizeRegistry(r) {
+	return false
+}
+
+func (g *Generator) isExcluded(regStr string) bool {
+	for _, ex := range g.excludeRegistries {
+		if regStr == ex {
 			return true
 		}
 	}
@@ -639,7 +627,7 @@ func ValidateHelmTemplate(chartPath string, overrides []byte) error {
 	}
 
 	// Load the chart
-	chart, err := loader.Load(chartPath)
+	loadedChart, err := loader.Load(chartPath)
 	if err != nil {
 		return fmt.Errorf("failed to load chart: %w", err)
 	}
@@ -652,7 +640,7 @@ func ValidateHelmTemplate(chartPath string, overrides []byte) error {
 
 	// Create a release object
 	rel := &release.Release{
-		Chart:  chart,
+		Chart:  loadedChart,
 		Config: values,
 		Name:   "release-name",
 	}
