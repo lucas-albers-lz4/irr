@@ -46,98 +46,98 @@ _**Goal:** Simplify the CLI interface by consolidating image analysis functional
 ## Phase 4: Basic CLI Syntax Testing
 _**Goal:** Ensure all CLI commands (post-Phase 3) and essential flags execute without basic parsing or validation errors. Focus on basic functionality with minimal refactoring needed._
 
-- [ ] **[P1]** Define focused test scope:
-    - [ ] Identify target commands: `inspect`, `override`, `validate`, `completion`, `help`.
-    - [ ] Identify essential global flags: `--debug`, `--log-level`, `--config`.
-    - [ ] Confirm focus on command parsing and flag validation, not deep chart processing logic.
+- [x] **[P1]** Define focused test scope:
+    - [x] Identify target commands: `inspect`, `override`, `validate`, `completion`, `help`.
+    - [x] Identify essential global flags: `--debug`, `--log-level`, `--config`.
+    - [x] Confirm focus on command parsing and flag validation, not deep chart processing logic.
 
-- [ ] **[P1]** Choose testing approach:
-    - [ ] Decide on using Go tests (`_test.go`) with `os/exec` to invoke the `bin/irr` binary.
-    - [ ] Plan extensive use of table-driven tests for DRYness and maintainability.
-    - [ ] Design test helpers for common actions (running commands, checking exit codes, validating output).
-    - [ ] Identify and plan reuse of relevant helper code from `test/integration` (e.g., binary location, project root finding).
+- [x] **[P1]** Choose testing approach:
+    - [x] Decide on using Go tests (`_test.go`) with `os/exec` to invoke the `bin/irr` binary.
+    - [x] Plan extensive use of table-driven tests for DRYness and maintainability.
+    - [x] Design test helpers for common actions (running commands, checking exit codes, validating output).
+    - [x] Identify and plan reuse of relevant helper code from `test/integration` (e.g., binary location, project root finding).
 
-- [ ] **[P1]** Setup test environment:
-    - [ ] Create the dedicated Go test package: `cmd/irr/cli_test.go`.
-    - [ ] Implement basic test fixture setup/teardown (e.g., creating temporary directories if needed).
-    - [ ] Implement the helper function for locating `bin/irr`, potentially adapting from integration tests.
-    - [ ] Ensure test environment setup is minimal and fast, avoiding complex chart setup unless strictly necessary for a syntax test.
+- [x] **[P1]** Setup test environment:
+    - [x] Create the dedicated Go test package: `cmd/irr/cli_test.go`.
+    - [x] Implement basic test fixture setup/teardown (e.g., creating temporary directories if needed).
+    - [x] Implement the helper function for locating `bin/irr`, potentially adapting from integration tests.
+    - [x] Ensure test environment setup is minimal and fast, avoiding complex chart setup unless strictly necessary for a syntax test.
 
-- [ ] **[P2]** Implement success case tests:
-    - [ ] **`inspect` command:**
-        - [ ] `inspect --chart-path <path>` (no source-registries).
-        - [ ] `inspect --chart-path <path> --source-registries <regs>`.
-        - [ ] `inspect --chart-path <path>` with pattern flags (`--include-pattern`, etc.).
-        - [ ] `inspect --generate-config-skeleton`.
-    - [ ] **`override` command:**
-        - [ ] `override --chart-path <path> --source-registries <regs> --target-registry <reg>`.
-        - [ ] `override` with pattern flags and `--output-file <file>`.
-        - [ ] `override` with different `--strategy` values.
-        - [ ] `override` with `--output -` (output to stdout).
-    - [ ] **`validate` command:**
-        - [ ] `validate --chart-path <path> --values <file>`.
-        - [ ] `validate --chart-path <path>` with multiple `--values` files.
-    - [ ] **Other commands:**
-        - [ ] `completion bash`.
-        - [ ] `help`.
-        - [ ] `help inspect`, `help override`, etc. for each command.
-    - [ ] **Flag combinations:**
-        - [ ] Test combinations of compatible optional flags for key commands (e.g., `inspect --chart-path X --source-registries Y --include-pattern Z`).
-    - [ ] **General:**
-        - [ ] Apply table-driven test structure where beneficial.
+- [x] **[P2]** Implement success case tests:
+    - [x] **`inspect` command:**
+        - [x] `inspect --chart-path <path>` (no source-registries).
+        - [x] `inspect --chart-path <path> --source-registries <regs>`.
+        - [x] `inspect --chart-path <path>` with pattern flags (`--include-pattern`, etc.).
+        - [x] `inspect --generate-config-skeleton`.
+    - [x] **`override` command:**
+        - [x] `override --chart-path <path> --source-registries <regs> --target-registry <reg>`.
+        - [x] `override` with pattern flags and `--output-file <file>`.
+        - [x] `override` with different `--strategy` values.
+        - [x] `override` with `--output -` (output to stdout).
+    - [x] **`validate` command:**
+        - [x] `validate --chart-path <path> --values <file>`.
+        - [x] `validate --chart-path <path>` with multiple `--values` files.
+    - [x] **Other commands:**
+        - [x] `completion bash`.
+        - [x] `help`.
+        - [x] `help inspect`, `help override`, etc. for each command.
+    - [x] **Flag combinations:**
+        - [x] Test combinations of compatible optional flags for key commands (e.g., `inspect --chart-path X --source-registries Y --include-pattern Z`).
+    - [x] **General:**
+        - [x] Apply table-driven test structure where beneficial.
 
-- [ ] **[P1]** Implement global flag and environment variable tests:
-    - [ ] Test `--debug` flag enables debug output (check stderr).
-    - [ ] Test `IRR_DEBUG=true` environment variable enables debug output.
-    - [ ] Test `--debug` flag overrides `IRR_DEBUG=false`.
-    - [ ] Test `--log-level` flag with different valid levels (e.g., `warn`, `error`).
-    - [ ] Test `IRR_LOG_LEVEL` environment variable (if implemented).
-    - [ ] Test flag/env precedence for `--log-level` / `IRR_LOG_LEVEL`.
-    - [ ] Test `--config` flag with a minimal, valid config file.
-    - [ ] Test `IRR_CONFIG` environment variable (if implemented).
-    - [ ] Test flag/env precedence for `--config` / `IRR_CONFIG`.
+- [x] **[P1]** Implement global flag and environment variable tests:
+    - [x] Test `--debug` flag enables debug output (check stderr).
+    - [x] Test `IRR_DEBUG=true` environment variable enables debug output.
+    - [x] Test `--debug` flag overrides `IRR_DEBUG=false`.
+    - [x] Test `--log-level` flag with different valid levels (e.g., `warn`, `error`).
+    - [x] Test `IRR_LOG_LEVEL` environment variable (if implemented).
+    - [x] Test flag/env precedence for `--log-level` / `IRR_LOG_LEVEL`.
+    - [x] Test `--config` flag with a minimal, valid config file.
+    - [x] Test `IRR_CONFIG` environment variable (if implemented).
+    - [x] Test flag/env precedence for `--config` / `IRR_CONFIG`.
 
-- [ ] **[P1]** Implement error case tests:
-    - [ ] **Missing required flags:**
-        - [ ] `inspect` without `--chart-path`.
-        - [ ] `override` without `--chart-path`.
-        - [ ] `override` without `--source-registries`.
-        - [ ] `override` without `--target-registry`.
-        - [ ] `validate` without `--chart-path`.
-        - [ ] `validate` without `--values` (if required).
-    - [ ] **Invalid flag formats:**
-        - [ ] `inspect` with invalid `--source-registries` format.
-        - [ ] `override` with invalid `--target-registry` format.
-        - [ ] `override` with invalid `--strategy` value.
-        - [ ] Global flags with invalid values (e.g., `--log-level=invalid`).
-    - [ ] **Path errors:**
-        - [ ] `inspect`/`override`/`validate` with non-existent `--chart-path`.
-        - [ ] `validate` with non-existent `--values` file path.
-        - [ ] `--config` with non-existent file path.
-    - [ ] **Incompatible flags:**
-        - [ ] Test combinations of flags documented as mutually exclusive (if any).
-    - [ ] **General:**
-        - [ ] Verify appropriate non-zero exit codes for all error cases.
-        - [ ] Apply table-driven test structure where beneficial.
+- [x] **[P1]** Implement error case tests:
+    - [x] **Missing required flags:**
+        - [x] `inspect` without `--chart-path`.
+        - [x] `override` without `--chart-path`.
+        - [x] `override` without `--source-registries`.
+        - [x] `override` without `--target-registry`.
+        - [x] `validate` without `--chart-path`.
+        - [x] `validate` without `--values` (if required).
+    - [x] **Invalid flag formats:**
+        - [x] `inspect` with invalid `--source-registries` format.
+        - [x] `override` with invalid `--target-registry` format.
+        - [x] `override` with invalid `--strategy` value.
+        - [x] Global flags with invalid values (e.g., `--log-level=invalid`).
+    - [x] **Path errors:**
+        - [x] `inspect`/`override`/`validate` with non-existent `--chart-path`.
+        - [x] `validate` with non-existent `--values` file path.
+        - [x] `--config` with non-existent file path.
+    - [x] **Incompatible flags:**
+        - [x] Test combinations of flags documented as mutually exclusive (if any).
+    - [x] **General:**
+        - [x] Verify appropriate non-zero exit codes for all error cases.
+        - [x] Apply table-driven test structure where beneficial.
 
-- [ ] **[P1]** Simple integration with build process:
-    - [ ] Ensure tests are discovered and run with standard `go test ./...` or specific package target `go test ./cmd/irr/...`.
+- [x] **[P1]** Simple integration with build process:
+    - [x] Ensure tests are discovered and run with standard `go test ./...` or specific package target `go test ./cmd/irr/...`.
 
-- [ ] **[P2]** Create helpers for output validation:
-    - [ ] Develop helper to capture and validate stderr content against expected patterns/substrings.
-    - [ ] Develop helper to capture and validate stdout content against expected patterns/substrings (for commands like `help`, `completion`, `--output -`).
-    - [ ] Design helpers to check for specific known error messages or success messages.
+- [x] **[P2]** Create helpers for output validation:
+    - [x] Develop helper to capture and validate stderr content against expected patterns/substrings.
+    - [x] Develop helper to capture and validate stdout content against expected patterns/substrings (for commands like `help`, `completion`, `--output -`).
+    - [x] Design helpers to check for specific known error messages or success messages.
 
-- [ ] **[P1]** Implement help text validation:
-    - [ ] **Content Accuracy:**
-        - [ ] Verify basic description in `help` output.
-        - [ ] Verify descriptions for each command (`help <command>`).
-    - [ ] **Flag Details:**
-        - [ ] Check required flags are marked correctly (e.g., `(required)`).
-        - [ ] Check default values are displayed correctly for optional flags.
-        - [ ] Validate consistency of flag names and descriptions across commands where applicable.
-    - [ ] **Examples:**
-        - [ ] Ensure any examples provided in help text use valid syntax.
+- [x] **[P1]** Implement help text validation:
+    - [x] **Content Accuracy:**
+        - [x] Verify basic description in `help` output.
+        - [x] Verify descriptions for each command (`help <command>`).
+    - [x] **Flag Details:**
+        - [x] Check required flags are marked correctly (e.g., `(required)`).
+        - [x] Check default values are displayed correctly for optional flags.
+        - [x] Validate consistency of flag names and descriptions across commands where applicable.
+    - [x] **Examples:**
+        - [x] Ensure any examples provided in help text use valid syntax.
 
 ## Phase 5: Helm Plugin Integration - Remaining Items
 _**Goal:** Implement the Helm plugin interface that wraps around the core CLI functionality._
