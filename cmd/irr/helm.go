@@ -77,7 +77,7 @@ func GetChartPathFromRelease(releaseName string) (string, error) {
 	chartPath, err := pull.Run(chartInfo.Name)
 	if err != nil {
 		// Try to find the chart in repositories
-		repoManager := helm.NewHelmRepositoryManager(settings)
+		repoManager := helm.NewRepositoryManager(settings)
 		chartRepo, err := repoManager.FindChartInRepositories(chartInfo.Name)
 		if err != nil {
 			return "", fmt.Errorf("failed to find chart %s in any repository: %w", chartInfo.Name, err)

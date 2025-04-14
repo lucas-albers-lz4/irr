@@ -1,3 +1,5 @@
+// Package helm provides utilities for version checking and comparison,
+// particularly for validating Helm version requirements.
 package helm
 
 import (
@@ -5,8 +7,6 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
-
-	"helm.sh/helm/v3/pkg/cli"
 )
 
 const (
@@ -14,6 +14,7 @@ const (
 	MinHelmVersion = "3.10.0"
 	// MaxHelmVersion is the maximum supported Helm version
 	MaxHelmVersion = "3.12.0"
+	minSemverParts = 3 // minimum number of parts in semantic version (major.minor.patch)
 )
 
 // GetHelmVersion is a variable holding the function to get Helm version
@@ -30,65 +31,55 @@ var GetHelmVersion = func() (string, error) {
 	return version, nil
 }
 
-// CheckHelmVersion checks if the installed Helm version is compatible
-func CheckHelmVersion(settings *cli.EnvSettings) error {
+// CheckHelmVersion checks if the Helm version is compatible
+func CheckHelmVersion() error {
+	// Get Helm version
 	version, err := GetHelmVersion()
 	if err != nil {
-		return fmt.Errorf("failed to get Helm version: %w", err)
+		return err
 	}
 
-	major, minor, patch, err := ParseHelmVersion(version)
+	// Parse major, minor, patch
+	major, minor, _, err := ParseHelmVersion(version)
 	if err != nil {
-		return fmt.Errorf("failed to parse Helm version: %w", err)
+		return err
 	}
 
-	// Check if version is too old
-	minMajor, minMinor, minPatch, err := ParseHelmVersion(MinHelmVersion)
-	if err != nil {
-		return fmt.Errorf("failed to parse minimum Helm version: %w", err)
-	}
-
-	if major < minMajor || (major == minMajor && minor < minMinor) || (major == minMajor && minor == minMinor && patch < minPatch) {
-		return fmt.Errorf("Helm version %s is not supported. Please upgrade to the latest version", version)
+	// Check if version is compatible
+	if major < 3 || (major == 3 && minor < 10) {
+		return fmt.Errorf("helm version %s is not supported. Please upgrade to the latest version", version)
 	}
 
 	// Check if version is too new
-	maxMajor, maxMinor, maxPatch, err := ParseHelmVersion(MaxHelmVersion)
-	if err != nil {
-		return fmt.Errorf("failed to parse maximum Helm version: %w", err)
-	}
-
-	if major > maxMajor || (major == maxMajor && minor > maxMinor) || (major == maxMajor && minor == maxMinor && patch > maxPatch) {
-		return fmt.Errorf("Helm version %s is not supported. Please downgrade to the latest version", version)
+	if major > 3 || (major == 3 && minor > 12) {
+		return fmt.Errorf("helm version %s is not supported. Please downgrade to the latest version", version)
 	}
 
 	return nil
 }
 
-// ParseHelmVersion parses a Helm version string into major, minor, and patch versions
-func ParseHelmVersion(version string) (int, int, int, error) {
-	// Remove v prefix if present
-	version = strings.TrimPrefix(version, "v")
+// ParseHelmVersion parses a helm version string and returns the major, minor, and patch versions
+func ParseHelmVersion(version string) (major, minor, patch int, err error) {
+	const requiredSemverParts = 3
 
-	// Split version into major, minor, patch
 	parts := strings.Split(version, ".")
-	if len(parts) < 3 {
+	if len(parts) < requiredSemverParts {
 		return 0, 0, 0, fmt.Errorf("invalid version format: %s", version)
 	}
 
-	major, err := strconv.Atoi(parts[0])
+	major, err = strconv.Atoi(parts[0])
 	if err != nil {
-		return 0, 0, 0, fmt.Errorf("invalid major version: %s", parts[0])
+		return 0, 0, 0, fmt.Errorf("unable to parse major version '%s' as int: %w", parts[0], err)
 	}
 
-	minor, err := strconv.Atoi(parts[1])
+	minor, err = strconv.Atoi(parts[1])
 	if err != nil {
-		return 0, 0, 0, fmt.Errorf("invalid minor version: %s", parts[1])
+		return 0, 0, 0, fmt.Errorf("unable to parse minor version '%s' as int: %w", parts[1], err)
 	}
 
-	patch, err := strconv.Atoi(parts[2])
+	patch, err = strconv.Atoi(parts[2])
 	if err != nil {
-		return 0, 0, 0, fmt.Errorf("invalid patch version: %s", parts[2])
+		return 0, 0, 0, fmt.Errorf("unable to parse patch version '%s' as int: %w", parts[2], err)
 	}
 
 	return major, minor, patch, nil

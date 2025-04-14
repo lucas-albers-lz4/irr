@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-
-	"helm.sh/helm/v3/pkg/cli"
 )
 
 func TestCheckHelmVersion(t *testing.T) {
@@ -47,7 +45,7 @@ func TestCheckHelmVersion(t *testing.T) {
 				return tt.version, nil
 			}
 
-			err := CheckHelmVersion(cli.New())
+			err := CheckHelmVersion()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("CheckHelmVersion() error = %v, wantErr %v", err, tt.wantErr)
 				return

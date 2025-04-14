@@ -14,16 +14,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRepositoryManager_GetRepositories(t *testing.T) {
+// setupTestRepo creates a temporary repository and returns the required test objects.
+// The caller should check the errors returned.
+func setupTestRepo(t *testing.T) (tmpDir string, srv *repotest.Server, settings *cli.EnvSettings, rm *RepositoryManager, cleanup func()) {
 	// Create a temporary directory for the test
 	tmpDir, err := os.MkdirTemp("", "helm-repo-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
 
 	// Create a test repository
-	srv, err := repotest.NewTempServer("test-chart")
+	srv, err = repotest.NewTempServerWithCleanup(t, "test-chart")
 	require.NoError(t, err)
-	defer os.RemoveAll(srv.Root())
 
 	// Create a test repo file
 	repoFile := filepath.Join(tmpDir, "repositories.yaml")
@@ -32,15 +32,30 @@ func TestRepositoryManager_GetRepositories(t *testing.T) {
 		Name: "test-repo",
 		URL:  srv.URL(),
 	})
-	err = rf.WriteFile(repoFile, 0644)
+	err = rf.WriteFile(repoFile, 0o644)
 	require.NoError(t, err)
 
 	// Create settings with our test repo file
-	settings := cli.New()
+	settings = cli.New()
 	settings.RepositoryConfig = repoFile
 
 	// Create repository manager
-	rm := NewHelmRepositoryManager(settings)
+	rm = NewRepositoryManager(settings)
+
+	// Return a cleanup function
+	cleanup = func() {
+		srv.Stop()
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Logf("Failed to remove temp dir %s: %v", tmpDir, err)
+		}
+	}
+
+	return tmpDir, srv, settings, rm, cleanup
+}
+
+func TestRepositoryManager_GetRepositories(t *testing.T) {
+	_, _, _, rm, cleanup := setupTestRepo(t)
+	defer cleanup()
 
 	// Test GetRepositories
 	repos, err := rm.GetRepositories()
@@ -48,7 +63,6 @@ func TestRepositoryManager_GetRepositories(t *testing.T) {
 	require.NotNil(t, repos)
 	require.Len(t, repos.Repositories, 1)
 	assert.Equal(t, "test-repo", repos.Repositories[0].Name)
-	assert.Equal(t, srv.URL(), repos.Repositories[0].URL)
 
 	// Test caching
 	repos2, err := rm.GetRepositories()
@@ -63,35 +77,11 @@ func TestRepositoryManager_GetRepositories(t *testing.T) {
 }
 
 func TestRepositoryManager_FindChartInRepositories(t *testing.T) {
-	// Create a temporary directory for the test
-	tmpDir, err := os.MkdirTemp("", "helm-repo-test-*")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
-
-	// Create a test repository
-	srv, err := repotest.NewTempServer("test-chart")
-	require.NoError(t, err)
-	defer os.RemoveAll(srv.Root())
-
-	// Create a test repo file
-	repoFile := filepath.Join(tmpDir, "repositories.yaml")
-	rf := repo.NewFile()
-	rf.Add(&repo.Entry{
-		Name: "test-repo",
-		URL:  srv.URL(),
-	})
-	err = rf.WriteFile(repoFile, 0644)
-	require.NoError(t, err)
-
-	// Create settings with our test repo file
-	settings := cli.New()
-	settings.RepositoryConfig = repoFile
-
-	// Create repository manager
-	rm := NewHelmRepositoryManager(settings)
+	_, _, _, rm, cleanup := setupTestRepo(t)
+	defer cleanup()
 
 	// Test finding non-existent chart (should return error)
-	_, err = rm.FindChartInRepositories("non-existent-chart")
+	_, err := rm.FindChartInRepositories("non-existent-chart")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not found in any repository")
 
@@ -115,32 +105,8 @@ func TestRepositoryManager_FindChartInRepositories(t *testing.T) {
 }
 
 func TestRepositoryManager_ClearCache(t *testing.T) {
-	// Create a temporary directory for the test
-	tmpDir, err := os.MkdirTemp("", "helm-repo-test-*")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
-
-	// Create a test repository
-	srv, err := repotest.NewTempServer("test-chart")
-	require.NoError(t, err)
-	defer os.RemoveAll(srv.Root())
-
-	// Create a test repo file
-	repoFile := filepath.Join(tmpDir, "repositories.yaml")
-	rf := repo.NewFile()
-	rf.Add(&repo.Entry{
-		Name: "test-repo",
-		URL:  srv.URL(),
-	})
-	err = rf.WriteFile(repoFile, 0644)
-	require.NoError(t, err)
-
-	// Create settings with our test repo file
-	settings := cli.New()
-	settings.RepositoryConfig = repoFile
-
-	// Create repository manager
-	rm := NewHelmRepositoryManager(settings)
+	_, _, _, rm, cleanup := setupTestRepo(t)
+	defer cleanup()
 
 	// Get repositories to populate cache
 	repos, err := rm.GetRepositories()

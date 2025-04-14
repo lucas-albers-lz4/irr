@@ -1,3 +1,5 @@
+// Package helm provides interfaces and implementations for interacting with the Helm package manager.
+// It includes repository management, chart loading, and other Helm-related functionality.
 package helm
 
 import (
@@ -11,8 +13,8 @@ import (
 	log "github.com/lalbers/irr/pkg/log"
 )
 
-// helmRepositoryManager handles Helm repository operations with caching
-type helmRepositoryManager struct {
+// RepositoryManager handles Helm repository operations with caching
+type RepositoryManager struct {
 	settings *cli.EnvSettings
 	cache    *repoCache
 }
@@ -29,9 +31,9 @@ const (
 	DefaultCacheDuration = 5 * time.Minute
 )
 
-// NewHelmRepositoryManager creates a new repository manager
-func NewHelmRepositoryManager(settings *cli.EnvSettings) *helmRepositoryManager {
-	return &helmRepositoryManager{
+// NewRepositoryManager creates a new repository manager
+func NewRepositoryManager(settings *cli.EnvSettings) *RepositoryManager {
+	return &RepositoryManager{
 		settings: settings,
 		cache: &repoCache{
 			indexes: make(map[string]*repo.IndexFile),
@@ -40,7 +42,7 @@ func NewHelmRepositoryManager(settings *cli.EnvSettings) *helmRepositoryManager 
 }
 
 // GetRepositories returns the list of configured repositories
-func (rm *helmRepositoryManager) GetRepositories() (*repo.File, error) {
+func (rm *RepositoryManager) GetRepositories() (*repo.File, error) {
 	rm.cache.mu.RLock()
 	if rm.cache.repos != nil && time.Since(rm.cache.lastSync) < DefaultCacheDuration {
 		defer rm.cache.mu.RUnlock()
@@ -70,7 +72,7 @@ func (rm *helmRepositoryManager) GetRepositories() (*repo.File, error) {
 }
 
 // FindChartInRepositories searches for a chart across all repositories
-func (rm *helmRepositoryManager) FindChartInRepositories(chartName string) (string, error) {
+func (rm *RepositoryManager) FindChartInRepositories(chartName string) (string, error) {
 	repos, err := rm.GetRepositories()
 	if err != nil {
 		return "", err
@@ -97,7 +99,7 @@ func (rm *helmRepositoryManager) FindChartInRepositories(chartName string) (stri
 }
 
 // getRepositoryIndex returns the index file for a repository, using cache if available
-func (rm *helmRepositoryManager) getRepositoryIndex(r *repo.Entry) (*repo.IndexFile, error) {
+func (rm *RepositoryManager) getRepositoryIndex(r *repo.Entry) (*repo.IndexFile, error) {
 	rm.cache.mu.RLock()
 	if index, ok := rm.cache.indexes[r.Name]; ok && time.Since(rm.cache.lastSync) < DefaultCacheDuration {
 		defer rm.cache.mu.RUnlock()
@@ -128,7 +130,7 @@ func (rm *helmRepositoryManager) getRepositoryIndex(r *repo.Entry) (*repo.IndexF
 }
 
 // ClearCache clears the repository cache
-func (rm *helmRepositoryManager) ClearCache() {
+func (rm *RepositoryManager) ClearCache() {
 	rm.cache.mu.Lock()
 	defer rm.cache.mu.Unlock()
 

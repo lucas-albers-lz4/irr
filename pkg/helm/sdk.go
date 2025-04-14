@@ -23,15 +23,12 @@ type TimeProvider interface {
 // defaultChartLoader implements ChartLoader using Helm's loader
 type defaultChartLoader struct{}
 
-func (d *defaultChartLoader) Load(path string) (*chart.Chart, error) {
-	return loader.Load(path)
-}
-
-// defaultTimeProvider implements TimeProvider
-type defaultTimeProvider struct{}
-
-func (d *defaultTimeProvider) Now() time.Time {
-	return time.Now()
+func (l *defaultChartLoader) Load(path string) (*chart.Chart, error) {
+	chart, err := loader.Load(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load chart: %w", err)
+	}
+	return chart, nil
 }
 
 // FileSystem abstraction
@@ -43,7 +40,7 @@ func SetFileSystem(newFs afero.Fs) {
 }
 
 // ResolveChartPath resolves a chart path from a release name using the Helm SDK
-func ResolveChartPath(actionConfig *action.Configuration, releaseName, chartPath string) (string, error) {
+func ResolveChartPath(_ *action.Configuration, _, chartPath string) (string, error) {
 	// Check if chart path exists
 	exists, err := afero.Exists(fs, chartPath)
 	if err != nil {
@@ -92,29 +89,9 @@ func DiscoverPlugins(pluginDir string) ([]*Plugin, error) {
 // LoadChart loads a chart from the given path
 func LoadChart(chartPath string) (*chart.Chart, error) {
 	loader := &defaultChartLoader{}
-	return loader.Load(chartPath)
-}
-
-// findImagesInChart finds all image references in a chart's dependencies
-func findImagesInChart(chart *chart.Chart) []string {
-	var images []string
-
-	// Check values.yaml for image references
-	if chart.Values != nil {
-		if img, ok := chart.Values["image"].(map[string]interface{}); ok {
-			if repo, ok := img["repository"].(string); ok {
-				if tag, ok := img["tag"].(string); ok {
-					images = append(images, fmt.Sprintf("%s:%s", repo, tag))
-				}
-			}
-		}
+	chart, err := loader.Load(chartPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load chart: %w", err)
 	}
-
-	// Check dependencies
-	for _, dep := range chart.Dependencies() {
-		depImages := findImagesInChart(dep)
-		images = append(images, depImages...)
-	}
-
-	return images
+	return chart, nil
 }

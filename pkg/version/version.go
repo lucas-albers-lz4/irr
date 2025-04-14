@@ -1,3 +1,5 @@
+// Package version provides utilities for version checking and comparison,
+// particularly for validating Helm version requirements.
 package version
 
 import (
@@ -35,7 +37,7 @@ func CheckHelmVersion() error {
 	if !isVersionGreaterOrEqual(version, MinHelmVersion) {
 		return &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitHelmCommandFailed,
-			Err:  fmt.Errorf("Helm version %s is not supported. Minimum required version is %s", version, MinHelmVersion),
+			Err:  fmt.Errorf("helm version %s is not supported. Minimum required version is %s", version, MinHelmVersion),
 		}
 	}
 
@@ -57,8 +59,14 @@ func isVersionGreaterOrEqual(v1, v2 string) bool {
 
 		v1Num := 0
 		v2Num := 0
-		fmt.Sscanf(v1Parts[i], "%d", &v1Num)
-		fmt.Sscanf(v2Parts[i], "%d", &v2Num)
+		if _, err := fmt.Sscanf(v1Parts[i], "%d", &v1Num); err != nil {
+			// If we can't parse the version number, treat it as 0
+			v1Num = 0
+		}
+		if _, err := fmt.Sscanf(v2Parts[i], "%d", &v2Num); err != nil {
+			// If we can't parse the version number, treat it as 0
+			v2Num = 0
+		}
 
 		if v1Num > v2Num {
 			return true

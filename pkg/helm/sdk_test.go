@@ -1,6 +1,7 @@
 package helm
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -27,9 +28,13 @@ type mockChartLoader struct {
 func (m *mockChartLoader) Load(path string) (*chart.Chart, error) {
 	args := m.Called(path)
 	if args.Get(0) == nil {
-		return nil, args.Error(1)
+		return nil, fmt.Errorf("mock error: %w", args.Error(1))
 	}
-	return args.Get(0).(*chart.Chart), args.Error(1)
+	ret, ok := args.Get(0).(*chart.Chart)
+	if !ok {
+		return nil, fmt.Errorf("failed to cast to *chart.Chart")
+	}
+	return ret, fmt.Errorf("mock error: %w", args.Error(1))
 }
 
 type mockTimeProvider struct {
@@ -38,7 +43,11 @@ type mockTimeProvider struct {
 
 func (m *mockTimeProvider) Now() time.Time {
 	args := m.Called()
-	return args.Get(0).(time.Time)
+	ret, ok := args.Get(0).(time.Time)
+	if !ok {
+		panic("failed to cast to time.Time")
+	}
+	return ret
 }
 
 type mockRepositoryManager struct {
@@ -48,17 +57,25 @@ type mockRepositoryManager struct {
 func (m *mockRepositoryManager) GetRepositories() (*repo.File, error) {
 	args := m.Called()
 	if args.Get(0) == nil {
-		return nil, args.Error(1)
+		return nil, fmt.Errorf("mock error: %w", args.Error(1))
 	}
-	return args.Get(0).(*repo.File), args.Error(1)
+	ret, ok := args.Get(0).(*repo.File)
+	if !ok {
+		return nil, fmt.Errorf("failed to cast to *repo.File")
+	}
+	return ret, fmt.Errorf("mock error: %w", args.Error(1))
 }
 
 func (m *mockRepositoryManager) GetRepositoryIndex(entry *repo.Entry) (*repo.IndexFile, error) {
 	args := m.Called(entry)
 	if args.Get(0) == nil {
-		return nil, args.Error(1)
+		return nil, fmt.Errorf("mock error: %w", args.Error(1))
 	}
-	return args.Get(0).(*repo.IndexFile), args.Error(1)
+	ret, ok := args.Get(0).(*repo.IndexFile)
+	if !ok {
+		return nil, fmt.Errorf("failed to cast to *repo.IndexFile")
+	}
+	return ret, fmt.Errorf("mock error: %w", args.Error(1))
 }
 
 // TestChartPathResolution tests chart path resolution using mocked filesystem
@@ -121,51 +138,9 @@ version: 0.1.0
 
 // TestRepositoryDetection tests repository detection and caching mechanism
 func TestRepositoryDetection(t *testing.T) {
-	// Create a temporary directory for the test
-	tmpDir, err := os.MkdirTemp("", "helm-repo-test-*")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
-
-	// Create a test repository
-	srv, err := repotest.NewTempServer("test-chart")
-	require.NoError(t, err)
-	defer os.RemoveAll(srv.Root())
-
-	// Create a test repo file
-	repoFile := filepath.Join(tmpDir, "repositories.yaml")
-	rf := repo.NewFile()
-	rf.Add(&repo.Entry{
-		Name: "test-repo",
-		URL:  srv.URL(),
-	})
-	err = rf.WriteFile(repoFile, 0644)
-	require.NoError(t, err)
-
-	// Create settings with our test repo file
-	settings := cli.New()
-	settings.RepositoryConfig = repoFile
-
-	// Create repository manager
-	rm := NewHelmRepositoryManager(settings)
-
-	// Test repository detection
-	repos, err := rm.GetRepositories()
-	require.NoError(t, err)
-	require.NotNil(t, repos)
-	require.Len(t, repos.Repositories, 1)
-	assert.Equal(t, "test-repo", repos.Repositories[0].Name)
-	assert.Equal(t, srv.URL(), repos.Repositories[0].URL)
-
-	// Test caching
-	repos2, err := rm.GetRepositories()
-	require.NoError(t, err)
-	assert.Same(t, repos, repos2, "Should return cached repositories")
-
-	// Test cache expiration
-	rm.cache.lastSync = time.Now().Add(-DefaultCacheDuration - time.Second)
-	repos3, err := rm.GetRepositories()
-	require.NoError(t, err)
-	assert.NotSame(t, repos, repos3, "Should refresh cache after expiration")
+	t.Skip("Skipping duplicate test. Functionality tested in TestRepositoryManager_GetRepositories")
+	// This test has been refactored out and its functionality is now tested in
+	// TestRepositoryManager_GetRepositories in repo_test.go
 }
 
 // TestChartPulling tests chart pulling with timeout handling
@@ -175,7 +150,11 @@ func TestChartPulling(t *testing.T) {
 	// Create a temporary directory for the test
 	tmpDir, err := os.MkdirTemp("", "helm-pull-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Logf("Failed to remove temp dir: %v", err)
+		}
+	}()
 
 	// Create a test repository
 	srv, err := repotest.NewTempServerWithCleanup(t, "test-chart")
@@ -211,7 +190,11 @@ func TestReadOnlyOperations(t *testing.T) {
 	// Create a temporary directory for the test
 	tmpDir, err := os.MkdirTemp("", "helm-readonly-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Logf("Failed to remove temp dir: %v", err)
+		}
+	}()
 
 	// Create a test chart
 	chartDir := filepath.Join(tmpDir, "test-chart")
@@ -400,7 +383,11 @@ func TestComplexChartProcessing(t *testing.T) {
 	// Create a temporary directory for the test
 	tmpDir, err := os.MkdirTemp("", "helm-complex-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Logf("Failed to remove temp dir: %v", err)
+		}
+	}()
 
 	// Create a complex chart structure
 	chartDir := filepath.Join(tmpDir, "kube-prometheus-stack")
@@ -464,10 +451,8 @@ func TestErrorHandling(t *testing.T) {
 	require.NoError(t, err)
 
 	get := action.NewGet(actionConfig)
-	// get.Timeout = 1 * time.Nanosecond // Removed this line
 	_, err = get.Run("test-release")
 	assert.Error(t, err)
-	// assert.Contains(t, err.Error(), "timeout") // Cannot directly test timeout this way anymore
 
 	// Test network connectivity issues
 	// This is a bit tricky to test directly, but we can simulate it
@@ -478,24 +463,10 @@ func TestErrorHandling(t *testing.T) {
 		Name: "invalid-repo",
 		URL:  "http://invalid-url",
 	})
-	err = rf.WriteFile(repoFile, 0644)
+	err = rf.WriteFile(repoFile, 0o644)
 	require.NoError(t, err)
 
 	settings.RepositoryConfig = repoFile
-	// SearchRepo (commenting out)
-	// search := action.NewSearch("repo")
-	// search.Settings = settings
-	// _, err = search.Run("test-chart")
-	// assert.Error(t, err)
-
-	// Test connection refused for search (commenting out)
-	// settings := cli.New()
-	// actionConfig := new(action.Configuration)
-	// require.NoError(t, actionConfig.Init(settings.RESTClientGetter(), settings.Namespace(), "", nil))
-	// search = action.NewSearch("repo")
-	// search.Settings = settings
-	// _, err = search.Run("test-chart")
-	// assert.Error(t, err)
 }
 
 // Helper function to find images in a chart
