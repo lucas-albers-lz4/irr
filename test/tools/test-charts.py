@@ -684,48 +684,66 @@ async def test_chart_validate(chart_info, target_registry, irr_binary, session, 
         dir=TEST_OUTPUT_DIR,
     ) as temp_dir:
         temp_path = Path(temp_dir)
-        override_file = temp_path / "override.yaml"
-        values_file = temp_path / "values.yaml"
+        override_file_path = chart_info.get("override_file_path")
 
         # --- 1. Prepare Override File (Copy from previous step or create empty) ---
-        override_file_path = chart_info.get("override_file_path")
         if override_file_path and override_file_path.exists():
-            shutil.copy(override_file_path, override_file)
+            shutil.copy(override_file_path, temp_path / "override.yaml")
             log_debug(f"Using override file from previous step: {override_file_path}")
         else:
             # Create an empty override file if none exists (shouldn't happen often)
-            override_file.touch()
+            (temp_path / "override.yaml").touch()
             log_debug("Override file not found from previous step, creating empty.")
 
         # --- 2. Prepare Values File ---
         values_content = get_values_content(classification, target_registry)
-        with open(values_file, "w", encoding="utf-8") as f:
+        with open(temp_path / "values.yaml", "w", encoding="utf-8") as f:
             f.write(values_content)
         log_debug(f"Using values file for classification '{classification}'")
+
+        # Ensure chart_path is a proper Path object
+        if not isinstance(chart_path, Path):
+            chart_path = Path(chart_path)
+
+        # Ensure the chart path exists and is valid
+        log_debug(f"Validating chart path exists: {chart_path}")
+        if not chart_path.exists():
+            error_msg = f"Chart path does not exist: {chart_path}"
+            log_debug(f"Error: {error_msg}")
+            return TestResult(
+                chart_name=chart_name,
+                chart_path=chart_path,
+                classification=classification,
+                status="SETUP_ERROR",
+                category="SETUP_ERROR",
+                details=error_msg,
+                override_duration=chart_info.get("override_duration", 0),
+                validation_duration=0,
+            )
 
         # --- 3. Construct Validation Command ---
         validate_cmd = [
             str(irr_binary),
             "validate",
             "--chart-path",
-            str(chart_path),
-            "--release-name",
-            f"{chart_name.split('/')[-1]}-test",
+            chart_path.absolute().as_posix(),  # Use absolute posix path to avoid escaping issues
             "--values",
-            str(override_file),  # Use the generated override file
-            "--values",
-            str(values_file),  # Use the classification-specific values
-            f"--kube-version={DEFAULT_TEST_KUBE_VERSION}",  # Pass as a single argument with value
-            # REMOVED primary --set flags for kubeVersion/Capabilities
-            # "--set",
-            # f"kubeVersion={DEFAULT_TEST_KUBE_VERSION}",
-            # "--set",
-            # f"Capabilities.KubeVersion.Version=v{DEFAULT_TEST_KUBE_VERSION}",
-            # "--set",
-            # f"Capabilities.KubeVersion.Major={DEFAULT_TEST_KUBE_VERSION.split('.')[0]}",
-            # "--set",
-            # f"Capabilities.KubeVersion.Minor={DEFAULT_TEST_KUBE_VERSION.split('.')[1]}",
+            Path(override_file_path)
+            .absolute()
+            .as_posix(),  # Use absolute posix path to avoid escaping issues
         ]
+
+        # Add release name only if needed
+        if hasattr(args, "release_name") and args.release_name:
+            validate_cmd.extend(["--release-name", args.release_name])
+        else:
+            # Default release name based on chart
+            release_name = chart_name.split("/")[-1]
+            # Ensure no spaces in release name
+            release_name = release_name.replace(" ", "-")
+            validate_cmd.extend(["--release-name", f"release-{release_name}"])
+
+        # Add debug flag if specified
         if args.debug:
             validate_cmd.append("--debug")
 
@@ -773,7 +791,16 @@ async def test_chart_validate(chart_info, target_registry, irr_binary, session, 
                     validation_duration=validation_duration,
                 )
             else:
+                # Get complete error details without truncation
                 error_details = stderr.strip() or stdout.strip()
+
+                # For exit code 18 (path-related errors), include the full command in the error details
+                if "exit code 18" in error_details:
+                    log_debug(
+                        f"Path-related error (exit code 18) detected with chart {chart_path}"
+                    )
+                    error_details = f"Command failed with exit code 18. Full command: {' '.join(validate_cmd)}\nOriginal error: {error_details}"
+
                 error_category = categorize_error(error_details)
                 log_debug(
                     f"Validation failed. Category: {error_category}, Details: {error_details[:500]}..."
@@ -801,9 +828,7 @@ async def test_chart_validate(chart_info, target_registry, irr_binary, session, 
                             f"{chart_name.split('/')[-1]}-test",
                             str(chart_path),
                             "--values",
-                            str(override_file),
-                            "--values",
-                            str(values_file),
+                            str(override_file_path),
                             "--kube-version",
                             k8s_version,  # Use --kube-version in fallback
                             # RETAIN --set Capabilities.* in fallback for charts that strictly need it
@@ -1406,6 +1431,19 @@ async def main():
         "--debug", action="store_true", help="Enable debug output to console"
     )
 
+    # Add timeout parameter
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=120,
+        help="Timeout in seconds for chart operations",
+    )
+
+    # Add release name parameter
+    parser.add_argument(
+        "--release-name", help="Release name for helm template validation"
+    )
+
     # Solver-specific arguments
     parser.add_argument("--solver-mode", action="store_true", help="Run in solver mode")
     parser.add_argument(
@@ -1573,9 +1611,40 @@ async def main():
     if args.operation in ["validate", "both"]:
         # For validate operation, only test charts that have override files
         charts_to_validate = []
+        override_results_dict = {}
+
+        # First, organize override results by chart_name for lookup
+        if "override_results" in locals():
+            for result in override_results:
+                if isinstance(result, TestResult):
+                    override_results_dict[result.chart_name] = result
+
         for chart_name, chart_path in charts_to_process_info:
-            if (TEST_OUTPUT_DIR / f"{chart_name}-values.yaml").exists():
-                charts_to_validate.append((chart_name, chart_path))
+            override_file_path = TEST_OUTPUT_DIR / f"{chart_name}-values.yaml"
+            if override_file_path.exists():
+                # Get classification for this chart - default to "UNKNOWN" if not determined
+                classification = (
+                    get_chart_classification(chart_path)
+                    if os.path.isdir(chart_path)
+                    else "UNKNOWN"
+                )
+
+                # Get override duration from previous results if available
+                override_duration = 0
+                if chart_name in override_results_dict:
+                    override_duration = override_results_dict[
+                        chart_name
+                    ].override_duration
+
+                # Create proper dictionary structure required by test_chart_validate
+                chart_info = {
+                    "chart_name": chart_name,
+                    "chart_path": chart_path,
+                    "classification": classification,
+                    "override_file_path": override_file_path,
+                    "override_duration": override_duration,
+                }
+                charts_to_validate.append(chart_info)
 
         if charts_to_validate:
             print(f"\n--- Starting Validation for {len(charts_to_validate)} charts ---")
