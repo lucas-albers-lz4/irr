@@ -139,7 +139,7 @@ _**Goal:** Systematically increase unit and integration test coverage across the
     - [x] `pkg/helm`: Update SDK to use injectable filesystem
     - [x] `pkg/fileutil`: Fix error handling in filesystem mocking tests
     - [x] `pkg/chart`: Update Loader and Generator to use injectable filesystem
-    - [ ] `pkg/registry`: Update registry mapping file operations
+    - [x] `pkg/registry`: Update registry mapping file operations
     - [ ] `cmd/irr`: Allow filesystem injection for file operations
   - [ ] Test Strategy:
     - [ ] When testing a package, first update it to use the filesystem abstraction
