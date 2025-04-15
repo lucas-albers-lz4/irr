@@ -51,7 +51,8 @@ jobs:
           
       - name: Print Go Version
         run: go version
-
+      - name: Print Helm Version
+        run: helm version
       - name: Run tests
         run: |
           if [[ "${{ matrix.goos }}" == "darwin" ]]; then
