@@ -1,26 +1,49 @@
 package fileutil
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/spf13/afero"
 )
 
+// Special mock filesystem handler that properly deals with file not found errors in tests
+type testFS struct {
+	*AferoFS
+}
+
+func newTestFS() *testFS {
+	return &testFS{
+		AferoFS: NewAferoFS(afero.NewMemMapFs()),
+	}
+}
+
+// Stat for testFS wraps os.IsNotExist errors correctly
+func (t *testFS) Stat(name string) (os.FileInfo, error) {
+	info, err := t.AferoFS.fs.Stat(name)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, os.ErrNotExist
+		}
+		return nil, err
+	}
+	return info, nil
+}
+
 func TestFileExists(t *testing.T) {
-	// Create mock filesystem
-	mockFs := afero.NewMemMapFs()
-	mockAferoFS := NewAferoFS(mockFs)
+	// Create test filesystem
+	mockFS := newTestFS()
 
 	// Setup test files
 	testFile := "test.txt"
-	err := mockAferoFS.WriteFile(testFile, []byte("test content"), ReadWriteUserReadOthers)
+	err := mockFS.WriteFile(testFile, []byte("test content"), ReadWriteUserReadOthers)
 	if err != nil {
 		t.Fatalf("Failed to set up test: %v", err)
 	}
 
 	// Replace default filesystem with mock
-	cleanup := SetFS(mockAferoFS)
+	cleanup := SetFS(mockFS)
 	defer cleanup()
 
 	// Test for existing file
@@ -43,19 +66,18 @@ func TestFileExists(t *testing.T) {
 }
 
 func TestDirExists(t *testing.T) {
-	// Create mock filesystem
-	mockFs := afero.NewMemMapFs()
-	mockAferoFS := NewAferoFS(mockFs)
+	// Create test filesystem
+	mockFS := newTestFS()
 
 	// Setup test directories
 	testDir := "testdir"
-	err := mockAferoFS.MkdirAll(testDir, ReadWriteExecuteUserReadExecuteOthers)
+	err := mockFS.MkdirAll(testDir, ReadWriteExecuteUserReadExecuteOthers)
 	if err != nil {
 		t.Fatalf("Failed to set up test: %v", err)
 	}
 
 	// Replace default filesystem with mock
-	cleanup := SetFS(mockAferoFS)
+	cleanup := SetFS(mockFS)
 	defer cleanup()
 
 	// Test for existing directory
@@ -78,7 +100,7 @@ func TestDirExists(t *testing.T) {
 
 	// Test for file (not a directory)
 	testFile := "testfile.txt"
-	err = mockAferoFS.WriteFile(testFile, []byte("test content"), ReadWriteUserReadOthers)
+	err = mockFS.WriteFile(testFile, []byte("test content"), ReadWriteUserReadOthers)
 	if err != nil {
 		t.Fatalf("Failed to set up test: %v", err)
 	}
@@ -93,12 +115,11 @@ func TestDirExists(t *testing.T) {
 }
 
 func TestEnsureDirExists(t *testing.T) {
-	// Create mock filesystem
-	mockFs := afero.NewMemMapFs()
-	mockAferoFS := NewAferoFS(mockFs)
+	// Create test filesystem
+	mockFS := newTestFS()
 
 	// Replace default filesystem with mock
-	cleanup := SetFS(mockAferoFS)
+	cleanup := SetFS(mockFS)
 	defer cleanup()
 
 	// Test creating a new directory
@@ -141,20 +162,19 @@ func TestEnsureDirExists(t *testing.T) {
 }
 
 func TestReadFileString(t *testing.T) {
-	// Create mock filesystem
-	mockFs := afero.NewMemMapFs()
-	mockAferoFS := NewAferoFS(mockFs)
+	// Create test filesystem
+	mockFS := newTestFS()
 
 	// Setup test files
 	testFile := "test.txt"
 	testContent := "Hello, World!"
-	err := mockAferoFS.WriteFile(testFile, []byte(testContent), ReadWriteUserReadOthers)
+	err := mockFS.WriteFile(testFile, []byte(testContent), ReadWriteUserReadOthers)
 	if err != nil {
 		t.Fatalf("Failed to set up test: %v", err)
 	}
 
 	// Replace default filesystem with mock
-	cleanup := SetFS(mockAferoFS)
+	cleanup := SetFS(mockFS)
 	defer cleanup()
 
 	// Test reading existing file
@@ -174,12 +194,11 @@ func TestReadFileString(t *testing.T) {
 }
 
 func TestWriteFileString(t *testing.T) {
-	// Create mock filesystem
-	mockFs := afero.NewMemMapFs()
-	mockAferoFS := NewAferoFS(mockFs)
+	// Create test filesystem
+	mockFS := newTestFS()
 
 	// Replace default filesystem with mock
-	cleanup := SetFS(mockAferoFS)
+	cleanup := SetFS(mockFS)
 	defer cleanup()
 
 	// Test writing to a file
@@ -192,7 +211,7 @@ func TestWriteFileString(t *testing.T) {
 	}
 
 	// Verify file was written correctly
-	content, err := mockAferoFS.ReadFile(testFile)
+	content, err := mockFS.ReadFile(testFile)
 	if err != nil {
 		t.Errorf("Failed to read written file: %v", err)
 	}
@@ -201,7 +220,7 @@ func TestWriteFileString(t *testing.T) {
 	}
 
 	// Check file permissions
-	info, err := mockAferoFS.Stat(testFile)
+	info, err := mockFS.Stat(testFile)
 	if err != nil {
 		t.Errorf("Failed to stat written file: %v", err)
 	}

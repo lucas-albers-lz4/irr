@@ -8,14 +8,20 @@ import (
 
 // FileExists checks if a file exists at the given path
 func FileExists(path string) (bool, error) {
-	_, err := DefaultFS.Stat(path)
-	if err == nil {
-		return true, nil
+	info, err := DefaultFS.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		// Don't wrap "file not found" errors
+		if err.Error() == os.ErrNotExist.Error() ||
+			err.Error() == "file does not exist" ||
+			err.Error() == "no such file or directory" {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to check if file exists: %w", err)
 	}
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	return false, fmt.Errorf("failed to check if file exists: %w", err)
+	return !info.IsDir(), nil
 }
 
 // DirExists checks if a directory exists at the given path
@@ -23,6 +29,12 @@ func DirExists(path string) (bool, error) {
 	info, err := DefaultFS.Stat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
+			return false, nil
+		}
+		// Don't wrap "file not found" errors
+		if err.Error() == os.ErrNotExist.Error() ||
+			err.Error() == "file does not exist" ||
+			err.Error() == "no such file or directory" {
 			return false, nil
 		}
 		return false, fmt.Errorf("failed to stat directory: %w", err)
