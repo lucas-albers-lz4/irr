@@ -1,0 +1,67 @@
+name: Test Coverage
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+  test-coverage:
+    name: Test Coverage Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Run tests with coverage
+        run: |
+          go test ./... -coverprofile=coverage.out -covermode=atomic
+
+      - name: Check coverage thresholds
+        run: |
+          # Set minimum coverage threshold for core packages
+          MIN_CORE_COVERAGE=50
+          
+          # Core packages to check
+          CORE_PACKAGES=(
+            "github.com/lalbers/irr/pkg/chart"
+            "github.com/lalbers/irr/pkg/override"
+            "github.com/lalbers/irr/pkg/rules"
+            "github.com/lalbers/irr/pkg/analysis"
+            "github.com/lalbers/irr/pkg/image"
+          )
+          
+          # Check coverage for each core package
+          for pkg in "${CORE_PACKAGES[@]}"; do
+            echo "Checking coverage for $pkg"
+            coverage=$(go tool cover -func=coverage.out | grep "$pkg" | awk '{ sum += $3; count++ } END { print sum/count }' | sed 's/%//')
+            echo "Coverage: $coverage%"
+            
+            # Compare with threshold
+            if (( $(echo "$coverage < $MIN_CORE_COVERAGE" | bc -l) )); then
+              echo "Coverage for $pkg is below minimum threshold of $MIN_CORE_COVERAGE%"
+              exit 1
+            fi
+          done
+          
+          echo "All core packages meet minimum coverage threshold!"
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.out
+          fail_ci_if_error: false
+          verbose: true 
