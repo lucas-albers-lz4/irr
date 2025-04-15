@@ -4,33 +4,22 @@
 
 PROJECT_NAME="irr"
 PROJECT_GH="lucas-albers-lz4/$PROJECT_NAME"
-HELM_PLUGIN_NAME="irr" # Use the actual plugin name here
 
 # Get plugin path from helm env if HELM_HOME not set
 if [ -z "$HELM_HOME" ]; then
   HELM_PLUGINS=$(helm env | grep HELM_PLUGINS | cut -d'"' -f2)
   if [ -n "$HELM_PLUGINS" ]; then
-    HELM_PLUGIN_PATH="$HELM_PLUGINS/$HELM_PLUGIN_NAME"
+    HELM_PLUGIN_PATH="$HELM_PLUGINS/irr"
   else
-    # Fallback for older Helm versions or if HELM_PLUGINS is not set
-    # This might need adjustment based on actual Helm behavior
-    DEFAULT_HELM_HOME="$HOME/.helm"
-    if helm env | grep -q HELM_PATH_HOME; then
-        DEFAULT_HELM_HOME=$(helm env | grep HELM_PATH_HOME | cut -d'"' -f2)
-    fi
-     HELM_PLUGIN_PATH="$DEFAULT_HELM_HOME/plugins/$HELM_PLUGIN_NAME"
+    HELM_PLUGIN_PATH="$(helm home)/plugins/irr"
   fi
 else
-  HELM_PLUGIN_PATH="$HELM_HOME/plugins/$HELM_PLUGIN_NAME"
+  HELM_PLUGIN_PATH="$HELM_HOME/plugins/irr"
 fi
 
 # Extract version from plugin.yaml if in the same directory
-# Use HELM_PLUGIN_DIR which Helm sets for install hooks
-if [ -f "$HELM_PLUGIN_DIR/plugin.yaml" ]; then
-  HELM_PLUGIN_VERSION=$(grep "version" "$HELM_PLUGIN_DIR/plugin.yaml" | cut -d'"' -f2)
-else
-  echo "Error: plugin.yaml not found in $HELM_PLUGIN_DIR"
-  exit 1
+if [ -f "plugin.yaml" ]; then
+  HELM_PLUGIN_VERSION=$(grep "version" plugin.yaml | cut -d'"' -f2)
 fi
 
 if [[ $SKIP_BIN_INSTALL == "1" ]]; then
@@ -66,10 +55,9 @@ initOS() {
 # verifySupported checks that the os/arch combination is supported for
 # binary builds.
 verifySupported() {
-  local supported="linux-amd64\nlinux-arm64\ndarwin-arm64" # Updated supported platforms
+  local supported="linux-amd64\nlinux-arm64\ndarwin-amd64\ndarwin-arm64"
   if ! echo "${supported}" | grep -q "${OS}-${ARCH}"; then
     echo "No prebuild binary for ${OS}-${ARCH}."
-    echo "If you are building from source, try running 'make build' first."
     exit 1
   fi
 
@@ -81,81 +69,61 @@ verifySupported() {
 
 # getDownloadURL checks the latest available version.
 getDownloadURL() {
-  # Use the GitHub API to find the download URL for this project.
-  local latest_url="https://api.github.com/repos/$PROJECT_GH/releases/tags/v${HELM_PLUGIN_VERSION}"
-  echo "Fetching release information from $latest_url"
-
-  local download_url_pattern="browser_download_url.*${OS}-${ARCH}\.tar\.gz"
-
-  if type "curl" > /dev/null; then
-    DOWNLOAD_URL=$(curl -s $latest_url | grep -o "$download_url_pattern" | cut -d'"' -f4)
-  elif type "wget" > /dev/null; then
-    DOWNLOAD_URL=$(wget -q -O - $latest_url | grep -o "$download_url_pattern" | cut -d'"' -f4)
+  # If there's a local build for this architecture, use it
+  local local_file="_dist/irr-${HELM_PLUGIN_VERSION}-${OS}-${ARCH}.tar.gz"
+  if [ -f "$local_file" ]; then
+    echo "Using local build from $local_file"
+    DOWNLOAD_URL="file://$local_file"
+    return
   fi
 
-  if [ -z "$DOWNLOAD_URL" ]; then
-    echo "Could not find download URL for version v${HELM_PLUGIN_VERSION} and platform ${OS}-${ARCH}"
-    echo "Please check https://github.com/$PROJECT_GH/releases"
-    exit 1
+  # Otherwise, use the GitHub API to find the latest version for this project.
+  local latest_url="https://api.github.com/repos/$PROJECT_GH/releases/latest"
+  if type "curl" > /dev/null; then
+    DOWNLOAD_URL=$(curl -s $latest_url | grep $OS | awk '/\"browser_download_url\":/{gsub( /[,\"]/,"", $2); print $2}')
+  elif type "wget" > /dev/null; then
+    DOWNLOAD_URL=$(wget -q -O - $latest_url | awk '/\"browser_download_url\":/{gsub( /[,\"]/,"", $2); print $2}')
   fi
 }
 
-# downloadFile downloads the binary package and also the checksum
+# downloadFile downloads the latest binary package and also the checksum
 # for that binary.
 downloadFile() {
   PLUGIN_TMP_FILE="/tmp/${PROJECT_NAME}.tgz"
   echo "Downloading $DOWNLOAD_URL"
-  if type "curl" > /dev/null; then
+  if [[ $DOWNLOAD_URL == file://* ]]; then
+    cp "${DOWNLOAD_URL#file://}" "$PLUGIN_TMP_FILE"
+  elif type "curl" > /dev/null; then
     curl -L "$DOWNLOAD_URL" -o "$PLUGIN_TMP_FILE"
   elif type "wget" > /dev/null; then
     wget -q -O "$PLUGIN_TMP_FILE" "$DOWNLOAD_URL"
   fi
 }
 
-# installFile unpacks and installs the binary.
+# installFile unpacks and installs helm-whatup.
 installFile() {
   HELM_TMP="/tmp/$PROJECT_NAME"
   mkdir -p "$HELM_TMP"
   tar xf "$PLUGIN_TMP_FILE" -C "$HELM_TMP"
-  # The binary is expected to be in the 'bin' directory within the tarball
-  if [ -f "$HELM_TMP/bin/$PROJECT_NAME" ]; then
-    echo "Preparing to install binary into ${HELM_PLUGIN_PATH}/bin"
-    mkdir -p "${HELM_PLUGIN_PATH}/bin"
-    cp "$HELM_TMP/bin/$PROJECT_NAME" "${HELM_PLUGIN_PATH}/bin/$PROJECT_NAME"
-    chmod +x "${HELM_PLUGIN_PATH}/bin/$PROJECT_NAME"
-  else
-     echo "Error: Binary 'bin/$PROJECT_NAME' not found in downloaded archive."
-     exit 1
-  fi
-  # Clean up tmp files
-  rm -f "$PLUGIN_TMP_FILE"
-  rm -rf "$HELM_TMP"
+  echo "Preparing to install into ${HELM_PLUGIN_PATH}"
+  cp -R "$HELM_TMP/bin" "$HELM_PLUGIN_PATH/"
 }
 
 # fail_trap is executed if an error occurs.
 fail_trap() {
   result=$?
   if [ "$result" != "0" ]; then
-    echo "Failed to install $PROJECT_NAME plugin."
-    echo -e "\tFor support, go to https://github.com/$PROJECT_GH."
+    echo "Failed to install $PROJECT_NAME"
+    echo "\tFor support, go to https://github.com/lucas-albers-lz4/irr."
   fi
-  # Clean up potentially leftover tmp files
-  rm -f "/tmp/${PROJECT_NAME}.tgz"
-  rm -rf "/tmp/${PROJECT_NAME}"
   exit $result
 }
 
 # testVersion tests the installed client to make sure it is working.
 testVersion() {
-  set +e # Allow command to fail without exiting script
-  echo "$PROJECT_NAME installed into $HELM_PLUGIN_PATH"
-  echo "Running '$PROJECT_NAME version' to verify installation..."
-  "${HELM_PLUGIN_PATH}/bin/$PROJECT_NAME" version
-  if [ "$?" != "0" ]; then
-      echo "Could not run '$PROJECT_NAME version'. Installation may have failed."
-      exit 1
-  fi
-  echo "'$PROJECT_NAME version' command executed successfully."
+  set +e
+  echo "$PROJECT_NAME installed into $HELM_PLUGIN_PATH/$PROJECT_NAME"
+  $HELM_PLUGIN_PATH/bin/$PROJECT_NAME -h
   set -e
 }
 
@@ -164,15 +132,10 @@ testVersion() {
 #Stop execution on any error
 trap "fail_trap" EXIT
 set -e
-
-echo "Installing $PROJECT_NAME Helm plugin..."
 initArch
 initOS
 verifySupported
-getDownloadURL # This now gets the URL based on the version in plugin.yaml
+getDownloadURL
 downloadFile
 installFile
 testVersion
-
-echo "$PROJECT_NAME plugin installed successfully."
-echo "You can now run commands like: helm $PROJECT_NAME --help" 
