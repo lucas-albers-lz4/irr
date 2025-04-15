@@ -1,4 +1,4 @@
-.PHONY: build test lint clean run helm-lint test-charts test-integration test-cert-manager test-kube-prometheus-stack test-integration-specific test-integration-debug help helm-plugin helm-install build-platforms dist
+.PHONY: build test lint clean run helm-lint test-charts test-integration test-cert-manager test-kube-prometheus-stack test-integration-specific test-integration-debug help dist
 
 BINARY_NAME=irr
 BUILD_DIR=bin
@@ -12,48 +12,41 @@ VERSION=$(shell grep -o 'version:[ "]*[^"]*' plugin.yaml | awk '{print $$2}' | t
 DIST=$(CURDIR)/_dist
 LDFLAGS="-X main.version=$(VERSION)"
 
-# Platform-specific build settings
-PLATFORMS=darwin/amd64 darwin/arm64 linux/amd64 linux/arm64
+# Platform-specific build settings - Keep GOOS/GOARCH available for manual builds if needed
+GOOS?=$(shell go env GOOS)
+GOARCH?=$(shell go env GOARCH)
 
 all: lint helm-lint test test-integration build
 
 build:
-	@echo "Building..."
+	@echo "Building $(BINARY_NAME) for $(GOOS)/$(GOARCH)..."
 	@mkdir -p $(BUILD_DIR)
-	@go build -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/irr
+	@CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags=$(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/irr
 
-# Build for specific platform
-build-platform:
-	@echo "Building for $(GOOS)/$(GOARCH)..."
-	@mkdir -p $(BUILD_DIR)
-	@GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o $(BUILD_DIR)/$(BINARY_NAME)-$(GOOS)-$(GOARCH) ./cmd/irr
+# Simplified dist target for packaging - Explicit builds for each platform
+dist:
+	@echo "Creating distribution packages for all supported platforms..."
+	@mkdir -p $(DIST) $(BUILD_DIR)/bin # Ensure dist and bin directories exist
 
-# Build for all supported platforms
-build-platforms:
-	@echo "Building for all supported platforms..."
-	@for platform in $(PLATFORMS); do \
-		GOOS=$${platform%/*} GOARCH=$${platform#*/} $(MAKE) build-platform; \
-	done
+	@echo "Building and packaging for linux/amd64..."
+	@CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags=$(LDFLAGS) -o $(BUILD_DIR)/bin/$(BINARY_NAME) ./cmd/irr
+	@tar -zcvf $(DIST)/helm-$(BINARY_NAME)-$(VERSION)-linux-amd64.tar.gz \
+		-C $(BUILD_DIR) bin/$(BINARY_NAME) \
+		-C $(CURDIR) README.md LICENSE plugin.yaml install-binary.sh
 
-# Build the Helm plugin
-helm-plugin: build-platforms
-	@echo "Building Helm plugin..."
-	@mkdir -p $(HELM_PLUGIN_DIR)/bin
-	@for platform in $(PLATFORMS); do \
-		cp $(BUILD_DIR)/$(BINARY_NAME)-$${platform%/*}-$${platform#*/} $(HELM_PLUGIN_DIR)/bin/$(BINARY_NAME)-$${platform%/*}-$${platform#*/}; \
-		chmod +x $(HELM_PLUGIN_DIR)/bin/$(BINARY_NAME)-$${platform%/*}-$${platform#*/}; \
-	done
+	@echo "Building and packaging for linux/arm64..."
+	@CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags=$(LDFLAGS) -o $(BUILD_DIR)/bin/$(BINARY_NAME) ./cmd/irr
+	@tar -zcvf $(DIST)/helm-$(BINARY_NAME)-$(VERSION)-linux-arm64.tar.gz \
+		-C $(BUILD_DIR) bin/$(BINARY_NAME) \
+		-C $(CURDIR) README.md LICENSE plugin.yaml install-binary.sh
 
-# Install the Helm plugin
-helm-install: helm-plugin
-	@echo "Installing Helm plugin..."
-	@if command -v helm > /dev/null; then \
-		(cd $(HELM_PLUGIN_DIR) && ./install-plugin.sh); \
-	else \
-		echo "Helm not installed. Cannot install plugin."; \
-		echo "Install Helm with: brew install helm (macOS) or follow https://helm.sh/docs/intro/install/"; \
-		exit 1; \
-	fi
+	@echo "Building and packaging for darwin/arm64..."
+	@CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags=$(LDFLAGS) -o $(BUILD_DIR)/bin/$(BINARY_NAME) ./cmd/irr
+	@tar -zcvf $(DIST)/helm-$(BINARY_NAME)-$(VERSION)-darwin-arm64.tar.gz \
+		-C $(BUILD_DIR) bin/$(BINARY_NAME) \
+		-C $(CURDIR) README.md LICENSE plugin.yaml install-binary.sh
+
+	@echo "Distribution packages created in $(DIST)"
 
 test: build
 	@echo "Running unit tests..."
@@ -161,9 +154,9 @@ run: build
 help:
 	@echo "Available targets:"
 	@echo "  all                Build and run all tests"
-	@echo "  build              Build the irr binary"
-	@echo "  helm-plugin        Build the Helm plugin"
-	@echo "  helm-install       Install the Helm plugin"
+	@echo "  build              Build the irr binary for current host OS/ARCH (or specify GOOS/GOARCH)"
+	@echo "  dist               Create distribution tarball for current host OS/ARCH (or specify GOOS/GOARCH)"
+	@echo "  helm-lint          Run Helm lint and template validation"
 	@echo "  test               Run all unit tests"
 	@echo "  test-json          Run unit tests with JSON output"
 	@echo "  test-packages      Run package tests (skipping cmd/irr)"
@@ -183,16 +176,5 @@ help:
 	@echo "  lint               Run linter"
 	@echo "  helm-lint          Run Helm lint and template validation"
 	@echo "  clean              Clean up build artifacts"
-	@echo "  run ARGS=\"...\"     Run the irr binary with the specified arguments"
+	@echo "  run ARGS=\"./..\"     Run the irr binary with the specified arguments"
 	@echo "  help               Show this help message"
-
-# Dist target for plugin distribution
-dist:
-	@echo "Building distribution packages..."
-	@mkdir -p $(DIST)
-	GOOS=linux GOARCH=amd64 go build -o $(BUILD_DIR)/$(BINARY_NAME) -ldflags $(LDFLAGS) ./cmd/irr
-	tar -zcvf $(DIST)/$(BINARY_NAME)-$(VERSION)-linux-amd64.tar.gz $(BUILD_DIR)/$(BINARY_NAME) README.md LICENSE plugin.yaml
-	GOOS=darwin GOARCH=amd64 go build -o $(BUILD_DIR)/$(BINARY_NAME) -ldflags $(LDFLAGS) ./cmd/irr
-	tar -zcvf $(DIST)/$(BINARY_NAME)-$(VERSION)-darwin-amd64.tar.gz $(BUILD_DIR)/$(BINARY_NAME) README.md LICENSE plugin.yaml
-	GOOS=darwin GOARCH=arm64 go build -o $(BUILD_DIR)/$(BINARY_NAME) -ldflags $(LDFLAGS) ./cmd/irr
-	tar -zcvf $(DIST)/$(BINARY_NAME)-$(VERSION)-darwin-arm64.tar.gz $(BUILD_DIR)/$(BINARY_NAME) README.md LICENSE plugin.yaml
