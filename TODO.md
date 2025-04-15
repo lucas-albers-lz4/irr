@@ -138,7 +138,7 @@ _**Goal:** Systematically increase unit and integration test coverage across the
   - [x] Apply consistent pattern to one package at a time:
     - [x] `pkg/helm`: Update SDK to use injectable filesystem
     - [x] `pkg/fileutil`: Fix error handling in filesystem mocking tests
-    - [ ] `pkg/chart`: Update Loader and Generator to use injectable filesystem
+    - [x] `pkg/chart`: Update Loader and Generator to use injectable filesystem
     - [ ] `pkg/registry`: Update registry mapping file operations
     - [ ] `cmd/irr`: Allow filesystem injection for file operations
   - [ ] Test Strategy:
