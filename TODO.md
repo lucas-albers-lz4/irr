@@ -8,22 +8,22 @@ _**Goal:** Implement the Helm plugin interface that wraps around the core CLI fu
 _**Goal:** Systematically increase unit and integration test coverage across the codebase to improve reliability and reduce regressions, aiming for a minimum coverage baseline and targeting critical packages._
 
 ### Phase 2.1: Establish Baseline & Target Low-Hanging Fruit (Goal: Variable Minimum Coverage)
-- [ ] **Step 1: Quick Wins - Simple Packages First**
-  - [ ] **`pkg/exitcodes` (Target: 30%)**: Test error types and helper functions.
-    - [ ] Test string formatting for each error type
-    - [ ] Verify error wrapping/unwrapping behavior works correctly
-    - [ ] Test detection of exit code errors via `IsExitCodeError()`
+- [x] **Step 1: Quick Wins - Simple Packages First**
+  - [x] **`pkg/exitcodes` (Target: 30%)**: Test error types and helper functions.
+    - [x] Test string formatting for each error type
+    - [x] Verify error wrapping/unwrapping behavior works correctly
+    - [x] Test detection of exit code errors via `IsExitCodeError()`
 
-  - [ ] **`pkg/version` (Target: 30%)**: Test version checking logic.
-    - [ ] Test with valid and invalid version strings
-    - [ ] Verify correct comparison behavior for major/minor/patch versions
-    - [ ] Test error handling for malformed versions
+  - [x] **`pkg/version` (Target: 30%)**: Test version checking logic.
+    - [x] Test with valid and invalid version strings
+    - [x] Verify correct comparison behavior for major/minor/patch versions
+    - [x] Test error handling for malformed versions
 
-- [ ] **Step 2: Filesystem Mocking Preparation**
-  - [ ] Start by creating a consistent filesystem mocking pattern:
-    - [ ] Identify all packages with filesystem interactions
-    - [ ] **Implement hybrid approach for filesystem abstraction:**
-      - [ ] Define a standard filesystem interface in a central location:
+- [x] **Step 2: Filesystem Mocking Preparation**
+  - [x] Start by creating a consistent filesystem mocking pattern:
+    - [x] Identify all packages with filesystem interactions
+    - [x] **Implement hybrid approach for filesystem abstraction:**
+      - [x] Define a standard filesystem interface in a central location:
         ```go
         // In pkg/fileutil or a new pkg/fsutil package
         type FS interface {
@@ -42,7 +42,7 @@ _**Goal:** Systematically increase unit and integration test coverage across the
         var _ FS = afero.NewOsFs()
         ```
       
-      - [ ] For existing code (non-intrusive approach):
+      - [x] For existing code (non-intrusive approach):
         ```go
         // In each package that uses filesystem
         var fs fileutil.FS = afero.NewOsFs()
@@ -60,7 +60,7 @@ _**Goal:** Systematically increase unit and integration test coverage across the
         }
         ```
       
-      - [ ] For new code and major refactors (dependency injection):
+      - [x] For new code and major refactors (dependency injection):
         ```go
         // Struct with explicit dependency
         type FileOperations struct {
@@ -81,45 +81,45 @@ _**Goal:** Systematically increase unit and integration test coverage across the
         }
         ```
     
-    - [ ] Document implementation guidelines:
-      - [ ] Favor dependency injection for new code and significant refactors
-      - [ ] Use package variables for smaller, focused updates to existing code
-      - [ ] Always provide test helpers for swapping filesystem implementations
+    - [x] Document implementation guidelines:
+      - [x] Favor dependency injection for new code and significant refactors
+      - [x] Use package variables for smaller, focused updates to existing code
+      - [x] Always provide test helpers for swapping filesystem implementations
     
-    - [ ] Create a detailed mocking guide in `docs/TESTING-FILESYSTEM-MOCKING.md` (COMPLETED)
+    - [x] Create a detailed mocking guide in `docs/TESTING-FILESYSTEM-MOCKING.md` (COMPLETED)
       - [x] Explain both approaches with examples
       - [x] Provide standard test patterns
       - [x] Document when to use each approach
-      - [ ] Reference this document in other testing documentation
+      - [x] Reference this document in other testing documentation
 
-  - [ ] **`pkg/fileutil` (Target: 30%)**: Implement as first application of filesystem mocking.
-    - [ ] Add `afero.Fs` variable or parameter to functions
-    - [ ] Test file existence checking
-    - [ ] Test directory operations
-    - [ ] Use as a model for other packages
+  - [x] **`pkg/fileutil` (Target: 30%)**: Implement as first application of filesystem mocking.
+    - [x] Add `afero.Fs` variable or parameter to functions
+    - [x] Test file existence checking
+    - [x] Test directory operations
+    - [x] Use as a model for other packages
 
-- [ ] **Step 3: Utility Packages with Adjusted Expectations**
-  - [ ] **`pkg/log` (Target: 20%)**:
-    - [ ] Test `ParseLevel` with all supported log levels
-    - [ ] Test level setting and retrieval (`SetLevel`/`CurrentLevel`) 
-    - [ ] Test level-based filtering (basic cases only)
-    - [ ] *Note: Output capturing can be flaky - focus on core functionality*
+- [x] **Step 3: Utility Packages with Adjusted Expectations**
+  - [x] **`pkg/log` (Target: 20%)**:
+    - [x] Test `ParseLevel` with all supported log levels
+    - [x] Test level setting and retrieval (`SetLevel`/`CurrentLevel`) 
+    - [x] Test level-based filtering (basic cases only)
+    - [x] *Note: Output capturing can be flaky - focus on core functionality*
 
-  - [ ] **`pkg/debug` (Target: 20%)**:
-    - [ ] Test initialization with mocked environment variables
-    - [ ] Test debug state toggling (basic cases only)
-    - [ ] Test simple output functions
-    - [ ] *Note: Not critical path code, basic coverage is sufficient*
+  - [x] **`pkg/debug` (Target: 20%)**:
+    - [x] Test initialization with mocked environment variables
+    - [x] Test debug state toggling (basic cases only)
+    - [x] Test simple output functions
+    - [x] *Note: Not critical path code, basic coverage is sufficient*
 
-  - [ ] **`pkg/testutil` (Target: 25%)**:
-    - [ ] Apply filesystem mocking pattern from Step 2
-    - [ ] Test `GetChartPath` with various path inputs
-    - [ ] *Note: Test utilities themselves need only moderate coverage*
+  - [x] **`pkg/testutil` (Target: 25%)**:
+    - [x] Apply filesystem mocking pattern from Step 2
+    - [x] Test `GetChartPath` with various path inputs
+    - [x] *Note: Test utilities themselves need only moderate coverage*
 
-- [ ] **Step 4: Complex Analysis Package**
-  - [ ] **`pkg/analyzer` (Target: 25-30%)**:
-    - [ ] Create test fixtures for representative chart values
-    - [ ] Test simple pattern matching cases first:
+- [x] **Step 4: Complex Analysis Package**
+  - [x] **`pkg/analyzer` (Target: 25-30%)**:
+    - [x] Create test fixtures for representative chart values
+    - [x] Test simple pattern matching cases first:
       ```go
       // Start with simple patterns and simple structures
       testValues := map[string]interface{}{
@@ -130,12 +130,14 @@ _**Goal:** Systematically increase unit and integration test coverage across the
       }
       patterns := []string{"*.image"}
       ```
-    - [ ] Add tests for basic value traversal (simple maps first)
-    - [ ] Test recursive analysis with limited nesting depth
-    - [ ] *Note: Full coverage of recursive analysis is challenging, focus on key paths*
+    - [x] Add tests for basic value traversal (simple maps first)
+    - [x] Test recursive analysis with limited nesting depth
+    - [x] *Note: Full coverage of recursive analysis is challenging, focus on key paths*
 
 - [ ] **Step 5: Filesystem Mocking - Incremental Roll-out**
-  - [ ] Apply consistent pattern to one package at a time:
+  - [x] Apply consistent pattern to one package at a time:
+    - [x] `pkg/helm`: Update SDK to use injectable filesystem
+    - [x] `pkg/fileutil`: Fix error handling in filesystem mocking tests
     - [ ] `pkg/chart`: Update Loader and Generator to use injectable filesystem
     - [ ] `pkg/registry`: Update registry mapping file operations
     - [ ] `cmd/irr`: Allow filesystem injection for file operations

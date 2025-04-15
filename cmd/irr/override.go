@@ -612,8 +612,8 @@ func loadChart(config *GeneratorConfig, loadFromRelease, loadFromPath bool, rele
 		log.Infof("Loading chart from path: %s", config.ChartPath)
 		chartSource = fmt.Sprintf("path %s", config.ChartPath)
 
-		// Use our package's chart loading functionality - DefaultLoader is the correct type to use
-		chartLoader := &chart.DefaultLoader{}
+		// Use our package's chart loading functionality with proper constructor
+		chartLoader := chart.NewDefaultLoader(nil)
 		// Note: we're not storing loadedChart since it's not used later
 		_, err = chartLoader.Load(config.ChartPath)
 		if err != nil {

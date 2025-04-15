@@ -192,7 +192,7 @@ func NewGenerator(
 ) *Generator {
 	// Set up a default chart loader if none was provided
 	if chartLoader == nil {
-		chartLoader = &DefaultLoader{}
+		chartLoader = NewDefaultLoader(nil)
 	}
 
 	return &Generator{

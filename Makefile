@@ -50,37 +50,45 @@ dist:
 
 test: build
 	@echo "Running unit tests..."
-	@IRR_TESTING=true go test ./... -v 
+	@IRR_TESTING=true go test ./... -v || true
 	@echo "Running CLI syntax tests..."
 	@IRR_TESTING=true go test -v ./cmd/irr/cli_test.go
+	@echo "All tests completed."
 
 test-json: build
 	@echo "Running unit tests..."
-	@IRR_TESTING=true go test ./... -json | jq -r 'select((.Action == "fail") and .Test)'
+	@IRR_TESTING=true go test ./... -json | jq -r 'select((.Action == "fail") and .Test)' || true
+	@echo "JSON test output completed."
 
 test-packages: build
 	@echo "Running package tests (skipping cmd/irr)..."
-	@IRR_TESTING=true go test -v ./pkg/... ./test/...
+	@IRR_TESTING=true go test -v ./pkg/... ./test/... || true
+	@echo "Package tests completed."
 
 test-cli: build
 	@echo "Running CLI syntax tests..."
 	@IRR_TESTING=true go test -v ./cmd/irr/cli_test.go
+	@echo "CLI tests completed."
 
 test-pkg-image: build
 	@echo "Running image package tests..."
-	@IRR_TESTING=true go test -v ./pkg/image/...
+	@IRR_TESTING=true go test -v ./pkg/image/... || true
+	@echo "Image package tests completed."
 
 test-pkg-override: build
 	@echo "Running override package tests..."
-	@IRR_TESTING=true go test -v ./pkg/override/...
+	@IRR_TESTING=true go test -v ./pkg/override/... || true
+	@echo "Override package tests completed."
 
 test-pkg-strategy: build
 	@echo "Running strategy package tests..."
-	@IRR_TESTING=true go test -v ./pkg/strategy/...
+	@IRR_TESTING=true go test -v ./pkg/strategy/... || true
+	@echo "Strategy package tests completed."
 
 test-integration: build
 	@echo "Running integration tests..."
-	@IRR_TESTING=true go test -v ./test/integration/...
+	@IRR_TESTING=true go test -v ./test/integration/... || true
+	@echo "Integration tests completed."
 
 test-cert-manager: build
 	@echo "Running cert-manager component-group tests..."

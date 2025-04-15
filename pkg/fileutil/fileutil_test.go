@@ -10,7 +10,7 @@ import (
 
 // Special mock filesystem handler that properly deals with file not found errors in tests
 type testFS struct {
-	*AferoFS
+	*AferoFS // Restore the embedded field
 }
 
 func newTestFS() *testFS {
@@ -19,10 +19,11 @@ func newTestFS() *testFS {
 	}
 }
 
-// Stat for testFS wraps os.IsNotExist errors correctly
+// Stat for testFS properly handles os.IsNotExist errors
 func (t *testFS) Stat(name string) (os.FileInfo, error) {
 	info, err := t.AferoFS.fs.Stat(name)
 	if err != nil {
+		// Return original os.ErrNotExist error without wrapping when file doesn't exist
 		if os.IsNotExist(err) {
 			return nil, os.ErrNotExist
 		}

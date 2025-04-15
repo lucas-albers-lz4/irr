@@ -7,6 +7,7 @@ import (
 
 	"github.com/lalbers/irr/pkg/analysis"
 	"github.com/lalbers/irr/pkg/debug"
+	"github.com/lalbers/irr/pkg/fileutil"
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
 	// "helm.sh/helm/v3/pkg/chartutil" // Not needed after removing unused funcs
@@ -29,7 +30,27 @@ var _ analysis.ChartLoader = (*DefaultLoader)(nil)
 
 // DefaultLoader is the standard implementation of Loader.
 // It uses Helm's chart.loader package to load charts from the filesystem.
-type DefaultLoader struct{}
+type DefaultLoader struct {
+	fs fileutil.FS // Filesystem implementation to use
+}
+
+// NewDefaultLoader creates a new DefaultLoader instance with the provided
+// filesystem implementation. If fs is nil, it uses the default filesystem.
+func NewDefaultLoader(fs fileutil.FS) *DefaultLoader {
+	if fs == nil {
+		fs = fileutil.DefaultFS
+	}
+	return &DefaultLoader{fs: fs}
+}
+
+// SetFS replaces the filesystem used by the loader and returns a cleanup function
+func (l *DefaultLoader) SetFS(fs fileutil.FS) func() {
+	oldFS := l.fs
+	l.fs = fs
+	return func() {
+		l.fs = oldFS
+	}
+}
 
 // Load implements the Loader interface.
 // It loads a chart from the specified path using Helm's loader.
@@ -46,13 +67,24 @@ func (l *DefaultLoader) Load(chartPath string) (*chart.Chart, error) {
 	debug.Printf("Loading chart from path: %s", chartPath)
 
 	// Convert to absolute path if it's relative
+	// Note: Although we're injecting our filesystem for testing,
+	// we still need to use filepath.Abs here since Helm's loader
+	// expects real filesystem paths
 	absPath, err := filepath.Abs(chartPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get absolute path for %s: %w", chartPath, err)
 	}
 	debug.Printf("Absolute chart path: %s", absPath)
 
+	// Verify the chart path exists using our injectable filesystem
+	_, err = l.fs.Stat(absPath)
+	if err != nil {
+		return nil, fmt.Errorf("chart path stat error %s: %w", absPath, err)
+	}
+
 	// Load the chart
+	// Note: We're still using Helm's loader which uses the real filesystem
+	// In a future refactoring, we could consider adapting Helm's loader to use our FS interface
 	loadedChart, err := loader.Load(absPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load chart from %s: %w", absPath, err)

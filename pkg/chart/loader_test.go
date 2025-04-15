@@ -7,14 +7,14 @@ import (
 	"strings"
 	"testing"
 
-	// "github.com/spf13/afero" // No longer needed for this test file
+	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	// Assuming types are needed from analysis or somewhere else - adjust as needed
-	// "github.com/lalbers/irr/pkg/analysis"
+
+	"github.com/lalbers/irr/pkg/fileutil"
 )
 
-// Helper to create a temporary chart directory for testing DefaultLoader
+// createTempChartDir creates a temporary chart directory in the real filesystem for testing
 func createTempChartDir(t *testing.T, name, chartYaml, valuesYaml string) string {
 	t.Helper()
 	tempDir := t.TempDir()
@@ -36,10 +36,33 @@ func createTempChartDir(t *testing.T, name, chartYaml, valuesYaml string) string
 	return chartPath
 }
 
+// createMockChartDir creates a chart directory in a mock filesystem for testing
+func createMockChartDir(t *testing.T, fs afero.Fs, name, chartYaml, valuesYaml string) string {
+	t.Helper()
+
+	// Use a non-absolute path for the mock filesystem
+	chartPath := filepath.Join("temp", name)
+
+	err := fs.MkdirAll(filepath.Join(chartPath, "templates"), 0o750)
+	require.NoError(t, err, "Failed to create chart dir structure in mock filesystem")
+
+	err = afero.WriteFile(fs, filepath.Join(chartPath, "Chart.yaml"), []byte(chartYaml), 0o600)
+	require.NoError(t, err, "Failed to write Chart.yaml in mock filesystem")
+
+	err = afero.WriteFile(fs, filepath.Join(chartPath, "values.yaml"), []byte(valuesYaml), 0o600)
+	require.NoError(t, err, "Failed to write values.yaml in mock filesystem")
+
+	// Add a dummy template file
+	err = afero.WriteFile(fs, filepath.Join(chartPath, "templates", "dummy.yaml"), []byte("kind: Pod"), 0o600)
+	require.NoError(t, err, "Failed to write dummy template in mock filesystem")
+
+	return chartPath
+}
+
 // TestDefaultLoaderLoad tests the Load method of the concrete DefaultLoader implementation.
 // It uses the real filesystem via t.TempDir().
 func TestDefaultLoaderLoad(t *testing.T) {
-	loader := &DefaultLoader{} // Use the DefaultLoader struct
+	loader := NewDefaultLoader(nil) // Use the DefaultLoader with default filesystem
 	require.IsType(t, &DefaultLoader{}, loader, "DefaultLoader should be the correct type")
 
 	t.Run("Load From Valid Directory", func(t *testing.T) {
@@ -98,7 +121,68 @@ image:
 	// TODO: Test Load With Subcharts (Requires more complex temp dir setup)
 }
 
-// TODO: Add tests for ProcessChart function (Removed, no longer needed)
+// TestDefaultLoaderWithMockFS tests the DefaultLoader with a mock filesystem
+func TestDefaultLoaderWithMockFS(t *testing.T) {
+	// Create a mock filesystem
+	mockFs := afero.NewMemMapFs()
+	aferofs := fileutil.NewAferoFS(mockFs)
+
+	// Create a loader with the mock filesystem
+	loader := NewDefaultLoader(aferofs)
+
+	t.Run("Mock FS - Load From Valid Directory", func(t *testing.T) {
+		chartYaml := `
+apiVersion: v2
+name: testchart-mockfs
+version: 0.3.0
+`
+		valuesYaml := `
+replicaCount: 3
+image:
+  repository: nginx-mock
+  tag: latest
+`
+		// Note: Since this test is skipped due to Helm's loader using the real filesystem directly,
+		// we're keeping this as documentation of how the test would be structured
+		t.Skip("Skipping mock filesystem test because Helm's loader uses the real filesystem directly")
+
+		chartDir := createMockChartDir(t, mockFs, "testchart-mockfs", chartYaml, valuesYaml)
+
+		// This would be the ideal test, but Helm's loader doesn't support afero
+		// We're deliberately ignoring the return values but adding a comment to explain why
+		// nolint:errcheck // These return values are intentionally ignored as this code path doesn't execute (test is skipped)
+		_, _ = loader.Load(chartDir)
+
+		// In a more advanced implementation, we would need to adapt Helm's loader
+		// to use our filesystem abstraction or use a more extensive mocking approach
+	})
+
+	t.Run("Mock FS - Stat Check", func(t *testing.T) {
+		// We can still test that our filesystem abstraction is used for the Stat check
+		chartYaml := `
+apiVersion: v2
+name: testchart-mockfs-stat
+version: 0.3.0
+`
+		valuesYaml := `
+replicaCount: 3
+image:
+  repository: nginx-mock
+  tag: latest
+`
+		chartDir := createMockChartDir(t, mockFs, "testchart-mockfs-stat", chartYaml, valuesYaml)
+
+		// This will pass the Stat check with our mock filesystem
+		// but fail when Helm's loader tries to use the real filesystem
+		_, err := loader.Load(chartDir)
+
+		// We expect an error here because Helm's loader can't find the file
+		// in the real filesystem
+		assert.Error(t, err)
+		// But we can check that the error comes from Helm's loader and not our Stat check
+		assert.NotContains(t, err.Error(), "failed to access chart path")
+	})
+}
 
 func setupTestChart(t *testing.T, chartPath string) {
 	// Create templates directory
@@ -161,7 +245,7 @@ func TestDefaultLoader_LoadChart(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			loader := &DefaultLoader{} // Use DefaultLoader
+			loader := NewDefaultLoader(nil) // Use DefaultLoader with default filesystem
 			_, err := loader.Load(tt.path)
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -188,7 +272,7 @@ func TestDefaultLoader_LoadChartWithInvalidFile(t *testing.T) {
 	require.NoErrorf(t, err, "failed to create invalid Chart.yaml in %s", chartPath)
 
 	// Test loading the invalid chart
-	loader := &DefaultLoader{} // Use DefaultLoader
+	loader := NewDefaultLoader(nil) // Use DefaultLoader with default filesystem
 	_, err = loader.Load(chartPath)
 	assert.Error(t, err, "expected error loading invalid chart")
 }
