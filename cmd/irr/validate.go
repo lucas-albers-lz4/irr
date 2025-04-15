@@ -10,6 +10,7 @@ import (
 	"github.com/lalbers/irr/pkg/exitcodes"
 	"github.com/lalbers/irr/pkg/fileutil"
 	log "github.com/lalbers/irr/pkg/log"
+	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 )
 
@@ -46,7 +47,7 @@ func detectChartInCurrentDirectoryIfNeeded(chartPath string) (string, error) {
 	}
 
 	// Check if Chart.yaml exists in current directory
-	if _, err := os.Stat("Chart.yaml"); err == nil {
+	if _, err := AppFs.Stat("Chart.yaml"); err == nil {
 		// Current directory is a chart
 		currentDir, err := os.Getwd()
 		if err != nil {
@@ -56,7 +57,7 @@ func detectChartInCurrentDirectoryIfNeeded(chartPath string) (string, error) {
 	}
 
 	// Check if there's a chart directory
-	entries, err := os.ReadDir(".")
+	entries, err := afero.ReadDir(AppFs, ".")
 	if err != nil {
 		return "", fmt.Errorf("failed to read current directory: %w", err)
 	}
@@ -65,7 +66,7 @@ func detectChartInCurrentDirectoryIfNeeded(chartPath string) (string, error) {
 		if entry.IsDir() {
 			// Check if the directory contains Chart.yaml
 			chartFile := filepath.Join(entry.Name(), "Chart.yaml")
-			if _, err := os.Stat(chartFile); err == nil {
+			if _, err := AppFs.Stat(chartFile); err == nil {
 				// Found a chart directory
 				chartPath, err := filepath.Abs(entry.Name())
 				if err != nil {
@@ -112,7 +113,7 @@ func getChartPath(cmd *cobra.Command) (string, error) {
 	}
 
 	// Check if chart exists
-	_, err = os.Stat(chartPath)
+	_, err = AppFs.Stat(chartPath)
 	if err != nil {
 		return "", &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitChartNotFound,
@@ -142,7 +143,7 @@ func getValuesFiles(cmd *cobra.Command) ([]string, error) {
 
 	// Check that values files exist
 	for _, valueFile := range valuesFiles {
-		_, err := os.Stat(valueFile)
+		_, err := AppFs.Stat(valueFile)
 		if err != nil {
 			return nil, &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitChartNotFound,
@@ -158,7 +159,7 @@ func getValuesFiles(cmd *cobra.Command) ([]string, error) {
 func handleOutput(outputFile string, debugTemplate bool, manifest string) error {
 	switch {
 	case outputFile != "":
-		if err := os.WriteFile(outputFile, []byte(manifest), fileutil.ReadWriteUserPermission); err != nil {
+		if err := afero.WriteFile(AppFs, outputFile, []byte(manifest), fileutil.ReadWriteUserPermission); err != nil {
 			return &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitIOError,
 				Err:  fmt.Errorf("failed to write template output to file: %w", err),

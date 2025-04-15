@@ -91,7 +91,7 @@ func GetChartPathFromRelease(releaseName string) (string, error) {
 	}
 
 	// Return the path to the chart file
-	if _, err := os.Stat(chartPath); err != nil {
+	if _, err := AppFs.Stat(chartPath); err != nil {
 		return "", fmt.Errorf("chart file not found: %w", err)
 	}
 

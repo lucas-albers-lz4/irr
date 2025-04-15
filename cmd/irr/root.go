@@ -48,6 +48,14 @@ var (
 // AppFs defines the filesystem interface to use, allows mocking in tests.
 var AppFs = afero.NewOsFs()
 
+// SetFs replaces the current filesystem with the provided one and returns a function to restore it.
+// This is primarily used for testing.
+func SetFs(newFs afero.Fs) func() {
+	oldFs := AppFs
+	AppFs = newFs
+	return func() { AppFs = oldFs }
+}
+
 // ExitCodeError wraps an error with an exit code
 type ExitCodeError struct {
 	err      error

@@ -12,6 +12,7 @@ import (
 
 	// Mock internal/helm for testing command logic without actual Helm calls
 	"github.com/lalbers/irr/internal/helm"
+	"github.com/spf13/afero"
 )
 
 // Mock the helm.Template function via the exported variable
@@ -163,3 +164,86 @@ func TestValidateCmd_KubeVersionPrecedence(t *testing.T) {
 	// This requires more complex mocking or inspection.
 }
 */
+
+func TestDetectChartInCurrentDirectoryIfNeeded(t *testing.T) {
+	// Create test cases
+	testCases := []struct {
+		name          string
+		inputPath     string
+		setupFs       func(fs afero.Fs)
+		expectedPath  string
+		expectedError bool
+	}{
+		{
+			name:          "Path already provided",
+			inputPath:     "/some/chart/path",
+			setupFs:       func(fs afero.Fs) {},
+			expectedPath:  "/some/chart/path",
+			expectedError: false,
+		},
+		{
+			name:      "Chart.yaml in current directory",
+			inputPath: "",
+			setupFs: func(fs afero.Fs) {
+				err := afero.WriteFile(fs, "Chart.yaml", []byte("apiVersion: v2\nname: test-chart\nversion: 0.1.0"), 0644)
+				require.NoError(t, err)
+			},
+			expectedPath:  "", // Will be replaced with os.Getwd() result
+			expectedError: false,
+		},
+		{
+			name:      "Chart.yaml in subdirectory",
+			inputPath: "",
+			setupFs: func(fs afero.Fs) {
+				err := fs.MkdirAll("mychart", 0755)
+				require.NoError(t, err)
+				err = afero.WriteFile(fs, "mychart/Chart.yaml", []byte("apiVersion: v2\nname: test-chart\nversion: 0.1.0"), 0644)
+				require.NoError(t, err)
+			},
+			expectedPath:  "mychart",
+			expectedError: false,
+		},
+		{
+			name:          "No chart found",
+			inputPath:     "",
+			setupFs:       func(fs afero.Fs) {},
+			expectedPath:  "",
+			expectedError: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Set up mock filesystem
+			mockFs := afero.NewMemMapFs()
+			tc.setupFs(mockFs)
+
+			// Replace global filesystem with mock
+			reset := SetFs(mockFs)
+			defer reset() // Restore original filesystem
+
+			// Call the function
+			path, err := detectChartInCurrentDirectoryIfNeeded(tc.inputPath)
+
+			// Check results
+			if tc.expectedError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				if tc.inputPath != "" {
+					// If input path was provided, expect it to be returned unchanged
+					assert.Equal(t, tc.inputPath, path)
+				} else if tc.expectedPath == "mychart" {
+					// For the subdirectory case, we can't check the exact path because it
+					// gets converted to an absolute path which varies by environment.
+					// Just check that it ends with the expected directory name.
+					assert.Contains(t, path, "mychart")
+				} else if tc.expectedPath == "" {
+					// For the current directory case, we can't check the exact path
+					// because it depends on os.Getwd(), so we just check it's not empty
+					assert.NotEmpty(t, path)
+				}
+			}
+		})
+	}
+}

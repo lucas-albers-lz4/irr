@@ -2,11 +2,11 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/spf13/afero"
 	"gopkg.in/yaml.v3"
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart"
@@ -171,7 +171,7 @@ func writeOutput(analysis *ImageAnalysis, flags *InspectFlags) error {
 
 	// Write to file or stdout
 	if flags.OutputFile != "" {
-		if err := os.WriteFile(flags.OutputFile, output, fileutil.ReadWriteUserPermission); err != nil {
+		if err := afero.WriteFile(AppFs, flags.OutputFile, output, fileutil.ReadWriteUserPermission); err != nil {
 			return &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitIOError,
 				Err:  fmt.Errorf("failed to write analysis to file: %w", err),
@@ -265,7 +265,7 @@ func getInspectFlags(cmd *cobra.Command) (*InspectFlags, error) {
 	}
 
 	// Check if chart exists
-	_, err = os.Stat(chartPath)
+	_, err = AppFs.Stat(chartPath)
 	if err != nil {
 		return nil, &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitChartNotFound,
@@ -431,18 +431,14 @@ func processImagePatterns(patterns []analyzer.ImagePattern) (images []ImageInfo,
 
 // detectChartInCurrentDirectory attempts to find a Helm chart in the current directory
 func detectChartInCurrentDirectory() (string, error) {
-	// Check if Chart.yaml exists in current directory
-	if _, err := os.Stat("Chart.yaml"); err == nil {
-		// Current directory is a chart
-		currentDir, err := os.Getwd()
-		if err != nil {
-			return "", fmt.Errorf("failed to get current directory: %w", err)
-		}
-		return currentDir, nil
+	// Check if Chart.yaml exists in the current directory
+	if _, err := AppFs.Stat("Chart.yaml"); err == nil {
+		// Found Chart.yaml in current directory
+		return ".", nil
 	}
 
 	// Check if there's a chart directory
-	entries, err := os.ReadDir(".")
+	entries, err := afero.ReadDir(AppFs, ".")
 	if err != nil {
 		return "", fmt.Errorf("failed to read current directory: %w", err)
 	}
@@ -451,7 +447,7 @@ func detectChartInCurrentDirectory() (string, error) {
 		if entry.IsDir() {
 			// Check if the directory contains Chart.yaml
 			chartFile := filepath.Join(entry.Name(), "Chart.yaml")
-			if _, err := os.Stat(chartFile); err == nil {
+			if _, err := AppFs.Stat(chartFile); err == nil {
 				// Found a chart directory
 				chartPath, err := filepath.Abs(entry.Name())
 				if err != nil {
@@ -510,16 +506,12 @@ func createConfigSkeleton(images []ImageInfo, outputFile string) error {
 		"# Replace placeholder values with your actual registry mappings\n\n" +
 		string(configYAML)
 
-	// Write to file or stdout
-	if outputFile != "" {
-		err := os.WriteFile(outputFile, []byte(yamlWithComments), SecureFilePerms)
-		if err != nil {
-			return fmt.Errorf("failed to write config skeleton to file: %w", err)
-		}
-		log.Infof("Configuration skeleton written to %s", outputFile)
-	} else {
-		fmt.Println(yamlWithComments)
+	// Write the skeleton file
+	err = afero.WriteFile(AppFs, outputFile, []byte(yamlWithComments), SecureFilePerms)
+	if err != nil {
+		return fmt.Errorf("failed to write config skeleton: %w", err)
 	}
 
+	log.Infof("Config skeleton written to %s", outputFile)
 	return nil
 }
