@@ -4,110 +4,202 @@
 ## Phase 1: Helm Plugin Integration - Remaining Items
 _**Goal:** Implement the Helm plugin interface that wraps around the core CLI functionality._
 
-### 5.1 Create Helm plugin architecture
-- [ ] **[P2]** Improve plugin security:
-  - [ ] Implement proper filesystem permissions model for the installed plugin binary and cache directories
-    - [ ] Add platform-specific permission settings (0755 for binaries, 0644 for configs)
-    - [ ] Verify permissions are correctly set after installation
-  - [ ] Add plugin version validation against Helm version
-    - [ ] Implement version check against latest Helm version during plugin initialization
-  - [ ] Use standard GitHub mechanisms for security
-    - [ ] Rely on GitHub's release asset checksums and HTTPS
-    - [ ] Document release verification process for users
-- [ ] **[P1]** Create proper plugin distribution package:
-  - [ ] Set up versioning for plugin releases
-    - [ ] Define semantic versioning strategy (MAJOR.MINOR.PATCH)
-    - [ ] Create version bumping automation (via GitHub Actions)
-    - [ ] Ensure version is embedded in binary at build time
-  - [ ] Create basic release automation (e.g., via Makefile/GitHub Actions)
-    - [ ] Set up GitHub Actions workflow for release creation on tags
-    - [ ] Automate binary building for supported platforms:
-      - [ ] Linux AMD64
-      - [ ] Linux ARM64
-      - [ ] macOS ARM64
-    - [ ] Generate checksums for all artifacts
-    - [ ] Use standard GitHub release mechanisms for publishing
+## Phase 2: Test Coverage
+_**Goal:** Systematically increase unit and integration test coverage across the codebase to improve reliability and reduce regressions, aiming for a minimum coverage baseline and targeting critical packages._
 
-### 5.2 Implement Helm-specific functionality
-- [ ] **[P2]** Implement Helm hooks support for pre/post operations **(Post-Release Feature)**
-  - [ ] Define hook interface and discovery mechanism
-  - [ ] Create hook execution engine with proper error handling
-  - [ ] Implement hook timeout handling
-- [ ] **[P2]** Define clear hook execution flow and environment variables available to hooks **(Post-Release Feature)**
-  - [ ] Document hook environment variables (HELM_PLUGIN_*, CHART_*, RELEASE_*)
-  - [ ] Create standard hook exit code handling
-  - [ ] Define hook execution order guarantees
-- [ ] **[P2]** Specifically support `pre-override` and `post-override` hooks for user customizations **(Post-Release Feature)**
-  - [ ] Implement hook discovery in standard locations
-  - [ ] Pass appropriate context variables to hooks
-  - [ ] Allow hooks to modify override process
-- [ ] **[P2]** Add documentation on creating custom hook scripts **(Post-Release Feature)**
-  - [ ] Create sample hooks for common use cases
-  - [ ] Document best practices for hook development
-- [ ] **[P2]** Add Helm template debugging support **(Post-Release Feature)**
-  - [ ] Create debug output format matching Helm's
-  - [ ] Implement verbose logging of template operations
-- [ ] **[P2]** Integrate with Helm's `--debug` flag or provide similar functionality **(Post-Release Feature)**
-  - [ ] Match Helm's debug output format and verbosity
-  - [ ] Add detailed SDK operation logging
-- [ ] **[P2]** Add Helm auth integration: **(Future Feature - Not part of current development work - Post-Release Feature)**
-  - [ ] Support Helm credential plugins via SDK
-  - [ ] Handle private chart repository authentication via SDK
-  - [ ] Respect Helm's registry authentication configuration via SDK
-  - [ ] Ensure sensitive credential handling is secure
-- [ ] **[P1]** Implement version compatibility checks:
-  - [ ] Add plugin version compatibility checking with latest Helm version
-  - [ ] Gracefully handle version mismatches with clear error messages
-  - [ ] Document latest Helm version support policy
+### Phase 2.1: Establish Baseline & Target Low-Hanging Fruit (Goal: Variable Minimum Coverage)
+- [ ] **Step 1: Quick Wins - Simple Packages First**
+  - [ ] **`pkg/exitcodes` (Target: 30%)**: Test error types and helper functions.
+    - [ ] Test string formatting for each error type
+    - [ ] Verify error wrapping/unwrapping behavior works correctly
+    - [ ] Test detection of exit code errors via `IsExitCodeError()`
 
-### 5.4 Update documentation for Helm plugin usage
-- [ ] **[P1]** Enhance user documentation:
-  - [ ] Add examples for complex scenarios
-    - [ ] Multi-chart deployments
-    - [ ] Air-gapped environments
-    - [ ] Custom registry setups
-  - [ ] Include troubleshooting guide specific to plugin usage
-    - [ ] Common error scenarios and resolutions
-    - [ ] Diagnostic procedures for plugin issues
-    - [ ] Environment setup troubleshooting
-  - [ ] **[P2]** Add FAQ section based on common issues **(Post-Release Feature)**
-  - [ ] Clearly document the read-only nature and security implications
-    - [ ] Explain RBAC requirements
-    - [ ] Document security best practices
-- [ ] **[P1]** Improve integration documentation:
-  - [ ] Document CI/CD integration
-  - [ ] Add examples for GitOps workflows
-- [ ] **[P2]** We only support cross-platform macos/linux
-  - [ ] Document official support for macOS and Ubuntu LTS only
-  - [ ] Explicitly state that bash is the only supported shell, even though macOS defaults to zsh
-  - [ ] Add instructions for macOS users to run commands in bash instead of zsh
-  - [ ] Note that other environments may work but are not tested or supported
+  - [ ] **`pkg/version` (Target: 30%)**: Test version checking logic.
+    - [ ] Test with valid and invalid version strings
+    - [ ] Verify correct comparison behavior for major/minor/patch versions
+    - [ ] Test error handling for malformed versions
 
-### 5.5 Implement cross-cutting improvements
-- [ ] **[P2]** Only support platform macos/linux support:
-  - [ ] Test only with bash on macOS (development environment)
-  - [ ] Ensure scripts specify #!/bin/bash rather than relying on default shell
-  - [ ] Include note in development docs about using bash explicitly on macOS
-  - [ ] Test only with bash on Ubuntu LTS (CI environment)
-  - [ ] Document specific supported environment limitations
-  - [ ] Handle basic path differences between macOS and Ubuntu
-    - [ ] Focus on standard installation locations only
-- [ ] **[P1]** Improve plugin lifecycle management:
-  - [ ] Add proper uninstallation support
-    - [ ] Create uninstall script that cleans up all artifacts
-    - [ ] Handle configuration preservation options
-    - [ ] Test uninstall/reinstall scenarios
-  - [ ] Handle configuration persistence across updates
-    - [ ] Define configuration versioning scheme
-    - [ ] Create migration path for config changes
-    - [ ] Add configuration validation during updates
+- [ ] **Step 2: Filesystem Mocking Preparation**
+  - [ ] Start by creating a consistent filesystem mocking pattern:
+    - [ ] Identify all packages with filesystem interactions
+    - [ ] **Implement hybrid approach for filesystem abstraction:**
+      - [ ] Define a standard filesystem interface in a central location:
+        ```go
+        // In pkg/fileutil or a new pkg/fsutil package
+        type FS interface {
+            Open(name string) (File, error)
+            Stat(name string) (os.FileInfo, error)
+            Create(name string) (File, error)
+            ReadFile(filename string) ([]byte, error)
+            WriteFile(filename string, data []byte, perm os.FileMode) error
+            MkdirAll(path string, perm os.FileMode) error
+            Remove(name string) error
+            RemoveAll(path string) error
+            // Add other methods as needed
+        }
+        
+        // Ensure afero.Fs implements this interface
+        var _ FS = afero.NewOsFs()
+        ```
+      
+      - [ ] For existing code (non-intrusive approach):
+        ```go
+        // In each package that uses filesystem
+        var fs fileutil.FS = afero.NewOsFs()
+        
+        // Helper for tests to swap the filesystem
+        func SetFs(newFs fileutil.FS) func() {
+            oldFs := fs
+            fs = newFs
+            return func() { fs = oldFs } // Return a cleanup function
+        }
+        
+        // Use throughout package
+        func ReadConfigFile(path string) ([]byte, error) {
+            return fs.ReadFile(path)
+        }
+        ```
+      
+      - [ ] For new code and major refactors (dependency injection):
+        ```go
+        // Struct with explicit dependency
+        type FileOperations struct {
+            fs fileutil.FS
+        }
+        
+        // Constructor with default
+        func NewFileOperations(fs fileutil.FS) *FileOperations {
+            if fs == nil {
+                fs = afero.NewOsFs()
+            }
+            return &FileOperations{fs: fs}
+        }
+        
+        // Methods use the dependency
+        func (f *FileOperations) ReadConfig(path string) ([]byte, error) {
+            return f.fs.ReadFile(path)
+        }
+        ```
+    
+    - [ ] Document implementation guidelines:
+      - [ ] Favor dependency injection for new code and significant refactors
+      - [ ] Use package variables for smaller, focused updates to existing code
+      - [ ] Always provide test helpers for swapping filesystem implementations
+    
+    - [ ] Create a detailed mocking guide in `docs/TESTING-FILESYSTEM-MOCKING.md` (COMPLETED)
+      - [x] Explain both approaches with examples
+      - [x] Provide standard test patterns
+      - [x] Document when to use each approach
+      - [ ] Reference this document in other testing documentation
 
-### 5.6 Test cases for P1 Features
-- [ ] **Documentation Example Tests**
-  - [ ] Verify all documented command examples
-  - [ ] Test air-gapped environment scenarios
-  - [ ] Validate multi-chart deployment examples
-  - [ ] Test GitOps workflow examples
+  - [ ] **`pkg/fileutil` (Target: 30%)**: Implement as first application of filesystem mocking.
+    - [ ] Add `afero.Fs` variable or parameter to functions
+    - [ ] Test file existence checking
+    - [ ] Test directory operations
+    - [ ] Use as a model for other packages
+
+- [ ] **Step 3: Utility Packages with Adjusted Expectations**
+  - [ ] **`pkg/log` (Target: 20%)**:
+    - [ ] Test `ParseLevel` with all supported log levels
+    - [ ] Test level setting and retrieval (`SetLevel`/`CurrentLevel`) 
+    - [ ] Test level-based filtering (basic cases only)
+    - [ ] *Note: Output capturing can be flaky - focus on core functionality*
+
+  - [ ] **`pkg/debug` (Target: 20%)**:
+    - [ ] Test initialization with mocked environment variables
+    - [ ] Test debug state toggling (basic cases only)
+    - [ ] Test simple output functions
+    - [ ] *Note: Not critical path code, basic coverage is sufficient*
+
+  - [ ] **`pkg/testutil` (Target: 25%)**:
+    - [ ] Apply filesystem mocking pattern from Step 2
+    - [ ] Test `GetChartPath` with various path inputs
+    - [ ] *Note: Test utilities themselves need only moderate coverage*
+
+- [ ] **Step 4: Complex Analysis Package**
+  - [ ] **`pkg/analyzer` (Target: 25-30%)**:
+    - [ ] Create test fixtures for representative chart values
+    - [ ] Test simple pattern matching cases first:
+      ```go
+      // Start with simple patterns and simple structures
+      testValues := map[string]interface{}{
+          "image": "nginx:latest",
+          "nested": map[string]interface{}{
+              "image": "redis:alpine"
+          }
+      }
+      patterns := []string{"*.image"}
+      ```
+    - [ ] Add tests for basic value traversal (simple maps first)
+    - [ ] Test recursive analysis with limited nesting depth
+    - [ ] *Note: Full coverage of recursive analysis is challenging, focus on key paths*
+
+- [ ] **Step 5: Filesystem Mocking - Incremental Roll-out**
+  - [ ] Apply consistent pattern to one package at a time:
+    - [ ] `pkg/chart`: Update Loader and Generator to use injectable filesystem
+    - [ ] `pkg/registry`: Update registry mapping file operations
+    - [ ] `cmd/irr`: Allow filesystem injection for file operations
+  - [ ] Test Strategy:
+    - [ ] When testing a package, first update it to use the filesystem abstraction
+    - [ ] Then write tests using the mocking capability
+    - [ ] Follow the standard pattern developed in Step 2:
+      ```go
+      // Example pattern for filesystem mocking in tests
+      func TestWithMockFs(t *testing.T) {
+          // Create mock filesystem
+          mockFs := afero.NewMemMapFs()
+          
+          // Setup test files/directories
+          afero.WriteFile(mockFs, "test.yaml", []byte("test: data"), 0644)
+          
+          // Replace package filesystem with mock
+          originalFs := somepackage.Fs
+          somepackage.Fs = mockFs
+          defer func() { somepackage.Fs = originalFs }()
+          
+          // Run test with mock filesystem
+          // ...
+      }
+      ```
+  - [ ] Document architectural tradeoffs and approach:
+    - [ ] Add guidance about when to use global variables vs. dependency injection
+    - [ ] Document patterns for test setup/teardown with mock filesystem
+    - [ ] Update mocking section in testing documentation
+
+### Phase 2.2: Target Core Functionality Gaps (Goal: ~50-60% in Core Packages)
+- [ ] **Analyze Coverage Reports:** Use `go tool cover -html=coverage.out` to visualize uncovered lines in key packages.
+- [ ] **Increase Coverage in Core Packages:**
+  - [ ] `pkg/chart` (Current: 52.3%): Focus on `Load`, `validateHelmTemplateInternal`, `OverridesToYAML`, error handling, rules integration.
+  - [ ] `pkg/override` (Current: 51.1%): Test YAML generation (`GenerateYAMLOverrides`, `GenerateYAML`, `ToYAML`), path construction/manipulation (`ConstructPath`, `GetValueAtPath`), merging (`mergeMaps`), and error wrapping.
+  - [ ] `pkg/rules` (Current: 60.2%): Test core rule application (`ApplyRules`, `ApplyRulesToMap`), registration (`AddRule`), enabling/disabling (`SetEnabled`), and provider detection (`DetectChartProvider`).
+  - [ ] `pkg/analysis` (Current: 72.4%): Add tests for uncovered functions (`Load`, `IsGlobalRegistry`, `ParseImageString`, `mergeAnalysis`).
+  - [ ] `pkg/image` (Current: 71.3%): Add tests for validation (`IsValid*`), error types, and edge cases in parsing/normalization.
+
+### Phase 2.3: Enhance High-Coverage & Local Integration (Goal: ~70%+ in Core)
+- [ ] **Refine Existing Tests:** Improve tests in well-covered packages (`pkg/generator`, `pkg/helm`, `pkg/registry`, `pkg/strategy`) by adding edge cases or complex scenarios.
+- [ ] **Implement Local Integration Tests:**
+    - [ ] Write tests covering interactions *between* packages (e.g., `analysis` -> `override` -> `generator`).
+    - [ ] Use chart fixtures, mock dependencies (like registry interactions) where necessary.
+    - [ ] Validate end-to-end workflows locally (load chart -> analyze -> generate overrides -> apply rules -> validate output).
+
+### General Principles & Tooling for Coverage Improvement
+- [ ] **Prioritize Behavior:** Focus tests on intended functionality and critical paths, especially public APIs.
+- [ ] **Test Errors:** Explicitly test error conditions and handling.
+- [ ] **Use Coverage Tools:** Regularly run `go test -coverprofile=coverage.out ./...` and `go tool cover -html=coverage.out`.
+- [ ] **CI Integration:** Add a coverage check to CI to prevent regressions (e.g., using a tool or script to enforce a minimum threshold).
+- [ ] **Refactor for Testability:** If needed, refactor code (using interfaces, dependency injection) to make it easier to test.
+- [ ] **Document Test Patterns:** 
+  - [ ] As coverage increases, document effective test patterns used
+  - [ ] Capture lessons learned about which test approaches work best for different package types
+  - [ ] Share successful mocking strategies with the team
+- [ ] **Periodic Review:** 
+  - [ ] Revisit coverage targets after initial improvements to potentially raise them
+  - [ ] Perform focused reviews of CLI (cmd/irr) error handling after core packages
+  - [ ] Identify packages that might need architectural changes for better testability
+- [ ] **Documentation Updates:**
+  - [ ] Update package-level README files with testing guidance as patterns emerge
+  - [ ] Add code comments about test requirements for complex functions
+  - [ ] Document any non-obvious test setup requirements
 
 ## Phase 2: Chart Parameter Handling & Rules System
 _**Goal:** Analyze results from the brute-force solver and chart analysis to identify parameters essential for successful Helm chart deployment after applying IRR overrides. Implement an intelligent rules system that distinguishes between Deployment-Critical (Type 1) and Test/Validation-Only (Type 2) parameters._
@@ -219,46 +311,6 @@ Implementation steps:
 ## Phase 3: Kubernetes Version Handling in `irr validate`
 _**Goal:** Implement robust Kubernetes version specification for chart validation to ensure consistent version handling and resolve compatibility issues._
 
-### Implementation Plan
-
-1.  **Default Kubernetes Version Setting**
-    -   [x] **[P1]** Define a modern default Kubernetes version (`1.31.0`) for validation operations.
-        -   [x] Add `DefaultKubernetesVersion` constant in the codebase.
-        -   [x] Update `runValidate` to use this default when the `--kube-version` flag is not provided.
-        -   [x] Document this default version in user documentation and command help text.
-
-2.  **`--kube-version` Flag Implementation**
-    -   [x] **[P1]** Add the `--kube-version` string flag to the `irr validate` command.
-        -   [x] Add flag definition in `cmd/irr/validate.go`'s `newValidateCmd` function.
-        -   [x] Update `runValidate` function to read the flag value.
-        -   [x] Document the flag in `docs/cli-reference.md`.
-
-3.  **Helm Integration**
-    -   [x] **[P1]** Update `internal/helm/command.go` to pass the specified Kubernetes version to Helm.
-        -   [x] Add `KubeVersion string` field to the `TemplateOptions` struct.
-        -   [x] Modify the `Template` function to use the provided version.
-        -   [x] Ensure proper precedence over any conflicting `--set` values.
-
-4.  **test-charts.py Script Updates**
-    -   [x] **[P1]** Update the `test/tools/test-charts.py` script to use the new flag for validation.
-        -   [x] Update validation commands to use `--kube-version` instead of `--set` flags.
-        -   [x] Implement fallback mechanism for charts with specific version requirements.
-
-5.  **Documentation and Tests**
-    -   [x] **[P1]** Add unit tests for the Kubernetes version flag handling.
-        -   [x] Test default case, valid version string, and invalid version handling.
-        -   [x] Test flag precedence over `--set` values.
-    -   [x] **[P1]** Ensure Type 2 parameters are never included in generated override file.
-    -   [x] **[P1]** Update documentation to reflect the new flag and default version.
-    -   [x] **[P1]** Add integration tests for validation with different Kubernetes versions.
-
-### Versioning Precedence
-
-The implementation respects the following precedence for determining the Kubernetes version used during validation (highest to lowest):
-
-1.  Explicit `--kube-version` flag provided by the user (overrides any `--set` values).
-2.  The defined `DefaultKubernetesVersion` constant (`1.31.0`) if the flag is not provided.
-3.  Helm's internal default version (though our implementation ensures #2 is always used as a fallback).
 
 ## Phase 4: `kind` Cluster Integration Testing
 _**Goal:** Implement end-to-end tests using `kind` to validate Helm plugin interactions with a live Kubernetes API and Helm release state, ensuring read-only behavior._
@@ -278,7 +330,7 @@ _**Goal:** Implement end-to-end tests using `kind` to validate Helm plugin inter
   - [ ] Set up CI configuration to run `
 
  
-  ## Implementation Process: DONT REMOVE THIS SECTION as these hints are important to remember.
+  ## REMINDER 0 (TEST BEFORE AND AFTER) Implementation Process: DONT REMOVE THIS SECTION as these hints are important to remember.
 - For each change:
   1. **Baseline Verification:**
      - Run full test suite: `go test ./...` ✓
@@ -293,12 +345,18 @@ _**Goal:** Implement end-to-end tests using `kind` to validate Helm plugin inter
      - Follow KISS and YAGNI principles ✓
      - Maintain consistent code style ✓
      - Document changes in code comments where appropriate ✓
+     - **For filesystem mocking changes:**
+       - Implement changes package by package following the guidelines in `docs/TESTING-FILESYSTEM-MOCKING.md`
+       - Start with simpler packages before tackling complex ones
+       - Always provide test helpers for swapping the filesystem implementation
+       - Run tests frequently to catch issues early
   
   4. **Post-Change Verification:**
      - Run targeted tests to verify the changes work as expected ✓
      - Run targeted linting to confirm specific issues are resolved ✓
      - Run full test suite: `go test ./...` ✓
      - Run full linting: `golangci-lint run` ✓
+     - **CRITICAL:** After filesystem mocking changes, verify all tests still pass with both the real and mock filesystem
   
   5. **Git Commit:**
      - Stop after completing a logical portion of a feature to make well reasoned git commits with changes and comments ✓
