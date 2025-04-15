@@ -25,7 +25,20 @@ jobs:
 
   build:
     needs: lint
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            runner: ubuntu-latest
+          - goos: linux
+            goarch: arm64
+            runner: ubuntu-latest
+          - goos: darwin
+            goarch: arm64
+            runner: macos-latest
+
+    runs-on: ${{ matrix.runner }}
 
     steps:
       - uses: actions/checkout@v4
@@ -38,13 +51,31 @@ jobs:
       - name: Run tests
         run: make test
         
-      - name: Build distribution packages
-        run: make dist
-          
-      - name: Upload artifacts
+      - name: Get Version
+        id: get_version
+        run: echo "VERSION=$(grep -o 'version:[ \"\.]*[^\"\']*' plugin.yaml | awk '{print $2}' | tr -d '\"')" >> $GITHUB_OUTPUT
+
+      - name: Build binary for ${{ matrix.goos }}/${{ matrix.goarch }}
+        run: make build GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }}
+
+      - name: Create distribution package for ${{ matrix.goos }}/${{ matrix.goarch }}
+        run: |
+          DIST_DIR=_dist
+          PACKAGE_NAME=irr-${{ steps.get_version.outputs.VERSION }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
+          echo "Creating $PACKAGE_NAME..."
+          mkdir -p $DIST_DIR
+          tar -zcvf $DIST_DIR/$PACKAGE_NAME \
+            -C bin irr \
+            README.md \
+            LICENSE \
+            plugin.yaml \
+            install-binary.sh
+          echo "Created $DIST_DIR/$PACKAGE_NAME"
+
+      - name: Upload artifact for ${{ matrix.goos }}/${{ matrix.goarch }}
         uses: actions/upload-artifact@v4
         with:
-          name: irr-packages
+          name: irr-package-${{ matrix.goos }}-${{ matrix.goarch }}
           path: _dist/*.tar.gz
           retention-days: 1
 
@@ -63,7 +94,9 @@ jobs:
       - name: Prepare release files
         run: |
           mkdir -p release-files
-          find artifacts -name "*.tar.gz" -exec cp {} release-files/ \;
+          find artifacts -name 'irr-package-*' -type d -exec find {} -name '*.tar.gz' -exec cp {} release-files/ \;
+          echo "Contents of release-files:"
+          ls -l release-files
           
       - name: Create Release
         uses: softprops/action-gh-release@v1
