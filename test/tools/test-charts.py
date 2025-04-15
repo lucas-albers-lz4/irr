@@ -200,6 +200,8 @@ CHART_VERSION_REGEX = re.compile(
     "-((\\d+\\.){2}\\d+.*?)$"
 )  # Ignore case not needed here
 
+DEFAULT_TEST_KUBE_VERSION = "1.31.0"  # Define the default K8s version for tests
+
 
 @dataclass
 class TestResult:
@@ -661,743 +663,279 @@ async def test_chart_override(chart_info, target_registry, irr_binary, session, 
 
 
 async def test_chart_validate(chart_info, target_registry, irr_binary, session, args):
-    """Test chart validation against existing override files."""
-    chart_name, chart_path = chart_info
-    override_file = TEST_OUTPUT_DIR / f"{chart_name}-values.yaml"
-    debug_log_file = TEST_OUTPUT_DIR / f"{chart_name}-validate-debug.log"
-
-    # --- Initialize variables ---
-    classification = "UNKNOWN"
-    validation_duration = 0
-    result = None
-
-    # Create debug log file
-    debug_log_file.parent.mkdir(parents=True, exist_ok=True)
-    debug_log = open(debug_log_file, "w")
+    """Test the validation (template) process for a single chart."""
+    chart_name = chart_info["chart_name"]
+    chart_path = chart_info["chart_path"]
+    classification = chart_info["classification"]
+    detailed_log_file = DETAILED_LOGS_DIR / f"{chart_name}-validate.log"
+    stdout_file = DETAILED_LOGS_DIR / f"{chart_name}-validate-stdout.log"
+    stderr_file = DETAILED_LOGS_DIR / f"{chart_name}-validate-stderr.log"
 
     def log_debug(msg):
-        """Helper to log debug messages selectively."""
-        # Always write to log file
-        debug_log.write(f"{msg}\n")
-        debug_log.flush()
+        with open(detailed_log_file, "a", encoding="utf-8") as f:
+            f.write(f"[{datetime.now()}] DEBUG: {msg}\n")
 
-        # Only print to console if debug flag is enabled
-        if args.debug:
-            # For large JSON/YAML content, truncate console output
-            if len(msg) > 200 and ("JSON" in msg or "YAML" in msg):
-                truncated = msg[:197] + "..."
-                print(f"  DEBUG: {truncated} (full content in log file)")
-            else:
-                print(f"  DEBUG: {msg}")
+    log_debug(f"Starting validation for chart: {chart_name} ({chart_path})")
+    log_debug(f"Classification: {classification}")
 
-    try:
-        log_debug(f"Validating chart {chart_name} from {chart_path}")
+    # Create a temporary directory for validation outputs
+    with tempfile.TemporaryDirectory(
+        prefix=f"irr-test-validate-{chart_name.replace('/', '_')}-",
+        dir=TEST_OUTPUT_DIR,
+    ) as temp_dir:
+        temp_path = Path(temp_dir)
+        override_file = temp_path / "override.yaml"
+        values_file = temp_path / "values.yaml"
 
-        # --- Chart Path Handling ---
-        chart_path = Path(chart_path)
-        if not chart_path.exists():
-            raise FileNotFoundError(f"Chart path does not exist: {chart_path}")
+        # --- 1. Prepare Override File (Copy from previous step or create empty) ---
+        override_file_path = chart_info.get("override_file_path")
+        if override_file_path and override_file_path.exists():
+            shutil.copy(override_file_path, override_file)
+            log_debug(f"Using override file from previous step: {override_file_path}")
+        else:
+            # Create an empty override file if none exists (shouldn't happen often)
+            override_file.touch()
+            log_debug("Override file not found from previous step, creating empty.")
 
-        # Get chart classification and appropriate template
-        classification = get_chart_classification(chart_path)
-        log_debug(f"Chart classified as: {classification}")
+        # --- 2. Prepare Values File ---
+        values_content = get_values_content(classification, target_registry)
+        with open(values_file, "w", encoding="utf-8") as f:
+            f.write(values_content)
+        log_debug(f"Using values file for classification '{classification}'")
 
-        # Get appropriate values template based on classification
-        log_debug(f"Using template for classification: {classification}")
-
-        # --- Validation ---
-        log_debug(f"Validating overrides for {chart_name}...")
-        start_time = time.time()
-
-        # --- Command Construction ---
+        # --- 3. Construct Validation Command ---
         validate_cmd = [
             str(irr_binary),
             "validate",
             "--chart-path",
             str(chart_path),
+            "--release-name",
+            f"{chart_name.split('/')[-1]}-test",
             "--values",
-            str(override_file),
+            str(override_file),  # Use the generated override file
+            "--values",
+            str(values_file),  # Use the classification-specific values
+            "--kube-version",  # Use the new flag
+            DEFAULT_TEST_KUBE_VERSION,  # Use the default K8s version
+            # REMOVED primary --set flags for kubeVersion/Capabilities
+            # "--set",
+            # f"kubeVersion={DEFAULT_TEST_KUBE_VERSION}",
+            # "--set",
+            # f"Capabilities.KubeVersion.Version=v{DEFAULT_TEST_KUBE_VERSION}",
+            # "--set",
+            # f"Capabilities.KubeVersion.Major={DEFAULT_TEST_KUBE_VERSION.split('.')[0]}",
+            # "--set",
+            # f"Capabilities.KubeVersion.Minor={DEFAULT_TEST_KUBE_VERSION.split('.')[1]}",
         ]
+        if args.debug:
+            validate_cmd.append("--debug")
 
-        # Set a high Kubernetes version to avoid version compatibility errors - use v1.31.0 by default
-        validate_cmd.extend(["--set", "kubeVersion=1.31.0"])
-        # Adding more specific kubeVersion settings that might be needed by some charts
-        validate_cmd.extend(
-            [
-                "--set",
-                "Capabilities.KubeVersion.Major=1",
-                "--set",
-                "Capabilities.KubeVersion.Minor=31",
-                "--set",
-                "Capabilities.KubeVersion.GitVersion=v1.31.0",
-            ]
-        )
+        log_debug(f"Running validation command: {' '.join(validate_cmd)}")
 
-        # Add --kube-version flag if supported by the irr binary
-        validate_cmd.extend(["--kube-version", "1.31.0"])
-
-        # Add classification-specific flags
-        if classification == "BITNAMI":
-            validate_cmd.extend(
-                [
-                    "--set",
-                    "global.imageRegistry=" + target_registry,
-                    "--set",
-                    "global.security.allowInsecureImages=true",
-                    "--set",
-                    "global.storageClass=standard",
-                    "--set",
-                    "global.redis.auth.enabled=false",
-                    "--set",
-                    "global.postgresql.auth.enabled=false",
-                    "--set",
-                    "global.mongodb.auth.enabled=false",
-                ]
-            )
-        elif classification == "STANDARD_MAP":
-            validate_cmd.extend(
-                [
-                    "--set",
-                    "image.registry=" + target_registry,
-                    "--set",
-                    "image.pullPolicy=IfNotPresent",
-                ]
-            )
-        elif classification == "STANDARD_STRING":
-            validate_cmd.extend(["--set", f"image={target_registry}/placeholder:1.0.0"])
-
-        # Add chart-specific required values based on error patterns
-        chart_name_lower = chart_name.lower()
-
-        # Loki and related charts
-        if "loki" in chart_name_lower:
-            validate_cmd.extend(
-                [
-                    "--set",
-                    "lokiAddress=http://loki:3100",
-                    "--set",
-                    "tempoAddress.push=http://tempo:3200",
-                    "--set",
-                    "loki.storage.bucketNames.chunks=chunks",
-                    "--set",
-                    "loki.storage.bucketNames.blocks=blocks",
-                    "--set",
-                    "loki.storage.bucketNames.alertmanager=alertmanager",
-                    "--set",
-                    "loki.auth_enabled=false",
-                    "--set",
-                    "loki.storage.type=filesystem",
-                ]
-            )
-
-        # Linkerd charts
-        if "linkerd" in chart_name_lower:
-            validate_cmd.extend(
-                [
-                    "--set",
-                    "identity.issuer.crtPEM=placeholder-cert",
-                    "--set",
-                    "identity.issuer.keyPEM=placeholder-key",
-                    "--set",
-                    "identity.issuer.tls.crtPEM=placeholder-cert",
-                    "--set",
-                    "identity.issuer.tls.keyPEM=placeholder-key",
-                    "--set",
-                    "identity.issuer.scheme=kubernetes.io/tls",
-                ]
-            )
-
-        # Teleport charts
-        if "teleport" in chart_name_lower:
-            validate_cmd.extend(
-                [
-                    "--set",
-                    "proxyAddr=teleport-proxy:3023",
-                    "--set",
-                    "kubeClusterName=placeholder-cluster",
-                    "--set",
-                    "auth.teleportConfigRaw.auth_service.enabled=true",
-                    "--set",
-                    "auth.teleportConfigRaw.proxy_service.enabled=true",
-                ]
-            )
-
-        # Workload identity charts
-        if "workload-identity" in chart_name_lower:
-            validate_cmd.extend(
-                [
-                    "--set",
-                    "azureTenantID=placeholder-tenant-id",
-                    "--set",
-                    "azureClientID=placeholder-client-id",
-                    "--set",
-                    "azureClientSecret=placeholder-client-secret",
-                ]
-            )
-
-        # Profiling and performance charts
-        if "profiling" in chart_name_lower or "pf-host-agent" in chart_name_lower:
-            validate_cmd.extend(
-                [
-                    "--set",
-                    "projectID=12345",
-                    "--set",
-                    "endpoint=profiling-agent:8080",
-                    "--set",
-                    "serviceAccount.create=true",
-                    "--set",
-                    "serviceAccount.name=profiling-agent",
-                ]
-            )
-
-        # Cert-manager charts
-        if "certmanager" in chart_name_lower:
-            validate_cmd.extend(
-                [
-                    "--set",
-                    "email=placeholder@example.com",
-                    "--set",
-                    "installCRDs=true",
-                    "--set",
-                    "prometheus.enabled=false",
-                ]
-            )
-
-        # Harbor scanner charts
-        if "harbor-scanner-aqua" in chart_name_lower:
-            validate_cmd.extend(
-                [
-                    "--set",
-                    "aqua.username=placeholder-user",
-                    "--set",
-                    "aqua.password=placeholder-pass",
-                    "--set",
-                    "aqua.registry=placeholder-registry",
-                    "--set",
-                    "aqua.gateway=placeholder-gateway",
-                ]
-            )
-
-        # AWS related charts
-        if "aws-load-balancer" in chart_name_lower or "aws-nth" in chart_name_lower:
-            validate_cmd.extend(
-                [
-                    "--set",
-                    "clusterName=placeholder-cluster",
-                    "--set",
-                    "region=us-west-2",
-                    "--set",
-                    "serviceAccount.create=true",
-                    "--set",
-                    "serviceAccount.name=aws-lb-controller",
-                ]
-            )
-
-        # OpenTelemetry charts
-        if "opentelemetry" in chart_name_lower:
-            validate_cmd.extend(
-                [
-                    "--set",
-                    "mode=deployment",
-                    "--set",
-                    "collector.serviceAccount.create=true",
-                    "--set",
-                    "collector.serviceAccount.name=opentelemetry",
-                ]
-            )
-
-        # Grafana charts
-        if "grafana" in chart_name_lower:
-            validate_cmd.extend(
-                [
-                    "--set",
-                    "watchNamespaces=default",
-                    "--set",
-                    "adminPassword=admin",
-                    "--set",
-                    "persistence.enabled=false",
-                ]
-            )
-
-        # Tempo charts
-        if "tempo" in chart_name_lower:
-            validate_cmd.extend(
-                [
-                    "--set",
-                    "tempoAddress.push=http://tempo:3200",
-                    "--set",
-                    "storage.trace.backend=local",
-                    "--set",
-                    "storage.trace.local.path=/tmp/tempo/traces",
-                ]
-            )
-
-        # GitLab charts
-        if "gitlab" in chart_name_lower:
-            validate_cmd.extend(
-                [
-                    "--set",
-                    "certmanager-issuer.email=placeholder@example.com",
-                    "--set",
-                    "global.ingress.enabled=false",
-                    "--set",
-                    "global.postgresql.serviceAccount.create=true",
-                ]
-            )
-
-        # ECK (Elastic Cloud on Kubernetes) charts
-        if "eck" in chart_name_lower:
-            validate_cmd.extend(
-                [
-                    "--set",
-                    "daemonSet.enabled=true",
-                    "--set",
-                    "securityContext.runAsUser=1000",
-                    "--set",
-                    "securityContext.fsGroup=1000",
-                ]
-            )
-
-        # RKE2 charts
-        if "rke2" in chart_name_lower:
-            validate_cmd.extend(
-                [
-                    "--set",
-                    "global.clusterDNS=10.96.0.10",
-                    "--set",
-                    "global.clusterDomain=cluster.local",
-                    "--set",
-                    "global.systemDefaultRegistry=",
-                ]
-            )
-
-        # Prometheus charts
-        if "prometheus" in chart_name_lower:
-            validate_cmd.extend(
-                [
-                    "--set",
-                    "version=1.4.0",
-                    "--set",
-                    "server.persistentVolume.enabled=false",
-                    "--set",
-                    "alertmanager.persistentVolume.enabled=false",
-                ]
-            )
-
-        # Auto-deploy charts
-        if "auto-deploy" in chart_name_lower:
-            validate_cmd.extend(
-                [
-                    "--set",
-                    "image.secrets={}",
-                    "--set",
-                    "serviceAccount.create=true",
-                    "--set",
-                    "serviceAccount.name=auto-deploy",
-                ]
-            )
-
-        # Sonarqube charts
-        if "sonarqube" in chart_name_lower:
-            validate_cmd.extend(
-                [
-                    "--set",
-                    "service.type=ClusterIP",
-                    "--set",
-                    "elasticsearch.bootstrapChecks=false",
-                    "--set",
-                    "plugins.install=null",
-                    # Ensure very high Kubernetes version
-                    "--set",
-                    "kubeVersion=1.30.0",
-                    "--set",
-                    "Capabilities.KubeVersion.Major=1",
-                    "--set",
-                    "Capabilities.KubeVersion.Minor=30",
-                    "--set",
-                    "Capabilities.KubeVersion.GitVersion=v1.30.0",
-                ]
-            )
-
-        # ECK (Elastic Cloud on Kubernetes) charts
-        if "eck-" in chart_name_lower:
-            validate_cmd.extend(
-                [
-                    "--set",
-                    "daemonSet.enabled=true",
-                    "--set",
-                    "securityContext.runAsUser=1000",
-                    "--set",
-                    "securityContext.fsGroup=1000",
-                    # Override Kubernetes version specifically for ECK charts
-                    "--set",
-                    "kubeVersion=1.30.0",
-                    "--set",
-                    "Capabilities.KubeVersion.Major=1",
-                    "--set",
-                    "Capabilities.KubeVersion.Minor=30",
-                    "--set",
-                    "Capabilities.KubeVersion.GitVersion=v1.30.0",
-                ]
-            )
-
-        # Insights agent charts
-        if "insights" in chart_name_lower:
-            validate_cmd.extend(
-                [
-                    "--set",
-                    "targetNamespace=insights",
-                    "--set",
-                    "serviceAccount.create=true",
-                    "--set",
-                    "serviceAccount.name=insights-agent",
-                    # Override Kubernetes version specifically for Insights charts
-                    "--set",
-                    "kubeVersion=1.30.0",
-                    "--set",
-                    "Capabilities.KubeVersion.Major=1",
-                    "--set",
-                    "Capabilities.KubeVersion.Minor=30",
-                    "--set",
-                    "Capabilities.KubeVersion.GitVersion=v1.30.0",
-                ]
-            )
-
-        # Traefik charts
-        if "traefik" in chart_name_lower:
-            validate_cmd.extend(
-                [
-                    "--set",
-                    "deployment.replicas=1",
-                    "--set",
-                    "ports.websecure.tls.enabled=true",
-                    "--set",
-                    "ingressRoute.dashboard.enabled=false",
-                    # Override Kubernetes version specifically for Traefik
-                    "--set",
-                    "kubeVersion=1.30.0",
-                    "--set",
-                    "Capabilities.KubeVersion.Major=1",
-                    "--set",
-                    "Capabilities.KubeVersion.Minor=30",
-                    "--set",
-                    "Capabilities.KubeVersion.GitVersion=v1.30.0",
-                ]
-            )
-
-        # Profiling charts
-        if "profiling" in chart_name_lower:
-            validate_cmd.extend(
-                [
-                    "--set",
-                    "projectID=12345",
-                    "--set",
-                    "endpoint=profiling-agent:8080",
-                    "--set",
-                    "serviceAccount.create=true",
-                    "--set",
-                    "serviceAccount.name=profiling-agent",
-                    # Override Kubernetes version specifically
-                    "--set",
-                    "kubeVersion=1.30.0",
-                    "--set",
-                    "Capabilities.KubeVersion.Major=1",
-                    "--set",
-                    "Capabilities.KubeVersion.Minor=30",
-                    "--set",
-                    "Capabilities.KubeVersion.GitVersion=v1.30.0",
-                ]
-            )
-
-        # Everest charts
-        if "everest" in chart_name_lower:
-            validate_cmd.extend(
-                [
-                    "--set",
-                    "replicaCount=1",
-                    "--set",
-                    "serviceAccount.create=true",
-                    "--set",
-                    "serviceAccount.name=everest",
-                    # Override Kubernetes version specifically
-                    "--set",
-                    "kubeVersion=1.30.0",
-                    "--set",
-                    "Capabilities.KubeVersion.Major=1",
-                    "--set",
-                    "Capabilities.KubeVersion.Minor=30",
-                    "--set",
-                    "Capabilities.KubeVersion.GitVersion=v1.30.0",
-                ]
-            )
-
-        log_debug(f"Running command: {' '.join(validate_cmd)}")
-
-        # --- Execute Command ---
+        # --- 4. Execute Validation Command ---
+        start_time = time.monotonic()
         try:
-            # Set up environment variables for Kubernetes version
-            env = os.environ.copy()
-            env["KUBE_VERSION"] = "v1.31.0"
-
-            result = subprocess.run(
-                validate_cmd,
-                capture_output=True,
-                text=True,
-                timeout=120,
-                env=env,
+            process = await asyncio.create_subprocess_exec(
+                *validate_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=temp_path,  # Run in temp dir to isolate
             )
-            if result.returncode != 0:
-                error_msg = f"Command failed with exit code {result.returncode}: {result.stderr}"
-                log_debug(f"Error: {error_msg}")
-                # Add detailed error logging
-                log_debug("Validation Error Details:")
-                log_debug(result.stderr)
-                if result.stdout:
-                    log_debug("Command Output:")
-                    log_debug(result.stdout)
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                process.communicate(),
+                timeout=args.timeout * 2,  # Longer timeout for validate
+            )
+            stdout = stdout_bytes.decode("utf-8", errors="ignore")
+            stderr = stderr_bytes.decode("utf-8", errors="ignore")
+            return_code = process.returncode
 
-                # Check for kubeVersion compatibility errors and retry with direct helm command
-                if "kubeVersion" in result.stderr and "incompatible" in result.stderr:
+            with open(stdout_file, "w", encoding="utf-8") as f:
+                f.write(stdout)
+            with open(stderr_file, "w", encoding="utf-8") as f:
+                f.write(stderr)
+
+            end_time = time.monotonic()
+            validation_duration = end_time - start_time
+            log_debug(
+                f"Validation command finished with code {return_code} in {validation_duration:.2f}s"
+            )
+
+            if return_code == 0:
+                log_debug("Validation successful.")
+                update_classification_stats(chart_name, classification, success=True)
+                return TestResult(
+                    chart_name=chart_name,
+                    chart_path=chart_path,
+                    classification=classification,
+                    status="SUCCESS",
+                    category="",
+                    details="",
+                    override_duration=chart_info.get("override_duration", 0),
+                    validation_duration=validation_duration,
+                )
+            else:
+                error_details = stderr.strip() or stdout.strip()
+                error_category = categorize_error(error_details)
+                log_debug(
+                    f"Validation failed. Category: {error_category}, Details: {error_details[:500]}..."
+                )
+
+                # --- 5. Fallback Logic for KUBERNETES_VERSION_ERROR ---
+                if error_category == "KUBERNETES_VERSION_ERROR":
                     log_debug(
-                        "Kubernetes version compatibility error detected, retrying with direct helm template command"
+                        "Kubernetes version error detected. Attempting fallback with direct Helm template."
                     )
-
-                    # Log the actual Kubernetes version being used in the error
-                    actual_version_match = re.search(
-                        r"incompatible with Kubernetes (v[0-9.]+)", result.stderr
-                    )
-                    if actual_version_match:
-                        actual_k8s_version = actual_version_match.group(1)
-                        log_debug(
-                            f"IMPORTANT: Chart validation is using Kubernetes {actual_k8s_version} despite our version flags!"
-                        )
-                    else:
-                        log_debug(
-                            "Could not determine actual Kubernetes version from error message"
-                        )
-
-                    # Extract the required Kubernetes version from the error message if possible
-                    required_version = None
-                    if "requires kubeVersion: " in result.stderr:
-                        version_start = result.stderr.find(
-                            "requires kubeVersion: "
-                        ) + len("requires kubeVersion: ")
-                        version_end = result.stderr.find(
-                            " which is incompatible", version_start
-                        )
-                        if version_end > version_start:
-                            required_version = result.stderr[
-                                version_start:version_end
-                            ].strip()
-                            log_debug(
-                                f"Chart requires Kubernetes version: {required_version}"
-                            )
-
-                    # Try multiple Kubernetes versions from newest to oldest
                     k8s_versions_to_try = [
-                        "v1.31.0",  # Future-proofing for newer charts
-                        "v1.30.0",  # Match chart-specific settings used elsewhere
-                        "v1.29.0",
-                        "v1.28.0",
-                        "v1.27.0",
-                        "v1.26.0",
-                        "v1.25.0",
-                    ]
-
-                    # If we extracted a required version, try with that specific version first
-                    if required_version:
-                        # Normalize the version format
-                        if not required_version.startswith(
-                            "v"
-                        ) and not required_version.startswith(">=v"):
-                            if required_version.startswith(">="):
-                                required_version = "v" + required_version[2:]
-                            else:
-                                required_version = "v" + required_version
-
-                        # If there's a comparison operator, extract just the version
-                        if ">=" in required_version:
-                            clean_version = required_version.replace(">=", "")
-                            # Add a slightly higher version to be safe
-                            k8s_versions_to_try.insert(0, clean_version)
+                        "1.28.0",
+                        "1.27.0",
+                        "1.25.0",
+                        "1.23.0",
+                    ]  # Example older versions
 
                     for k8s_version in k8s_versions_to_try:
-                        # Get major and minor from the version string
-                        version_parts = k8s_version.lstrip("v").split(".")
-                        if len(version_parts) >= 2:
-                            major = version_parts[0]
-                            minor = version_parts[1]
-
-                            log_debug(
-                                f"Trying with Kubernetes version: {k8s_version} (Major: {major}, Minor: {minor})"
+                        log_debug(
+                            f"Retrying with Helm template and K8s version: {k8s_version}"
+                        )
+                        helm_cmd = [
+                            "helm",
+                            "template",
+                            f"{chart_name.split('/')[-1]}-test",
+                            str(chart_path),
+                            "--values",
+                            str(override_file),
+                            "--values",
+                            str(values_file),
+                            "--kube-version",
+                            k8s_version,  # Use --kube-version in fallback
+                            # RETAIN --set Capabilities.* in fallback for charts that strictly need it
+                            "--set",
+                            f"Capabilities.KubeVersion.Version=v{k8s_version}",
+                            "--set",
+                            f"Capabilities.KubeVersion.Major={k8s_version.split('.')[0]}",
+                            "--set",
+                            f"Capabilities.KubeVersion.Minor={k8s_version.split('.')[1]}",
+                        ]
+                        log_debug(f"Fallback Helm command: {' '.join(helm_cmd)}")
+                        try:
+                            helm_process = await asyncio.create_subprocess_exec(
+                                *helm_cmd,
+                                stdout=asyncio.subprocess.PIPE,
+                                stderr=asyncio.subprocess.PIPE,
+                                cwd=temp_path,
+                            )
+                            (
+                                helm_stdout_bytes,
+                                helm_stderr_bytes,
+                            ) = await asyncio.wait_for(
+                                helm_process.communicate(), timeout=args.timeout
+                            )
+                            # We only need stderr for error checking
+                            # helm_stdout = helm_stdout_bytes.decode("utf-8", errors="ignore")  # Unused variable
+                            helm_stderr = helm_stderr_bytes.decode(
+                                "utf-8", errors="ignore"
                             )
 
-                            # Build direct helm template command with specific --kube-version flag
-                            direct_helm_cmd = [
-                                "helm",
-                                "template",
-                                "release-name",
-                                str(chart_path),
-                                "--kube-version",
-                                k8s_version,
-                                # Add debug flags to help diagnose version issues
-                                "--debug",
-                                "--values",
-                                str(override_file),
-                            ]
-
-                            # Add corresponding Capabilities values
-                            capabilities_values = [
-                                f"Capabilities.KubeVersion.Major={major}",
-                                f"Capabilities.KubeVersion.Minor={minor}",
-                                f"Capabilities.KubeVersion.GitVersion={k8s_version}",
-                                f"kubeVersion={k8s_version.lstrip('v')}",
-                            ]
-
-                            # Add any additional set values from the original command
-                            set_values = []
-                            i = 0
-                            while i < len(validate_cmd):
-                                if validate_cmd[i] == "--set" and i + 1 < len(
-                                    validate_cmd
-                                ):
-                                    set_val = validate_cmd[i + 1]
-                                    # Skip Kubernetes version related ones as we're setting our own
-                                    if not set_val.startswith(
-                                        "Capabilities.KubeVersion"
-                                    ) and not set_val.startswith("kubeVersion="):
-                                        set_values.append(set_val)
-                                    i += 2
-                                else:
-                                    i += 1
-
-                            # Add all set values to the helm command
-                            for set_value in set_values:
-                                direct_helm_cmd.extend(["--set", set_value])
-
-                            # Add our capabilities values
-                            for cap_value in capabilities_values:
-                                direct_helm_cmd.extend(["--set", cap_value])
-
-                            log_debug(
-                                f"Running direct helm command with {k8s_version}: {' '.join(direct_helm_cmd)}"
-                            )
-
-                            # Try the direct helm command
-                            try:
-                                # Use the same environment variables
-                                direct_env = os.environ.copy()
-                                direct_env["KUBE_VERSION"] = k8s_version
-
-                                helm_result = subprocess.run(
-                                    direct_helm_cmd,
-                                    capture_output=True,
-                                    text=True,
-                                    timeout=120,
-                                    env=direct_env,
-                                )
-                                if helm_result.returncode == 0:
-                                    log_debug(
-                                        f"Direct helm template command with {k8s_version} succeeded!"
-                                    )
-                                    validation_duration = time.time() - start_time
-                                    return TestResult(
-                                        chart_name,
-                                        chart_path,
-                                        classification,
-                                        "SUCCESS",
-                                        "SUCCESS",
-                                        f"Validation successful with direct helm command using K8s {k8s_version}",
-                                        0,
-                                        validation_duration,
-                                    )
-                                else:
-                                    log_debug(
-                                        f"Direct helm template command with {k8s_version} failed: {helm_result.stderr}"
-                                    )
-                            except Exception as helm_err:
+                            if helm_process.returncode == 0:
                                 log_debug(
-                                    f"Error running direct helm command with {k8s_version}: {helm_err}"
+                                    f"Fallback successful with K8s version {k8s_version}."
                                 )
+                                # Log success but still categorize original failure
+                                update_classification_stats(
+                                    chart_name, classification, success=False
+                                )  # Mark original as failure
+                                return TestResult(
+                                    chart_name=chart_name,
+                                    chart_path=chart_path,
+                                    classification=classification,
+                                    status="SUCCESS_FALLBACK",  # Indicate success via fallback
+                                    category=error_category,  # Keep original category
+                                    details=f"Original failure ({error_category}): {error_details[:200]}... Succeeded with fallback K8s version {k8s_version}",
+                                    override_duration=chart_info.get(
+                                        "override_duration", 0
+                                    ),
+                                    validation_duration=validation_duration,  # Use original duration
+                                )
+                            else:
+                                log_debug(
+                                    f"Fallback failed with K8s version {k8s_version}. Error: {helm_stderr.strip()[:200]}..."
+                                )
+                                # Continue to next version if this one failed
 
-                    log_debug("All Kubernetes version attempts failed")
+                        except asyncio.TimeoutError:
+                            log_debug(
+                                f"Fallback Helm template timed out for version {k8s_version}."
+                            )
+                            # Continue to next version
+                        except Exception as e:
+                            log_debug(
+                                f"Exception during fallback Helm template for version {k8s_version}: {e}"
+                            )
+                            # Continue to next version
 
-                # Check for other specific error patterns
-                elif "required" in result.stderr and "is required" in result.stderr:
-                    log_debug("Required value error detected")
-                elif "schema" in result.stderr and "specifications" in result.stderr:
-                    log_debug("Schema validation error detected")
+                    # If all fallbacks fail, return the original error
+                    log_debug("All fallback attempts failed. Reporting original error.")
+                    update_classification_stats(
+                        chart_name, classification, success=False
+                    )
+                    return TestResult(
+                        chart_name=chart_name,
+                        chart_path=chart_path,
+                        classification=classification,
+                        status="TEMPLATE_ERROR",  # Report original error type
+                        category=error_category,
+                        details=error_details,
+                        override_duration=chart_info.get("override_duration", 0),
+                        validation_duration=validation_duration,
+                    )
 
-                return TestResult(
-                    chart_name,
-                    chart_path,
-                    classification,
-                    "VALIDATE_ERROR",
-                    categorize_error(result.stderr),
-                    result.stderr.strip(),
-                    0,
-                    0,
-                )
-        except subprocess.TimeoutExpired:
-            error_msg = "Command timed out after 120 seconds"
-            log_debug(f"Error: {error_msg}")
+                # --- 6. Handle Other Errors (Non-K8s Version) ---
+                else:
+                    log_debug("Validation failed with non-K8s version error.")
+                    update_classification_stats(
+                        chart_name, classification, success=False
+                    )
+                    return TestResult(
+                        chart_name=chart_name,
+                        chart_path=chart_path,
+                        classification=classification,
+                        status="TEMPLATE_ERROR",  # Or more specific if possible
+                        category=error_category,
+                        details=error_details,
+                        override_duration=chart_info.get("override_duration", 0),
+                        validation_duration=validation_duration,
+                    )
+
+        except asyncio.TimeoutError:
+            end_time = time.monotonic()
+            validation_duration = end_time - start_time
+            log_debug(f"Validation command timed out after {validation_duration:.2f}s")
+            update_classification_stats(chart_name, classification, success=False)
             return TestResult(
-                chart_name,
-                chart_path,
-                classification,
-                "TIMEOUT_ERROR",
-                "TIMEOUT_ERROR",
-                error_msg,
-                0,
-                0,
+                chart_name=chart_name,
+                chart_path=chart_path,
+                classification=classification,
+                status="TIMEOUT_ERROR",
+                category="TIMEOUT_ERROR",
+                details=f"Validation timed out after {args.timeout * 2} seconds",
+                override_duration=chart_info.get("override_duration", 0),
+                validation_duration=validation_duration,
             )
         except Exception as e:
-            error_msg = f"Error executing command: {e}"
-            log_debug(f"Error: {error_msg}")
+            end_time = time.monotonic()
+            validation_duration = end_time - start_time
+            error_details = f"Unexpected error during validation: {e}"
+            log_debug(error_details)
+            update_classification_stats(chart_name, classification, success=False)
             return TestResult(
-                chart_name,
-                chart_path,
-                classification,
-                "VALIDATE_ERROR",
-                "VALIDATE_ERROR",
-                error_msg,
-                0,
-                0,
+                chart_name=chart_name,
+                chart_path=chart_path,
+                classification=classification,
+                status="UNKNOWN_ERROR",
+                category="UNKNOWN_ERROR",
+                details=error_details,
+                override_duration=chart_info.get("override_duration", 0),
+                validation_duration=validation_duration,
             )
-
-        # --- Success ---
-        validation_duration = time.time() - start_time
-        return TestResult(
-            chart_name,
-            chart_path,
-            classification,
-            "SUCCESS",
-            "SUCCESS",
-            "Validation successful",
-            0,
-            validation_duration,
-        )
-
-    except Exception as e:
-        error_msg = f"Unexpected error validating chart {chart_name}: {str(e)}"
-        log_debug(f"Error: {error_msg}")
-        import traceback
-
-        traceback.print_exc(file=debug_log)
-        return TestResult(
-            chart_name,
-            chart_path,
-            classification,
-            "UNKNOWN_ERROR",
-            "UNKNOWN_ERROR",
-            error_msg,
-            0,
-            0,
-        )
-
-    finally:
-        # Close debug log file
-        debug_log.close()
 
 
 # Repository management functions

@@ -32,6 +32,7 @@ const (
 	ExitChartProcessingFailed = 15 // Failed to process chart
 	ExitHelmCommandFailed     = 16 // Helm command execution failed
 	ExitHelmInteractionError  = 17 // Error during Helm SDK interaction
+	ExitHelmTemplateFailed    = 18 // Helm template command failed specifically
 
 	// Runtime Errors (20-29)
 	ExitGeneralRuntimeError = 20 // General runtime/system error
@@ -82,6 +83,7 @@ var CodeDescriptions = map[int]string{
 	ExitChartProcessingFailed:   "Failed to process chart",
 	ExitHelmCommandFailed:       "Helm command execution failed",
 	ExitHelmInteractionError:    "Error during Helm SDK interaction",
+	ExitHelmTemplateFailed:      "Helm template command failed",
 	ExitGeneralRuntimeError:     "General runtime/system error",
 	ExitIOError:                 "IO operation error",
 	ExitInternalError:           "Internal error in command execution",

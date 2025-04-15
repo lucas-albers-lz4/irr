@@ -4,26 +4,26 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
-	"helm.sh/helm/v3/pkg/action"
-	"helm.sh/helm/v3/pkg/chart/loader"
-	"helm.sh/helm/v3/pkg/chartutil"
-	"helm.sh/helm/v3/pkg/cli"
-	"helm.sh/helm/v3/pkg/strvals"
-
+	"github.com/lalbers/irr/internal/helm"
 	"github.com/lalbers/irr/pkg/exitcodes"
 	"github.com/lalbers/irr/pkg/fileutil"
 	log "github.com/lalbers/irr/pkg/log"
 	"github.com/spf13/cobra"
 )
 
+// DefaultKubernetesVersion defines the default K8s version used for validation
+const DefaultKubernetesVersion = "1.31.0"
+
 // newValidateCmd creates a new validate command
 func newValidateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "validate",
 		Short: "Validate a Helm chart with override values",
-		Long: `Validate a Helm chart with override values.
-This command validates that the chart can be templated with the provided values.`,
+		Long: `Validate a Helm chart with override values.\n` +
+			`This command validates that the chart can be templated with the provided values.\n` +
+			fmt.Sprintf("Defaults to Kubernetes version %s if --kube-version is not specified.", DefaultKubernetesVersion),
 		RunE: runValidate,
 	}
 
@@ -34,6 +34,7 @@ This command validates that the chart can be templated with the provided values.
 	cmd.Flags().String("output-file", "", "Write template output to file instead of validating")
 	cmd.Flags().Bool("debug-template", false, "Print template output for debugging")
 	cmd.Flags().String("namespace", "", "Namespace to use for templating")
+	cmd.Flags().String("kube-version", "", fmt.Sprintf("Kubernetes version for validation (e.g., '1.31.0'). Defaults to %s", DefaultKubernetesVersion))
 
 	return cmd
 }
@@ -153,35 +154,6 @@ func getValuesFiles(cmd *cobra.Command) ([]string, error) {
 	return valuesFiles, nil
 }
 
-// loadAndMergeValues loads values from files and merges them with set values
-func loadAndMergeValues(valuesFiles, setValues []string) (map[string]interface{}, error) {
-	finalValues := map[string]interface{}{}
-
-	// Load values from files
-	for _, valueFile := range valuesFiles {
-		currentValues, err := chartutil.ReadValuesFile(valueFile)
-		if err != nil {
-			return nil, &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitChartLoadFailed,
-				Err:  fmt.Errorf("failed to read values file %s: %w", valueFile, err),
-			}
-		}
-		finalValues = chartutil.CoalesceTables(finalValues, currentValues.AsMap())
-	}
-
-	// Handle set values
-	for _, value := range setValues {
-		if err := strvals.ParseInto(value, finalValues); err != nil {
-			return nil, &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitInputConfigurationError,
-				Err:  fmt.Errorf("failed to parse set value %q: %w", value, err),
-			}
-		}
-	}
-
-	return finalValues, nil
-}
-
 // handleOutput handles the output of the template validation
 func handleOutput(outputFile string, debugTemplate bool, manifest string) error {
 	switch {
@@ -256,48 +228,74 @@ func runValidate(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	// Initialize Helm environment
-	settings := cli.New()
-
-	// Create action config
-	actionConfig := new(action.Configuration)
-	if err := actionConfig.Init(settings.RESTClientGetter(), namespace, "", log.Infof); err != nil {
+	kubeVersion, err := cmd.Flags().GetString("kube-version")
+	if err != nil {
 		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitHelmCommandFailed,
-			Err:  fmt.Errorf("failed to initialize Helm action config: %w", err),
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get kube-version flag: %w", err),
+		}
+	}
+	if kubeVersion == "" {
+		kubeVersion = DefaultKubernetesVersion
+		log.Debugf("No --kube-version specified, using default: %s", DefaultKubernetesVersion)
+	}
+
+	log.Infof("Validating chart %s with release name %s", chartPath, releaseName)
+
+	// Prepare options for helm template
+	templateOptions := &helm.TemplateOptions{
+		ReleaseName: releaseName,
+		ChartPath:   chartPath,
+		ValuesFiles: valuesFiles,
+		SetValues:   setValues,
+		Namespace:   namespace,
+		KubeVersion: kubeVersion,
+	}
+
+	// Execute helm template
+	result, err := helm.HelmTemplateFunc(templateOptions)
+	if err != nil {
+		// Attempt to return a more specific exit code if possible
+		// Extract the error message for matching
+		errStr := err.Error()
+		var exitCode int
+		var exitErr error
+
+		switch {
+		case strings.Contains(errStr, "chart path not found"):
+			exitCode = exitcodes.ExitChartNotFound
+			exitErr = err
+		case strings.Contains(errStr, "failed to load chart") || strings.Contains(errStr, "failed to read values file"):
+			exitCode = exitcodes.ExitChartLoadFailed
+			exitErr = err
+		case strings.Contains(errStr, "failed to parse set value"):
+			exitCode = exitcodes.ExitInputConfigurationError
+			exitErr = err
+		case strings.Contains(errStr, "failed to template chart") || strings.Contains(errStr, "Helm template failed"):
+			exitCode = exitcodes.ExitHelmTemplateFailed
+			exitErr = err
+		default:
+			// Generic Helm error
+			exitCode = exitcodes.ExitHelmCommandFailed
+			exitErr = err
+		}
+
+		return &exitcodes.ExitCodeError{
+			Code: exitCode,
+			Err:  exitErr,
 		}
 	}
 
-	// Load chart
-	chart, err := loader.Load(chartPath)
-	if err != nil {
+	// Check result (although Template should return error on failure)
+	if !result.Success {
+		// This path might be less likely now with SDK error handling, but keep for robustness
+		log.Errorf("Helm template validation failed: %s", result.Stderr)
 		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitChartLoadFailed,
-			Err:  fmt.Errorf("failed to load chart: %w", err),
+			Code: exitcodes.ExitHelmTemplateFailed,
+			Err:  fmt.Errorf("helm template command failed: %s", result.Stderr),
 		}
 	}
 
-	// Load and merge values
-	finalValues, err := loadAndMergeValues(valuesFiles, setValues)
-	if err != nil {
-		return err
-	}
-
-	// Create install action for validation
-	install := action.NewInstall(actionConfig)
-	install.ReleaseName = releaseName
-	install.Namespace = namespace
-	install.DryRun = true
-	install.ClientOnly = true
-
-	// Run template validation
-	rel, err := install.Run(chart, finalValues)
-	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitHelmCommandFailed,
-			Err:  fmt.Errorf("helm template validation failed: %w", err),
-		}
-	}
-
-	return handleOutput(outputFile, debugTemplate, rel.Manifest)
+	// Handle output (write to file or log success)
+	return handleOutput(outputFile, debugTemplate, result.Stdout)
 }
