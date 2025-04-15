@@ -715,8 +715,7 @@ async def test_chart_validate(chart_info, target_registry, irr_binary, session, 
             str(override_file),  # Use the generated override file
             "--values",
             str(values_file),  # Use the classification-specific values
-            "--kube-version",  # Use the new flag
-            DEFAULT_TEST_KUBE_VERSION,  # Use the default K8s version
+            f"--kube-version={DEFAULT_TEST_KUBE_VERSION}",  # Pass as a single argument with value
             # REMOVED primary --set flags for kubeVersion/Capabilities
             # "--set",
             # f"kubeVersion={DEFAULT_TEST_KUBE_VERSION}",
