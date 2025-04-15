@@ -51,6 +51,17 @@ jobs:
           
       - name: Print Go Version
         run: go version
+
+      - name: Install Helm if missing (macOS only)
+        if: matrix.goos == 'darwin'
+        run: |
+          if ! command -v helm &> /dev/null; then
+            echo "Helm not found. Installing via Homebrew..."
+            brew install helm
+          else
+            echo "Helm already installed. Skipping installation."
+          fi
+
       - name: Print Helm Version
         run: helm version
       - name: Run tests
