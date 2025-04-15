@@ -134,17 +134,17 @@ _**Goal:** Systematically increase unit and integration test coverage across the
     - [x] Test recursive analysis with limited nesting depth
     - [x] *Note: Full coverage of recursive analysis is challenging, focus on key paths*
 
-- [ ] **Step 5: Filesystem Mocking - Incremental Roll-out**
+- [x] **Step 5: Filesystem Mocking - Incremental Roll-out**
   - [x] Apply consistent pattern to one package at a time:
     - [x] `pkg/helm`: Update SDK to use injectable filesystem
     - [x] `pkg/fileutil`: Fix error handling in filesystem mocking tests
     - [x] `pkg/chart`: Update Loader and Generator to use injectable filesystem
     - [x] `pkg/registry`: Update registry mapping file operations
-    - [ ] `cmd/irr`: Allow filesystem injection for file operations
-  - [ ] Test Strategy:
-    - [ ] When testing a package, first update it to use the filesystem abstraction
-    - [ ] Then write tests using the mocking capability
-    - [ ] Follow the standard pattern developed in Step 2:
+    - [x] `cmd/irr`: Allow filesystem injection for file operations
+  - [x] Test Strategy:
+    - [x] When testing a package, first update it to use the filesystem abstraction
+    - [x] Then write tests using the mocking capability
+    - [x] Follow the standard pattern developed in Step 2:
       ```go
       // Example pattern for filesystem mocking in tests
       func TestWithMockFs(t *testing.T) {
@@ -163,19 +163,109 @@ _**Goal:** Systematically increase unit and integration test coverage across the
           // ...
       }
       ```
-  - [ ] Document architectural tradeoffs and approach:
-    - [ ] Add guidance about when to use global variables vs. dependency injection
-    - [ ] Document patterns for test setup/teardown with mock filesystem
-    - [ ] Update mocking section in testing documentation
+  - [x] Document architectural tradeoffs and approach:
+    - [x] Add guidance about when to use global variables vs. dependency injection
+    - [x] Document patterns for test setup/teardown with mock filesystem
+    - [x] Update mocking section in testing documentation
 
 ### Phase 2.2: Target Core Functionality Gaps (Goal: ~50-60% in Core Packages)
-- [ ] **Analyze Coverage Reports:** Use `go tool cover -html=coverage.out` to visualize uncovered lines in key packages.
-- [ ] **Increase Coverage in Core Packages:**
-  - [ ] `pkg/chart` (Current: 52.3%): Focus on `Load`, `validateHelmTemplateInternal`, `OverridesToYAML`, error handling, rules integration.
-  - [ ] `pkg/override` (Current: 51.1%): Test YAML generation (`GenerateYAMLOverrides`, `GenerateYAML`, `ToYAML`), path construction/manipulation (`ConstructPath`, `GetValueAtPath`), merging (`mergeMaps`), and error wrapping.
-  - [ ] `pkg/rules` (Current: 60.2%): Test core rule application (`ApplyRules`, `ApplyRulesToMap`), registration (`AddRule`), enabling/disabling (`SetEnabled`), and provider detection (`DetectChartProvider`).
-  - [ ] `pkg/analysis` (Current: 72.4%): Add tests for uncovered functions (`Load`, `IsGlobalRegistry`, `ParseImageString`, `mergeAnalysis`).
-  - [ ] `pkg/image` (Current: 71.3%): Add tests for validation (`IsValid*`), error types, and edge cases in parsing/normalization.
+
+#### Implementation Guidelines & Clarifications
+
+- **Test Fixtures & Data Structure**:
+  - Create a centralized `pkg/testutil/fixtures` directory for test data
+  - Add subdirectories for each core package (e.g., `fixtures/chart`, `fixtures/rules`)
+  - Include representative chart metadata, rule definitions, and image references
+  - Document fixture usage patterns in a README within the directory
+
+- **CI Integration**:
+  - Add a coverage check using GitHub Actions or similar CI system
+  - Set minimum threshold at 50% for core packages
+  - Use [codecov](https://codecov.io/) or [coveralls](https://coveralls.io/) for visualization
+  - Add coverage badge to README.md
+
+- **Logging Test Approach**:
+  - Implement a helper in `pkg/testutil` for capturing and asserting log output:
+    ```go
+    // CaptureLogOutput redirects log output during test execution and returns captured content
+    func CaptureLogOutput(logLevel log.Level, testFunc func()) string {
+        // Save original stderr
+        // Redirect to buffer
+        // Run test function
+        // Restore stderr
+        // Return captured output
+    }
+    ```
+  - Use this helper when testing rule application and other logging functionality
+
+- **Error Handling Standards**:
+  - Always test both success and error paths
+  - Verify that custom error types are properly wrapped
+  - Assert error message content to ensure context is preserved
+  - Verify error types using `errors.Is()` and `errors.As()` in tests
+
+- **Analyze Coverage Reports:** Use `go tool cover -html=coverage.out` to visualize uncovered lines in key packages.
+
+- **Increase Coverage in Core Packages:**
+  - **`pkg/chart` (Current: 52.3%)**:
+    - Focus on `Load`, `validateHelmTemplateInternal`, `OverridesToYAML`, error handling, rules integration.
+    - **Clarification - Rules Integration**: 
+      - Test chart loading with and without rules enabled
+      - Add mock implementation of `rules.Registry` for testing
+      - Specifically test the `SetRulesRegistry(registry interface{})` function with valid and nil input
+      - Verify rule application during the chart loading and validation process
+      - Use dependency injection for testing charts with different rule sets
+
+  - **`pkg/override` (Current: 51.1%)**:
+    - Test YAML generation (`GenerateYAMLOverrides`, `GenerateYAML`, `ToYAML`), path construction/manipulation (`ConstructPath`, `GetValueAtPath`), merging (`mergeMaps`), and error wrapping.
+    - **Clarification - Error Wrapping**:
+      - Test all error wrappers defined in `pkg/override/errors.go`
+      - Verify that error hierarchies are maintained (e.g., `ErrPathParsing` wraps other errors)
+      - Use `errors.Is()` to verify error types in all error scenarios
+      - Ensure wrapped errors include context (e.g., path parts, key names)
+    - **Clarification - Merging Logic**:
+      - Test `mergeMaps` with the following scenarios:
+        - Simple merge (non-overlapping keys)
+        - Nested merge (overlapping maps)
+        - Type conflicts (map vs. primitive at same key)
+        - Array handling
+        - Deep nesting (3+ levels)
+        - Edge cases (nil maps, empty maps)
+
+  - **`pkg/rules` (Current: 60.2%)**:
+    - Test core rule application (`ApplyRules`, `ApplyRulesToMap`), registration (`AddRule`), enabling/disabling (`SetEnabled`), and provider detection (`DetectChartProvider`).
+    - **Clarification - Provider Detection**:
+      - Create a suite of test chart metadata fixtures in `pkg/testutil/fixtures/rules/chartmeta`
+      - Include metadata representing different confidence levels for Bitnami detection
+      - Test each confidence level with appropriate metadata combinations
+      - Implement edge cases (empty metadata, conflicting indicators)
+    - **Clarification - Log Output Assertions**:
+      - Use the `CaptureLogOutput` helper to test that rule application logs expected info
+      - Verify rule application logs include:
+        - Rule name
+        - Parameter path/value
+        - Reason for application
+      - Test with different log levels to verify filtering works correctly
+
+  - **`pkg/analysis` (Current: 72.4%)**:
+    - Add tests for uncovered functions (`Load`, `IsGlobalRegistry`, `ParseImageString`, `mergeAnalysis`).
+    - **Clarification - Merging Analysis**:
+      - Define test cases for `mergeAnalysis` specifically addressing:
+        - Merging charts with different names/versions
+        - Combining image lists without duplicates
+        - Handling error lists and skipped items
+        - Verifying pattern merging correctness
+      - Document expected behavior for each scenario in comments
+
+  - **`pkg/image` (Current: 71.3%)**:
+    - Add tests for validation (`IsValid*`), error types, and edge cases in parsing/normalization.
+    - **Clarification - Image Validation**:
+      - Create a comprehensive image test fixture file with:
+        - Valid images with various components (registry, repository, tag, digest)
+        - Invalid images with specific validation failures
+        - Edge cases (empty strings, unusual formats)
+      - Test each validation function against all fixture entries
+      - Document what makes an image valid/invalid in comments
 
 ### Phase 2.3: Enhance High-Coverage & Local Integration (Goal: ~70%+ in Core)
 - [ ] **Refine Existing Tests:** Improve tests in well-covered packages (`pkg/generator`, `pkg/helm`, `pkg/registry`, `pkg/strategy`) by adding edge cases or complex scenarios.
