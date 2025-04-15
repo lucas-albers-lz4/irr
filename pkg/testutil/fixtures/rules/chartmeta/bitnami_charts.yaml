@@ -1,0 +1,124 @@
+# Test fixtures for chart metadata used in provider detection tests
+# Specifically for testing Bitnami chart detection with different confidence levels
+
+# High confidence Bitnami chart metadata (multiple indicators)
+high_confidence:
+  - name: "nginx-with-multiple-indicators"
+    metadata:
+      name: "nginx"
+      version: "9.3.0"
+      home: "https://bitnami.com/stack/nginx"
+      sources:
+        - "https://github.com/bitnami/charts/tree/master/bitnami/nginx"
+      maintainers:
+        - name: "Bitnami"
+          email: "containers@bitnami.com"
+      annotations:
+        category: "Infrastructure"
+        images: |-
+          - name: nginx
+            repository: docker.io/bitnami/nginx
+            tag: 1.21.5-debian-10-r0
+            pullPolicy: IfNotPresent
+    expected_detection: true
+    confidence_level: "high"
+    
+  - name: "redis-with-multiple-indicators"
+    metadata:
+      name: "redis"
+      version: "16.8.5"
+      home: "https://github.com/bitnami/charts/tree/master/bitnami/redis"
+      sources:
+        - "https://github.com/bitnami/containers/tree/main/bitnami/redis"
+      maintainers:
+        - name: "Broadcom"
+          url: "https://bitnami.com"
+      dependencies:
+        - name: "common"
+          repository: "https://charts.bitnami.com/bitnami"
+          tags:
+            - "bitnami-common"
+    expected_detection: true
+    confidence_level: "high"
+
+# Medium confidence Bitnami chart metadata (single strong indicator)
+medium_confidence:
+  - name: "single-homepage-indicator"
+    metadata:
+      name: "generic-chart"
+      version: "1.0.0"
+      home: "https://bitnami.com/stack/generic"
+      maintainers:
+        - name: "Some Maintainer"
+          email: "generic@example.com"
+    expected_detection: true
+    confidence_level: "medium"
+    
+  - name: "single-source-indicator"
+    metadata:
+      name: "generic-chart"
+      version: "1.0.0"
+      sources:
+        - "https://github.com/bitnami/charts/tree/master/bitnami/generic"
+      maintainers:
+        - name: "Some Maintainer"
+          email: "generic@example.com"
+    expected_detection: true
+    confidence_level: "medium"
+    
+  - name: "single-maintainer-indicator"
+    metadata:
+      name: "generic-chart"
+      version: "1.0.0"
+      maintainers:
+        - name: "Bitnami"
+          email: "generic@example.com"
+    expected_detection: true
+    confidence_level: "medium"
+    
+  - name: "single-repository-indicator"
+    metadata:
+      name: "generic-chart"
+      version: "1.0.0"
+      repository: "https://charts.bitnamicharts.com/some-chart"
+    expected_detection: true
+    confidence_level: "medium"
+
+# Low confidence / ambiguous (needs secondary confirmation)
+ambiguous:
+  - name: "ambiguous-bitnami-reference"
+    metadata:
+      name: "ambiguous-chart"
+      version: "1.0.0"
+      description: "This chart references bitnami in the description but has no other indicators"
+    expected_detection: false
+    confidence_level: "low"
+    
+  - name: "similar-but-not-bitnami"
+    metadata:
+      name: "almost-bitnami"
+      version: "1.0.0"
+      home: "https://notbitnami.com/stack/nginx"
+      maintainers:
+        - name: "BitnamiLike"
+          email: "containers@example.com"
+    expected_detection: false
+    confidence_level: "low"
+
+# Non-Bitnami charts (negative test cases)
+non_bitnami:
+  - name: "standard-chart"
+    metadata:
+      name: "standard-chart"
+      version: "1.0.0"
+      home: "https://helm.sh"
+      sources:
+        - "https://github.com/helm/charts"
+      maintainers:
+        - name: "Helm Maintainers"
+          email: "maintainers@helm.sh"
+    expected_detection: false
+    
+  - name: "empty-metadata"
+    metadata: {}
+    expected_detection: false 

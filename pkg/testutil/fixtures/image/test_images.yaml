@@ -1,0 +1,103 @@
+# Test fixture for image validation tests
+# Contains valid and invalid image references to test validation functions
+
+# Valid images with various components
+valid_images:
+  # Basic valid images
+  - name: "simple"
+    image: "nginx"
+    description: "Simple image name without tag"
+
+  - name: "simple_with_tag"
+    image: "nginx:latest"
+    description: "Simple image with tag"
+
+  - name: "simple_with_specific_tag"
+    image: "nginx:1.19.3"
+    description: "Simple image with specific version tag"
+
+  - name: "with_registry"
+    image: "docker.io/nginx:latest"
+    description: "Image with registry specified"
+
+  - name: "with_complex_registry"
+    image: "gcr.io/google-samples/hello-app:1.0"
+    description: "Image with complex registry path"
+
+  - name: "with_port_in_registry"
+    image: "localhost:5000/my-app:1.0"
+    description: "Image with port in registry"
+
+  - name: "with_digest"
+    image: "alpine@sha256:b3237212c52a11c2469ef7536775d165b0fc448f565a543eacef39dae369a7d7"
+    description: "Image with digest instead of tag"
+
+  - name: "with_registry_and_digest"
+    image: "docker.io/alpine@sha256:b3237212c52a11c2469ef7536775d165b0fc448f565a543eacef39dae369a7d7"
+    description: "Image with registry and digest"
+
+  - name: "with_namespace"
+    image: "bitnami/nginx:latest"
+    description: "Image with namespace"
+
+  - name: "with_registry_namespace_tag"
+    image: "docker.io/bitnami/nginx:1.19.3"
+    description: "Image with all components: registry, namespace, name, and tag"
+
+  - name: "with_private_registry_auth"
+    image: "username:password@myregistry.io/myapp:1.0"
+    description: "Image with authentication credentials"
+
+# Invalid images for validation testing
+invalid_images:
+  - name: "empty"
+    image: ""
+    description: "Empty image string"
+    expected_error: "empty image reference"
+
+  - name: "spaces_only"
+    image: "   "
+    description: "Image string with only spaces"
+    expected_error: "empty image reference"
+
+  - name: "invalid_characters"
+    image: "nginx:lat@est"
+    description: "Invalid characters in tag"
+    expected_error: "invalid tag format"
+
+  - name: "invalid_tag_format"
+    image: "nginx:1.0:2.0"
+    description: "Multiple colons in tag"
+    expected_error: "invalid tag format"
+
+  - name: "invalid_registry_format"
+    image: "docker..io/nginx:latest"
+    description: "Invalid registry format with double periods"
+    expected_error: "invalid registry format"
+
+  - name: "invalid_digest"
+    image: "alpine@sha256:invaliddigest123"
+    description: "Invalid digest format"
+    expected_error: "invalid digest format"
+
+  - name: "missing_image_name"
+    image: "docker.io/:latest"
+    description: "Missing image name"
+    expected_error: "missing image name"
+
+# Edge cases for testing specific validation scenarios
+edge_cases:
+  - name: "very_long_tag"
+    image: "nginx:this-is-an-extremely-long-tag-name-that-might-cause-issues-in-some-systems-but-is-technically-valid"
+    description: "Extremely long tag name"
+    valid: true
+
+  - name: "unusual_but_valid_characters"
+    image: "my-app_service.web:v1.0.0-alpha.1"
+    description: "Image with unusual but valid characters in name and tag"
+    valid: true
+
+  - name: "unusual_registry"
+    image: "registry.k8s.io/kube-apiserver:v1.27.3"
+    description: "Image from less common registry"
+    valid: true 

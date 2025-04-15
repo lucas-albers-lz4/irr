@@ -1,0 +1,144 @@
+# Test fixtures for override merge testing
+# Contains scenarios to test different merge situations
+
+# Simple merge (non-overlapping keys)
+simple_merge:
+  # First map
+  map1:
+    key1: value1
+    key2: value2
+  # Second map
+  map2:
+    key3: value3
+    key4: value4
+  # Expected result
+  expected:
+    key1: value1
+    key2: value2
+    key3: value3
+    key4: value4
+
+# Nested merge (overlapping maps)
+nested_merge:
+  # First map with nested structure
+  map1:
+    top_level: value
+    nested:
+      key1: value1
+      key2: value2
+  # Second map with overlapping nested structure
+  map2:
+    other_top: other_value
+    nested:
+      key3: value3
+      key4: value4
+  # Expected result
+  expected:
+    top_level: value
+    other_top: other_value
+    nested:
+      key1: value1
+      key2: value2
+      key3: value3
+      key4: value4
+
+# Type conflicts (map vs. primitive at same key)
+type_conflicts:
+  # Map with a map value at 'conflict'
+  map1:
+    conflict:
+      nested: value
+    non_conflict: string_value
+  # Map with a primitive value at 'conflict'
+  map2:
+    conflict: primitive_value
+    other: other_value
+  # Expected result (primitive overwrites map)
+  expected:
+    conflict: primitive_value
+    non_conflict: string_value
+    other: other_value
+
+# Array handling
+array_handling:
+  # First map with arrays
+  map1:
+    top_level: value1
+    array_key:
+      - item1
+      - item2
+  # Second map with overlapping array
+  map2:
+    top_level: value2
+    array_key:
+      - item3
+      - item4
+  # Expected result (second array replaces first)
+  expected:
+    top_level: value2
+    array_key:
+      - item3
+      - item4
+
+# Deep nesting (3+ levels)
+deep_nesting:
+  # Deeply nested first map
+  map1:
+    level1:
+      level2:
+        level3:
+          key1: value1
+        level3b:
+          key2: value2
+  # Second map with additions at deep levels
+  map2:
+    level1:
+      level2:
+        level3:
+          key3: value3
+        new_level3:
+          key4: value4
+  # Expected result
+  expected:
+    level1:
+      level2:
+        level3:
+          key1: value1
+          key3: value3
+        level3b:
+          key2: value2
+        new_level3:
+          key4: value4
+
+# Edge cases
+edge_cases:
+  # Nil map
+  nil_map:
+    map1: null
+    map2:
+      key: value
+    expected:
+      key: value
+  
+  # Empty map
+  empty_map:
+    map1: {}
+    map2:
+      key: value
+    expected:
+      key: value
+  
+  # Numbers and booleans
+  mixed_types:
+    map1:
+      string: text
+      number: 42
+      boolean: true
+    map2:
+      string: new_text
+      number: 100
+      boolean: false
+    expected:
+      string: new_text
+      number: 100
+      boolean: false 

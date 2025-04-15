@@ -1,0 +1,157 @@
+# Test fixtures for analysis merge testing
+# Contains scenarios to test different analysis merge situations
+
+# Merging charts with different names/versions
+different_charts:
+  # First analysis
+  analysis1:
+    chart_name: "chart1"
+    chart_version: "1.0.0"
+    images:
+      - "nginx:1.19.3"
+      - "redis:6.0.9"
+    errors:
+      - "error in chart1"
+    skipped:
+      - "skipped in chart1"
+    patterns:
+      - "*.image"
+      - "*.repository"
+  
+  # Second analysis
+  analysis2:
+    chart_name: "chart2"
+    chart_version: "2.0.0"
+    images:
+      - "postgres:13.1"
+      - "memcached:1.6.9"
+    errors:
+      - "error in chart2"
+    skipped:
+      - "skipped in chart2"
+    patterns:
+      - "*.image"
+      - "*.containerImage"
+  
+  # Expected merged result
+  expected:
+    chart_name: "merged"  # Or however the implementation handles different chart names
+    chart_version: ""     # Should be empty or combined somehow
+    images:
+      - "nginx:1.19.3"
+      - "redis:6.0.9"
+      - "postgres:13.1"
+      - "memcached:1.6.9"
+    errors:
+      - "error in chart1"
+      - "error in chart2"
+    skipped:
+      - "skipped in chart1"
+      - "skipped in chart2"
+    patterns:
+      - "*.image"
+      - "*.repository"
+      - "*.containerImage"
+
+# Combining image lists without duplicates
+duplicate_images:
+  # First analysis
+  analysis1:
+    chart_name: "chart1"
+    chart_version: "1.0.0"
+    images:
+      - "nginx:1.19.3"
+      - "redis:6.0.9"
+    patterns:
+      - "*.image"
+  
+  # Second analysis with duplicate images
+  analysis2:
+    chart_name: "chart1"
+    chart_version: "1.0.0"
+    images:
+      - "nginx:1.19.3"  # Duplicate
+      - "postgres:13.1"
+    patterns:
+      - "*.repository"
+  
+  # Expected merged result
+  expected:
+    chart_name: "chart1"
+    chart_version: "1.0.0"
+    images:
+      - "nginx:1.19.3"  # Only appears once
+      - "redis:6.0.9"
+      - "postgres:13.1"
+    patterns:
+      - "*.image"
+      - "*.repository"
+
+# Handling error lists
+error_handling:
+  # First analysis with errors
+  analysis1:
+    chart_name: "chart1"
+    chart_version: "1.0.0"
+    images:
+      - "nginx:1.19.3"
+    errors:
+      - "error1"
+      - "error2"
+    skipped: []
+  
+  # Second analysis with no errors
+  analysis2:
+    chart_name: "chart1"
+    chart_version: "1.0.0"
+    images:
+      - "redis:6.0.9"
+    errors: []
+    skipped:
+      - "skipped1"
+  
+  # Expected merged result
+  expected:
+    chart_name: "chart1"
+    chart_version: "1.0.0"
+    images:
+      - "nginx:1.19.3"
+      - "redis:6.0.9"
+    errors:
+      - "error1"
+      - "error2"
+    skipped:
+      - "skipped1"
+
+# Empty analysis merge
+empty_analysis:
+  # Empty first analysis
+  analysis1:
+    chart_name: ""
+    chart_version: ""
+    images: []
+    errors: []
+    skipped: []
+    patterns: []
+  
+  # Second analysis with content
+  analysis2:
+    chart_name: "chart2"
+    chart_version: "2.0.0"
+    images:
+      - "nginx:1.19.3"
+    errors: []
+    skipped: []
+    patterns:
+      - "*.image"
+  
+  # Expected merged result (should equal analysis2)
+  expected:
+    chart_name: "chart2"
+    chart_version: "2.0.0"
+    images:
+      - "nginx:1.19.3"
+    errors: []
+    skipped: []
+    patterns:
+      - "*.image" 

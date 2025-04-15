@@ -1,0 +1,48 @@
+# Simple chart fixture for testing chart loading
+apiVersion: v2
+name: basic-chart
+version: 1.0.0
+description: A basic chart for testing
+type: application
+appVersion: "1.16.0"
+
+# Dependencies
+dependencies:
+  - name: common
+    version: "1.0.0"
+    repository: "https://charts.example.com/common"
+
+# Maintainers
+maintainers:
+  - name: Test User
+    email: test@example.com
+
+# Other fields
+home: https://example.com/charts/basic-chart
+keywords:
+  - testing
+  - basic
+sources:
+  - https://github.com/example/charts/basic-chart
+
+# Values for testing
+values:
+  image:
+    repository: nginx
+    tag: "1.19.3"
+    pullPolicy: IfNotPresent
+  
+  config:
+    enabled: true
+    data:
+      key1: value1
+      key2: value2
+  
+  deployment:
+    replicas: 1
+    podAnnotations:
+      prometheus.io/scrape: "true"
+  
+  service:
+    type: ClusterIP
+    port: 80 
