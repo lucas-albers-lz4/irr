@@ -19,6 +19,7 @@ import (
 
 	"github.com/lalbers/irr/pkg/analysis"
 	"github.com/lalbers/irr/pkg/debug"
+	"github.com/lalbers/irr/pkg/fileutil"
 	"github.com/lalbers/irr/pkg/image"
 	log "github.com/lalbers/irr/pkg/log"
 	"github.com/lalbers/irr/pkg/override"
@@ -90,11 +91,37 @@ func (e *ThresholdError) Unwrap() error { return e.Err }
 var _ analysis.ChartLoader = (*GeneratorLoader)(nil)
 
 // GeneratorLoader provides functionality to load Helm charts
-type GeneratorLoader struct{}
+type GeneratorLoader struct {
+	fs fileutil.FS // Filesystem implementation to use
+}
+
+// NewGeneratorLoader creates a new GeneratorLoader with the provided filesystem.
+// If fs is nil, it uses the default filesystem.
+func NewGeneratorLoader(fs fileutil.FS) *GeneratorLoader {
+	if fs == nil {
+		fs = fileutil.DefaultFS
+	}
+	return &GeneratorLoader{fs: fs}
+}
+
+// SetFS replaces the filesystem used by the loader and returns a cleanup function
+func (l *GeneratorLoader) SetFS(fs fileutil.FS) func() {
+	oldFS := l.fs
+	l.fs = fs
+	return func() {
+		l.fs = oldFS
+	}
+}
 
 // Load implements analysis.ChartLoader interface, returning *chart.Chart
 func (l *GeneratorLoader) Load(chartPath string) (*chart.Chart, error) {
 	debug.Printf("GeneratorLoader: Loading chart from %s", chartPath)
+
+	// Verify the chart path exists using our injectable filesystem
+	_, err := l.fs.Stat(chartPath)
+	if err != nil {
+		return nil, fmt.Errorf("chart path stat error %s: %w", chartPath, err)
+	}
 
 	// Use helm's loader directly
 	loadedChart, err := loader.Load(chartPath)
@@ -192,7 +219,7 @@ func NewGenerator(
 ) *Generator {
 	// Set up a default chart loader if none was provided
 	if chartLoader == nil {
-		chartLoader = NewDefaultLoader(nil)
+		chartLoader = NewGeneratorLoader(fileutil.DefaultFS)
 	}
 
 	return &Generator{
