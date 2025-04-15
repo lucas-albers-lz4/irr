@@ -8,7 +8,7 @@ command: "$HELM_PLUGIN_DIR/bin/irr"
 hooks:
   install: "$HELM_PLUGIN_DIR/install-binary.sh"
 useTunnel: true
-helmVersion: ">=3.12.0"
+helm.version: ">=3.12.0"
 
 
 
