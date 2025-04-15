@@ -26,7 +26,6 @@ jobs:
   build:
     needs: lint
     strategy:
-      fail-fast: false
       matrix:
         include:
           - goos: linux
@@ -66,12 +65,7 @@ jobs:
         run: helm version
       - name: Run tests
         run: |
-          if [[ "${{ matrix.goos }}" == "darwin" ]]; then
-            echo "Running macOS tests with enhanced debug logging..."
-            IRR_TESTING=true LOG_LEVEL=DEBUG IRR_DEBUG=1 make test
-          else
             make test
-          fi
         
       - name: Get Version
         id: get_version
@@ -116,7 +110,8 @@ jobs:
       - name: Prepare release files
         run: |
           mkdir -p release-files
-          find artifacts -name 'irr-package-*' -type d -exec find {} -name 'helm-irr-*.tar.gz' -exec cp {} release-files/ \;
+          echo "Searching for tarballs in artifacts/"
+          find artifacts/ -name 'helm-irr-*.tar.gz' -type f -print -exec cp {} release-files/ \;
           echo "Contents of release-files:"
           ls -l release-files
           
