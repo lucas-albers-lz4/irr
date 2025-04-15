@@ -53,7 +53,7 @@ func TestExitCodeError_Unwrap(t *testing.T) {
 		Err:  originalErr,
 	}
 
-	if unwrapped := exitErr.Unwrap(); unwrapped != originalErr {
+	if unwrapped := exitErr.Unwrap(); !errors.Is(unwrapped, originalErr) {
 		t.Errorf("Unwrap() = %v, want %v", unwrapped, originalErr)
 	}
 

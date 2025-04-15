@@ -7,4 +7,6 @@ const (
 	ReadWriteUserPermission = 0o600
 	// ReadWriteUserReadOthers represents read/write for owner, read for others (0644 in octal)
 	ReadWriteUserReadOthers = 0o644
+	// ReadWriteExecuteUserReadExecuteOthers represents read/write/execute for owner, read/execute for others (0755 in octal)
+	ReadWriteExecuteUserReadExecuteOthers = 0o755
 )

@@ -1,6 +1,7 @@
 package fileutil
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -14,7 +15,7 @@ func FileExists(path string) (bool, error) {
 	if os.IsNotExist(err) {
 		return false, nil
 	}
-	return false, err
+	return false, fmt.Errorf("failed to check if file exists: %w", err)
 }
 
 // DirExists checks if a directory exists at the given path
@@ -24,7 +25,7 @@ func DirExists(path string) (bool, error) {
 		if os.IsNotExist(err) {
 			return false, nil
 		}
-		return false, err
+		return false, fmt.Errorf("failed to stat directory: %w", err)
 	}
 	return info.IsDir(), nil
 }
@@ -36,7 +37,9 @@ func EnsureDirExists(path string) error {
 		return err
 	}
 	if !exists {
-		return DefaultFS.MkdirAll(path, 0755)
+		if err := DefaultFS.MkdirAll(path, ReadWriteExecuteUserReadExecuteOthers); err != nil {
+			return fmt.Errorf("failed to create directory: %w", err)
+		}
 	}
 	return nil
 }
@@ -45,14 +48,18 @@ func EnsureDirExists(path string) error {
 func ReadFileString(path string) (string, error) {
 	data, err := DefaultFS.ReadFile(path)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to read file: %w", err)
 	}
 	return string(data), nil
 }
 
 // WriteFileString writes a string to a file
 func WriteFileString(path, content string) error {
-	return DefaultFS.WriteFile(path, []byte(content), ReadWriteUserReadOthers)
+	err := DefaultFS.WriteFile(path, []byte(content), ReadWriteUserReadOthers)
+	if err != nil {
+		return fmt.Errorf("failed to write file: %w", err)
+	}
+	return nil
 }
 
 // JoinPath joins path components using the OS-specific separator
@@ -62,5 +69,9 @@ func JoinPath(elem ...string) string {
 
 // GetAbsPath returns the absolute path of a file
 func GetAbsPath(path string) (string, error) {
-	return filepath.Abs(path)
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("failed to get absolute path: %w", err)
+	}
+	return abs, nil
 }

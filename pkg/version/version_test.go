@@ -138,7 +138,7 @@ func TestVersionStringParsing(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// Extract version prefix (v)
 			result := tc.input
-			if len(result) > 0 && result[0] == 'v' {
+			if result != "" && result[0] == 'v' {
 				result = result[1:]
 			}
 

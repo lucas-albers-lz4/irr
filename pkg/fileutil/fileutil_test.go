@@ -1,7 +1,7 @@
 package fileutil
 
 import (
-	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/spf13/afero"
@@ -14,7 +14,7 @@ func TestFileExists(t *testing.T) {
 
 	// Setup test files
 	testFile := "test.txt"
-	err := mockAferoFS.WriteFile(testFile, []byte("test content"), 0644)
+	err := mockAferoFS.WriteFile(testFile, []byte("test content"), ReadWriteUserReadOthers)
 	if err != nil {
 		t.Fatalf("Failed to set up test: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestDirExists(t *testing.T) {
 
 	// Setup test directories
 	testDir := "testdir"
-	err := mockAferoFS.MkdirAll(testDir, 0755)
+	err := mockAferoFS.MkdirAll(testDir, ReadWriteExecuteUserReadExecuteOthers)
 	if err != nil {
 		t.Fatalf("Failed to set up test: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestDirExists(t *testing.T) {
 
 	// Test for file (not a directory)
 	testFile := "testfile.txt"
-	err = mockAferoFS.WriteFile(testFile, []byte("test content"), 0644)
+	err = mockAferoFS.WriteFile(testFile, []byte("test content"), ReadWriteUserReadOthers)
 	if err != nil {
 		t.Fatalf("Failed to set up test: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestReadFileString(t *testing.T) {
 	// Setup test files
 	testFile := "test.txt"
 	testContent := "Hello, World!"
-	err := mockAferoFS.WriteFile(testFile, []byte(testContent), 0644)
+	err := mockAferoFS.WriteFile(testFile, []byte(testContent), ReadWriteUserReadOthers)
 	if err != nil {
 		t.Fatalf("Failed to set up test: %v", err)
 	}
@@ -224,17 +224,17 @@ func TestJoinPath(t *testing.T) {
 		{
 			name:     "two elements",
 			elements: []string{"dir", "file.txt"},
-			expected: "dir" + string(os.PathSeparator) + "file.txt",
+			expected: filepath.Join("dir", "file.txt"),
 		},
 		{
 			name:     "multiple elements",
 			elements: []string{"root", "parent", "child", "file.txt"},
-			expected: "root" + string(os.PathSeparator) + "parent" + string(os.PathSeparator) + "child" + string(os.PathSeparator) + "file.txt",
+			expected: filepath.Join("root", "parent", "child", "file.txt"),
 		},
 		{
 			name:     "with empty elements",
 			elements: []string{"dir", "", "file.txt"},
-			expected: "dir" + string(os.PathSeparator) + "file.txt",
+			expected: filepath.Join("dir", "file.txt"),
 		},
 	}
 
