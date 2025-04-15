@@ -1,5 +1,5 @@
 name: "irr"
-version: "0.0.1"
+version: "0.0.2"
 usage: "A Helm plugin for inspecting and validating image references in releases"
 description: |-
   This plugin helps inspect and validate image references in Helm releases,
