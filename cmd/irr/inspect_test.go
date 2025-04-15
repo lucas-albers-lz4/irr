@@ -22,7 +22,7 @@ func TestDetectChartInCurrentDirectory(t *testing.T) {
 		{
 			name: "Chart.yaml in current directory",
 			setupFs: func(fs afero.Fs) {
-				err := afero.WriteFile(fs, "Chart.yaml", []byte("apiVersion: v2\nname: test-chart\nversion: 0.1.0"), 0644)
+				err := afero.WriteFile(fs, "Chart.yaml", []byte("apiVersion: v2\nname: test-chart\nversion: 0.1.0"), 0o644)
 				require.NoError(t, err)
 			},
 			expectedPath:  ".",
@@ -31,9 +31,9 @@ func TestDetectChartInCurrentDirectory(t *testing.T) {
 		{
 			name: "Chart.yaml in subdirectory",
 			setupFs: func(fs afero.Fs) {
-				err := fs.MkdirAll("mychart", 0755)
+				err := fs.MkdirAll("mychart", 0o755)
 				require.NoError(t, err)
-				err = afero.WriteFile(fs, "mychart/Chart.yaml", []byte("apiVersion: v2\nname: test-chart\nversion: 0.1.0"), 0644)
+				err = afero.WriteFile(fs, "mychart/Chart.yaml", []byte("apiVersion: v2\nname: test-chart\nversion: 0.1.0"), 0o644)
 				require.NoError(t, err)
 			},
 			expectedPath:  "mychart",
@@ -41,7 +41,7 @@ func TestDetectChartInCurrentDirectory(t *testing.T) {
 		},
 		{
 			name:          "No chart found",
-			setupFs:       func(fs afero.Fs) {},
+			setupFs:       func(_ afero.Fs) {},
 			expectedPath:  "",
 			expectedError: true,
 		},
@@ -160,7 +160,7 @@ func TestWriteOutput(t *testing.T) {
 			flags: &InspectFlags{
 				OutputFile: "",
 			},
-			checkFs: func(t *testing.T, fs afero.Fs) {
+			checkFs: func(_ *testing.T, _ afero.Fs) {
 				// Nothing to check in filesystem for stdout output
 			},
 			expectedError: false,
@@ -178,19 +178,22 @@ func TestWriteOutput(t *testing.T) {
 
 			// Capture stdout
 			oldStdout := os.Stdout
-			r, w, _ := os.Pipe()
+			r, w, err := os.Pipe()
+			require.NoError(t, err)
 			os.Stdout = w
 
 			// Call the function
-			err := writeOutput(tc.analysis, tc.flags)
+			err = writeOutput(tc.analysis, tc.flags)
 
 			// Close pipe and restore stdout
-			w.Close()
+			errClose := w.Close()
 			os.Stdout = oldStdout
+			require.NoError(t, errClose)
 
 			// Read captured stdout
 			var buf bytes.Buffer
-			io.Copy(&buf, r)
+			_, errCopy := io.Copy(&buf, r)
+			require.NoError(t, errCopy)
 			output := buf.String()
 
 			// Check results

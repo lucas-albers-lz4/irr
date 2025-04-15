@@ -177,7 +177,7 @@ func TestDetectChartInCurrentDirectoryIfNeeded(t *testing.T) {
 		{
 			name:          "Path already provided",
 			inputPath:     "/some/chart/path",
-			setupFs:       func(fs afero.Fs) {},
+			setupFs:       func(_ afero.Fs) {},
 			expectedPath:  "/some/chart/path",
 			expectedError: false,
 		},
@@ -185,7 +185,7 @@ func TestDetectChartInCurrentDirectoryIfNeeded(t *testing.T) {
 			name:      "Chart.yaml in current directory",
 			inputPath: "",
 			setupFs: func(fs afero.Fs) {
-				err := afero.WriteFile(fs, "Chart.yaml", []byte("apiVersion: v2\nname: test-chart\nversion: 0.1.0"), 0644)
+				err := afero.WriteFile(fs, "Chart.yaml", []byte("apiVersion: v2\nname: test-chart\nversion: 0.1.0"), 0o644)
 				require.NoError(t, err)
 			},
 			expectedPath:  "", // Will be replaced with os.Getwd() result
@@ -195,9 +195,9 @@ func TestDetectChartInCurrentDirectoryIfNeeded(t *testing.T) {
 			name:      "Chart.yaml in subdirectory",
 			inputPath: "",
 			setupFs: func(fs afero.Fs) {
-				err := fs.MkdirAll("mychart", 0755)
+				err := fs.MkdirAll("mychart", 0o755)
 				require.NoError(t, err)
-				err = afero.WriteFile(fs, "mychart/Chart.yaml", []byte("apiVersion: v2\nname: test-chart\nversion: 0.1.0"), 0644)
+				err = afero.WriteFile(fs, "mychart/Chart.yaml", []byte("apiVersion: v2\nname: test-chart\nversion: 0.1.0"), 0o644)
 				require.NoError(t, err)
 			},
 			expectedPath:  "mychart",
@@ -206,7 +206,7 @@ func TestDetectChartInCurrentDirectoryIfNeeded(t *testing.T) {
 		{
 			name:          "No chart found",
 			inputPath:     "",
-			setupFs:       func(fs afero.Fs) {},
+			setupFs:       func(_ afero.Fs) {},
 			expectedPath:  "",
 			expectedError: true,
 		},
@@ -226,23 +226,18 @@ func TestDetectChartInCurrentDirectoryIfNeeded(t *testing.T) {
 			path, err := detectChartInCurrentDirectoryIfNeeded(tc.inputPath)
 
 			// Check results
-			if tc.expectedError {
+			switch {
+			case tc.expectedError:
 				assert.Error(t, err)
-			} else {
+			case tc.inputPath != "":
 				assert.NoError(t, err)
-				if tc.inputPath != "" {
-					// If input path was provided, expect it to be returned unchanged
-					assert.Equal(t, tc.inputPath, path)
-				} else if tc.expectedPath == "mychart" {
-					// For the subdirectory case, we can't check the exact path because it
-					// gets converted to an absolute path which varies by environment.
-					// Just check that it ends with the expected directory name.
-					assert.Contains(t, path, "mychart")
-				} else if tc.expectedPath == "" {
-					// For the current directory case, we can't check the exact path
-					// because it depends on os.Getwd(), so we just check it's not empty
-					assert.NotEmpty(t, path)
-				}
+				assert.Equal(t, tc.inputPath, path)
+			case tc.expectedPath == "mychart":
+				assert.NoError(t, err)
+				assert.Contains(t, path, "mychart")
+			case tc.expectedPath == "":
+				assert.NoError(t, err)
+				assert.NotEmpty(t, path)
 			}
 		})
 	}
