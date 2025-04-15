@@ -48,8 +48,22 @@ jobs:
         with:
           go-version: 1.24
           
+      - name: Print Go Version (macOS only)
+        if: matrix.goos == 'darwin'
+        run: go version
+
+      - name: Print Helm Version (macOS only)
+        if: matrix.goos == 'darwin'
+        run: helm version --short
+
       - name: Run tests
-        run: make test
+        run: |
+          if [[ "${{ matrix.goos }}" == "darwin" ]]; then
+            echo "Running macOS tests with enhanced debug logging..."
+            IRR_TESTING=true LOG_LEVEL=DEBUG IRR_DEBUG=1 make test
+          else
+            make test
+          fi
         
       - name: Get Version
         id: get_version
