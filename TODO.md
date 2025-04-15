@@ -217,6 +217,12 @@ _**Goal:** Systematically increase unit and integration test coverage across the
       - [x] Use dependency injection for testing charts with different rule sets
 
   - [ ] **`pkg/override` (Current: 51.1%)**:
+    - [x] Created detailed test implementation plan covering all untested core functionality
+    - [x] Identified and prioritized untested functions requiring coverage:
+      - [x] JSON/YAML conversion functions: `JSONToYAML`, `ToYAML`, `GenerateYAML`
+      - [x] Path utilities: `GetValueAtPath`, `flattenYAMLToHelmSet`/`flattenValue`
+      - [x] Specified detailed test scenarios for each function
+    - [x] Fixed linter issues that would affect test implementation across codebase
     - [ ] Test YAML generation (`GenerateYAMLOverrides`, `GenerateYAML`, `ToYAML`), path construction/manipulation (`ConstructPath`, `GetValueAtPath`), merging (`mergeMaps`), and error wrapping.
     - [ ] **Clarification - Error Wrapping**:
       - [ ] Test all error wrappers defined in `pkg/override/errors.go`
@@ -231,6 +237,30 @@ _**Goal:** Systematically increase unit and integration test coverage across the
         - [ ] Array handling
         - [ ] Deep nesting (3+ levels)
         - [ ] Edge cases (nil maps, empty maps)
+    - [ ] **New - YAML/JSON Conversion Tests**:
+      - [ ] Implement `TestJSONToYAML` with these scenarios:
+        - [ ] Simple JSON conversion
+        - [ ] Nested JSON structures
+        - [ ] Arrays and mixed types
+        - [ ] Invalid JSON input
+      - [ ] Create `TestToYAML` for File struct serialization:
+        - [ ] Simple File structs
+        - [ ] Complex nested Values
+        - [ ] Empty/nil Values map
+      - [ ] Add `TestGenerateYAML` for override map conversion:
+        - [ ] Simple and complex map structures
+        - [ ] Verify formatting and indentation
+    - [ ] **New - Path Utility Tests**:
+      - [ ] Enhance `TestGetValueAtPath` with:
+        - [ ] Multi-level nested map access
+        - [ ] Array access via path notation
+        - [ ] Edge cases (empty paths, non-existent keys)
+        - [ ] Error conditions and proper error wrapping
+      - [ ] Add `TestFlattenYAMLToHelmSet`:
+        - [ ] Simple key-value pairs
+        - [ ] Nested structures with dotted path notation
+        - [ ] Array indices in paths
+        - [ ] Special characters handling
 
   - [ ] **`pkg/rules` (Current: 60.2%)**:
     - [ ] Test core rule application (`ApplyRules`, `ApplyRulesToMap`), registration (`AddRule`), enabling/disabling (`SetEnabled`), and provider detection (`DetectChartProvider`).
