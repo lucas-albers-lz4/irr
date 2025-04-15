@@ -1,4 +1,4 @@
-.PHONY: build test lint clean run helm-lint test-charts test-integration test-cert-manager test-kube-prometheus-stack test-integration-specific test-integration-debug help helm-plugin helm-install build-platforms
+.PHONY: build test lint clean run helm-lint test-charts test-integration test-cert-manager test-kube-prometheus-stack test-integration-specific test-integration-debug help helm-plugin helm-install build-platforms dist
 
 BINARY_NAME=irr
 BUILD_DIR=bin
@@ -8,6 +8,9 @@ TEST_CHARTS_DIR=test-data/charts
 TEST_RESULTS_DIR=test/results
 TEST_OVERRIDES_DIR=test/overrides
 TARGET_REGISTRY?=harbor.home.arpa
+VERSION=$(shell grep -o 'version:[ "]*[^"]*' plugin.yaml | awk '{print $$2}' | tr -d '"')
+DIST=$(CURDIR)/_dist
+LDFLAGS="-X main.version=$(VERSION)"
 
 # Platform-specific build settings
 PLATFORMS=darwin/amd64 darwin/arm64 linux/amd64 linux/arm64
@@ -182,3 +185,14 @@ help:
 	@echo "  clean              Clean up build artifacts"
 	@echo "  run ARGS=\"...\"     Run the irr binary with the specified arguments"
 	@echo "  help               Show this help message"
+
+# Dist target for plugin distribution
+dist:
+	@echo "Building distribution packages..."
+	@mkdir -p $(DIST)
+	GOOS=linux GOARCH=amd64 go build -o $(BUILD_DIR)/$(BINARY_NAME) -ldflags $(LDFLAGS) ./cmd/irr
+	tar -zcvf $(DIST)/$(BINARY_NAME)-$(VERSION)-linux-amd64.tar.gz $(BUILD_DIR)/$(BINARY_NAME) README.md LICENSE plugin.yaml
+	GOOS=darwin GOARCH=amd64 go build -o $(BUILD_DIR)/$(BINARY_NAME) -ldflags $(LDFLAGS) ./cmd/irr
+	tar -zcvf $(DIST)/$(BINARY_NAME)-$(VERSION)-darwin-amd64.tar.gz $(BUILD_DIR)/$(BINARY_NAME) README.md LICENSE plugin.yaml
+	GOOS=darwin GOARCH=arm64 go build -o $(BUILD_DIR)/$(BINARY_NAME) -ldflags $(LDFLAGS) ./cmd/irr
+	tar -zcvf $(DIST)/$(BINARY_NAME)-$(VERSION)-darwin-arm64.tar.gz $(BUILD_DIR)/$(BINARY_NAME) README.md LICENSE plugin.yaml
