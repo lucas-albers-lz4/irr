@@ -222,93 +222,43 @@ _**Goal:** Implement robust Kubernetes version specification for chart validatio
 ### Implementation Plan
 
 1.  **Default Kubernetes Version Setting**
-    -   [ ] **[P1]** Define a modern default Kubernetes version (e.g., `1.31.0`) for validation operations.
-        -   [ ] Add a constant (e.g., `DefaultKubernetesVersion = "1.31.0"`) in the codebase.
-        -   [ ] Update `runValidate` in `cmd/irr/validate.go` to use this default when the `--kube-version` flag is not provided.
-        -   [ ] Document this default version (`1.31.0`) in user documentation and command help text.
-    -   Rationale for `1.31.0`:
-        -   Provides consistency with test harness requirements for newer charts.
-        -   Modern enough for most chart features and API versions.
-        -   Reduces the need for immediate fallback attempts during testing.
+    -   [x] **[P1]** Define a modern default Kubernetes version (`1.31.0`) for validation operations.
+        -   [x] Add `DefaultKubernetesVersion` constant in the codebase.
+        -   [x] Update `runValidate` to use this default when the `--kube-version` flag is not provided.
+        -   [x] Document this default version in user documentation and command help text.
 
 2.  **`--kube-version` Flag Implementation**
-    -   [ ] **[P1]** Add the `--kube-version` string flag to the `irr validate` command.
-        -   [ ] Add flag definition in `cmd/irr/validate.go`'s `newValidateCmd` function.
-            -   Example help text: `"Kubernetes version to use for validation (e.g., 1.31.0)"`
-        -   [ ] Update `runValidate` function to read the flag value using `cmd.Flags().GetString("kube-version")`.
-        -   [ ] Document the flag in `docs/cli-reference.md` and include examples.
+    -   [x] **[P1]** Add the `--kube-version` string flag to the `irr validate` command.
+        -   [x] Add flag definition in `cmd/irr/validate.go`'s `newValidateCmd` function.
+        -   [x] Update `runValidate` function to read the flag value.
+        -   [x] Document the flag in `docs/cli-reference.md`.
 
 3.  **Helm Integration**
-    -   [ ] **[P1]** Update `internal/helm/command.go` to pass the specified Kubernetes version to Helm.
-        -   [ ] Add `KubeVersion string` field to the `TemplateOptions` struct.
-        -   [ ] Modify the `Template` function:
-            -   If `options.KubeVersion` is not empty, append `"--kube-version", options.KubeVersion` to the `helmArgs` slice.
-            -   Ensure this flag takes precedence over any `--set` values attempting to configure Kubernetes version (see Versioning Precedence below).
-        -   [ ] Review `executeHelmCommand`: Current plan uses Helm CLI, where `--kube-version` works. If implementation switches to Helm SDK later, version handling will need adaptation as SDK actions derive capabilities differently. (Keep existing note about SDK differences).
+    -   [x] **[P1]** Update `internal/helm/command.go` to pass the specified Kubernetes version to Helm.
+        -   [x] Add `KubeVersion string` field to the `TemplateOptions` struct.
+        -   [x] Modify the `Template` function to use the provided version.
+        -   [x] Ensure proper precedence over any conflicting `--set` values.
 
 4.  **test-charts.py Script Updates**
-    -   [ ] **[P1]** Update the `test/tools/test-charts.py` script to primarily use the new flag for validation.
-        -   [ ] In the `test_chart_validate` function, modify the `validate_cmd` construction:
-            -   Add `"--kube-version", DEFAULT_TEST_KUBE_VERSION` (using the defined default, e.g., "1.31.0").
-            -   **Decision:** Remove the primary `--set kubeVersion=...` and `--set Capabilities.KubeVersion...` flags used for the main validation command to rely on the `--kube-version` flag.
-        -   [ ] In the fallback mechanism (when retrying with direct `helm template` calls for KUBERNETES_VERSION_ERROR):
-            -   Ensure the `helm template` command includes `--kube-version` with the specific version being tested.
-            -   **Consideration:** Retain the redundant `--set Capabilities.KubeVersion...` flags *only* within this fallback mechanism, as some charts might strictly rely on Capabilities. This redundancy maximizes compatibility for difficult charts during retry, but the primary validation relies on `--kube-version`.
-        -   [ ] Keep the `KUBE_VERSION` environment variable setting as a potential fallback layer, but prioritize the `--kube-version` flag.
+    -   [x] **[P1]** Update the `test/tools/test-charts.py` script to use the new flag for validation.
+        -   [x] Update validation commands to use `--kube-version` instead of `--set` flags.
+        -   [x] Implement fallback mechanism for charts with specific version requirements.
 
 5.  **Documentation and Tests**
-    -   [ ] **[P1]** Add unit tests for the Kubernetes version flag handling in `cmd/irr/validate_test.go`.
-        -   Test cases: no flag (uses default `1.31.0`), valid version string.
-        -   **[P1]** Test case: invalid version string input (ensure clear error message).
-        -   **[P1]** Test case: Verify flag precedence (`--kube-version` overrides `--set` attempts for version).
-    -   [ ] **[P1]** Add test to `irr override` validation ensuring Type 2 parameters (`kubeVersion`, `Capabilities.KubeVersion.*`) are *never* included in the generated `override.yaml` file.
-    -   [ ] **[P1]** Update documentation (`README.md`, `docs/cli-reference.md`, `docs/TESTING.md`) to reflect the new flag, the `1.31.0` default, and precedence rules.
-    -   [ ] **[P1]** Add integration tests in `test/integration/` to validate the flag works correctly against sample charts requiring specific Kubernetes versions (e.g., >= 1.25, >= 1.30).
-
-### Technical Implementation Snippets (Reference)
-
-```go
-// cmd/irr/validate.go - Flag Definition
-cmd.Flags().String("kube-version", "", "Kubernetes version for validation (e.g., '1.31.0')")
-
-// cmd/irr/validate.go - Reading the flag
-const DefaultKubernetesVersion = "1.31.0"
-kubeVersion, err := cmd.Flags().GetString("kube-version")
-// ... error handling ...
-if kubeVersion == "" {
-    kubeVersion = DefaultKubernetesVersion
-    log.Debugf("No --kube-version specified, using default: %s", DefaultKubernetesVersion)
-}
-// TODO: Add logic to handle potential --set conflicts if needed, ensuring kubeVersion takes precedence.
-
-// internal/helm/command.go - Struct Update
-type TemplateOptions struct {
-    // ... existing fields ...
-    KubeVersion string
-}
-
-// internal/helm/command.go - Template Function Update
-func Template(options *TemplateOptions) (*CommandResult, error) {
-    helmArgs := []string{"template", options.ReleaseName, options.ChartPath}
-    // ... add values, set, namespace args ...
-
-    // Filter out any conflicting --set version args if kubeVersion is provided
-    // Example filter logic needed here if options.SetValues are passed in
-
-    if options.KubeVersion != "" {
-        helmArgs = append(helmArgs, "--kube-version", options.KubeVersion)
-    }
-    return executeHelmCommand(helmArgs)
-}
-```
+    -   [x] **[P1]** Add unit tests for the Kubernetes version flag handling.
+        -   [x] Test default case, valid version string, and invalid version handling.
+        -   [x] Test flag precedence over `--set` values.
+    -   [x] **[P1]** Ensure Type 2 parameters are never included in generated override file.
+    -   [x] **[P1]** Update documentation to reflect the new flag and default version.
+    -   [x] **[P1]** Add integration tests for validation with different Kubernetes versions.
 
 ### Versioning Precedence
 
-The final implementation will respect the following precedence for determining the Kubernetes version used during validation (highest to lowest):
+The implementation respects the following precedence for determining the Kubernetes version used during validation (highest to lowest):
 
-1.  Explicit `--kube-version` flag provided by the user. This flag overrides any version specified via `--set`. 
+1.  Explicit `--kube-version` flag provided by the user (overrides any `--set` values).
 2.  The defined `DefaultKubernetesVersion` constant (`1.31.0`) if the flag is not provided.
-3.  Helm's internal default version if neither of the above is applicable (though our implementation ensures #2 is always used as a fallback).
+3.  Helm's internal default version (though our implementation ensures #2 is always used as a fallback).
 
 ## Phase 4: `kind` Cluster Integration Testing
 _**Goal:** Implement end-to-end tests using `kind` to validate Helm plugin interactions with a live Kubernetes API and Helm release state, ensuring read-only behavior._
