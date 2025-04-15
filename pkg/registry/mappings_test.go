@@ -16,7 +16,7 @@ import (
 func TestLoadMappings(t *testing.T) {
 	// Create a memory-backed filesystem for testing
 	fs := afero.NewMemMapFs()
-	tmpDir := "/tmp"
+	tmpDir := TestTmpDir
 
 	// Create test file paths
 	newFormatFile := filepath.Join(tmpDir, "new-format.yaml")

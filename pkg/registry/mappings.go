@@ -11,6 +11,7 @@ import (
 	"errors"
 
 	"github.com/lalbers/irr/pkg/debug"
+	"github.com/lalbers/irr/pkg/fileutil"
 	"github.com/lalbers/irr/pkg/image"
 	"github.com/spf13/afero"
 	"sigs.k8s.io/yaml"
@@ -318,4 +319,22 @@ func isValidDomain(domain string) bool {
 	}
 
 	return true
+}
+
+// LoadMappingsWithFS loads registry mappings from a YAML file using the provided fileutil.FS.
+// skipCWDRestriction allows bypassing the check that the path must be within the CWD tree.
+func LoadMappingsWithFS(fs fileutil.FS, path string, skipCWDRestriction bool) (*Mappings, error) {
+	if fs == nil {
+		fs = DefaultFS
+	}
+
+	// Convert to afero.Fs for backwards compatibility with existing implementation
+	afs := GetAferoFS(fs)
+
+	return LoadMappings(afs, path, skipCWDRestriction)
+}
+
+// LoadMappingsDefault loads registry mappings using the default filesystem.
+func LoadMappingsDefault(path string, skipCWDRestriction bool) (*Mappings, error) {
+	return LoadMappingsWithFS(DefaultFS, path, skipCWDRestriction)
 }

@@ -1,6 +1,7 @@
 package fileutil
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -21,13 +22,13 @@ func newTestFS() *testFS {
 
 // Stat for testFS properly handles os.IsNotExist errors
 func (t *testFS) Stat(name string) (os.FileInfo, error) {
-	info, err := t.AferoFS.fs.Stat(name)
+	info, err := t.fs.Stat(name)
 	if err != nil {
 		// Return original os.ErrNotExist error without wrapping when file doesn't exist
 		if os.IsNotExist(err) {
 			return nil, os.ErrNotExist
 		}
-		return nil, err
+		return nil, fmt.Errorf("error stating file %s: %w", name, err)
 	}
 	return info, nil
 }

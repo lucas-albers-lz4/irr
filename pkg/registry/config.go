@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/lalbers/irr/pkg/debug"
+	"github.com/lalbers/irr/pkg/fileutil"
 	"github.com/spf13/afero"
 	"sigs.k8s.io/yaml"
 )
@@ -184,4 +185,38 @@ func (c *Config) ToMappings() *Mappings {
 	}
 
 	return mappings
+}
+
+// LoadConfigWithFS loads registry configuration using the provided fileutil.FS.
+func LoadConfigWithFS(fs fileutil.FS, path string, skipCWDRestriction bool) (map[string]string, error) {
+	if fs == nil {
+		fs = DefaultFS
+	}
+
+	// Convert to afero.Fs for backwards compatibility with existing implementation
+	afs := GetAferoFS(fs)
+
+	return LoadConfig(afs, path, skipCWDRestriction)
+}
+
+// LoadConfigDefault loads registry configuration using the default filesystem.
+func LoadConfigDefault(path string, skipCWDRestriction bool) (map[string]string, error) {
+	return LoadConfigWithFS(DefaultFS, path, skipCWDRestriction)
+}
+
+// LoadStructuredConfigWithFS loads structured registry configuration using the provided fileutil.FS.
+func LoadStructuredConfigWithFS(fs fileutil.FS, path string, skipCWDRestriction bool) (*Config, error) {
+	if fs == nil {
+		fs = DefaultFS
+	}
+
+	// Convert to afero.Fs for backwards compatibility with existing implementation
+	afs := GetAferoFS(fs)
+
+	return LoadStructuredConfig(afs, path, skipCWDRestriction)
+}
+
+// LoadStructuredConfigDefault loads structured registry configuration using the default filesystem.
+func LoadStructuredConfigDefault(path string, skipCWDRestriction bool) (*Config, error) {
+	return LoadStructuredConfigWithFS(DefaultFS, path, skipCWDRestriction)
 }
