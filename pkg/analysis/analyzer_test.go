@@ -785,3 +785,290 @@ func TestAnalyzeArray(t *testing.T) {
 		})
 	}
 }
+
+// TestIsGlobalRegistry tests the IsGlobalRegistry function for detecting global registry configurations.
+func TestIsGlobalRegistry(t *testing.T) {
+	tests := []struct {
+		name         string
+		dummyMap     map[string]interface{}
+		keyPath      string
+		expectResult bool
+	}{
+		{
+			name:         "global registry path",
+			dummyMap:     map[string]interface{}{},
+			keyPath:      "global.registry",
+			expectResult: true,
+		},
+		{
+			name:         "global imageRegistry path",
+			dummyMap:     map[string]interface{}{},
+			keyPath:      "global.imageRegistry",
+			expectResult: true,
+		},
+		{
+			name:         "nested global registry path",
+			dummyMap:     map[string]interface{}{},
+			keyPath:      "global.images.registry",
+			expectResult: true,
+		},
+		{
+			name:         "not a global registry path",
+			dummyMap:     map[string]interface{}{},
+			keyPath:      "image.registry",
+			expectResult: false,
+		},
+		{
+			name:         "empty path",
+			dummyMap:     map[string]interface{}{},
+			keyPath:      "",
+			expectResult: false,
+		},
+		{
+			name:         "global prefix without registry",
+			dummyMap:     map[string]interface{}{},
+			keyPath:      "global.image",
+			expectResult: false,
+		},
+	}
+
+	analyzer := &Analyzer{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := analyzer.IsGlobalRegistry(tt.dummyMap, tt.keyPath)
+			assert.Equal(t, tt.expectResult, result, "IsGlobalRegistry result mismatch")
+		})
+	}
+}
+
+// TestParseImageString tests parsing an image string into its components.
+func TestParseImageString(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          string
+		wantRegistry   string
+		wantRepository string
+		wantTag        string
+	}{
+		{
+			name:           "full image reference",
+			input:          "docker.io/library/nginx:1.21",
+			wantRegistry:   "docker.io",
+			wantRepository: "library/nginx",
+			wantTag:        "1.21",
+		},
+		{
+			name:           "short image reference",
+			input:          "nginx:latest",
+			wantRegistry:   "docker.io", // Default registry
+			wantRepository: "nginx",
+			wantTag:        "latest",
+		},
+		{
+			name:           "image without tag",
+			input:          "quay.io/prometheus/node-exporter",
+			wantRegistry:   "quay.io",
+			wantRepository: "prometheus/node-exporter",
+			wantTag:        "latest", // Default tag
+		},
+		{
+			name:           "image with complex repository path",
+			input:          "gcr.io/project/nested/path/image:v1.2.3",
+			wantRegistry:   "gcr.io",
+			wantRepository: "project/nested/path/image",
+			wantTag:        "v1.2.3",
+		},
+		{
+			name:           "minimal image reference",
+			input:          "busybox",
+			wantRegistry:   "docker.io", // Default registry
+			wantRepository: "busybox",
+			wantTag:        "latest", // Default tag
+		},
+	}
+
+	analyzer := &Analyzer{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			registry, repository, tag := analyzer.ParseImageString(tt.input)
+			assert.Equal(t, tt.wantRegistry, registry, "Registry mismatch")
+			assert.Equal(t, tt.wantRepository, repository, "Repository mismatch")
+			assert.Equal(t, tt.wantTag, tag, "Tag mismatch")
+		})
+	}
+}
+
+// TestMergeAnalysis tests merging of two ChartAnalysis instances.
+func TestMergeAnalysis(t *testing.T) {
+	tests := []struct {
+		name      string
+		analysis1 *ChartAnalysis
+		analysis2 *ChartAnalysis
+		expected  *ChartAnalysis
+	}{
+		{
+			name: "merge image patterns only",
+			analysis1: &ChartAnalysis{
+				ImagePatterns: []ImagePattern{
+					{Path: "image1", Type: PatternTypeMap, Value: "registry/repo1:tag1"},
+				},
+				GlobalPatterns: []GlobalPattern{},
+			},
+			analysis2: &ChartAnalysis{
+				ImagePatterns: []ImagePattern{
+					{Path: "image2", Type: PatternTypeString, Value: "registry/repo2:tag2"},
+				},
+				GlobalPatterns: []GlobalPattern{},
+			},
+			expected: &ChartAnalysis{
+				ImagePatterns: []ImagePattern{
+					{Path: "image1", Type: PatternTypeMap, Value: "registry/repo1:tag1"},
+					{Path: "image2", Type: PatternTypeString, Value: "registry/repo2:tag2"},
+				},
+				GlobalPatterns: []GlobalPattern{},
+			},
+		},
+		{
+			name: "merge global patterns only",
+			analysis1: &ChartAnalysis{
+				ImagePatterns: []ImagePattern{},
+				GlobalPatterns: []GlobalPattern{
+					{Type: PatternTypeGlobal, Path: "global.registry"},
+				},
+			},
+			analysis2: &ChartAnalysis{
+				ImagePatterns: []ImagePattern{},
+				GlobalPatterns: []GlobalPattern{
+					{Type: PatternTypeGlobal, Path: "global.imageRegistry"},
+				},
+			},
+			expected: &ChartAnalysis{
+				ImagePatterns: []ImagePattern{},
+				GlobalPatterns: []GlobalPattern{
+					{Type: PatternTypeGlobal, Path: "global.registry"},
+					{Type: PatternTypeGlobal, Path: "global.imageRegistry"},
+				},
+			},
+		},
+		{
+			name: "merge both image and global patterns",
+			analysis1: &ChartAnalysis{
+				ImagePatterns: []ImagePattern{
+					{Path: "image1", Type: PatternTypeMap, Value: "registry/repo1:tag1"},
+				},
+				GlobalPatterns: []GlobalPattern{
+					{Type: PatternTypeGlobal, Path: "global.registry"},
+				},
+			},
+			analysis2: &ChartAnalysis{
+				ImagePatterns: []ImagePattern{
+					{Path: "image2", Type: PatternTypeString, Value: "registry/repo2:tag2"},
+				},
+				GlobalPatterns: []GlobalPattern{
+					{Type: PatternTypeGlobal, Path: "global.imageRegistry"},
+				},
+			},
+			expected: &ChartAnalysis{
+				ImagePatterns: []ImagePattern{
+					{Path: "image1", Type: PatternTypeMap, Value: "registry/repo1:tag1"},
+					{Path: "image2", Type: PatternTypeString, Value: "registry/repo2:tag2"},
+				},
+				GlobalPatterns: []GlobalPattern{
+					{Type: PatternTypeGlobal, Path: "global.registry"},
+					{Type: PatternTypeGlobal, Path: "global.imageRegistry"},
+				},
+			},
+		},
+		{
+			name: "merge empty analysis",
+			analysis1: &ChartAnalysis{
+				ImagePatterns:  []ImagePattern{},
+				GlobalPatterns: []GlobalPattern{},
+			},
+			analysis2: &ChartAnalysis{
+				ImagePatterns: []ImagePattern{
+					{Path: "image", Type: PatternTypeMap, Value: "registry/repo:tag"},
+				},
+				GlobalPatterns: []GlobalPattern{
+					{Type: PatternTypeGlobal, Path: "global.registry"},
+				},
+			},
+			expected: &ChartAnalysis{
+				ImagePatterns: []ImagePattern{
+					{Path: "image", Type: PatternTypeMap, Value: "registry/repo:tag"},
+				},
+				GlobalPatterns: []GlobalPattern{
+					{Type: PatternTypeGlobal, Path: "global.registry"},
+				},
+			},
+		},
+		{
+			name: "merge into empty analysis",
+			analysis1: &ChartAnalysis{
+				ImagePatterns: []ImagePattern{
+					{Path: "image", Type: PatternTypeMap, Value: "registry/repo:tag"},
+				},
+				GlobalPatterns: []GlobalPattern{
+					{Type: PatternTypeGlobal, Path: "global.registry"},
+				},
+			},
+			analysis2: &ChartAnalysis{
+				ImagePatterns:  []ImagePattern{},
+				GlobalPatterns: []GlobalPattern{},
+			},
+			expected: &ChartAnalysis{
+				ImagePatterns: []ImagePattern{
+					{Path: "image", Type: PatternTypeMap, Value: "registry/repo:tag"},
+				},
+				GlobalPatterns: []GlobalPattern{
+					{Type: PatternTypeGlobal, Path: "global.registry"},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Make a deep copy of analysis1 to not affect other tests
+			analysis1Copy := &ChartAnalysis{
+				ImagePatterns:  make([]ImagePattern, len(tt.analysis1.ImagePatterns)),
+				GlobalPatterns: make([]GlobalPattern, len(tt.analysis1.GlobalPatterns)),
+			}
+			copy(analysis1Copy.ImagePatterns, tt.analysis1.ImagePatterns)
+			copy(analysis1Copy.GlobalPatterns, tt.analysis1.GlobalPatterns)
+
+			// Perform the merge
+			analysis1Copy.mergeAnalysis(tt.analysis2)
+
+			// Verify result
+			assert.Equal(t, len(tt.expected.ImagePatterns), len(analysis1Copy.ImagePatterns), "Number of image patterns should match")
+			assert.Equal(t, len(tt.expected.GlobalPatterns), len(analysis1Copy.GlobalPatterns), "Number of global patterns should match")
+
+			// Create maps for easier comparison (since order might not matter)
+			expectedImagePatterns := make(map[string]ImagePattern)
+			for _, p := range tt.expected.ImagePatterns {
+				expectedImagePatterns[p.Path] = p
+			}
+
+			actualImagePatterns := make(map[string]ImagePattern)
+			for _, p := range analysis1Copy.ImagePatterns {
+				actualImagePatterns[p.Path] = p
+			}
+
+			assert.Equal(t, expectedImagePatterns, actualImagePatterns, "Image patterns should match")
+
+			// For global patterns, we'll just compare paths
+			expectedGlobalPaths := make(map[string]bool)
+			for _, p := range tt.expected.GlobalPatterns {
+				expectedGlobalPaths[p.Path] = true
+			}
+
+			actualGlobalPaths := make(map[string]bool)
+			for _, p := range analysis1Copy.GlobalPatterns {
+				actualGlobalPaths[p.Path] = true
+			}
+
+			assert.Equal(t, expectedGlobalPaths, actualGlobalPaths, "Global pattern paths should match")
+		})
+	}
+}

@@ -180,3 +180,86 @@ func TestAppliesTo(t *testing.T) {
 		t.Errorf("BitnamiSecurityBypassRule.AppliesTo() should not apply to non-Bitnami chart")
 	}
 }
+
+func TestDetectChartProvider(t *testing.T) {
+	tests := []struct {
+		name               string
+		chart              *chart.Chart
+		expectedProvider   ChartProviderType
+		expectedConfidence ConfidenceLevel
+	}{
+		{
+			name: "Bitnami chart with high confidence",
+			chart: &chart.Chart{
+				Metadata: &chart.Metadata{
+					Name: "high-confidence-bitnami",
+					Home: "https://bitnami.com/chart",
+					Sources: []string{
+						"https://github.com/bitnami/charts/tree/main/test",
+					},
+					Maintainers: []*chart.Maintainer{
+						{
+							Name: "Bitnami Team",
+							URL:  "https://github.com/bitnami",
+						},
+					},
+				},
+			},
+			expectedProvider:   ProviderBitnami,
+			expectedConfidence: ConfidenceHigh,
+		},
+		{
+			name: "Bitnami chart with medium confidence",
+			chart: &chart.Chart{
+				Metadata: &chart.Metadata{
+					Name: "medium-confidence-bitnami",
+					Home: "https://bitnami.com/chart",
+				},
+			},
+			expectedProvider:   ProviderBitnami,
+			expectedConfidence: ConfidenceLow, // Single indicator is low confidence
+		},
+		{
+			name: "Unknown provider chart",
+			chart: &chart.Chart{
+				Metadata: &chart.Metadata{
+					Name: "unknown-provider",
+					Home: "https://example.com/chart",
+				},
+			},
+			expectedProvider:   ProviderUnknown,
+			expectedConfidence: ConfidenceNone,
+		},
+		{
+			name:               "Nil chart",
+			chart:              nil,
+			expectedProvider:   ProviderUnknown,
+			expectedConfidence: ConfidenceNone,
+		},
+		{
+			name: "Chart with nil metadata",
+			chart: &chart.Chart{
+				Metadata: nil,
+			},
+			expectedProvider:   ProviderUnknown,
+			expectedConfidence: ConfidenceNone,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Run detection
+			detection := DetectChartProvider(tt.chart)
+
+			// Check provider
+			if detection.Provider != tt.expectedProvider {
+				t.Errorf("DetectChartProvider() provider = %v, want %v", detection.Provider, tt.expectedProvider)
+			}
+
+			// Check confidence level
+			if detection.Confidence != tt.expectedConfidence {
+				t.Errorf("DetectChartProvider() confidence = %v, want %v", detection.Confidence, tt.expectedConfidence)
+			}
+		})
+	}
+}

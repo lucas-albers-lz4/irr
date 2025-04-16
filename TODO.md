@@ -295,25 +295,25 @@ _**Goal:** Implement the Helm plugin interface that wraps around the core CLI fu
       - [x] Fixed linting issues in rule test files
       - [x] Added detailed tests for both BaseRule and mockTestRule implementations
 
-  - [ ] **`pkg/analysis` (Current: 72.4%)**:
-    - [ ] Add tests for uncovered functions (`Load`, `IsGlobalRegistry`, `ParseImageString`, `mergeAnalysis`).
-    - [ ] **Clarification - Merging Analysis**:
-      - [ ] Define test cases for `mergeAnalysis` specifically addressing:
-        - [ ] Merging charts with different names/versions
-        - [ ] Combining image lists without duplicates
-        - [ ] Handling error lists and skipped items
-        - [ ] Verifying pattern merging correctness
-      - [ ] Document expected behavior for each scenario in comments
+  - [x] **`pkg/analysis` (Current: 84.6%)**:
+    - [x] Add tests for uncovered functions (`Load`, `IsGlobalRegistry`, `ParseImageString`, `mergeAnalysis`).
+    - [x] **Clarification - Merging Analysis**:
+      - [x] Define test cases for `mergeAnalysis` specifically addressing:
+        - [x] Merging charts with different names/versions
+        - [x] Combining image lists without duplicates
+        - [x] Handling error lists and skipped items
+        - [x] Verifying pattern merging correctness
+      - [x] Document expected behavior for each scenario in comments
 
-  - [ ] **`pkg/image` (Current: 71.3%)**:
-    - [ ] Add tests for validation (`IsValid*`), error types, and edge cases in parsing/normalization.
-    - [ ] **Clarification - Image Validation**:
-      - [ ] Create a comprehensive image test fixture file with:
-        - [ ] Valid images with various components (registry, repository, tag, digest)
-        - [ ] Invalid images with specific validation failures
-        - [ ] Edge cases (empty strings, unusual formats)
-      - [ ] Test each validation function against all fixture entries
-      - [ ] Document what makes an image valid/invalid in comments
+  - [x] **`pkg/image` (Current: 77.2%)**:
+    - [x] Add tests for validation (`IsValid*`), error types, and edge cases in parsing/normalization.
+    - [x] **Clarification - Image Validation**:
+      - [x] Create a comprehensive image test fixture file with:
+        - [x] Valid images with various components (registry, repository, tag, digest)
+        - [x] Invalid images with specific validation failures
+        - [x] Edge cases (empty strings, unusual formats)
+      - [x] Test each validation function against all fixture entries
+      - [x] Document what makes an image valid/invalid in comments
 
 ### Phase 2.3: Enhance High-Coverage & Local Integration (Goal: ~70%+ in Core)
 - [ ] **Refine Existing Tests:** Improve tests in well-covered packages (`pkg/generator`, `pkg/helm`, `pkg/registry`, `pkg/strategy`) by adding edge cases or complex scenarios.
