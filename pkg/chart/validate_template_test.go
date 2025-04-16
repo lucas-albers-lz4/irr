@@ -67,7 +67,7 @@ spec:
   - name: {{ .invalidSyntax? }}
     image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
 `
-		err := os.WriteFile(templatePath, []byte(invalidTemplate), 0o600)
+		err := os.WriteFile(templatePath, []byte(invalidTemplate), FilePermissions)
 		require.NoError(t, err, "Failed to write invalid template file")
 
 		// Test validation with a simple override
@@ -133,7 +133,7 @@ version: 1.0.0
 		// Create a temporary file for the values
 		tempDir := t.TempDir()
 		valuesPath := filepath.Join(tempDir, "values.yaml")
-		err := os.WriteFile(valuesPath, []byte(TestNginxValues), 0o600)
+		err := os.WriteFile(valuesPath, []byte(TestNginxValues), FilePermissions)
 		require.NoError(t, err)
 
 		// ... rest of the test ...
@@ -144,7 +144,7 @@ func TestReadValuesFile(t *testing.T) {
 	// Create a temp file with valid YAML
 	tempDir := t.TempDir()
 	valuesPath := filepath.Join(tempDir, "values.yaml")
-	err := os.WriteFile(valuesPath, []byte(TestNginxValues), 0o600)
+	err := os.WriteFile(valuesPath, []byte(TestNginxValues), FilePermissions)
 	require.NoError(t, err)
 
 	// ... rest of the test ...
@@ -156,7 +156,7 @@ func TestValidateHelmTemplate(t *testing.T) {
 		// Create a temporary file for values.yaml
 		tempDir := t.TempDir()
 		valuesPath := filepath.Join(tempDir, "values.yaml")
-		err := os.WriteFile(valuesPath, []byte(TestNginxValues), 0o600)
+		err := os.WriteFile(valuesPath, []byte(TestNginxValues), FilePermissions)
 		require.NoError(t, err)
 
 		// ... rest of the test ...

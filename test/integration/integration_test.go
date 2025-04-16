@@ -344,7 +344,7 @@ func TestRegistryMappingFile(t *testing.T) {
     target: quaycustom
 `
 	mappingFilePath := filepath.Join(harness.tempDir, "test-mappings.yaml")
-	err := os.WriteFile(mappingFilePath, []byte(mappingContent), 0o600)
+	err := os.WriteFile(mappingFilePath, []byte(mappingContent), defaultFilePerm)
 	require.NoError(t, err, "Failed to write temp mapping file")
 
 	harness.SetupChart(testutil.GetChartPath("minimal-test"))
@@ -409,7 +409,7 @@ func TestConfigFileMappings(t *testing.T) {
 	// Write the config file
 	configPath := filepath.Join(harness.tempDir, "test-config.yaml")
 	// #nosec G306 -- Using secure permissions (0600) for test-generated file
-	err := os.WriteFile(configPath, []byte(registryMappingsContent), 0o600)
+	err := os.WriteFile(configPath, []byte(registryMappingsContent), defaultFilePerm)
 	require.NoError(t, err, "Failed to write test config file")
 
 	output, err := harness.ExecuteIRR(
@@ -515,7 +515,7 @@ func TestClickhouseOperator(t *testing.T) {
 	updatedOverridesBytes, err := yaml.Marshal(overrides)
 	require.NoError(t, err, "Failed to marshal updated overrides YAML")
 	// #nosec G306 -- Using secure permissions (0600) for test-generated file
-	err = os.WriteFile(harness.overridePath, updatedOverridesBytes, 0o600)
+	err = os.WriteFile(harness.overridePath, updatedOverridesBytes, defaultFilePerm)
 	require.NoError(t, err, "Failed to write updated overrides file")
 
 	// Validate the overrides by running helm template
@@ -579,12 +579,12 @@ func setupMinimalTestChart(t *testing.T, h *TestHarness) {
 	chartYaml := `apiVersion: v2
 name: minimal-chart
 version: 0.1.0`
-	require.NoError(t, os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), []byte(chartYaml), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), []byte(chartYaml), defaultFilePerm))
 
 	valuesYaml := `image:
   repository: nginx
   tag: "1.23"`
-	require.NoError(t, os.WriteFile(filepath.Join(chartDir, "values.yaml"), []byte(valuesYaml), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(chartDir, "values.yaml"), []byte(valuesYaml), defaultFilePerm))
 
 	require.NoError(t, os.MkdirAll(filepath.Join(chartDir, "templates"), 0o750))
 
@@ -598,7 +598,7 @@ spec:
       containers:
       - name: nginx
         image: {{ .Values.image.repository }}:{{ .Values.image.tag }}`
-	require.NoError(t, os.WriteFile(filepath.Join(chartDir, "templates", "deployment.yaml"), []byte(deploymentYaml), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(chartDir, "templates", "deployment.yaml"), []byte(deploymentYaml), defaultFilePerm))
 
 	h.chartPath = chartDir
 }

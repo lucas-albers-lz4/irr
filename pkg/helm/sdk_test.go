@@ -14,6 +14,7 @@ import (
 	"helm.sh/helm/v3/pkg/repo"
 	"helm.sh/helm/v3/pkg/repo/repotest"
 
+	"github.com/lalbers/irr/pkg/fileutil"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -95,7 +96,7 @@ name: test-chart
 version: 0.1.0
 `
 	require.NoError(t, mockFs.MkdirAll(chartDir, 0o750))
-	require.NoError(t, afero.WriteFile(mockFs, chartDir+"/Chart.yaml", []byte(chartYaml), 0o600))
+	require.NoError(t, afero.WriteFile(mockFs, chartDir+"/Chart.yaml", []byte(chartYaml), fileutil.ReadWriteUserPermission))
 
 	// Initialize Helm environment
 	settings := cli.New()
@@ -207,7 +208,7 @@ apiVersion: v2
 name: test-chart
 version: 0.1.0
 `)
-	err = os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), chartYaml, 0o600)
+	err = os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), chartYaml, fileutil.ReadWriteUserPermission)
 	require.NoError(t, err)
 
 	// Initialize Helm environment
@@ -381,7 +382,7 @@ dependencies:
     version: 0.1.0
     repository: https://prometheus-community.github.io/helm-charts
 `)
-	err = os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), chartYaml, 0o600)
+	err = os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), chartYaml, fileutil.ReadWriteUserPermission)
 	require.NoError(t, err)
 
 	// Create values.yaml with nested image references
@@ -395,7 +396,7 @@ grafana:
     repository: grafana/grafana
     tag: 8.2.0
 `)
-	err = os.WriteFile(filepath.Join(chartDir, "values.yaml"), valuesYaml, 0o600)
+	err = os.WriteFile(filepath.Join(chartDir, "values.yaml"), valuesYaml, fileutil.ReadWriteUserPermission)
 	require.NoError(t, err)
 
 	// Test chart loading

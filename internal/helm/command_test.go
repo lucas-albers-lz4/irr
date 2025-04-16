@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/lalbers/irr/pkg/fileutil"
 )
 
 // TestTemplateShort is a short-running test for the Template function
@@ -91,7 +93,11 @@ func TestMergeValues(t *testing.T) {
 	// Create a temporary directory for test files
 	tempDir, err := os.MkdirTemp("", "helm-test")
 	require.NoError(t, err)
-	defer os.RemoveAll(tempDir) // Clean up after test
+	defer func() {
+		if err := os.RemoveAll(tempDir); err != nil {
+			t.Logf("Failed to clean up temp directory: %v", err)
+		}
+	}() // Clean up after test
 
 	// Create test values files
 	values1Path := filepath.Join(tempDir, "values1.yaml")
@@ -102,7 +108,7 @@ image:
 service:
   type: ClusterIP
 `)
-	err = os.WriteFile(values1Path, values1Content, 0644)
+	err = os.WriteFile(values1Path, values1Content, fileutil.ReadWriteUserPermission)
 	require.NoError(t, err)
 
 	values2Path := filepath.Join(tempDir, "values2.yaml")
@@ -114,7 +120,7 @@ resources:
     cpu: 100m
     memory: 128Mi
 `)
-	err = os.WriteFile(values2Path, values2Content, 0644)
+	err = os.WriteFile(values2Path, values2Content, fileutil.ReadWriteUserPermission)
 	require.NoError(t, err)
 
 	// Test merging values from multiple files
@@ -122,11 +128,11 @@ resources:
 		// We need to create simple, valid YAML that we're certain will merge properly
 		// Let's use simpler values to avoid any issues with the Helm merge logic
 		basicValues1 := filepath.Join(tempDir, "basic1.yaml")
-		err = os.WriteFile(basicValues1, []byte("foo: bar\nnested:\n  value1: one\n"), 0644)
+		err = os.WriteFile(basicValues1, []byte("foo: bar\nnested:\n  value1: one\n"), fileutil.ReadWriteUserPermission)
 		require.NoError(t, err)
 
 		basicValues2 := filepath.Join(tempDir, "basic2.yaml")
-		err = os.WriteFile(basicValues2, []byte("baz: qux\nnested:\n  value2: two\n"), 0644)
+		err = os.WriteFile(basicValues2, []byte("baz: qux\nnested:\n  value2: two\n"), fileutil.ReadWriteUserPermission)
 		require.NoError(t, err)
 
 		result, err := mergeValues([]string{basicValues1, basicValues2}, nil)
@@ -181,7 +187,7 @@ image:
   tag: 1.19.0
   invalid yaml
 `)
-		err = os.WriteFile(invalidPath, invalidContent, 0644)
+		err = os.WriteFile(invalidPath, invalidContent, fileutil.ReadWriteUserPermission)
 		require.NoError(t, err)
 
 		_, err := mergeValues([]string{invalidPath}, nil)
@@ -250,7 +256,11 @@ func TestGetValuesWithMock(t *testing.T) {
 	// Create a temporary file for output testing
 	tempDir, err := os.MkdirTemp("", "helm-values-test")
 	require.NoError(t, err)
-	defer os.RemoveAll(tempDir) // Clean up after test
+	defer func() {
+		if err := os.RemoveAll(tempDir); err != nil {
+			t.Logf("Failed to clean up temp directory: %v", err)
+		}
+	}() // Clean up after test
 
 	outputFile := filepath.Join(tempDir, "output.yaml")
 

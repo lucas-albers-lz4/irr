@@ -12,6 +12,7 @@ import (
 
 	// Mock internal/helm for testing command logic without actual Helm calls
 	"github.com/lalbers/irr/internal/helm"
+	"github.com/lalbers/irr/pkg/fileutil"
 	"github.com/spf13/afero"
 )
 
@@ -28,12 +29,12 @@ func setupValidateTest(t *testing.T) (cmd *cobra.Command, cleanup func()) {
 	err = os.Mkdir(chartDir, 0o750) // More secure permissions
 	require.NoError(t, err)
 	chartFile := filepath.Join(chartDir, "Chart.yaml")
-	err = os.WriteFile(chartFile, []byte("apiVersion: v2\nname: mychart\nversion: 0.1.0"), 0o600) // More secure permissions
+	err = os.WriteFile(chartFile, []byte("apiVersion: v2\nname: mychart\nversion: 0.1.0"), fileutil.ReadWriteUserPermission)
 	require.NoError(t, err)
 
 	// Create dummy values file
 	valuesFile := filepath.Join(tempDir, "values.yaml")
-	err = os.WriteFile(valuesFile, []byte("key: value"), 0o600) // More secure permissions
+	err = os.WriteFile(valuesFile, []byte("key: value"), fileutil.ReadWriteUserPermission)
 	require.NoError(t, err)
 
 	// Create command

@@ -101,7 +101,7 @@ replicaCount: 1
 		// Verify we're back to the default filesystem
 		// This assumes that default filesystem is the OS filesystem
 		testFile := filepath.Join(t.TempDir(), "test.txt")
-		err = os.WriteFile(testFile, []byte("test"), 0o600)
+		err = os.WriteFile(testFile, []byte("test"), FilePermissions)
 		require.NoError(t, err)
 
 		// After cleanup, the loader should be able to access files in the real filesystem

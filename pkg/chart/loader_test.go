@@ -23,14 +23,14 @@ func createTempChartDir(t *testing.T, name, chartYaml, valuesYaml string) string
 	err := os.MkdirAll(filepath.Join(chartPath, "templates"), 0o750)
 	require.NoError(t, err, "Failed to create chart dir structure")
 
-	err = os.WriteFile(filepath.Join(chartPath, "Chart.yaml"), []byte(chartYaml), 0o600)
+	err = os.WriteFile(filepath.Join(chartPath, "Chart.yaml"), []byte(chartYaml), FilePermissions)
 	require.NoError(t, err, "Failed to write Chart.yaml")
 
-	err = os.WriteFile(filepath.Join(chartPath, "values.yaml"), []byte(valuesYaml), 0o600)
+	err = os.WriteFile(filepath.Join(chartPath, "values.yaml"), []byte(valuesYaml), FilePermissions)
 	require.NoError(t, err, "Failed to write values.yaml")
 
 	// Add a dummy template file
-	err = os.WriteFile(filepath.Join(chartPath, "templates", "dummy.yaml"), []byte("kind: Pod"), 0o600)
+	err = os.WriteFile(filepath.Join(chartPath, "templates", "dummy.yaml"), []byte("kind: Pod"), FilePermissions)
 	require.NoError(t, err, "Failed to write dummy template")
 
 	return chartPath
@@ -46,14 +46,14 @@ func createMockChartDir(t *testing.T, fs afero.Fs, name, chartYaml, valuesYaml s
 	err := fs.MkdirAll(filepath.Join(chartPath, "templates"), 0o750)
 	require.NoError(t, err, "Failed to create chart dir structure in mock filesystem")
 
-	err = afero.WriteFile(fs, filepath.Join(chartPath, "Chart.yaml"), []byte(chartYaml), 0o600)
+	err = afero.WriteFile(fs, filepath.Join(chartPath, "Chart.yaml"), []byte(chartYaml), FilePermissions)
 	require.NoError(t, err, "Failed to write Chart.yaml in mock filesystem")
 
-	err = afero.WriteFile(fs, filepath.Join(chartPath, "values.yaml"), []byte(valuesYaml), 0o600)
+	err = afero.WriteFile(fs, filepath.Join(chartPath, "values.yaml"), []byte(valuesYaml), FilePermissions)
 	require.NoError(t, err, "Failed to write values.yaml in mock filesystem")
 
 	// Add a dummy template file
-	err = afero.WriteFile(fs, filepath.Join(chartPath, "templates", "dummy.yaml"), []byte("kind: Pod"), 0o600)
+	err = afero.WriteFile(fs, filepath.Join(chartPath, "templates", "dummy.yaml"), []byte("kind: Pod"), FilePermissions)
 	require.NoError(t, err, "Failed to write dummy template in mock filesystem")
 
 	return chartPath
@@ -102,7 +102,7 @@ image:
 
 	t.Run("Load From File Path (Not Dir or TGZ)", func(t *testing.T) {
 		filePath := filepath.Join(t.TempDir(), "not-a-chart.txt")
-		err := os.WriteFile(filePath, []byte("hello"), 0o600)
+		err := os.WriteFile(filePath, []byte("hello"), FilePermissions)
 		require.NoError(t, err)
 
 		chartInstance, loadErr := loader.Load(filePath)
@@ -195,7 +195,7 @@ apiVersion: v2
 name: test-chart
 version: 0.1.0
 `)
-	err = os.WriteFile(filepath.Join(chartPath, "Chart.yaml"), chartYaml, 0o600)
+	err = os.WriteFile(filepath.Join(chartPath, "Chart.yaml"), chartYaml, FilePermissions)
 	require.NoErrorf(t, err, "failed to create Chart.yaml in %s", chartPath)
 
 	// Create values.yaml
@@ -204,11 +204,11 @@ image:
   repository: nginx
   tag: latest
 `)
-	err = os.WriteFile(filepath.Join(chartPath, "values.yaml"), valuesYaml, 0o600)
+	err = os.WriteFile(filepath.Join(chartPath, "values.yaml"), valuesYaml, FilePermissions)
 	require.NoErrorf(t, err, "failed to create values.yaml in %s", chartPath)
 
 	// Create a dummy template file
-	err = os.WriteFile(filepath.Join(chartPath, "templates", "dummy.yaml"), []byte("kind: Pod"), 0o600)
+	err = os.WriteFile(filepath.Join(chartPath, "templates", "dummy.yaml"), []byte("kind: Pod"), FilePermissions)
 	require.NoErrorf(t, err, "failed to create dummy.yaml in %s", chartPath)
 }
 
@@ -268,7 +268,7 @@ func TestDefaultLoader_LoadChartWithInvalidFile(t *testing.T) {
 
 	// Create an invalid Chart.yaml
 	filePath := filepath.Join(chartPath, "Chart.yaml")
-	err = os.WriteFile(filePath, []byte("hello"), 0o600)
+	err = os.WriteFile(filePath, []byte("hello"), FilePermissions)
 	require.NoErrorf(t, err, "failed to create invalid Chart.yaml in %s", chartPath)
 
 	// Test loading the invalid chart

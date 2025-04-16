@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/lalbers/irr/pkg/fileutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -90,8 +91,8 @@ func createTempChart(t *testing.T) (chartPath string, cleanup func()) {
 name: test-chart
 version: 0.1.0
 `
-	// #nosec G306 - This is a test file that needs to be readable
-	err = os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), []byte(chartYaml), 0o600)
+	// Use constants for file permissions instead of hardcoded values for consistency and maintainability
+	err = os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), []byte(chartYaml), fileutil.ReadWriteUserPermission)
 	require.NoError(t, err, "Failed to create Chart.yaml")
 
 	// Create values.yaml with image references
@@ -101,8 +102,8 @@ version: 0.1.0
 sidecar:
   image: docker.io/library/busybox:1.33.1
 `
-	// #nosec G306 - This is a test file that needs to be readable
-	err = os.WriteFile(filepath.Join(chartDir, "values.yaml"), []byte(valuesYaml), 0o600)
+	// Use constants for file permissions instead of hardcoded values for consistency and maintainability
+	err = os.WriteFile(filepath.Join(chartDir, "values.yaml"), []byte(valuesYaml), fileutil.ReadWriteUserPermission)
 	require.NoError(t, err, "Failed to create values.yaml")
 
 	cleanup = func() {
@@ -295,8 +296,8 @@ func TestValidateCommand(t *testing.T) {
 sidecar:
   image: example.registry.io/library/busybox:1.33.1
 `
-	// #nosec G306 - This is a test file that needs to be readable
-	err := os.WriteFile(valuesFile, []byte(valuesContent), 0o600)
+	// Use constants for file permissions instead of hardcoded values for consistency and maintainability
+	err := os.WriteFile(valuesFile, []byte(valuesContent), fileutil.ReadWriteUserPermission)
 	require.NoError(t, err, "Failed to create test values file")
 
 	tests := []struct {
@@ -568,8 +569,8 @@ func TestCommandCombinations(t *testing.T) {
 sidecar:
   image: example.registry.io/library/busybox:1.33.1
 `
-	// #nosec G306 - This is a test file that needs to be readable
-	err := os.WriteFile(valuesFile, []byte(valuesContent), 0o600)
+	// Use constants for file permissions instead of hardcoded values for consistency and maintainability
+	err := os.WriteFile(valuesFile, []byte(valuesContent), fileutil.ReadWriteUserPermission)
 	require.NoError(t, err, "Failed to create test values file")
 
 	tests := []struct {
@@ -618,3 +619,39 @@ sidecar:
 		})
 	}
 }
+
+// Load values yaml from file
+valuesFile, err := os.CreateTemp("", "irr-values-*.yaml")
+require.NoError(t, err, "Failed to create temp values file")
+defer func() {
+	if err := os.Remove(valuesFile.Name()); err != nil {
+		fmt.Printf("Warning: Failed to remove temp file %s: %v\n", valuesFile.Name(), err)
+	}
+}()
+
+valuesContent := `
+image:
+  repository: docker.io/library/nginx
+  tag: latest
+`
+// Use constants for file permissions instead of hardcoded values for consistency and maintainability
+err = os.WriteFile(valuesFile.Name(), []byte(valuesContent), fileutil.ReadWriteUserPermission)
+require.NoError(t, err, "Failed to write to values file")
+
+// Load values yaml from file
+valuesFile, err = os.CreateTemp("", "override-yaml-*.yaml")
+require.NoError(t, err, "Failed to create temp override file")
+defer func() {
+	if err := os.Remove(valuesFile.Name()); err != nil {
+		fmt.Printf("Warning: Failed to cleanup temp file %s: %v\n", valuesFile.Name(), err)
+	}
+}()
+
+valuesContent = `
+image:
+  repository: docker.io/library/nginx
+  tag: latest
+`
+// Use constants for file permissions instead of hardcoded values for consistency and maintainability
+err = os.WriteFile(valuesFile.Name(), []byte(valuesContent), fileutil.ReadWriteUserPermission)
+require.NoError(t, err, "Failed to write to values file")
