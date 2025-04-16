@@ -1,4 +1,4 @@
-.PHONY: build test lint clean run helm-lint test-charts test-integration test-cert-manager test-kube-prometheus-stack test-integration-specific test-integration-debug help dist
+.PHONY: build test lint clean run helm-lint test-charts test-integration test-cert-manager test-kube-prometheus-stack test-integration-specific test-integration-debug help dist lint-fileperm
 
 BINARY_NAME=irr
 BUILD_DIR=bin
@@ -135,6 +135,10 @@ lint:
 		echo "Install with: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"; \
 	fi
 
+lint-fileperm:
+	@echo "Checking for hardcoded file permissions..."
+	@./tools/lint/fileperm/check-hardcoded-permissions.sh
+
 helm-lint:
 	@echo "Running Helm lint and template validation..."
 	@if command -v helm > /dev/null; then \
@@ -182,6 +186,7 @@ help:
 	@echo "  test-kube-prometheus-stack-debug  Run kube-prometheus-stack tests with debug output"
 	@echo "  test-charts        Run chart tests"
 	@echo "  lint               Run linter"
+	@echo "  lint-fileperm      Check for hardcoded file permissions"
 	@echo "  helm-lint          Run Helm lint and template validation"
 	@echo "  clean              Clean up build artifacts"
 	@echo "  run ARGS=\"./..\"     Run the irr binary with the specified arguments"
