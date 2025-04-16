@@ -44,11 +44,20 @@ linters:
     # Additionally recommended linters
     - whitespace
     - asciicheck
+    
+    # Custom linters will be added once the path to the binary is set up
+    # - fileperm
 
   disable:
     - gomoddirectives
     - godot
   settings:
+    # Custom linter - comment out until binary is properly built
+    # custom:
+    #   fileperm:
+    #     path: tools/lint/fileperm/cmd/fileperm-lint
+    #     description: Checks for hardcoded file permissions (0o600) instead of using constants
+    #     original-url: github.com/lalbers/irr/tools/lint/fileperm
     depguard:
       rules:
         Main:
