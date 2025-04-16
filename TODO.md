@@ -314,8 +314,86 @@ _**Goal:** Implement the Helm plugin interface that wraps around the core CLI fu
         - [x] Edge cases (empty strings, unusual formats)
       - [x] Test each validation function against all fixture entries
       - [x] Document what makes an image valid/invalid in comments
+### Phase 2.3: Focused 15-30% Coverage on current 0% coverage (High ROI First)
+- [ ] **Prioritization Criteria:**
+  - [ ] **Value-to-Effort Ratio:** Focus on functions with high reuse across the codebase (core libraries).
+  - [ ] **Complexity Consideration:** Prioritize functions with clear inputs/outputs and minimal mocking needs.
+  - [ ] **Dependency Impact:** Target functions that are foundational to other components.
+  - [ ] **Technical Risk:** Prioritize error handling, filesystem interactions, and core logic.
+  - [ ] **Implementation Time:** Favor functions requiring minimal mocking complexity for this initial phase.
 
-### Phase 2.3: Enhance High-Coverage & Local Integration (Goal: ~70%+ in Core)
+- [ ] **Error Handling Implementation (Estimated effort: 1-2 days):**
+  - [ ] **Chart Error Types:** Implement tests for all error constructors and methods in `pkg/chart/errors.go`:
+    - [ ] Test Error() string output matches expected format
+    - [ ] Verify Is() properly identifies error types
+    - [ ] Confirm Unwrap() correctly exposes wrapped errors
+  - [ ] **Override Error Wrappers:** Implement tests for error wrapper functions in `pkg/override/errors.go`:
+    - [ ] Test WrapNegativeArrayIndex, WrapNotAnArray, WrapNonMapTraversalArray, etc.
+    - [ ] Verify error context is properly preserved in wrapped errors
+    - [ ] Test error type assertions using errors.Is() and errors.As()
+  - [ ] **Registry Error Handling:** Implement tests for registry error functions:
+    - [ ] Test WrapMappingFileRead and other wrapper functions
+    - [ ] Verify Error() string output and Unwrap() functionality
+
+- [ ] **Filesystem Utilities (Estimated effort: 2-3 days):**
+  - [ ] **Core FS Functions:** Implement tests for filesystem operations in `pkg/fileutil/fs.go`:
+    - [ ] Test Create, Mkdir, MkdirAll, Open, OpenFile operations
+    - [ ] Test Remove, RemoveAll, Rename, Stat operations  
+    - [ ] Verify proper error propagation for each operation
+    - [ ] *Guideline:* Apply package variable mocking pattern (`SetFs`) as per `docs/TESTING-FILESYSTEM-MOCKING.md`.
+  - [ ] **Chart Loader FS Integration:** Test `pkg/chart/loader.go:SetFS` functionality:
+    - [ ] Verify FS injection works correctly with testing mock
+    - [ ] Test path resolution with injected filesystem
+    - [ ] *Guideline:* Assumes `Loader` uses dependency injection or similar for its FS.
+  - [ ] **Path Utilities:** Test `pkg/fileutil/utils.go:GetAbsPath`:
+    - [ ] Test with relative and absolute paths
+    - [ ] Verify correct behavior with different working directories
+    - [ ] *Guideline:* Use `path/filepath` for path manipulations within tests.
+
+- [ ] **Value Path Processing (Estimated effort: 2-3 days):**
+  - [ ] **Flattening Functions:** Test YAML/map flattening in `pkg/override/override.go`:
+    - [ ] Implement tests for `flattenYAMLToHelmSet`
+    - [ ] Test `flattenValue` with different data types (maps, arrays, primitives)
+    - [ ] Verify correct path construction in flattened output
+
+- [ ] **Configuration Loading (Estimated effort: 3-4 days):**
+  - [ ] **Registry Configuration:** Test configuration loading functions:
+    - [ ] Test `LoadConfigWithFS`, `LoadConfigDefault`, `LoadStructuredConfigDefault` in `pkg/registry/config.go`
+    - [ ] Verify proper default configuration when no file exists
+    - [ ] Test error handling with invalid configuration files
+    - [ ] *Guideline:* Implementer to verify current FS pattern. Use mock FS via DI/parameter for `LoadConfigWithFS`; use package variable mocking for `Load*Default` functions, assuming they use the package's `fs` variable.
+  - [ ] **Registry Mappings:** Test mapping functionality:
+    - [ ] Test `LoadMappingsDefault` in `pkg/registry/mappings.go`
+    - [ ] Verify correct registry mapping resolution
+    - [ ] Test with both valid and invalid mapping files
+    - [ ] *Guideline:* Implementer to verify current FS pattern. Apply package variable mocking pattern for default loading, assuming it uses the package's `fs` variable.
+
+- [ ] **Core Analyzer Functions (Estimated effort: 2-4 days):**
+  - [ ] **Analysis Loading:** Test `pkg/analyzer/analyzer.go:Load`
+    - [ ] Test loading valid analysis files using mock FS
+    - [ ] Test error handling for malformed or missing files
+    - [ ] *Guideline:* Implementer to verify current FS pattern (likely DI or package variable) and apply appropriate mocking strategy.
+
+- [ ] **Version Checking (Estimated effort: <1 day):**
+  - [ ] Test `pkg/version/version.go:CheckHelmVersion`:
+    - [ ] Test with compatible and incompatible version strings
+    - [ ] Verify error generation for incompatible versions
+    - [ ] Test with edge cases (development versions, pre-releases)
+
+- [ ] **Testing Guidelines:**
+  - [ ] **Pre-Check:** Before writing tests for a function, verify it uses the standard `fileutil.FS` interface.
+  - [ ] **Refactoring:** If a target function does not use `fileutil.FS`, refactor it first using the hybrid approach (`docs/TESTING-FILESYSTEM-MOCKING.md`) as part of the testing task.
+  - [ ] Leverage existing filesystem mocking patterns from Phase 2.1 (ref `docs/TESTING-FILESYSTEM-MOCKING.md`).
+  - [ ] Prioritize pure functions with clear inputs/outputs first.
+  - [ ] Use table-driven tests where appropriate for comprehensive test cases.
+  - [ ] Verify error types consistently using `errors.Is()` and `errors.As()` (standard from Phase 2.2).
+  - [ ] Use the standard `path/filepath` package for path manipulations.
+  - [ ] Consider using centralized fixtures from `pkg/testutil/fixtures` if applicable (established in Phase 2.2).
+  - [ ] Document any discovered bugs or inconsistencies.
+  - [ ] Create simple mock implementations where needed (e.g., for interfaces).
+  - [ ] *Note:* Consider parallelizing work across these sections (Errors, FS, Value Path, Config, Analyzer, Version) as they are largely independent.
+
+### Phase 2.4: Enhance High-Coverage & Local Integration (Goal: ~70%+ in Core)
 - [ ] **Refine Existing Tests:** Improve tests in well-covered packages (`pkg/generator`, `pkg/helm`, `pkg/registry`, `pkg/strategy`) by adding edge cases or complex scenarios.
 - [ ] **Implement Local Integration Tests:**
     - [ ] Write tests covering interactions *between* packages (e.g., `analysis` -> `override` -> `generator`).
