@@ -442,9 +442,9 @@ func TestParseArrayPath(t *testing.T) {
 	}
 }
 
-func TestGetValueAtPath(t *testing.T) {
-	// Create a complex nested structure for testing
-	data := map[string]interface{}{
+// createTestValueMap creates a complex nested structure for testing GetValueAtPath
+func createTestValueMap() map[string]interface{} {
+	return map[string]interface{}{
 		"simple":  "value",
 		"number":  42,
 		"boolean": true,
@@ -471,8 +471,18 @@ func TestGetValueAtPath(t *testing.T) {
 		},
 		"literal-key": "special-key-without-brackets",
 	}
+}
 
-	tests := []struct {
+// createGetValueAtPathTests creates all test cases for the GetValueAtPath test
+func createGetValueAtPathTests(data map[string]interface{}) []struct {
+	name        string
+	data        map[string]interface{}
+	path        []string
+	expected    interface{}
+	expectError bool
+	errorType   error
+} {
+	return []struct {
 		name        string
 		data        map[string]interface{}
 		path        []string
@@ -642,6 +652,12 @@ func TestGetValueAtPath(t *testing.T) {
 			errorType:   ErrPathNotFound,
 		},
 	}
+}
+
+func TestGetValueAtPath(t *testing.T) {
+	// Create a complex nested structure for testing
+	data := createTestValueMap()
+	tests := createGetValueAtPathTests(data)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
