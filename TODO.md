@@ -4,8 +4,17 @@
 ## Phase 1: Helm Plugin Integration - Remaining Items
 _**Goal:** Implement the Helm plugin interface that wraps around the core CLI functionality._
 
-## Phase 2: Test Coverage
-_**Goal:** Systematically increase unit and integration test coverage across the codebase to improve reliability and reduce regressions, aiming for a minimum coverage baseline and targeting critical packages._
+## Phase 2: Test Coverage for Core Packages (Target: 50-60% per package)
+
+**Phase 2.1: Test Implementation Planning (COMPLETED)**
+- [x] Create detailed implementation plans for each package based on test outlines
+- [x] Break down each feature area into testable components
+- [x] Define test priorities based on complexity and risk
+
+**Phase 2.2: Test Implementation (IN PROGRESS)**
+- [x] `pkg/override` package: Implement tests to reach >70% coverage
+- [ ] `pkg/rules` package: Implement tests to reach >60% coverage
+- [ ] `pkg/catalog` package: Implement tests to reach >60% coverage
 
 ### Phase 2.1: Establish Baseline & Target Low-Hanging Fruit (Goal: Variable Minimum Coverage)
 - [x] **Step 1: Quick Wins - Simple Packages First**
@@ -216,51 +225,56 @@ _**Goal:** Systematically increase unit and integration test coverage across the
       - [x] Verify rule application during the chart loading and validation process
       - [x] Use dependency injection for testing charts with different rule sets
 
-  - [ ] **`pkg/override` (Current: 51.1%)**:
+  - [x] **`pkg/override` (Current: 72.0%)**:
     - [x] Created detailed test implementation plan covering all untested core functionality
     - [x] Identified and prioritized untested functions requiring coverage:
       - [x] JSON/YAML conversion functions: `JSONToYAML`, `ToYAML`, `GenerateYAML`
       - [x] Path utilities: `GetValueAtPath`, `flattenYAMLToHelmSet`/`flattenValue`
       - [x] Specified detailed test scenarios for each function
     - [x] Fixed linter issues that would affect test implementation across codebase
-    - [ ] Test YAML generation (`GenerateYAMLOverrides`, `GenerateYAML`, `ToYAML`), path construction/manipulation (`ConstructPath`, `GetValueAtPath`), merging (`mergeMaps`), and error wrapping.
-    - [ ] **Clarification - Error Wrapping**:
-      - [ ] Test all error wrappers defined in `pkg/override/errors.go`
-      - [ ] Verify that error hierarchies are maintained (e.g., `ErrPathParsing` wraps other errors)
-      - [ ] Use `errors.Is()` to verify error types in all error scenarios
-      - [ ] Ensure wrapped errors include context (e.g., path parts, key names)
-    - [ ] **Clarification - Merging Logic**:
-      - [ ] Test `mergeMaps` with the following scenarios:
-        - [ ] Simple merge (non-overlapping keys)
-        - [ ] Nested merge (overlapping maps)
-        - [ ] Type conflicts (map vs. primitive at same key)
-        - [ ] Array handling
-        - [ ] Deep nesting (3+ levels)
-        - [ ] Edge cases (nil maps, empty maps)
-    - [ ] **New - YAML/JSON Conversion Tests**:
-      - [ ] Implement `TestJSONToYAML` with these scenarios:
-        - [ ] Simple JSON conversion
-        - [ ] Nested JSON structures
-        - [ ] Arrays and mixed types
-        - [ ] Invalid JSON input
-      - [ ] Create `TestToYAML` for File struct serialization:
-        - [ ] Simple File structs
-        - [ ] Complex nested Values
-        - [ ] Empty/nil Values map
-      - [ ] Add `TestGenerateYAML` for override map conversion:
-        - [ ] Simple and complex map structures
-        - [ ] Verify formatting and indentation
-    - [ ] **New - Path Utility Tests**:
-      - [ ] Enhance `TestGetValueAtPath` with:
-        - [ ] Multi-level nested map access
-        - [ ] Array access via path notation
-        - [ ] Edge cases (empty paths, non-existent keys)
-        - [ ] Error conditions and proper error wrapping
-      - [ ] Add `TestFlattenYAMLToHelmSet`:
-        - [ ] Simple key-value pairs
-        - [ ] Nested structures with dotted path notation
-        - [ ] Array indices in paths
-        - [ ] Special characters handling
+    - [x] Test YAML generation (`GenerateYAMLOverrides`, `GenerateYAML`, `ToYAML`), path construction/manipulation (`ConstructPath`, `GetValueAtPath`), merging (`mergeMaps`), and error wrapping.
+    - [x] **Clarification - Error Wrapping**:
+      - [x] Test all error wrappers defined in `pkg/override/errors.go`
+      - [x] Verify that error hierarchies are maintained (e.g., `ErrPathParsing` wraps other errors)
+      - [x] Use `errors.Is()` to verify error types in all error scenarios
+      - [x] Ensure wrapped errors include context (e.g., path parts, key names)
+    - [x] **Clarification - Merging Logic**:
+      - [x] Test `mergeMaps` with the following scenarios:
+        - [x] Simple merge (non-overlapping keys)
+        - [x] Nested merge (overlapping maps)
+        - [x] Type conflicts (map vs. primitive at same key)
+        - [x] Array handling
+        - [x] Deep nesting (3+ levels)
+        - [x] Edge cases (nil maps, empty maps)
+    - [x] **New - YAML/JSON Conversion Tests**:
+      - [x] Implement `TestJSONToYAML` with these scenarios:
+        - [x] Simple JSON conversion
+        - [x] Nested JSON structures
+        - [x] Arrays and mixed types
+        - [x] Invalid JSON input
+      - [x] Create `TestToYAML` for File struct serialization:
+        - [x] Simple File structs
+        - [x] Complex nested Values
+        - [x] Empty/nil Values map
+      - [x] Add `TestGenerateYAML` for override map conversion:
+        - [x] Simple and complex map structures
+        - [x] Verify formatting and indentation
+    - [x] **New - Path Utility Tests**:
+      - [x] Enhance `TestGetValueAtPath` with:
+        - [x] Multi-level nested map access
+        - [x] Array access via path notation
+        - [x] Edge cases (empty paths, non-existent keys)
+        - [x] Error conditions and proper error wrapping
+      - [x] Add `TestFlattenYAMLToHelmSet`:
+        - [x] Simple key-value pairs
+        - [x] Nested structures with dotted path notation
+        - [x] Array indices in paths
+        - [x] Special characters handling
+    - [x] **Achievement - Coverage Goal Exceeded**:
+      - [x] Increased coverage from 51.1% to 72.0%, exceeding the target of 50-60%
+      - [x] Implemented comprehensive tests for all core functionality
+      - [x] Fixed linting issues across the codebase
+      - [x] Identified and documented bugs in `flattenYAMLToHelmSet` for future fixing
 
   - [ ] **`pkg/rules` (Current: 60.2%)**:
     - [ ] Test core rule application (`ApplyRules`, `ApplyRulesToMap`), registration (`AddRule`), enabling/disabling (`SetEnabled`), and provider detection (`DetectChartProvider`).
