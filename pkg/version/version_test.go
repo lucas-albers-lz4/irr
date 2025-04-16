@@ -1,6 +1,9 @@
 package version
 
 import (
+	"fmt"
+	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -155,4 +158,93 @@ func TestVersionStringParsing(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestCheckHelmVersion tests the CheckHelmVersion function
+func TestCheckHelmVersion(t *testing.T) {
+	// Save original exec.Command and restore it after the test
+	originalExecCommand := execCommand
+	defer func() { execCommand = originalExecCommand }()
+
+	testCases := []struct {
+		name          string
+		helmVersion   string
+		shouldSucceed bool
+		errorOutput   string
+	}{
+		{
+			name:          "Compatible version",
+			helmVersion:   "v3.14.0",
+			shouldSucceed: true,
+		},
+		{
+			name:          "Compatible newer version",
+			helmVersion:   "v3.15.2",
+			shouldSucceed: true,
+		},
+		{
+			name:          "Incompatible version",
+			helmVersion:   "v3.13.0",
+			shouldSucceed: false,
+			errorOutput:   "helm version 3.13.0 is not supported",
+		},
+		{
+			name:          "Version with build metadata",
+			helmVersion:   "v3.14.0+g0e1f115",
+			shouldSucceed: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Mock the exec.Command function
+			execCommand = func(_ string, _ ...string) *exec.Cmd {
+				return mockExecCommand(tc.helmVersion, nil)
+			}
+
+			// Call the function being tested
+			err := CheckHelmVersion()
+
+			// Check the result
+			if tc.shouldSucceed {
+				if err != nil {
+					t.Errorf("CheckHelmVersion() returned error for %s: %v", tc.helmVersion, err)
+				}
+			} else {
+				if err == nil {
+					t.Errorf("CheckHelmVersion() did not return error for %s", tc.helmVersion)
+				} else if tc.errorOutput != "" && !strings.Contains(err.Error(), tc.errorOutput) {
+					t.Errorf("CheckHelmVersion() error %q does not contain %q", err.Error(), tc.errorOutput)
+				}
+			}
+		})
+	}
+
+	// Test error handling when command fails
+	t.Run("Command execution error", func(t *testing.T) {
+		// Mock the exec.Command function to return an error
+		execCommand = func(_ string, _ ...string) *exec.Cmd {
+			return mockExecCommand("", fmt.Errorf("command execution failed"))
+		}
+
+		// Call the function being tested
+		err := CheckHelmVersion()
+
+		// Check the result
+		if err == nil {
+			t.Error("CheckHelmVersion() did not return error when command execution failed")
+		} else if !strings.Contains(err.Error(), "failed to get Helm version") {
+			t.Errorf("Unexpected error message: %v", err)
+		}
+	})
+}
+
+// Mock function for exec.Command
+func mockExecCommand(output string, err error) *exec.Cmd {
+	cmd := exec.Command("echo", output)
+	// If an error is provided, we create a command that will fail
+	if err != nil {
+		cmd = exec.Command("false")
+	}
+	return cmd
 }

@@ -33,13 +33,17 @@ func (t *testFS) Stat(name string) (os.FileInfo, error) {
 	return info, nil
 }
 
+const (
+	testFileName = "test.txt"
+	testDirName  = "testdir"
+)
+
 func TestFileExists(t *testing.T) {
 	// Create test filesystem
 	mockFS := newTestFS()
 
 	// Setup test files
-	testFile := "test.txt"
-	err := mockFS.WriteFile(testFile, []byte("test content"), ReadWriteUserReadOthers)
+	err := mockFS.WriteFile(testFileName, []byte("test content"), ReadWriteUserReadOthers)
 	if err != nil {
 		t.Fatalf("Failed to set up test: %v", err)
 	}
@@ -49,7 +53,7 @@ func TestFileExists(t *testing.T) {
 	defer cleanup()
 
 	// Test for existing file
-	exists, err := FileExists(testFile)
+	exists, err := FileExists(testFileName)
 	if err != nil {
 		t.Errorf("FileExists() error = %v, want nil", err)
 	}
@@ -72,8 +76,7 @@ func TestDirExists(t *testing.T) {
 	mockFS := newTestFS()
 
 	// Setup test directories
-	testDir := "testdir"
-	err := mockFS.MkdirAll(testDir, ReadWriteExecuteUserReadExecuteOthers)
+	err := mockFS.MkdirAll(testDirName, ReadWriteExecuteUserReadExecuteOthers)
 	if err != nil {
 		t.Fatalf("Failed to set up test: %v", err)
 	}
@@ -83,7 +86,7 @@ func TestDirExists(t *testing.T) {
 	defer cleanup()
 
 	// Test for existing directory
-	exists, err := DirExists(testDir)
+	exists, err := DirExists(testDirName)
 	if err != nil {
 		t.Errorf("DirExists() error = %v, want nil", err)
 	}
@@ -101,13 +104,12 @@ func TestDirExists(t *testing.T) {
 	}
 
 	// Test for file (not a directory)
-	testFile := "testfile.txt"
-	err = mockFS.WriteFile(testFile, []byte("test content"), ReadWriteUserReadOthers)
+	err = mockFS.WriteFile(testFileName, []byte("test content"), ReadWriteUserReadOthers)
 	if err != nil {
 		t.Fatalf("Failed to set up test: %v", err)
 	}
 
-	exists, err = DirExists(testFile)
+	exists, err = DirExists(testFileName)
 	if err != nil {
 		t.Errorf("DirExists() error = %v, want nil", err)
 	}
@@ -168,9 +170,8 @@ func TestReadFileString(t *testing.T) {
 	mockFS := newTestFS()
 
 	// Setup test files
-	testFile := "test.txt"
 	testContent := "Hello, World!"
-	err := mockFS.WriteFile(testFile, []byte(testContent), ReadWriteUserReadOthers)
+	err := mockFS.WriteFile(testFileName, []byte(testContent), ReadWriteUserReadOthers)
 	if err != nil {
 		t.Fatalf("Failed to set up test: %v", err)
 	}
@@ -180,7 +181,7 @@ func TestReadFileString(t *testing.T) {
 	defer cleanup()
 
 	// Test reading existing file
-	content, err := ReadFileString(testFile)
+	content, err := ReadFileString(testFileName)
 	if err != nil {
 		t.Errorf("ReadFileString() error = %v, want nil", err)
 	}
@@ -266,5 +267,52 @@ func TestJoinPath(t *testing.T) {
 				t.Errorf("JoinPath() = %q, want %q", result, tc.expected)
 			}
 		})
+	}
+}
+
+func TestFileOperations(t *testing.T) {
+	// Create a temporary directory for the test
+	tempDir := t.TempDir()
+	testFile := filepath.Join(tempDir, testFileName)
+
+	// Create test filesystem
+	mockFS := newTestFS()
+
+	// Setup test files
+	err := mockFS.WriteFile(testFile, []byte("test content"), ReadWriteUserReadOthers)
+	if err != nil {
+		t.Fatalf("Failed to set up test: %v", err)
+	}
+
+	// Replace default filesystem with mock
+	cleanup := SetFS(mockFS)
+	defer cleanup()
+
+	// Test for existing file
+	exists, err := FileExists(testFile)
+	if err != nil {
+		t.Errorf("FileExists() error = %v, want nil", err)
+	}
+	if !exists {
+		t.Errorf("FileExists() = %v, want true", exists)
+	}
+
+	// Create a temporary directory for the test
+	tempDir = t.TempDir()
+	testDir := filepath.Join(tempDir, testDirName)
+
+	// Setup test directories
+	err = mockFS.MkdirAll(testDir, ReadWriteExecuteUserReadExecuteOthers)
+	if err != nil {
+		t.Fatalf("Failed to set up test: %v", err)
+	}
+
+	// Test for existing directory
+	exists, err = DirExists(testDir)
+	if err != nil {
+		t.Errorf("DirExists() error = %v, want nil", err)
+	}
+	if !exists {
+		t.Errorf("DirExists() = %v, want true", exists)
 	}
 }

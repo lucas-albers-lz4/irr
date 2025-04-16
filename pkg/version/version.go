@@ -16,10 +16,13 @@ const (
 	MinHelmVersion = "3.14.0"
 )
 
+// Variable for exec.Command to support mocking in tests
+var execCommand = exec.Command
+
 // CheckHelmVersion checks if the installed Helm version meets our requirements
 func CheckHelmVersion() error {
 	// Get Helm version
-	cmd := exec.Command("helm", "version", "--short")
+	cmd := execCommand("helm", "version", "--short")
 	output, err := cmd.Output()
 	if err != nil {
 		return &exitcodes.ExitCodeError{
