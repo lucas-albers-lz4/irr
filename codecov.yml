@@ -34,6 +34,7 @@ ignore:
   - "**/*_test.go"
   - "test/"
   - "vendor/"
+  - "tools/lint/"
 
 rules:
   target: 95%
