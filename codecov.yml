@@ -1,0 +1,41 @@
+codecov:
+  require_ci_to_pass: true
+  notify:
+    wait_for_ci: true
+
+coverage:
+  precision: 2
+  round: down
+  range: "60...90"
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 1%
+        base: auto
+      core:
+        target: 70%
+        threshold: 0.5%
+        paths:
+          - "pkg/chart"
+          - "pkg/override"
+          - "pkg/rules"
+          - "pkg/analysis"
+          - "pkg/image"
+
+comment:
+  layout: "reach,diff,flags,files,footer"
+  behavior: default
+  require_changes: false
+  require_base: false
+  require_head: true
+
+ignore:
+  - "**/*_test.go"
+  - "test/"
+  - "vendor/"
+
+rules:
+  target: 95%
+  paths:
+    - "pkg/rules/**" 
