@@ -276,3 +276,33 @@ func TestDefaultLoader_LoadChartWithInvalidFile(t *testing.T) {
 	_, err = loader.Load(chartPath)
 	assert.Error(t, err, "expected error loading invalid chart")
 }
+
+func TestDefaultLoader_SetFS(t *testing.T) {
+	// Create initial filesystem
+	initialFS := fileutil.NewAferoFS(afero.NewMemMapFs())
+
+	// Create loader with initial filesystem
+	loader := NewDefaultLoader(initialFS)
+	assert.Equal(t, initialFS, loader.fs, "Loader should use the provided filesystem")
+
+	// Create new filesystem
+	newFS := fileutil.NewAferoFS(afero.NewMemMapFs())
+
+	// Call SetFS and get cleanup function
+	cleanup := loader.SetFS(newFS)
+
+	// Verify filesystem was changed
+	assert.Equal(t, newFS, loader.fs, "Loader should use the new filesystem after SetFS")
+
+	// Call cleanup function
+	cleanup()
+
+	// Verify original filesystem was restored
+	assert.Equal(t, initialFS, loader.fs, "Loader should restore the original filesystem after cleanup")
+
+	// Test with nil filesystem (should not panic)
+	assert.NotPanics(t, func() {
+		cleanup = loader.SetFS(nil)
+		cleanup()
+	}, "SetFS should handle nil filesystem")
+}

@@ -2,26 +2,31 @@ package chart
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/lalbers/irr/pkg/strategy"
 	"github.com/stretchr/testify/assert"
 )
 
-func TestUnsupportedStructureError(t *testing.T) {
-	path := []string{"image", "repository", "tag"}
-	structType := "map-registry-repository-tag"
+func TestErrorSentinels(t *testing.T) {
+	// Test error sentinel values
+	assert.Equal(t, "strict mode validation failed: unsupported structures found", ErrStrictValidationFailed.Error())
+	assert.Equal(t, "chart not found", ErrChartNotFound.Error())
+	assert.Equal(t, "helm loader failed", ErrChartLoadFailed.Error())
+}
 
+func TestUnsupportedStructureError(t *testing.T) {
+	path := []string{"image", "repository"}
+	errorType := "map-registry-repository-tag"
 	err := &UnsupportedStructureError{
 		Path: path,
-		Type: structType,
+		Type: errorType,
 	}
 
 	// Test Error() method
-	errMsg := err.Error()
-	assert.Contains(t, errMsg, "unsupported structure")
-	assert.Contains(t, errMsg, "image.repository.tag")
-	assert.Contains(t, errMsg, "map-registry-repository-tag")
+	expectedMsg := "unsupported structure at path image.repository (type: map-registry-repository-tag)"
+	assert.Equal(t, expectedMsg, err.Error())
 
 	// Test Is() method
 	assert.True(t, errors.Is(err, ErrStrictValidationFailed))
@@ -30,15 +35,13 @@ func TestUnsupportedStructureError(t *testing.T) {
 
 func TestThresholdNotMetError(t *testing.T) {
 	err := &ThresholdNotMetError{
-		Actual:   75,
+		Actual:   70,
 		Required: 80,
 	}
 
 	// Test Error() method
-	errMsg := err.Error()
-	assert.Contains(t, errMsg, "processing threshold not met")
-	assert.Contains(t, errMsg, "required 80%")
-	assert.Contains(t, errMsg, "actual 75%")
+	expectedMsg := "processing threshold not met: required 80%, actual 70%"
+	assert.Equal(t, expectedMsg, err.Error())
 
 	// Test Is() method
 	assert.True(t, errors.Is(err, strategy.ErrThresholdExceeded))
@@ -46,86 +49,54 @@ func TestThresholdNotMetError(t *testing.T) {
 }
 
 func TestParsingError(t *testing.T) {
-	// Test with ErrChartNotFound
-	err1 := &ParsingError{
-		FilePath: "/path/to/chart",
-		Message:  "chart not found",
-		Err:      ErrChartNotFound,
+	innerErr := errors.New("file not found")
+	err := &ParsingError{
+		FilePath: "/path/to/chart.yaml",
+		Message:  "Failed to parse chart manifest",
+		Err:      innerErr,
 	}
 
 	// Test Error() method
-	errMsg1 := err1.Error()
-	assert.Contains(t, errMsg1, "error parsing chart")
-	assert.Contains(t, errMsg1, "chart not found")
+	assert.Equal(t, "error parsing chart: file not found", err.Error())
 
-	// Test Is() method
-	assert.True(t, errors.Is(err1, ErrChartNotFound))
-	assert.False(t, errors.Is(err1, strategy.ErrThresholdExceeded))
-
-	// Test with ErrChartLoadFailed
-	err2 := &ParsingError{
-		FilePath: "/path/to/chart",
-		Message:  "failed to load chart",
-		Err:      ErrChartLoadFailed,
-	}
-
-	// Test Error() method
-	errMsg2 := err2.Error()
-	assert.Contains(t, errMsg2, "error parsing chart")
-	assert.Contains(t, errMsg2, "helm loader failed")
-
-	// Test Is() method
-	assert.True(t, errors.Is(err2, ErrChartLoadFailed))
+	// Test Is() method with ErrChartNotFound
+	assert.True(t, errors.Is(err, ErrChartNotFound))
+	assert.True(t, errors.Is(err, ErrChartLoadFailed))
+	assert.False(t, errors.Is(err, strategy.ErrThresholdExceeded))
 
 	// Test Unwrap() method
-	unwrappedErr1 := errors.Unwrap(err1)
-	assert.Equal(t, ErrChartNotFound, unwrappedErr1)
-
-	unwrappedErr2 := errors.Unwrap(err2)
-	assert.Equal(t, ErrChartLoadFailed, unwrappedErr2)
+	assert.Equal(t, innerErr, err.Unwrap())
+	assert.True(t, errors.Is(err, innerErr))
 }
 
 func TestImageProcessingError(t *testing.T) {
-	// Test with path
+	// Test with path and reference
+	innerErr := errors.New("invalid image format")
 	path := []string{"image", "repository"}
-	ref := "nginx:latest"
-	underlyingErr := errors.New("invalid image format")
-
-	err1 := &ImageProcessingError{
+	ref := "docker.io/myapp:latest"
+	err := &ImageProcessingError{
 		Path: path,
 		Ref:  ref,
-		Err:  underlyingErr,
+		Err:  innerErr,
 	}
 
-	// Test Error() method
-	errMsg1 := err1.Error()
-	assert.Contains(t, errMsg1, "image processing error")
-	assert.Contains(t, errMsg1, "image.repository")
-	assert.Contains(t, errMsg1, "nginx:latest")
-	assert.Contains(t, errMsg1, "invalid image format")
-
-	// Test without path
-	err2 := &ImageProcessingError{
-		Path: []string{},
-		Ref:  ref,
-		Err:  underlyingErr,
-	}
-
-	// Test Error() method for empty path
-	errMsg2 := err2.Error()
-	assert.Contains(t, errMsg2, "image processing error")
-	assert.Contains(t, errMsg2, "nginx:latest")
-	assert.Contains(t, errMsg2, "invalid image format")
-	assert.NotContains(t, errMsg2, "path")
+	// Test Error() method with path
+	errorMsg := err.Error()
+	assert.True(t, strings.Contains(errorMsg, "image processing error at path 'image.repository'"))
+	assert.True(t, strings.Contains(errorMsg, "ref: docker.io/myapp:latest"))
+	assert.True(t, strings.Contains(errorMsg, "invalid image format"))
 
 	// Test Unwrap() method
-	unwrappedErr := errors.Unwrap(err1)
-	assert.Equal(t, underlyingErr, unwrappedErr)
-}
+	assert.Equal(t, innerErr, err.Unwrap())
+	assert.True(t, errors.Is(err, innerErr))
 
-func TestErrorSentinels(t *testing.T) {
-	// Test error sentinel values
-	assert.Equal(t, "strict mode validation failed: unsupported structures found", ErrStrictValidationFailed.Error())
-	assert.Equal(t, "chart not found", ErrChartNotFound.Error())
-	assert.Equal(t, "helm loader failed", ErrChartLoadFailed.Error())
+	// Test without path
+	err = &ImageProcessingError{
+		Path: []string{},
+		Ref:  ref,
+		Err:  innerErr,
+	}
+	errorMsg = err.Error()
+	assert.True(t, strings.Contains(errorMsg, "image processing error (ref: docker.io/myapp:latest)"))
+	assert.True(t, strings.Contains(errorMsg, "invalid image format"))
 }
