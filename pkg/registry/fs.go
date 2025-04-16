@@ -25,6 +25,13 @@ func GetAferoFS(fs fileutil.FS) afero.Fs {
 		return afero.NewOsFs()
 	}
 
+	// Special case for testing: If the filesystem is already an *afero.MemMapFs wrapper,
+	// try to extract and return the actual memMapFs for test consistency
+	if wrapper, ok := fs.(*fileutil.AferoFS); ok {
+		// Use the accessor to get the underlying filesystem
+		return wrapper.GetUnderlyingFs()
+	}
+
 	// For testing purposes, create a memory filesystem
 	// This ensures tests don't touch the real filesystem
 	// In a production environment, this function would ideally get the actual afero.Fs
