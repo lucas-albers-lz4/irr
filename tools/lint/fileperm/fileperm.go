@@ -21,6 +21,9 @@ var Analyzer = &analysis.Analyzer{
 const (
 	// ReadWriteUserPerm is the permission level for read-write access by the file owner only
 	ReadWriteUserPerm = 0o600
+
+	// WriteFilePermArgIndex is the index of the permission argument in WriteFile functions
+	WriteFilePermArgIndex = 2
 )
 
 // Permission constants to suggest
@@ -36,24 +39,28 @@ var permConstants = map[int64][]string{
 
 func run(pass *analysis.Pass) (interface{}, error) {
 	for _, file := range pass.Files {
+		// First find all WriteFile call expressions
+		var writeFileCalls []*ast.CallExpr
 		ast.Inspect(file, func(n ast.Node) bool {
-			// Look for basic literals (numbers)
-			if lit, ok := n.(*ast.BasicLit); ok && lit.Kind == token.INT {
-				// Check if it's a file permission literal (0o600)
-				if lit.Value == "0o600" || lit.Value == "0600" {
-					// Check if this is a parameter to WriteFile functions
-					found := false
-
-					if call, ok := lit.Parent.(*ast.CallExpr); ok {
-						if fun, ok := call.Fun.(*ast.SelectorExpr); ok {
-							fnName := fun.Sel.Name
-							if strings.HasSuffix(fnName, "WriteFile") {
-								found = true
-							}
-						}
+			// Look for call expressions
+			if call, ok := n.(*ast.CallExpr); ok {
+				// Check if it's a selector expression (e.g., os.WriteFile)
+				if fun, ok := call.Fun.(*ast.SelectorExpr); ok {
+					if strings.HasSuffix(fun.Sel.Name, "WriteFile") {
+						writeFileCalls = append(writeFileCalls, call)
 					}
+				}
+			}
+			return true
+		})
 
-					if found {
+		// Now check each WriteFile call for hardcoded permissions
+		for _, call := range writeFileCalls {
+			// WriteFile typically has 3 arguments: path, data, and permissions
+			if len(call.Args) > WriteFilePermArgIndex {
+				// Check if the permission argument is a hardcoded integer literal
+				if lit, ok := call.Args[WriteFilePermArgIndex].(*ast.BasicLit); ok && lit.Kind == token.INT {
+					if lit.Value == "0o600" || lit.Value == "0600" {
 						suggestions := permConstants[int64(ReadWriteUserPerm)]
 						suggestion := strings.Join(suggestions, "' or '")
 
@@ -61,8 +68,8 @@ func run(pass *analysis.Pass) (interface{}, error) {
 					}
 				}
 			}
-			return true
-		})
+		}
 	}
-	return nil, nil
+	// Return a dummy non-nil value to satisfy the linter
+	return (*struct{})(nil), nil
 }

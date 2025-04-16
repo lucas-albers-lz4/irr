@@ -619,39 +619,3 @@ sidecar:
 		})
 	}
 }
-
-// Load values yaml from file
-valuesFile, err := os.CreateTemp("", "irr-values-*.yaml")
-require.NoError(t, err, "Failed to create temp values file")
-defer func() {
-	if err := os.Remove(valuesFile.Name()); err != nil {
-		fmt.Printf("Warning: Failed to remove temp file %s: %v\n", valuesFile.Name(), err)
-	}
-}()
-
-valuesContent := `
-image:
-  repository: docker.io/library/nginx
-  tag: latest
-`
-// Use constants for file permissions instead of hardcoded values for consistency and maintainability
-err = os.WriteFile(valuesFile.Name(), []byte(valuesContent), fileutil.ReadWriteUserPermission)
-require.NoError(t, err, "Failed to write to values file")
-
-// Load values yaml from file
-valuesFile, err = os.CreateTemp("", "override-yaml-*.yaml")
-require.NoError(t, err, "Failed to create temp override file")
-defer func() {
-	if err := os.Remove(valuesFile.Name()); err != nil {
-		fmt.Printf("Warning: Failed to cleanup temp file %s: %v\n", valuesFile.Name(), err)
-	}
-}()
-
-valuesContent = `
-image:
-  repository: docker.io/library/nginx
-  tag: latest
-`
-// Use constants for file permissions instead of hardcoded values for consistency and maintainability
-err = os.WriteFile(valuesFile.Name(), []byte(valuesContent), fileutil.ReadWriteUserPermission)
-require.NoError(t, err, "Failed to write to values file")
