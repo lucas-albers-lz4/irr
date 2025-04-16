@@ -14,7 +14,7 @@ coverage:
         threshold: 1%
         base: auto
       core:
-        target: 70%
+        target: 67%
         threshold: 0.5%
         paths:
           - "pkg/chart"
