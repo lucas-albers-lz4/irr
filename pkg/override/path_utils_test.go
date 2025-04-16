@@ -2,8 +2,11 @@
 package override
 
 import (
+	"errors"
 	"reflect"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestDeepCopy(t *testing.T) {
@@ -435,6 +438,453 @@ func TestParseArrayPath(t *testing.T) {
 			if index != tt.wantIndex {
 				t.Errorf("parsePathPart() index = %v, want %v", index, tt.wantIndex)
 			}
+		})
+	}
+}
+
+func TestGetValueAtPath(t *testing.T) {
+	// Test data structure with various nested elements
+	data := map[string]interface{}{
+		"simple":  "value",
+		"number":  42,
+		"boolean": true,
+		"nested": map[string]interface{}{
+			"inner": "nested-value",
+			"deep": map[string]interface{}{
+				"deepest": "very-deep",
+			},
+		},
+		"array": []interface{}{
+			"first",
+			"second",
+			map[string]interface{}{
+				"name": "third-item",
+			},
+		},
+		"mixed": map[string]interface{}{
+			"list": []interface{}{
+				map[string]interface{}{
+					"prop": "item1",
+				},
+				map[string]interface{}{
+					"prop": "item2",
+				},
+			},
+		},
+		"empty": map[string]interface{}{},
+	}
+
+	tests := []struct {
+		name        string
+		data        map[string]interface{}
+		path        []string
+		expected    interface{}
+		expectError bool
+		errorType   error
+	}{
+		{
+			name:     "simple key",
+			data:     data,
+			path:     []string{"simple"},
+			expected: "value",
+		},
+		{
+			name:     "number value",
+			data:     data,
+			path:     []string{"number"},
+			expected: 42,
+		},
+		{
+			name:     "boolean value",
+			data:     data,
+			path:     []string{"boolean"},
+			expected: true,
+		},
+		{
+			name:     "nested key",
+			data:     data,
+			path:     []string{"nested", "inner"},
+			expected: "nested-value",
+		},
+		{
+			name:     "deeply nested key",
+			data:     data,
+			path:     []string{"nested", "deep", "deepest"},
+			expected: "very-deep",
+		},
+		{
+			name:     "array element by index",
+			data:     data,
+			path:     []string{"array[0]"},
+			expected: "first",
+		},
+		{
+			name:     "array element by index - second element",
+			data:     data,
+			path:     []string{"array[1]"},
+			expected: "second",
+		},
+		{
+			name:     "nested property in array element",
+			data:     data,
+			path:     []string{"array[2]", "name"},
+			expected: "third-item",
+		},
+		{
+			name:     "complex path with arrays and objects",
+			data:     data,
+			path:     []string{"mixed", "list[1]", "prop"},
+			expected: "item2",
+		},
+		{
+			name:     "empty path",
+			data:     data,
+			path:     []string{},
+			expected: data, // The function returns the entire data map for empty path
+		},
+		{
+			name:        "nil data",
+			data:        nil,
+			path:        []string{"key"},
+			expectError: true,
+			errorType:   ErrNilDataMap,
+		},
+		{
+			name:        "non-existent key",
+			data:        data,
+			path:        []string{"nonexistent"},
+			expectError: true,
+			errorType:   ErrPathNotFound,
+		},
+		{
+			name:        "non-existent nested key",
+			data:        data,
+			path:        []string{"nested", "nonexistent"},
+			expectError: true,
+			errorType:   ErrPathNotFound,
+		},
+		{
+			name:        "array index out of bounds",
+			data:        data,
+			path:        []string{"array[99]"},
+			expectError: true,
+			errorType:   ErrArrayIndexOutOfBounds,
+		},
+		{
+			name:        "invalid array index format",
+			data:        data,
+			path:        []string{"array[abc]"},
+			expectError: true,
+			errorType:   ErrPathParsing,
+		},
+		{
+			name:        "traversal through primitive",
+			data:        data,
+			path:        []string{"simple", "deeper"},
+			expectError: true,
+			errorType:   ErrNonMapOrArrayTraversal,
+		},
+		{
+			name:        "empty map traversal",
+			data:        data,
+			path:        []string{"empty", "nonexistent"},
+			expectError: true,
+			errorType:   ErrPathNotFound,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			value, err := GetValueAtPath(tt.data, tt.path)
+
+			if tt.expectError {
+				if assert.Error(t, err) {
+					// Check that the error is of the expected type
+					if tt.errorType != nil {
+						assert.True(t, errors.Is(err, tt.errorType),
+							"Expected error type %v, got %v", tt.errorType, err)
+					}
+				}
+				return
+			}
+
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expected, value)
+		})
+	}
+}
+
+// getSimpleMergeMapTestCases returns test cases for simple map merging scenarios
+func getSimpleMergeMapTestCases() []struct {
+	name     string
+	dst      map[string]interface{}
+	src      map[string]interface{}
+	expected map[string]interface{}
+} {
+	return []struct {
+		name     string
+		dst      map[string]interface{}
+		src      map[string]interface{}
+		expected map[string]interface{}
+	}{
+		{
+			name: "simple merge - non-overlapping keys",
+			dst: map[string]interface{}{
+				"a": "valueA",
+				"b": "valueB",
+			},
+			src: map[string]interface{}{
+				"c": "valueC",
+				"d": "valueD",
+			},
+			expected: map[string]interface{}{
+				"a": "valueA",
+				"b": "valueB",
+				"c": "valueC",
+				"d": "valueD",
+			},
+		},
+		{
+			name: "simple merge - overlapping keys",
+			dst: map[string]interface{}{
+				"a": "valueA",
+				"b": "valueB",
+			},
+			src: map[string]interface{}{
+				"b": "newValueB",
+				"c": "valueC",
+			},
+			expected: map[string]interface{}{
+				"a": "valueA",
+				"b": "newValueB",
+				"c": "valueC",
+			},
+		},
+		{
+			name: "nested merge - overlapping maps",
+			dst: map[string]interface{}{
+				"a": map[string]interface{}{
+					"x": "valueX",
+					"y": "valueY",
+				},
+			},
+			src: map[string]interface{}{
+				"a": map[string]interface{}{
+					"y": "newValueY",
+					"z": "valueZ",
+				},
+			},
+			expected: map[string]interface{}{
+				"a": map[string]interface{}{
+					"x": "valueX",
+					"y": "newValueY",
+					"z": "valueZ",
+				},
+			},
+		},
+		{
+			name: "type conflict - map vs primitive",
+			dst: map[string]interface{}{
+				"key": map[string]interface{}{
+					"x": "valueX",
+				},
+			},
+			src: map[string]interface{}{
+				"key": "primitive",
+			},
+			expected: map[string]interface{}{
+				"key": "primitive",
+			},
+		},
+		{
+			name: "type conflict - primitive vs map",
+			dst: map[string]interface{}{
+				"key": "primitive",
+			},
+			src: map[string]interface{}{
+				"key": map[string]interface{}{
+					"x": "valueX",
+				},
+			},
+			expected: map[string]interface{}{
+				"key": map[string]interface{}{
+					"x": "valueX",
+				},
+			},
+		},
+	}
+}
+
+// getComplexMergeMapTestCases returns test cases for complex map merging scenarios
+func getComplexMergeMapTestCases() []struct {
+	name     string
+	dst      map[string]interface{}
+	src      map[string]interface{}
+	expected map[string]interface{}
+} {
+	return []struct {
+		name     string
+		dst      map[string]interface{}
+		src      map[string]interface{}
+		expected map[string]interface{}
+	}{
+		{
+			name: "array handling",
+			dst: map[string]interface{}{
+				"array": []interface{}{1, 2, 3},
+			},
+			src: map[string]interface{}{
+				"array": []interface{}{4, 5, 6},
+			},
+			expected: map[string]interface{}{
+				"array": []interface{}{4, 5, 6},
+			},
+		},
+		{
+			name: "deep nesting (3+ levels)",
+			dst: map[string]interface{}{
+				"level1": map[string]interface{}{
+					"level2": map[string]interface{}{
+						"level3": map[string]interface{}{
+							"a": "valueA",
+							"b": "valueB",
+						},
+					},
+				},
+			},
+			src: map[string]interface{}{
+				"level1": map[string]interface{}{
+					"level2": map[string]interface{}{
+						"level3": map[string]interface{}{
+							"b": "newValueB",
+							"c": "valueC",
+						},
+					},
+				},
+			},
+			expected: map[string]interface{}{
+				"level1": map[string]interface{}{
+					"level2": map[string]interface{}{
+						"level3": map[string]interface{}{
+							"a": "valueA",
+							"b": "newValueB",
+							"c": "valueC",
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "edge case - nil source map",
+			dst: map[string]interface{}{
+				"a": "valueA",
+			},
+			src: nil,
+			expected: map[string]interface{}{
+				"a": "valueA",
+			},
+		},
+		{
+			name: "edge case - empty source map",
+			dst: map[string]interface{}{
+				"a": "valueA",
+			},
+			src: map[string]interface{}{},
+			expected: map[string]interface{}{
+				"a": "valueA",
+			},
+		},
+		{
+			name: "edge case - empty destination map",
+			dst:  map[string]interface{}{},
+			src: map[string]interface{}{
+				"a": "valueA",
+			},
+			expected: map[string]interface{}{
+				"a": "valueA",
+			},
+		},
+		{
+			name: "complex merge with multiple types",
+			dst: map[string]interface{}{
+				"string": "value",
+				"number": 42,
+				"bool":   true,
+				"array":  []interface{}{1, 2, 3},
+				"map": map[string]interface{}{
+					"key": "value",
+				},
+				"nested": map[string]interface{}{
+					"array": []interface{}{
+						map[string]interface{}{
+							"name": "item1",
+						},
+					},
+				},
+			},
+			src: map[string]interface{}{
+				"string": "newValue",
+				"array":  []interface{}{4, 5, 6},
+				"map": map[string]interface{}{
+					"key":    "newValue",
+					"newKey": "value",
+					"submap": map[string]interface{}{
+						"key": "value",
+					},
+				},
+				"nested": map[string]interface{}{
+					"array": []interface{}{
+						map[string]interface{}{
+							"name": "item2",
+						},
+					},
+				},
+			},
+			expected: map[string]interface{}{
+				"string": "newValue",
+				"number": 42,
+				"bool":   true,
+				"array":  []interface{}{4, 5, 6},
+				"map": map[string]interface{}{
+					"key":    "newValue",
+					"newKey": "value",
+					"submap": map[string]interface{}{
+						"key": "value",
+					},
+				},
+				"nested": map[string]interface{}{
+					"array": []interface{}{
+						map[string]interface{}{
+							"name": "item2",
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func TestMergeMaps(t *testing.T) {
+	// Combine all test cases
+	tests := append(getSimpleMergeMapTestCases(), getComplexMergeMapTestCases()...)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Make a copy of dst to avoid modifying the test case
+			dstCopyInterface := DeepCopy(tt.dst)
+			dstCopy, ok := dstCopyInterface.(map[string]interface{})
+			if !ok && dstCopyInterface != nil {
+				t.Fatalf("Expected DeepCopy result to be map[string]interface{} or nil, got %T", dstCopyInterface)
+			}
+
+			// Test the function
+			result := mergeMaps(dstCopy, tt.src)
+
+			// Check the result
+			assert.Equal(t, tt.expected, result, "Maps should be merged correctly")
+
+			// Since mergeMaps modifies the dst map in place, dstCopy and result should be equal
+			assert.Equal(t, dstCopy, result, "Result should equal the modified destination map")
 		})
 	}
 }
