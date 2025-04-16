@@ -1080,10 +1080,10 @@ func TestHelmChartLoader_Load(t *testing.T) {
 	// Test with a non-existent chart path
 	t.Run("NonExistentPath", func(t *testing.T) {
 		nonExistentPath := "./testdata/non-existent-chart"
-		chart, err := loader.Load(nonExistentPath)
+		loadedChart, err := loader.Load(nonExistentPath)
 
 		assert.Error(t, err, "Load should return an error for non-existent path")
-		assert.Nil(t, chart, "Chart should be nil for non-existent path")
+		assert.Nil(t, loadedChart, "Chart should be nil for non-existent path")
 		assert.Contains(t, err.Error(), "failed to load chart", "Error should mention chart loading failure")
 		assert.Contains(t, err.Error(), nonExistentPath, "Error should include the path")
 	})
