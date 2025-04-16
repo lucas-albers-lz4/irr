@@ -325,18 +325,18 @@ _**Goal:** Implement the Helm plugin interface that wraps around the core CLI fu
   - [ ] **Technical Risk:** Prioritize error handling, filesystem interactions, and core logic.
   - [ ] **Implementation Time:** Favor functions requiring minimal mocking complexity for this initial phase.
 
-- [ ] **Error Handling Implementation (Estimated effort: 1-2 days):**
-  - [ ] **Chart Error Types:** Implement tests for all error constructors and methods in `pkg/chart/errors.go`:
-    - [ ] Test Error() string output matches expected format
-    - [ ] Verify Is() properly identifies error types
-    - [ ] Confirm Unwrap() correctly exposes wrapped errors
+- [x] **Error Handling Implementation (Estimated effort: 1-2 days):**
+  - [x] **Chart Error Types:** Implement tests for all error constructors and methods in `pkg/chart/errors.go`:
+    - [x] Test Error() string output matches expected format
+    - [x] Verify Is() properly identifies error types
+    - [x] Confirm Unwrap() correctly exposes wrapped errors
   - [ ] **Override Error Wrappers:** Implement tests for error wrapper functions in `pkg/override/errors.go`:
     - [ ] Test WrapNegativeArrayIndex, WrapNotAnArray, WrapNonMapTraversalArray, etc.
     - [ ] Verify error context is properly preserved in wrapped errors
     - [ ] Test error type assertions using errors.Is() and errors.As()
-  - [ ] **Registry Error Handling:** Implement tests for registry error functions:
-    - [ ] Test WrapMappingFileRead and other wrapper functions
-    - [ ] Verify Error() string output and Unwrap() functionality
+  - [x] **Registry Error Handling:** Implement tests for registry error functions:
+    - [x] Test WrapMappingFileRead and other wrapper functions
+    - [x] Verify Error() string output and Unwrap() functionality
 
 - [ ] **Filesystem Utilities (Estimated effort: 2-3 days):**
   - [ ] **Core FS Functions:** Implement tests for filesystem operations in `pkg/fileutil/fs.go`:
@@ -359,17 +359,17 @@ _**Goal:** Implement the Helm plugin interface that wraps around the core CLI fu
     - [ ] Test `flattenValue` with different data types (maps, arrays, primitives)
     - [ ] Verify correct path construction in flattened output
 
-- [ ] **Configuration Loading (Estimated effort: 3-4 days):**
-  - [ ] **Registry Configuration:** Test configuration loading functions:
-    - [ ] Test `LoadConfigWithFS`, `LoadConfigDefault`, `LoadStructuredConfigDefault` in `pkg/registry/config.go`
-    - [ ] Verify proper default configuration when no file exists
-    - [ ] Test error handling with invalid configuration files
-    - [ ] *Guideline:* Implementer to verify current FS pattern. Use mock FS via DI/parameter for `LoadConfigWithFS`; use package variable mocking for `Load*Default` functions, assuming they use the package's `fs` variable.
-  - [ ] **Registry Mappings:** Test mapping functionality:
-    - [ ] Test `LoadMappingsDefault` in `pkg/registry/mappings.go`
-    - [ ] Verify correct registry mapping resolution
-    - [ ] Test with both valid and invalid mapping files
-    - [ ] *Guideline:* Implementer to verify current FS pattern. Apply package variable mocking pattern for default loading, assuming it uses the package's `fs` variable.
+- [x] **Configuration Loading (Estimated effort: 3-4 days):**
+  - [x] **Registry Configuration:** Test configuration loading functions:
+    - [x] Test `LoadConfigWithFS`, `LoadConfigDefault`, `LoadStructuredConfigDefault` in `pkg/registry/config.go`
+    - [x] Verify proper default configuration when no file exists
+    - [x] Test error handling with invalid configuration files
+    - [x] *Guideline:* Implementer to verify current FS pattern. Use mock FS via DI/parameter for `LoadConfigWithFS`; use package variable mocking for `Load*Default` functions, assuming they use the package's `fs` variable.
+  - [x] **Registry Mappings:** Test mapping functionality:
+    - [x] Test `LoadMappingsDefault` in `pkg/registry/mappings.go`
+    - [x] Verify correct registry mapping resolution
+    - [x] Test with both valid and invalid mapping files
+    - [x] *Guideline:* Implementer to verify current FS pattern. Apply package variable mocking pattern for default loading, assuming it uses the package's `fs` variable.
 
 - [ ] **Core Analyzer Functions (Estimated effort: 2-4 days):**
   - [ ] **Analysis Loading:** Test `pkg/analyzer/analyzer.go:Load`
