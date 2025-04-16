@@ -370,6 +370,15 @@ _**Goal:** Implement the Helm plugin interface that wraps around the core CLI fu
     - [x] Verify correct registry mapping resolution
     - [x] Test with both valid and invalid mapping files
     - [x] *Guideline:* Implementer to verify current FS pattern. Apply package variable mocking pattern for default loading, assuming it uses the package's `fs` variable.
+  - [x] **Bug Fixes:** Fixed test failures in registry package:
+    - [x] Fixed YAML format issue in `TestLoadMappingsWithFS` to use `mappings` key instead of `entries`
+    - [x] Aligned test paths with expected values in filesystem mocking
+    - [x] Verified all tests pass with integration test
+    - [x] Fixed ineffectual assignment linter error in mappings_test_default.go
+  - [x] **Linter Fixes:** Fixed linter errors in fileutil package:
+    - [x] Removed duplicate test file utils_test.go
+    - [x] Resolved redeclaration errors for test constants and functions
+    - [x] Verified all tests pass after cleanup
 
 - [ ] **Core Analyzer Functions (Estimated effort: 2-4 days):**
   - [ ] **Analysis Loading:** Test `pkg/analyzer/analyzer.go:Load`

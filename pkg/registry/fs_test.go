@@ -51,23 +51,20 @@ func TestLoadMappingsWithFS(t *testing.T) {
 	require.NoError(t, memFs.MkdirAll(tmpDir, 0o755))
 	require.NoError(t, afero.WriteFile(memFs, mappingsFile, []byte(content), 0o644))
 
-	// For LoadMappingsWithFS, we need to pass in the mockFS but also skipCWDRestriction
-	// because our test file doesn't actually exist in the real file system
-	_, loadWithFSErr := LoadMappingsWithFS(mockFS, mappingsFile, true)
-	if assert.Error(t, loadWithFSErr) {
-		// This will still error because GetAferoFS doesn't return the actual memFs
-		// It creates a new memory filesystem
-		assert.Contains(t, loadWithFSErr.Error(), "mappings file does not exist")
-	}
-
-	// Instead of testing LoadMappingsWithFS directly, we'll test the original LoadMappings
-	// with our memFs directly, which is what LoadMappingsWithFS would ideally use
-	mappings, err := LoadMappings(memFs, mappingsFile, true)
+	// Now our GetAferoFS works correctly with the mock filesystem
+	// So LoadMappingsWithFS should succeed
+	mappings, err := LoadMappingsWithFS(mockFS, mappingsFile, true)
 	require.NoError(t, err)
 	require.NotNil(t, mappings)
 	assert.Len(t, mappings.Entries, 2)
 	assert.Equal(t, "quay.io", mappings.Entries[0].Source)
 	assert.Equal(t, "registry.example.com/quay-mirror", mappings.Entries[0].Target)
+
+	// Also test the original LoadMappings to ensure compatibility
+	mappingsViaOriginal, err := LoadMappings(memFs, mappingsFile, true)
+	require.NoError(t, err)
+	require.NotNil(t, mappingsViaOriginal)
+	assert.Len(t, mappingsViaOriginal.Entries, 2)
 }
 
 func TestLoadConfigWithFS(t *testing.T) {
@@ -94,22 +91,19 @@ func TestLoadConfigWithFS(t *testing.T) {
 	require.NoError(t, memFs.MkdirAll(tmpDir, 0o755))
 	require.NoError(t, afero.WriteFile(memFs, configFile, []byte(content), 0o644))
 
-	// For LoadStructuredConfigWithFS, we need to pass in the mockFS but also skipCWDRestriction
-	// because our test file doesn't actually exist in the real file system
-	_, loadWithFSErr := LoadStructuredConfigWithFS(mockFS, configFile, true)
-	if assert.Error(t, loadWithFSErr) {
-		// This will still error because GetAferoFS doesn't return the actual memFs
-		// It creates a new memory filesystem
-		assert.Contains(t, loadWithFSErr.Error(), "mappings file does not exist")
-	}
-
-	// Instead of testing LoadStructuredConfigWithFS directly, we'll test the original LoadStructuredConfig
-	// with our memFs directly, which is what LoadStructuredConfigWithFS would ideally use
-	config, err := LoadStructuredConfig(memFs, configFile, true)
+	// Now our GetAferoFS works correctly with the mock filesystem
+	// So LoadStructuredConfigWithFS should succeed
+	config, err := LoadStructuredConfigWithFS(mockFS, configFile, true)
 	require.NoError(t, err)
 	require.NotNil(t, config)
 	assert.Len(t, config.Registries.Mappings, 2)
 	assert.Equal(t, "registry.example.com/default", config.Registries.DefaultTarget)
+
+	// Also test the original LoadStructuredConfig to ensure compatibility
+	configViaOriginal, err := LoadStructuredConfig(memFs, configFile, true)
+	require.NoError(t, err)
+	require.NotNil(t, configViaOriginal)
+	assert.Len(t, configViaOriginal.Registries.Mappings, 2)
 
 	// Test legacy format conversion
 	mapping := ConvertToLegacyFormat(config)

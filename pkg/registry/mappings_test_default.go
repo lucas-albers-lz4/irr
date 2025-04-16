@@ -52,9 +52,10 @@ func TestLoadMappingsDefault(t *testing.T) {
 
 	// Test with a non-existent file
 	nonExistentFile := filepath.Join(testTmpDir, "nonexistent.yaml")
-	_, err = LoadMappingsDefault(nonExistentFile, true)
+	mappings, err = LoadMappingsDefault(nonExistentFile, true)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "mappings file does not exist")
+	assert.Nil(t, mappings)
 
 	// Test with an invalid file
 	invalidFile := filepath.Join(testTmpDir, "invalid.yaml")
@@ -69,28 +70,34 @@ func TestLoadMappingsWithFSWrapper(t *testing.T) {
 	memFs := afero.NewMemMapFs()
 	fs := fileutil.NewAferoFS(memFs)
 
+	// Save the original DefaultFS and GetAferoFS function so we can restore it later
+	origFS := DefaultFS
+	DefaultFS = fs // Set our mock FS as the default
+
+	// Restore the original DefaultFS
+	defer func() { DefaultFS = origFS }()
+
 	// Create test file path
-	mappingsFile := filepath.Join(testTmpDir, "mappings-default.yaml")
+	mappingsFile := filepath.Join(testTmpDir, "mappings-withfs.yaml")
 
 	// Create test content and setup test filesystem
 	content := createTestMappingsContent()
 	setupTestFilesystem(t, memFs, mappingsFile, content)
 
-	// Call LoadMappingsWithFS with the test file - this will fail due to GetAferoFS
-	_, err := LoadMappingsWithFS(fs, mappingsFile, true)
-
-	// Check the results - we expect an error because GetAferoFS creates a new filesystem
-	if assert.Error(t, err) {
-		assert.Contains(t, err.Error(), "mappings file does not exist")
-	}
-
-	// Test directly with LoadMappings and memFs since that's what's used internally
-	mappings, err := LoadMappings(memFs, mappingsFile, true)
+	// Call LoadMappingsWithFS with the test file
+	mappings, err := LoadMappingsWithFS(fs, mappingsFile, true)
 
 	// Check the results
 	if assert.NoError(t, err) {
 		verifyMappingsContent(t, mappings)
 	}
+
+	// Test with a non-existent file
+	nonExistentFile := filepath.Join(testTmpDir, "nonexistent.yaml")
+	mappings, err = LoadMappingsWithFS(fs, nonExistentFile, true)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "mappings file does not exist")
+	assert.Nil(t, mappings)
 }
 
 // Helper functions

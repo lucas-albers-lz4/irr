@@ -58,6 +58,11 @@ func NewAferoFS(fs afero.Fs) *AferoFS {
 	return &AferoFS{fs: fs}
 }
 
+// GetUnderlyingFs returns the underlying afero.Fs implementation for testing purposes
+func (a *AferoFS) GetUnderlyingFs() afero.Fs {
+	return a.fs
+}
+
 // Create creates a file
 func (a *AferoFS) Create(name string) (File, error) {
 	file, err := a.fs.Create(name)
