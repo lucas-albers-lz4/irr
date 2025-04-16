@@ -69,6 +69,11 @@ func (e *ErrMappingFileRead) Unwrap() error {
 	return e.Err
 }
 
+// GetPath returns the file path that caused the error
+func (e *ErrMappingFileRead) GetPath() string {
+	return e.Path
+}
+
 // WrapMappingFileRead creates a new ErrMappingFileRead error.
 func WrapMappingFileRead(path string, err error) error {
 	return &ErrMappingFileRead{Path: path, Err: err}
@@ -100,6 +105,11 @@ func (e *ErrMappingFileParse) Error() string {
 
 func (e *ErrMappingFileParse) Unwrap() error {
 	return e.Err
+}
+
+// GetPath returns the file path that caused the error
+func (e *ErrMappingFileParse) GetPath() string {
+	return e.Path
 }
 
 // WrapMappingFileParse creates a new ErrMappingFileParse error.
