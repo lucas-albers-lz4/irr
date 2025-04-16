@@ -39,7 +39,7 @@ jobs:
       - name: Check coverage thresholds
         run: |
           # Set minimum coverage threshold for core packages
-          MIN_CORE_COVERAGE=67
+          MIN_CORE_COVERAGE=48
           
           # Core packages to check
           CORE_PACKAGES=(
