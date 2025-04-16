@@ -25,6 +25,12 @@ jobs:
 
       - name: Install dependencies
         run: go mod download
+        
+      - name: Build binary for tests
+        run: |
+          make build
+          # Ensure binary exists at expected path
+          ls -la bin/irr
 
       - name: Run tests with coverage
         run: |
