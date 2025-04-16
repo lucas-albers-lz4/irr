@@ -26,6 +26,7 @@ _**Goal:** Implement the Helm plugin interface that wraps around the core CLI fu
     - [x] Test with valid and invalid version strings
     - [x] Verify correct comparison behavior for major/minor/patch versions
     - [x] Test error handling for malformed versions
+    - [x] Fix linter errors in version_test.go (unused parameters)
 
 - [x] **Step 2: Filesystem Mocking Preparation**
   - [x] Start by creating a consistent filesystem mocking pattern:
@@ -105,6 +106,7 @@ _**Goal:** Implement the Helm plugin interface that wraps around the core CLI fu
     - [x] Test file existence checking
     - [x] Test directory operations
     - [x] Use as a model for other packages
+    - [x] Fix linter errors in fileutil_test.go and utils_test.go (goconst, gocritic)
 
 - [x] **Step 3: Utility Packages with Adjusted Expectations**
   - [x] **`pkg/log` (Target: 20%)**:
@@ -314,6 +316,7 @@ _**Goal:** Implement the Helm plugin interface that wraps around the core CLI fu
         - [x] Edge cases (empty strings, unusual formats)
       - [x] Test each validation function against all fixture entries
       - [x] Document what makes an image valid/invalid in comments
+
 ### Phase 2.3: Focused 15-30% Coverage on current 0% coverage (High ROI First)
 - [ ] **Prioritization Criteria:**
   - [ ] **Value-to-Effort Ratio:** Focus on functions with high reuse across the codebase (core libraries).
@@ -379,19 +382,6 @@ _**Goal:** Implement the Helm plugin interface that wraps around the core CLI fu
     - [ ] Test with compatible and incompatible version strings
     - [ ] Verify error generation for incompatible versions
     - [ ] Test with edge cases (development versions, pre-releases)
-
-- [ ] **Testing Guidelines:**
-  - [ ] **Pre-Check:** Before writing tests for a function, verify it uses the standard `fileutil.FS` interface.
-  - [ ] **Refactoring:** If a target function does not use `fileutil.FS`, refactor it first using the hybrid approach (`docs/TESTING-FILESYSTEM-MOCKING.md`) as part of the testing task.
-  - [ ] Leverage existing filesystem mocking patterns from Phase 2.1 (ref `docs/TESTING-FILESYSTEM-MOCKING.md`).
-  - [ ] Prioritize pure functions with clear inputs/outputs first.
-  - [ ] Use table-driven tests where appropriate for comprehensive test cases.
-  - [ ] Verify error types consistently using `errors.Is()` and `errors.As()` (standard from Phase 2.2).
-  - [ ] Use the standard `path/filepath` package for path manipulations.
-  - [ ] Consider using centralized fixtures from `pkg/testutil/fixtures` if applicable (established in Phase 2.2).
-  - [ ] Document any discovered bugs or inconsistencies.
-  - [ ] Create simple mock implementations where needed (e.g., for interfaces).
-  - [ ] *Note:* Consider parallelizing work across these sections (Errors, FS, Value Path, Config, Analyzer, Version) as they are largely independent.
 
 ### Phase 2.4: Enhance High-Coverage & Local Integration (Goal: ~70%+ in Core)
 - [ ] **Refine Existing Tests:** Improve tests in well-covered packages (`pkg/generator`, `pkg/helm`, `pkg/registry`, `pkg/strategy`) by adding edge cases or complex scenarios.
@@ -546,7 +536,6 @@ _**Goal:** Implement end-to-end tests using `kind` to validate Helm plugin inter
   - [ ] Verify Helm release state remains unchanged after plugin execution
 - [ ] **[P1]** Test compatibility with latest Helm version in `kind`:
   - [ ] Set up CI configuration to run `
-
  
   ## REMINDER 0 (TEST BEFORE AND AFTER) Implementation Process: DONT REMOVE THIS SECTION as these hints are important to remember.
 - For each change:
