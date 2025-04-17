@@ -11,8 +11,8 @@ import (
 	"github.com/lalbers/irr/pkg/version"
 	// Removed cmd import to break cycle
 )
-
-var binaryVersion = "DEBUG v1"
+//When you run make build or make dist, Go replaces the value of binaryVersion in the compiled binary with the value from plugin.yaml.
+var binaryVersion = "0.2.0"
 var isHelmPlugin bool
 
 // main is the entry point of the application.
