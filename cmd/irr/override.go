@@ -473,7 +473,11 @@ func setupGeneratorConfig(cmd *cobra.Command, releaseName string) (config Genera
 			err = fmt.Errorf("failed to load registry mappings from %s: %w", registryFile, err)
 			return
 		}
-		debug.Printf("Successfully loaded %d mappings from %s", len(config.Mappings.Entries), registryFile)
+		if config.Mappings != nil {
+			debug.Printf("Successfully loaded %d mappings from %s", len(config.Mappings.Entries), registryFile)
+		} else {
+			debug.Printf("Mappings were not loaded (nil) from %s", registryFile)
+		}
 	}
 
 	// Get config file path
@@ -538,18 +542,28 @@ func setupGeneratorConfig(cmd *cobra.Command, releaseName string) (config Genera
 	}
 	config.RulesEnabled = !disableRules
 
-	// Get analysis control flags
-	config.IncludePatterns, err = getStringSliceFlag(cmd, "include-pattern")
+	// Get analysis control flags using helper function
+	config.IncludePatterns, config.ExcludePatterns, config.KnownImagePaths, err = getAnalysisControlFlags(cmd)
 	if err != nil {
 		return
 	}
 
-	config.ExcludePatterns, err = getStringSliceFlag(cmd, "exclude-pattern")
+	return
+}
+
+// getAnalysisControlFlags retrieves include/exclude patterns and known image paths
+func getAnalysisControlFlags(cmd *cobra.Command) (includePatterns, excludePatterns, knownImagePaths []string, err error) {
+	includePatterns, err = getStringSliceFlag(cmd, "include-pattern")
 	if err != nil {
 		return
 	}
 
-	config.KnownImagePaths, err = getStringSliceFlag(cmd, "known-image-paths")
+	excludePatterns, err = getStringSliceFlag(cmd, "exclude-pattern")
+	if err != nil {
+		return
+	}
+
+	knownImagePaths, err = getStringSliceFlag(cmd, "known-image-paths")
 	if err != nil {
 		return
 	}
@@ -559,6 +573,14 @@ func setupGeneratorConfig(cmd *cobra.Command, releaseName string) (config Genera
 
 // createAndExecuteGenerator creates a generator with the given config and executes it to generate overrides
 func createAndExecuteGenerator(chartSource string, config *GeneratorConfig) ([]byte, error) {
+	// Add nil check at the beginning before accessing any fields
+	if config == nil {
+		return nil, &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitGeneralRuntimeError,
+			Err:  errors.New("internal error: generator config is nil"),
+		}
+	}
+
 	// --- Create Override Generator ---
 	log.Infof("Initializing override generator for %s", chartSource)
 	generator := chart.NewGenerator(
@@ -577,7 +599,7 @@ func createAndExecuteGenerator(chartSource string, config *GeneratorConfig) ([]b
 		config.KnownImagePaths,
 	)
 
-	// Configure rules system
+	// Configure rules system - no need for nil check here as we've already checked at the top
 	generator.SetRulesEnabled(config.RulesEnabled)
 	if !config.RulesEnabled {
 		log.Infof("Chart parameter rules system is disabled")
@@ -586,7 +608,7 @@ func createAndExecuteGenerator(chartSource string, config *GeneratorConfig) ([]b
 	// Generate overrides
 	overrideFile, err := generator.Generate()
 	if err != nil {
-		return nil, handleGenerateError(err) // Use existing error handler
+		return nil, handleGenerateError(err)
 	}
 
 	// Convert to YAML
@@ -877,6 +899,14 @@ func getOutputFlags(cmd *cobra.Command, releaseName string) (outputFile string, 
 
 // handleHelmPluginOverride handles the override command when running as a Helm plugin
 func handleHelmPluginOverride(cmd *cobra.Command, releaseName, namespace string, config *GeneratorConfig, pathStrategy, outputFile string, dryRun bool) error {
+	// Add nil check for config
+	if config == nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitGeneralRuntimeError,
+			Err:  errors.New("internal error: generator config is nil in handleHelmPluginOverride"),
+		}
+	}
+
 	// Create a new Helm client and adapter
 	adapter, err := createHelmAdapter()
 	if err != nil {
@@ -908,12 +938,13 @@ func handleHelmPluginOverride(cmd *cobra.Command, releaseName, namespace string,
 		}
 	}
 
-	// Handle output based on different conditions
-	return handlePluginOverrideOutput(cmd, overrideFile, outputFile, dryRun, releaseName, namespace)
+	// Handle output based on different conditions - pass config parameter
+	return handlePluginOverrideOutput(cmd, overrideFile, outputFile, dryRun, releaseName, namespace, config)
 }
 
 // handlePluginOverrideOutput handles the output of the override operation
-func handlePluginOverrideOutput(cmd *cobra.Command, overrideFile, outputFile string, dryRun bool, releaseName, namespace string) error {
+// Add config parameter to function signature
+func handlePluginOverrideOutput(cmd *cobra.Command, overrideFile, outputFile string, dryRun bool, releaseName, namespace string, config *GeneratorConfig) error {
 	// Use switch statement instead of if-else chain
 	switch {
 	case dryRun:
@@ -955,14 +986,21 @@ func handlePluginOverrideOutput(cmd *cobra.Command, overrideFile, outputFile str
 		}
 	}
 
-	// Validate the chart with overrides if requested
-	return validatePluginOverrides(cmd, overrideFile, outputFile, dryRun, releaseName, namespace)
+	// Validate the chart with overrides if requested - pass config parameter
+	return validatePluginOverrides(cmd, overrideFile, outputFile, dryRun, releaseName, namespace, config)
 }
 
 // validatePluginOverrides validates the generated overrides
-func validatePluginOverrides(cmd *cobra.Command, overrideFile, outputFile string, dryRun bool, releaseName, namespace string) error {
+func validatePluginOverrides(cmd *cobra.Command, overrideFile, outputFile string, dryRun bool, releaseName, namespace string, config *GeneratorConfig) error {
 	shouldValidate, err := cmd.Flags().GetBool("validate")
 	if err == nil && shouldValidate {
+		// Add nil check for config here as well, though it might be redundant
+		if config == nil {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitGeneralRuntimeError,
+				Err:  errors.New("internal error: generator config is nil during plugin validation"),
+			}
+		}
 		// If we've created an override file, use that directly
 		var overrideFiles []string
 		if outputFile != "" && !dryRun {
@@ -1066,6 +1104,14 @@ func isStdOutRequested(cmd *cobra.Command) bool {
 
 // validateChart validates a chart with the generated overrides
 func validateChart(cmd *cobra.Command, yamlBytes []byte, config *GeneratorConfig, loadFromPath, loadFromRelease bool, releaseName, namespace string) error {
+	// Add nil check for config
+	if config == nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitGeneralRuntimeError,
+			Err:  errors.New("internal error: generator config is nil in validateChart"),
+		}
+	}
+
 	// Create a temporary file to store the overrides
 	tempFile, err := afero.TempFile(AppFs, "", "irr-override-*.yaml")
 	if err != nil {

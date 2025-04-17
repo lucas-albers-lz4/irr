@@ -329,6 +329,10 @@ func validateChartWithFiles(chartPath, releaseName, namespace string, valuesFile
 	}
 
 	log.Infof("Validation successful: Chart rendered successfully with values.")
+	// Add nil check for result before accessing Stdout
+	if result == nil {
+		return "", nil
+	}
 	return result.Stdout, nil
 }
 
