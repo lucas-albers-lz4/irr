@@ -75,23 +75,22 @@
   - [x] Add proper strict mode handling in TestKubeVersionPassthrough
 
 **P1: Core Command Implementation**
-- [ ] **[P1]** Implement release-based context for commands
+- [x] **[P1]** Implement release-based context for commands
   - [x] Implement function to fetch release values using Helm SDK (`helm get values`)
- 
   - [x] Parse namespace from CLI flags, Helm config, or default
   - [x] Implement chart source resolution (from release metadata, fallback to local cache or error)
   - [x] Use `action.NewGetValues()` from Helm SDK for value fetching
   - [x] For namespace: check `--namespace` flag, then `HELM_NAMESPACE`, then default to `"default"`
-- [ ] **[P1]** Adapt core commands to work with Helm context
-  - [ ] Refactor inspect/override/validate to accept both chart path and release name as input
-  - [ ] Add logic to merge values from release and user-supplied files
-  - [ ] Ensure all commands log the source of values and chart (for traceability)
-  - [ ] Accept both `--chart-path` and `--release-name`; error if neither provided
-  - [ ] Prioritize chart path over release name if both provided (with clear logging)
-- [ ] **[P1]** Implement file handling with safety features
+- [x] **[P1]** Adapt core commands to work with Helm context
+  - [x] Refactor inspect/override/validate to accept both chart path and release name as input
+  - [x] Add logic to merge values from release and user-supplied files
+  - [x] Ensure all commands log the source of values and chart (for traceability)
+  - [x] Accept both `--chart-path` and `--release-name`; error if neither provided
+  - [x] Prioritize chart path over release name if both provided (with clear logging)
+- [x] **[P1]** Implement file handling with safety features
   - [x] Implement file existence check before writing output
   - [x] Use 0600 permissions for output files by default
-  - [ ] Write unit tests for file safety logic
+  - [x] Write unit tests for file safety logic
   - [x] Default behavior: fail if file exists (per section 4.4 in PLUGIN-SPECIFIC.md)
   - [x] Use file permissions constants for necessaary permission set, those are defined in this file : `pkg/fileutil/constants.go`
 
