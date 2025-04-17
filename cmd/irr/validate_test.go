@@ -18,7 +18,10 @@ import (
 	"github.com/spf13/afero"
 )
 
-// Constants for repeated test values in validate tests
+// Constants for repeated test values in validate tests - reserved for future use
+// These are available for tests that need common values
+//
+//nolint:unused // These constants are available for future test usage
 const (
 	validateTestChartPath = "/path/to/chart"
 	validateTestRelease   = "release"
@@ -26,8 +29,11 @@ const (
 )
 
 // Mock the helm.Template function via the exported variable
+//
+//nolint:unused // This variable is used in some tests to override the template function
 var mockHelmTemplate func(options *helm.TemplateOptions) (*helm.CommandResult, error)
 
+//nolint:unused // This function is available for testing but not currently used
 func setupValidateTest(t *testing.T) (cmd *cobra.Command, cleanup func()) {
 	// Save the original isHelmPlugin value to restore later
 	originalIsHelmPlugin := isHelmPlugin
@@ -95,23 +101,24 @@ func setupValidateTest(t *testing.T) (cmd *cobra.Command, cleanup func()) {
 }
 
 // setupValuesFilesAndChart sets up fake chart and values files
-func setupValuesFilesAndChart(t *testing.T, memFs afero.Fs) (string, []string) {
+func setupValuesFilesAndChart(t *testing.T, memFs afero.Fs) (chartPath string, valuesFiles []string) {
 	// Create a test chart directory with Chart.yaml
-	chartDir := "/mock-chart"
-	err := memFs.MkdirAll(chartDir, 0755)
+	tmpDir := t.TempDir()
+	chartDir := filepath.Join(tmpDir, "mock-chart")
+	err := memFs.MkdirAll(chartDir, 0o755)
 	assert.NoError(t, err, "Failed to create chart directory")
 
 	chartFile := filepath.Join(chartDir, "Chart.yaml")
-	err = afero.WriteFile(memFs, chartFile, []byte("name: mock-chart\nversion: 1.0.0"), 0644)
+	err = afero.WriteFile(memFs, chartFile, []byte("name: mock-chart\nversion: 1.0.0"), 0o644)
 	assert.NoError(t, err, "Failed to create Chart.yaml")
 
 	// Create test values files
 	values1 := filepath.Join(chartDir, "values1.yaml")
-	err = afero.WriteFile(memFs, values1, []byte("key1: value1"), 0644)
+	err = afero.WriteFile(memFs, values1, []byte("key1: value1"), 0o644)
 	assert.NoError(t, err, "Failed to create values1.yaml")
 
 	values2 := filepath.Join(chartDir, "values2.yaml")
-	err = afero.WriteFile(memFs, values2, []byte("key2: value2"), 0644)
+	err = afero.WriteFile(memFs, values2, []byte("key2: value2"), 0o644)
 	assert.NoError(t, err, "Failed to create values2.yaml")
 
 	return chartDir, []string{values1, values2}
@@ -131,7 +138,7 @@ func setupCommandForTest() *cobra.Command {
 }
 
 // setupMockAdapter sets up a mock Helm adapter for tests
-func setupMockAdapter(t *testing.T) (cleanup func()) {
+func setupMockAdapter(_ *testing.T) (cleanup func()) {
 	// Save original factory function
 	originalFactory := helmAdapterFactory
 
@@ -158,7 +165,7 @@ func setupMockAdapter(t *testing.T) (cleanup func()) {
 }
 
 // setupMockAdapterForInvalidVersion sets up a mock Helm adapter that returns an error
-func setupMockAdapterForInvalidVersion(t *testing.T, expectedErrorMessage string) (cleanup func()) {
+func setupMockAdapterForInvalidVersion(_ *testing.T, expectedErrorMessage string) (cleanup func()) {
 	// Save original factory function
 	originalFactory := helmAdapterFactory
 
@@ -597,7 +604,7 @@ func TestValidateCmdFlags(t *testing.T) {
 		buf := &bytes.Buffer{}
 		cmd.SetOut(buf)
 		cmd.SetErr(buf)
-		cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		cmd.RunE = func(_ *cobra.Command, _ []string) error {
 			// Successfully parsed arguments
 			return nil
 		}
@@ -654,11 +661,27 @@ func TestValidateCommandWithOverrides(t *testing.T) {
 		Short: "Test validate command",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			chartPath, _ := cmd.Flags().GetString("chart-path")
-			values, _ := cmd.Flags().GetStringSlice("values")
-			namespace, _ := cmd.Flags().GetString("namespace")
-			kubeVersion, _ := cmd.Flags().GetString("kube-version")
-			strict, _ := cmd.Flags().GetBool("strict")
+			// Get the flag values with error checking
+			chartPath, err := cmd.Flags().GetString("chart-path")
+			if err != nil {
+				return fmt.Errorf("failed to get chart-path flag: %w", err)
+			}
+			values, err := cmd.Flags().GetStringSlice("values")
+			if err != nil {
+				return fmt.Errorf("failed to get values flag: %w", err)
+			}
+			namespace, err := cmd.Flags().GetString("namespace")
+			if err != nil {
+				return fmt.Errorf("failed to get namespace flag: %w", err)
+			}
+			kubeVersion, err := cmd.Flags().GetString("kube-version")
+			if err != nil {
+				return fmt.Errorf("failed to get kube-version flag: %w", err)
+			}
+			strict, err := cmd.Flags().GetBool("strict")
+			if err != nil {
+				return fmt.Errorf("failed to get strict flag: %w", err)
+			}
 
 			// Get release name from args if available
 			releaseName := ""
@@ -667,9 +690,13 @@ func TestValidateCommandWithOverrides(t *testing.T) {
 			}
 
 			// Output what would be validated
-			fmt.Fprintf(cmd.OutOrStdout(), "Would validate: chart=%s, release=%s, namespace=%s, kube-version=%s, strict=%v\n",
-				chartPath, releaseName, namespace, kubeVersion, strict)
-			fmt.Fprintf(cmd.OutOrStdout(), "With values files: %v\n", values)
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Would validate: chart=%s, release=%s, namespace=%s, kube-version=%s, strict=%v\n",
+				chartPath, releaseName, namespace, kubeVersion, strict); err != nil {
+				return fmt.Errorf("failed to write output: %w", err)
+			}
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "With values files: %v\n", values); err != nil {
+				return fmt.Errorf("failed to write values output: %w", err)
+			}
 
 			return nil
 		},
