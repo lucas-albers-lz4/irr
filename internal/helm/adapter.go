@@ -53,17 +53,12 @@ type OverrideOptions struct {
 }
 
 // NewAdapter creates a new Helm adapter
-func NewAdapter(helmClient ClientInterface, fs afero.Fs) *Adapter {
+func NewAdapter(helmClient ClientInterface, fs afero.Fs, isPlugin bool) *Adapter {
 	return &Adapter{
 		helmClient:        helmClient,
 		fs:                fs,
-		isRunningAsPlugin: isRunningAsHelmPlugin(),
+		isRunningAsPlugin: isPlugin,
 	}
-}
-
-// isRunningAsHelmPlugin checks if the program is being run as a Helm plugin
-func isRunningAsHelmPlugin() bool {
-	return os.Getenv("HELM_PLUGIN_NAME") != "" || os.Getenv("HELM_PLUGIN_DIR") != ""
 }
 
 // InspectRelease inspects a Helm release to identify image references
