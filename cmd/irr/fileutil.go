@@ -12,6 +12,28 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Variables to allow mocking for tests
+var (
+	// helmAdapterFactory is a function that creates a Helm adapter, can be replaced in tests
+	helmAdapterFactory = defaultHelmAdapterFactory
+)
+
+// defaultHelmAdapterFactory is the real implementation of creating a Helm adapter
+func defaultHelmAdapterFactory() (*helm.Adapter, error) {
+	// Create a new Helm client
+	helmClient, err := helm.NewHelmClient()
+	if err != nil {
+		return nil, &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitHelmCommandFailed,
+			Err:  fmt.Errorf("failed to initialize Helm client: %w", err),
+		}
+	}
+
+	// Create adapter with the Helm client
+	adapter := helm.NewAdapter(helmClient, AppFs, isHelmPlugin)
+	return adapter, nil
+}
+
 // getReleaseNameAndNamespaceCommon extracts and validates release name and namespace
 func getReleaseNameAndNamespaceCommon(cmd *cobra.Command, args []string) (releaseName, namespace string, err error) {
 	releaseName, err = cmd.Flags().GetString("release-name")
@@ -84,18 +106,7 @@ func writeOutputFile(outputFile string, content []byte, successMessage string) e
 
 // createHelmAdapter creates a new Helm client and adapter, handling errors consistently
 func createHelmAdapter() (*helm.Adapter, error) {
-	// Create a new Helm client
-	helmClient, err := helm.NewHelmClient()
-	if err != nil {
-		return nil, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitHelmCommandFailed,
-			Err:  fmt.Errorf("failed to initialize Helm client: %w", err),
-		}
-	}
-
-	// Create adapter with the Helm client
-	adapter := helm.NewAdapter(helmClient, AppFs, isHelmPlugin)
-	return adapter, nil
+	return helmAdapterFactory()
 }
 
 // getCommandContext gets the context from a command or creates a background context if none exists

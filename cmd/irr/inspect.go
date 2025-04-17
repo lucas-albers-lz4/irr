@@ -68,10 +68,11 @@ type InspectFlags struct {
 // newInspectCmd creates a new inspect command
 func newInspectCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "inspect",
+		Use:   "inspect [release-name]",
 		Short: "Inspect a Helm chart for image references",
 		Long: `Inspect a Helm chart to find all image references.
 This command analyzes the chart's values.yaml and templates to find image references.`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: runInspect,
 	}
 
