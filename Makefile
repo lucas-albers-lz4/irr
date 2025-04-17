@@ -1,4 +1,4 @@
-.PHONY: build test lint clean run helm-lint test-charts test-integration test-cert-manager test-kube-prometheus-stack test-integration-specific test-integration-debug help dist lint-fileperm
+.PHONY: build test lint clean run helm-lint test-charts test-integration test-cert-manager test-kube-prometheus-stack test-integration-specific test-integration-debug help dist lint-fileperm update-pyproject
 
 BINARY_NAME=irr
 BUILD_DIR=bin
@@ -10,7 +10,7 @@ TEST_OVERRIDES_DIR=test/overrides
 TARGET_REGISTRY?=harbor.home.arpa
 VERSION=$(shell grep -o '^version:[ "]*[^"]*' plugin.yaml | awk '{print $$2}' | tr -d '"')
 DIST=$(CURDIR)/_dist
-LDFLAGS="-X main.version=$(VERSION)"
+LDFLAGS="-X main.binaryVersion=$(VERSION)"
 
 # Platform-specific build settings - Keep GOOS/GOARCH available for manual builds if needed
 GOOS?=$(shell go env GOOS)
@@ -23,8 +23,15 @@ build:
 	@mkdir -p $(BUILD_DIR)
 	@CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags=$(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/irr
 
+# Update pyproject.toml version from plugin.yaml
+update-pyproject:
+	@echo "Updating pyproject.toml version to $(VERSION)..."
+	@sed -i.bak 's/^version = .*/version = "$(VERSION)"/' pyproject.toml && rm -f pyproject.toml.bak || \
+	(echo "sed command failed, possibly due to OS differences. Trying Linux sed syntax..."; \
+	sed -i 's/^version = .*/version = "$(VERSION)"/' pyproject.toml)
+
 # Simplified dist target for packaging - Explicit builds for each platform
-dist:
+dist: update-pyproject
 	@echo "Creating distribution packages for all supported platforms..."
 	@mkdir -p $(DIST) $(BUILD_DIR)/bin # Ensure dist and bin directories exist
 
@@ -190,4 +197,5 @@ help:
 	@echo "  helm-lint          Run Helm lint and template validation"
 	@echo "  clean              Clean up build artifacts"
 	@echo "  run ARGS=\"./..\"     Run the irr binary with the specified arguments"
+	@echo "  update-pyproject   Update version in pyproject.toml from plugin.yaml"
 	@echo "  help               Show this help message"
