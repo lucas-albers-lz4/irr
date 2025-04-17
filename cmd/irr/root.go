@@ -108,6 +108,18 @@ It can analyze Helm charts to identify image references and generate override va
 files compatible with Helm, pointing images to a new registry according to specified strategies.
 It also supports linting image references for potential issues.`,
 	PersistentPreRunE: func(_ *cobra.Command, _ []string) error {
+		// If debug is enabled, print environment, args, and plugin/debug status
+		if debugEnabled || os.Getenv("IRR_DEBUG") == "1" || os.Getenv("IRR_DEBUG") == "true" {
+			// Print all environment variables
+			for _, e := range os.Environ() {
+				fmt.Fprintf(os.Stderr, "[DEBUG] ENV: %s\n", e)
+			}
+			// Print all arguments
+			fmt.Fprintf(os.Stderr, "[DEBUG] ARGS: %v\n", os.Args)
+			// Print plugin/debug status
+			fmt.Fprintf(os.Stderr, "[DEBUG] isHelmPlugin: %v, debugEnabled: %v\n", isHelmPlugin, debugEnabled)
+		}
+
 		// Setup logging before any command logic runs
 		logLevelStr := logLevel      // Use the global variable
 		debugEnabled := debugEnabled // Use the global variable
@@ -156,13 +168,15 @@ It also supports linting image references for potential issues.`,
 			}
 		}
 
-		log.Infof("Log level set to %s", level)                  // Use log.Infof for informational messages
-		debug.Printf("Debug package enabled: %t", debug.Enabled) // This should confirm if it's set
+		// Only log level in debug mode to avoid duplicate output
+		if debug.Enabled {
+			log.Infof("Log level set to %s", level)
+		}
+		debug.Printf("Debug package enabled: %t", debug.Enabled)
 
 		// Integration test mode check
 		if integrationTestMode {
 			log.Warnf("Integration test mode enabled.")
-			// Perform actions specific to integration test mode if needed
 		}
 
 		// Initialize Helm client if running as a Helm plugin
@@ -173,27 +187,33 @@ It also supports linting image references for potential issues.`,
 		}
 
 		if registryFile != "" {
-			// Only reset the filesystem if it's not already an in-memory filesystem
-			// This preserves the filesystem set up by tests
 			_, isMemMapFs := AppFs.(*afero.MemMapFs)
 			if !isMemMapFs {
-				AppFs = afero.NewOsFs() // Ensure filesystem is initialized only if not in a test with MemMapFs
+				AppFs = afero.NewOsFs()
 				debug.Printf("Using OS filesystem for registry mappings")
 			} else {
 				debug.Printf("Preserving in-memory filesystem for testing")
 			}
 			debug.Printf("Root command: Attempting to load mappings from %s", registryFile)
-			// Only load to check for errors, don't need the result here.
-			// Skip CWD restriction when in integration test mode
-			_, err := registry.LoadMappings(AppFs, registryFile, integrationTestMode) // Pass integrationTestMode for skipCWDRestriction
+			_, err := registry.LoadMappings(AppFs, registryFile, integrationTestMode)
 			if err != nil {
 				debug.Printf("Root command: Failed to load mappings: %v", err)
-				// Use debug.Printf for logging warnings as well, assuming it handles levels
 				debug.Printf("Warning: Failed to load registry mappings from %s: %v. Proceeding without mappings.", registryFile, err)
 			}
 		}
 
-		return nil // PersistentPreRunE should return error
+		// Add debug log for execution mode detection
+		pluginModeDetected := isRunningAsHelmPlugin()
+		debug.Printf("Execution Mode Detected: %s", map[bool]string{true: "Plugin", false: "Standalone"}[pluginModeDetected])
+
+		// Add a clear log message for plugin mode that will appear even at info level
+		if pluginModeDetected {
+			log.Infof("IRR v%s running as Helm plugin", BinaryVersion)
+		} else {
+			log.Infof("IRR v%s running in standalone mode", BinaryVersion)
+		}
+
+		return nil
 	},
 	RunE: func(_ *cobra.Command, args []string) error {
 		// If no arguments (subcommand) are provided, return an error.

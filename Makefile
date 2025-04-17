@@ -10,7 +10,7 @@ TEST_OVERRIDES_DIR=test/overrides
 TARGET_REGISTRY?=harbor.home.arpa
 VERSION=$(shell grep -o '^version:[ "]*[^"]*' plugin.yaml | awk '{print $$2}' | tr -d '"')
 DIST=$(CURDIR)/_dist
-LDFLAGS="-X main.binaryVersion=$(VERSION)"
+LDFLAGS="-X main.BinaryVersion=$(VERSION)"
 
 # Platform-specific build settings - Keep GOOS/GOARCH available for manual builds if needed
 GOOS?=$(shell go env GOOS)

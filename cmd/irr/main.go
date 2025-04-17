@@ -14,7 +14,7 @@ import (
 )
 
 // When you run make build or make dist, Go replaces the value of binaryVersion in the compiled binary with the value from plugin.yaml.
-var binaryVersion = "0.2.0"
+var BinaryVersion = "0.2.0"
 var isHelmPlugin bool
 
 // main is the entry point of the application.
@@ -25,7 +25,7 @@ func main() {
 
 	// Use stdLog for consistency, check if debug is enabled
 	if log.IsDebugEnabled() {
-		log.Debugf("--- IRR BINARY VERSION: %s ---", binaryVersion)
+		log.Debugf("--- IRR BINARY VERSION: %s ---", BinaryVersion)
 	}
 
 	// Check for IRR_DEBUG environment variable for potential future debug setup
@@ -40,6 +40,10 @@ func main() {
 	// Log Helm environment variables when in debug mode
 	if log.IsDebugEnabled() && isHelmPlugin {
 		logHelmEnvironment()
+		// Add more prominent message about plugin detection
+		fmt.Fprintf(os.Stderr, "### DETECTED RUNNING AS HELM PLUGIN ###\n")
+	} else if log.IsDebugEnabled() {
+		fmt.Fprintf(os.Stderr, "### DETECTED RUNNING IN STANDALONE MODE ###\n")
 	}
 
 	// Initialize Helm plugin if necessary

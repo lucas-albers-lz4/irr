@@ -1,5 +1,5 @@
 name: "irr"
-version: "0.0.5"
+version: "0.0.6"
 usage: "Inspect, Override, and Validate image references in Helm charts and releases"
 description: |-
   IRR (Image Relocation and Rewrite) is a tool for Helm charts that helps:
