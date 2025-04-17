@@ -8,6 +8,7 @@ import (
 
 	"github.com/lalbers/irr/pkg/exitcodes"
 	"github.com/spf13/afero"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -169,4 +170,76 @@ func (m *mockFailDirFs) Chmod(name string, mode os.FileMode) error { return m.Fs
 func (m *mockFailDirFs) Chown(name string, uid, gid int) error     { return m.Fs.Chown(name, uid, gid) } //nolint:wrapcheck // Mock implementation
 func (m *mockFailDirFs) Chtimes(name string, atime, mtime time.Time) error {
 	return m.Fs.Chtimes(name, atime, mtime) //nolint:wrapcheck // Mock implementation
+}
+
+func TestGetReleaseNameAndNamespaceCommon(t *testing.T) {
+	// Save original isHelmPlugin value and restore after test
+	originalIsHelmPlugin := isHelmPlugin
+	defer func() { isHelmPlugin = originalIsHelmPlugin }()
+
+	t.Run("release name and namespace from flags", func(t *testing.T) {
+		// Create a mock command with flags
+		cmd := &cobra.Command{}
+		cmd.Flags().String("release-name", "", "Release name")
+		cmd.Flags().String("namespace", "", "Namespace")
+
+		// Set flag values
+		err := cmd.Flags().Set("release-name", "test-release")
+		require.NoError(t, err)
+		err = cmd.Flags().Set("namespace", "test-namespace")
+		require.NoError(t, err)
+
+		// Test with Helm plugin mode
+		isHelmPlugin = true
+		releaseName, namespace, err := getReleaseNameAndNamespaceCommon(cmd, []string{})
+		require.NoError(t, err)
+		assert.Equal(t, "test-release", releaseName)
+		assert.Equal(t, "test-namespace", namespace)
+
+		// Test with standalone mode
+		isHelmPlugin = false
+		releaseName, namespace, err = getReleaseNameAndNamespaceCommon(cmd, []string{})
+		require.NoError(t, err)
+		assert.Equal(t, "test-release", releaseName)
+		assert.Equal(t, "test-namespace", namespace)
+	})
+
+	t.Run("release name from positional argument in plugin mode", func(t *testing.T) {
+		// Create a mock command with namespace flag only
+		cmd := &cobra.Command{}
+		cmd.Flags().String("release-name", "", "Release name")
+		cmd.Flags().String("namespace", "", "Namespace")
+
+		// Set namespace flag only
+		err := cmd.Flags().Set("namespace", "arg-namespace")
+		require.NoError(t, err)
+
+		// Test with Helm plugin mode and args
+		isHelmPlugin = true
+		releaseName, namespace, err := getReleaseNameAndNamespaceCommon(cmd, []string{"arg-release"})
+		require.NoError(t, err)
+		assert.Equal(t, "arg-release", releaseName)
+		assert.Equal(t, "arg-namespace", namespace)
+
+		// Test with standalone mode (should not use args for release name)
+		isHelmPlugin = false
+		releaseName, namespace, err = getReleaseNameAndNamespaceCommon(cmd, []string{"arg-release"})
+		require.NoError(t, err)
+		assert.Equal(t, "", releaseName)
+		assert.Equal(t, "arg-namespace", namespace)
+	})
+
+	t.Run("error when flags cannot be retrieved", func(t *testing.T) {
+		// Create a minimal command without the required flags
+		cmd := &cobra.Command{}
+
+		// This should error because the flags don't exist
+		_, _, err := getReleaseNameAndNamespaceCommon(cmd, []string{})
+
+		// Verify it's the correct error type
+		require.Error(t, err)
+		var exitErr *exitcodes.ExitCodeError
+		assert.ErrorAs(t, err, &exitErr)
+		assert.Equal(t, exitcodes.ExitInputConfigurationError, exitErr.Code)
+	})
 }
