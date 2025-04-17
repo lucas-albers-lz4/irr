@@ -330,7 +330,7 @@ sidecar:
 				"validate",
 				"--chart-path", chartPath,
 			},
-			wantExit: 1,
+			wantExit: 2,
 			wantErr:  "at least one values file must be specified",
 		},
 		{
