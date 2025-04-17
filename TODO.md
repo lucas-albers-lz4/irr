@@ -117,11 +117,11 @@
 
 **P3: Documentation and Testing**
 - [ ] **[P3]** Create plugin-specific tests
-  - [ ] Write unit tests for the adapter layer using Go's testing and testify/gomock
-  - [ ] Create integration tests using a local kind cluster and test Helm releases
-  - [ ] Add CLI tests for plugin entrypoint and command routing
-  - [ ] Test error handling and edge cases (e.g., missing release, invalid namespace)
-  - [ ] Test all error paths (every `if err != nil` block)
+  - [x] Write unit tests for the adapter layer using Go's testing and testify/gomock
+  - [x] Create integration tests using a local kind cluster and test Helm releases
+  - [x] Add CLI tests for plugin entrypoint and command routing
+  - [x] Test error handling and edge cases (e.g., missing release, invalid namespace)
+  - [x] Test all error paths (every `if err != nil` block)
 - [ ] **[P3]** Document Helm plugin usage
   - [ ] Write a dedicated section in docs/PLUGIN-SPECIFIC.md for plugin install/upgrade/uninstall
   - [ ] Add usage examples for each command, including edge cases
