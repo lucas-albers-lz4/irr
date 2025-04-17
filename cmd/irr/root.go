@@ -242,9 +242,18 @@ func init() {
 	rootCmd.AddCommand(newInspectCmd())
 	rootCmd.AddCommand(newValidateCmd())
 
+	// Add release-name and namespace flags to root command for all modes
+	// We'll check isHelmPlugin before using them in the command execution
+	addReleaseFlag(rootCmd)
+	addNamespaceFlag(rootCmd)
+
 	// Check if running as Helm plugin
 	if isHelmPlugin {
+		// Initialize Helm plugin specific functionality
 		initHelmPlugin()
+	} else {
+		// If not running as a plugin, hide the plugin-specific flags
+		removeHelmPluginFlags(rootCmd)
 	}
 }
 
