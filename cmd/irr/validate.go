@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -175,36 +176,8 @@ func handleOutput(outputFile string, debugTemplate bool, manifest string) error 
 }
 
 // runValidate implements the validate command logic
-func runValidate(cmd *cobra.Command, _ []string) error {
-	// Get chart path
-	chartPath, err := getChartPath(cmd)
-	if err != nil {
-		return err
-	}
-
-	// Get values files
-	valuesFiles, err := getValuesFiles(cmd)
-	if err != nil {
-		return err
-	}
-
-	// Get other flags
-	releaseName, err := cmd.Flags().GetString("release-name")
-	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get release-name flag: %w", err),
-		}
-	}
-
-	setValues, err := cmd.Flags().GetStringSlice("set")
-	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get set flag: %w", err),
-		}
-	}
-
+func runValidate(cmd *cobra.Command, args []string) error {
+	// Get flags
 	outputFile, err := cmd.Flags().GetString("output-file")
 	if err != nil {
 		return &exitcodes.ExitCodeError{
@@ -221,11 +194,87 @@ func runValidate(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
+	// Get release name (from flag or positional argument)
+	releaseName, err := cmd.Flags().GetString("release-name")
+	if err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get release-name flag: %w", err),
+		}
+	}
+
+	// Check for positional argument as release name if flag is not set and we're running as a plugin
+	if releaseName == "" && isHelmPlugin && len(args) > 0 {
+		releaseName = args[0]
+		log.Infof("Using %s as release name from positional argument", releaseName)
+	}
+
+	// Get namespace
 	namespace, err := cmd.Flags().GetString("namespace")
 	if err != nil {
 		return &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitInputConfigurationError,
 			Err:  fmt.Errorf("failed to get namespace flag: %w", err),
+		}
+	}
+
+	// Get values files
+	valuesFiles, err := getValuesFiles(cmd)
+	if err != nil {
+		return err
+	}
+
+	// Check if we should use the Helm adapter (plugin mode with release name)
+	if releaseName != "" && isHelmPlugin {
+		// Create Helm client
+		helmClient, err := helm.NewHelmClient()
+		if err != nil {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitHelmCommandFailed,
+				Err:  fmt.Errorf("failed to initialize Helm client: %w", err),
+			}
+		}
+
+		// Create adapter
+		adapter := helm.NewAdapter(helmClient, AppFs)
+
+		// Get context
+		ctx := cmd.Context()
+		if ctx == nil {
+			ctx = context.Background()
+		}
+
+		// Call adapter to validate release
+		err = adapter.ValidateRelease(ctx, releaseName, namespace, valuesFiles)
+		if err != nil {
+			return err
+		}
+
+		// Success - handle output
+		if outputFile != "" {
+			log.Infof("Validation successful and template output written to %s", outputFile)
+		} else if debugTemplate {
+			log.Infof("Validation successful (debug output displayed above)")
+		} else {
+			log.Infof("Helm template validation completed successfully")
+		}
+
+		return nil
+	}
+
+	// Standard chart path mode below
+	// Get chart path
+	chartPath, err := getChartPath(cmd)
+	if err != nil {
+		return err
+	}
+
+	// Get other flags needed for template
+	setValues, err := cmd.Flags().GetStringSlice("set")
+	if err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get set flag: %w", err),
 		}
 	}
 
@@ -239,6 +288,11 @@ func runValidate(cmd *cobra.Command, _ []string) error {
 	if kubeVersion == "" {
 		kubeVersion = DefaultKubernetesVersion
 		log.Debugf("No --kube-version specified, using default: %s", DefaultKubernetesVersion)
+	}
+
+	// Use default release name if not provided
+	if releaseName == "" {
+		releaseName = "release"
 	}
 
 	log.Infof("Validating chart %s with release name %s", chartPath, releaseName)

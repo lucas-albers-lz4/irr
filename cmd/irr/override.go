@@ -7,6 +7,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -631,7 +632,7 @@ func loadChart(config *GeneratorConfig, loadFromRelease, loadFromPath bool, rele
 }
 
 // runOverride implements the override command logic
-func runOverride(cmd *cobra.Command, _ []string) error {
+func runOverride(cmd *cobra.Command, args []string) error {
 	// Get configuration from flags
 	config, err := setupGeneratorConfig(cmd)
 	if err != nil {
@@ -647,12 +648,211 @@ func runOverride(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
+	// Check for positional argument as release name if flag is not set and we're running as a plugin
+	if releaseName == "" && isHelmPlugin && len(args) > 0 {
+		releaseName = args[0]
+		log.Infof("Using %s as release name from positional argument", releaseName)
+	}
+
 	namespace, err := cmd.Flags().GetString("namespace")
 	if err != nil {
 		return &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitInputConfigurationError,
 			Err:  fmt.Errorf("failed to get namespace flag: %w", err),
 		}
+	}
+
+	// Get output file and dry-run flag
+	outputFile, err := cmd.Flags().GetString("output-file")
+	if err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get output-file flag: %w", err),
+		}
+	}
+
+	// If no output file specified and we have a release name, default to <release-name>-overrides.yaml
+	if outputFile == "" && releaseName != "" && !isStdOutRequested(cmd) {
+		// Sanitize release name for use as a filename
+		sanitizedName := strings.ReplaceAll(releaseName, "/", "-")
+		sanitizedName = strings.ReplaceAll(sanitizedName, ":", "-")
+		outputFile = sanitizedName + "-overrides.yaml"
+		log.Infof("No output file specified, defaulting to %s", outputFile)
+	}
+
+	dryRun, err := cmd.Flags().GetBool("dry-run")
+	if err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get dry-run flag: %w", err),
+		}
+	}
+
+	// Get path strategy
+	pathStrategy, err := cmd.Flags().GetString("strategy")
+	if err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get strategy flag: %w", err),
+		}
+	}
+
+	// Check if running as plugin with release name
+	if releaseName != "" && isHelmPlugin {
+		// Only allow release name if running as a plugin
+		if !isHelmPlugin {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitInputConfigurationError,
+				Err:  fmt.Errorf("the release name flag is only available when running as a Helm plugin (helm irr ...)"),
+			}
+		}
+
+		// Create a new Helm client
+		helmClient, err := helm.NewHelmClient()
+		if err != nil {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitHelmCommandFailed,
+				Err:  fmt.Errorf("failed to initialize Helm client: %w", err),
+			}
+		}
+
+		// Create adapter with the Helm client
+		adapter := helm.NewAdapter(helmClient, AppFs)
+
+		// Perform the override operation
+		ctx := cmd.Context()
+		if ctx == nil {
+			ctx = context.Background()
+		}
+
+		// Get the target registry
+		targetRegistry := config.TargetRegistry
+
+		// Call the adapter's OverrideRelease method
+		overrideFile, err := adapter.OverrideRelease(ctx, releaseName, namespace, targetRegistry,
+			config.SourceRegistries, pathStrategy, helm.OverrideOptions{
+				StrictMode: config.StrictMode,
+			})
+		if err != nil {
+			return err
+		}
+
+		// Handle output based on dry-run/outputFile settings
+		if dryRun {
+			// Dry run mode - output to stdout with headers
+			if _, err := fmt.Fprintln(cmd.OutOrStdout(), "--- Dry Run: Generated Overrides ---"); err != nil {
+				return &exitcodes.ExitCodeError{
+					Code: exitcodes.ExitGeneralRuntimeError,
+					Err:  fmt.Errorf("failed to write dry run header: %w", err),
+				}
+			}
+
+			if _, err := fmt.Fprintln(cmd.OutOrStdout(), string(overrideFile)); err != nil {
+				return &exitcodes.ExitCodeError{
+					Code: exitcodes.ExitGeneralRuntimeError,
+					Err:  fmt.Errorf("failed to write overrides in dry run mode: %w", err),
+				}
+			}
+
+			if _, err := fmt.Fprintln(cmd.OutOrStdout(), "--- End Dry Run ---"); err != nil {
+				return &exitcodes.ExitCodeError{
+					Code: exitcodes.ExitGeneralRuntimeError,
+					Err:  fmt.Errorf("failed to write dry run footer: %w", err),
+				}
+			}
+		} else if outputFile != "" {
+			// Check if file exists
+			exists, err := afero.Exists(AppFs, outputFile)
+			if err != nil {
+				return &exitcodes.ExitCodeError{
+					Code: exitcodes.ExitIOError,
+					Err:  fmt.Errorf("failed to check if output file exists: %w", err),
+				}
+			}
+			if exists {
+				return &exitcodes.ExitCodeError{
+					Code: exitcodes.ExitIOError,
+					Err:  fmt.Errorf("output file '%s' already exists", outputFile),
+				}
+			}
+
+			// Create the directory if it doesn't exist
+			err = AppFs.MkdirAll(filepath.Dir(outputFile), DirPermissions)
+			if err != nil {
+				return &exitcodes.ExitCodeError{
+					Code: exitcodes.ExitGeneralRuntimeError,
+					Err:  fmt.Errorf("failed to create output directory: %w", err),
+				}
+			}
+
+			// Write the file
+			err = afero.WriteFile(AppFs, outputFile, []byte(overrideFile), FilePermissions)
+			if err != nil {
+				return &exitcodes.ExitCodeError{
+					Code: exitcodes.ExitGeneralRuntimeError,
+					Err:  fmt.Errorf("failed to write override file: %w", err),
+				}
+			}
+
+			log.Infof("Successfully wrote overrides to %s", outputFile)
+		} else {
+			// Just output to stdout
+			_, err := fmt.Fprintln(cmd.OutOrStdout(), string(overrideFile))
+			if err != nil {
+				return &exitcodes.ExitCodeError{
+					Code: exitcodes.ExitGeneralRuntimeError,
+					Err:  fmt.Errorf("failed to write overrides to stdout: %w", err),
+				}
+			}
+		}
+
+		// Validate the chart with overrides if requested
+		shouldValidate, err := cmd.Flags().GetBool("validate")
+		if err == nil && shouldValidate {
+			// If we've created an override file, use that directly
+			var overrideFiles []string
+			if outputFile != "" && !dryRun {
+				overrideFiles = append(overrideFiles, outputFile)
+			} else {
+				// For dry-run or stdout output, write to a temporary file
+				tempFile, err := afero.TempFile(AppFs, "", "irr-override-*.yaml")
+				if err != nil {
+					return &exitcodes.ExitCodeError{
+						Code: exitcodes.ExitIOError,
+						Err:  fmt.Errorf("failed to create temp file for validation: %w", err),
+					}
+				}
+				defer func() {
+					if err := tempFile.Close(); err != nil {
+						log.Warnf("Failed to close temporary file: %v", err)
+					}
+					if err := AppFs.Remove(tempFile.Name()); err != nil {
+						log.Warnf("Failed to remove temporary file: %v", err)
+					}
+				}()
+
+				if _, err := tempFile.Write([]byte(overrideFile)); err != nil {
+					return &exitcodes.ExitCodeError{
+						Code: exitcodes.ExitIOError,
+						Err:  fmt.Errorf("failed to write to temp file for validation: %w", err),
+					}
+				}
+
+				overrideFiles = append(overrideFiles, tempFile.Name())
+			}
+
+			// Call the adapter to validate the release with overrides
+			err = adapter.ValidateRelease(ctx, releaseName, namespace, overrideFiles)
+			if err != nil {
+				return err
+			}
+
+			log.Infof("Validation successful! Chart renders correctly with overrides.")
+			log.Infof("To apply these changes, run:\n  helm upgrade %s -n %s -f %s",
+				releaseName, namespace, outputFile)
+		}
+
+		return nil
 	}
 
 	// Determine if we load from release or path
@@ -671,23 +871,6 @@ func runOverride(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	// Get output file and dry-run flag
-	outputFile, err := cmd.Flags().GetString("output-file")
-	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get output-file flag: %w", err),
-		}
-	}
-
-	dryRun, err := cmd.Flags().GetBool("dry-run")
-	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get dry-run flag: %w", err),
-		}
-	}
-
 	// Output the overrides
 	if err := outputOverrides(cmd, yamlBytes, outputFile, dryRun); err != nil {
 		return err // Pass through error from output helper
@@ -701,9 +884,10 @@ func runOverride(cmd *cobra.Command, _ []string) error {
 			Err:  fmt.Errorf("failed to get validate flag: %w", err),
 		}
 	}
-
 	if shouldValidate {
-		return validateChart(cmd, yamlBytes, &config, loadFromPath, loadFromRelease, releaseName, namespace)
+		if err := validateChart(cmd, yamlBytes, &config, loadFromPath, loadFromRelease, releaseName, namespace); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -835,4 +1019,14 @@ func validateChart(cmd *cobra.Command, yamlBytes []byte, config *GeneratorConfig
 
 	log.Infof("Validation successful: Chart rendered successfully with overrides.")
 	return nil
+}
+
+// isStdOutRequested checks if the user explicitly requested stdout output
+func isStdOutRequested(cmd *cobra.Command) bool {
+	// Check if -o - or --output-file - was specified
+	outputFlag, err := cmd.Flags().GetString("output-file")
+	if err == nil && outputFlag == "-" {
+		return true
+	}
+	return false
 }

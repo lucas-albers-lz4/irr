@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -13,6 +14,7 @@ import (
 	"helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/cli"
 
+	"github.com/lalbers/irr/internal/helm"
 	"github.com/lalbers/irr/pkg/analyzer"
 	"github.com/lalbers/irr/pkg/exitcodes"
 	"github.com/lalbers/irr/pkg/fileutil"
@@ -80,6 +82,8 @@ This command analyzes the chart's values.yaml and templates to find image refere
 	cmd.Flags().StringSlice("exclude-pattern", nil, "Glob patterns for values paths to exclude during analysis")
 	cmd.Flags().StringSlice("known-image-paths", nil, "Specific dot-notation paths known to contain images")
 	cmd.Flags().StringSliceP("source-registries", "r", nil, "Source registries to filter results (optional)")
+	cmd.Flags().String("release-name", "", "Release name for Helm plugin mode")
+	cmd.Flags().String("namespace", "", "Kubernetes namespace for the release")
 
 	return cmd
 }
@@ -186,11 +190,75 @@ func writeOutput(analysis *ImageAnalysis, flags *InspectFlags) error {
 }
 
 // runInspect implements the inspect command logic
-func runInspect(cmd *cobra.Command, _ []string) error {
+func runInspect(cmd *cobra.Command, args []string) error {
 	// Get command flags
 	flags, err := getInspectFlags(cmd)
 	if err != nil {
 		return err
+	}
+
+	// Check if a release name was provided (either via flag or positional argument)
+	releaseName, err := cmd.Flags().GetString("release-name")
+	if err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get release-name flag: %w", err),
+		}
+	}
+
+	// Check for positional argument as release name if flag is not set and we're running as a plugin
+	if releaseName == "" && isHelmPlugin && len(args) > 0 {
+		releaseName = args[0]
+		log.Infof("Using %s as release name from positional argument", releaseName)
+	}
+
+	// Get namespace for Helm operations
+	namespace, err := cmd.Flags().GetString("namespace")
+	if err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get namespace flag: %w", err),
+		}
+	}
+
+	// Handle Helm release mode if a release name is provided and we're running as a plugin
+	if releaseName != "" {
+		if !isHelmPlugin {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitInputConfigurationError,
+				Err:  fmt.Errorf("the release name flag is only available when running as a Helm plugin (helm irr ...)"),
+			}
+		}
+
+		// Create a new Helm client
+		helmClient, err := helm.NewHelmClient()
+		if err != nil {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitHelmCommandFailed,
+				Err:  fmt.Errorf("failed to initialize Helm client: %w", err),
+			}
+		}
+
+		// Create adapter with the Helm client
+		adapter := helm.NewAdapter(helmClient, AppFs)
+
+		// Perform the inspect operation
+		ctx := cmd.Context()
+		if ctx == nil {
+			ctx = context.Background()
+		}
+
+		// Get output file from flags
+		outputFile := flags.OutputFile
+
+		// Call the adapter's InspectRelease method with the output file
+		err = adapter.InspectRelease(ctx, releaseName, namespace, outputFile)
+		if err != nil {
+			return err
+		}
+
+		// Return success directly as the adapter has already handled the output
+		return nil
 	}
 
 	// If chart path is not specified, try to detect a chart in the current directory
