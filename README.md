@@ -342,3 +342,41 @@ irr \
 
 When no mappings file is provided, the tool will use the default behavior of prefixing the sanitized source registry name:
 - `docker.io/nginx:1.23` -> `my-registry.example.com/dockerio/nginx:1.23`
+
+## Test Output Management
+
+To run tests with reduced output volume:
+
+### 1. Limiting output to just failures
+
+```bash
+go test ./... -v 2>&1 | grep -A 10 "\-\-\-\sFAIL"
+```
+
+### 2. Using quiet mode for passing tests
+
+```bash
+go test -quiet ./...
+```
+
+### 3. Running specific packages
+
+```bash
+# Test only a specific package
+go test ./pkg/chart/...
+
+# Test multiple packages
+go test ./pkg/chart/... ./pkg/image/...
+```
+
+### 4. Using test.output flag to capture verbose logs to a file
+
+```bash
+go test -v ./... -args -test.testlogfile=test_output.log
+```
+
+### 5. Using race detection but quiet output 
+
+```bash
+go test -race -quiet ./...
+```
