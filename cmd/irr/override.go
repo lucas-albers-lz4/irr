@@ -736,10 +736,12 @@ func runOverride(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	releaseNameProvided := releaseName != "" && isHelmPlugin
+	// Determine if a release name is provided and if we're in plugin mode
+	releaseNameProvided := releaseName != ""
+	canUseReleaseName := releaseNameProvided && isHelmPlugin
 
 	// If releaseName is provided through args, but we're not in plugin mode, return an error about plugin mode
-	if releaseName != "" && !isHelmPlugin {
+	if releaseNameProvided && !isHelmPlugin {
 		return &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitInputConfigurationError,
 			Err:  fmt.Errorf("release name '%s' can only be used when running in plugin mode (helm irr...)", releaseName),
@@ -752,7 +754,7 @@ func runOverride(cmd *cobra.Command, args []string) error {
 	}
 
 	// If in plugin mode with a release name, handle differently
-	if releaseNameProvided {
+	if canUseReleaseName {
 		debug.Printf("Using release name: %s in namespace: %s", releaseName, namespace)
 
 		// Set up config for Helm plugin mode
@@ -886,6 +888,13 @@ func handleHelmPluginOverride(cmd *cobra.Command, releaseName, namespace string,
 
 	// Get the target registry
 	targetRegistry := config.TargetRegistry
+
+	// Add debug logging to troubleshoot nil pointer issue
+	log.Debugf("handleHelmPluginOverride details: releaseName=%q, namespace=%q, targetRegistry=%q",
+		releaseName, namespace, targetRegistry)
+	log.Debugf("handleHelmPluginOverride sourceRegistries: %v", config.SourceRegistries)
+	log.Debugf("handleHelmPluginOverride pathStrategy: %s", pathStrategy)
+	log.Debugf("handleHelmPluginOverride strictMode: %v", config.StrictMode)
 
 	// Call the adapter's OverrideRelease method
 	overrideFile, err := adapter.OverrideRelease(ctx, releaseName, namespace, targetRegistry,
