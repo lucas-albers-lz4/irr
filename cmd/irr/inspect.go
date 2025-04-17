@@ -193,11 +193,8 @@ func writeOutput(analysis *ImageAnalysis, flags *InspectFlags) error {
 
 // runInspect implements the inspect command logic
 func runInspect(cmd *cobra.Command, args []string) error {
-	// Get command flags
-	flags, err := getInspectFlags(cmd)
-	if err != nil {
-		return err
-	}
+	// Add debug logging
+	log.Debugf("runInspect called with args: %v, isHelmPlugin: %v", args, isHelmPlugin)
 
 	// Check if a release name was provided (either via flag or positional argument)
 	releaseName, err := cmd.Flags().GetString("release-name")
@@ -207,11 +204,12 @@ func runInspect(cmd *cobra.Command, args []string) error {
 			Err:  fmt.Errorf("failed to get release-name flag: %w", err),
 		}
 	}
+	log.Debugf("Release name from flag: %q", releaseName)
 
 	// Check for positional argument as release name if flag is not set and we're running as a plugin
-	if releaseName == "" && isHelmPlugin && len(args) > 0 {
+	if releaseName == "" && len(args) > 0 {
 		releaseName = args[0]
-		log.Infof("Using %s as release name from positional argument", releaseName)
+		log.Debugf("Using %q as release name from positional argument", releaseName)
 	}
 
 	// Get namespace for Helm operations
@@ -222,10 +220,20 @@ func runInspect(cmd *cobra.Command, args []string) error {
 			Err:  fmt.Errorf("failed to get namespace flag: %w", err),
 		}
 	}
+	log.Debugf("Namespace: %q", namespace)
 
-	// Determine if chart path or release name was provided
-	chartPathProvided := flags.ChartPath != ""
+	// Determine if release name was provided
 	releaseNameProvided := releaseName != ""
+	log.Debugf("Release name provided: %v (%q)", releaseNameProvided, releaseName)
+
+	// Get command flags - only require chart-path if we're not using a release name in Helm plugin mode
+	flags, err := getInspectFlags(cmd, releaseNameProvided && isHelmPlugin)
+	if err != nil {
+		return err
+	}
+
+	// Determine if chart path was provided
+	chartPathProvided := flags.ChartPath != ""
 
 	// Error if neither chart path nor release name is provided
 	if !chartPathProvided && !releaseNameProvided {
@@ -397,31 +405,42 @@ func inspectHelmRelease(cmd *cobra.Command, flags *InspectFlags, releaseName, na
 }
 
 // getInspectFlags retrieves flags from the command
-func getInspectFlags(cmd *cobra.Command) (*InspectFlags, error) {
+func getInspectFlags(cmd *cobra.Command, releaseNameProvided bool) (*InspectFlags, error) {
 	// Get chart path
 	chartPath, err := cmd.Flags().GetString("chart-path")
-	if err != nil || chartPath == "" {
+	if err != nil {
+		return nil, &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get chart-path flag: %w", err),
+		}
+	}
+
+	// Only require chart-path if we're not using a release name in plugin mode
+	if chartPath == "" && !releaseNameProvided {
 		return nil, &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitMissingRequiredFlag,
 			Err:  fmt.Errorf("required flag \"chart-path\" not set"),
 		}
 	}
 
-	// Normalize chart path
-	chartPath, err = filepath.Abs(chartPath)
-	if err != nil {
-		return nil, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get absolute path for chart: %w", err),
+	// If we have a chart path, validate it
+	if chartPath != "" {
+		// Normalize chart path
+		chartPath, err = filepath.Abs(chartPath)
+		if err != nil {
+			return nil, &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitInputConfigurationError,
+				Err:  fmt.Errorf("failed to get absolute path for chart: %w", err),
+			}
 		}
-	}
 
-	// Check if chart exists
-	_, err = AppFs.Stat(chartPath)
-	if err != nil {
-		return nil, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitChartNotFound,
-			Err:  fmt.Errorf("chart path not found or inaccessible: %s", chartPath),
+		// Check if chart exists
+		_, err = AppFs.Stat(chartPath)
+		if err != nil {
+			return nil, &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitChartNotFound,
+				Err:  fmt.Errorf("chart path not found or inaccessible: %s", chartPath),
+			}
 		}
 	}
 
