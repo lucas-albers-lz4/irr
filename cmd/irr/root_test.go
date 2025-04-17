@@ -284,3 +284,85 @@ func TestDebugFlagAndEnvVarInteraction(t *testing.T) {
 		})
 	})
 }
+
+func TestExecutionModeDetection(t *testing.T) {
+	// Save original isHelmPlugin value and restore it after the test
+	originalIsHelmPlugin := isHelmPlugin
+	defer func() {
+		isHelmPlugin = originalIsHelmPlugin
+	}()
+
+	// Test case 1: Plugin mode
+	isHelmPlugin = true
+	cmd := getRootCmd()
+
+	// Call initHelmPlugin directly to ensure flags are properly set up
+	initHelmPlugin()
+
+	// Verify release-name and namespace flags are available in plugin mode
+	releaseFlag := cmd.PersistentFlags().Lookup("release-name")
+	assert.NotNil(t, releaseFlag, "release-name flag should be available in plugin mode")
+
+	namespaceFlag := cmd.PersistentFlags().Lookup("namespace")
+	assert.NotNil(t, namespaceFlag, "namespace flag should be available in plugin mode")
+
+	// Test case 2: Standalone mode
+	isHelmPlugin = false
+	cmd = getRootCmd()
+
+	// Call removeHelmPluginFlags to hide the flags in standalone mode
+	removeHelmPluginFlags(cmd)
+
+	// Check if the flags are hidden in standalone mode
+	releaseFlag = cmd.PersistentFlags().Lookup("release-name")
+	if releaseFlag != nil {
+		assert.True(t, releaseFlag.Hidden, "release-name flag should be hidden in standalone mode")
+	} else {
+		// If the flag is completely removed, that's also acceptable
+		assert.Nil(t, releaseFlag, "release-name flag should be nil in standalone mode")
+	}
+}
+
+func TestSubcommandRouting(t *testing.T) {
+	// Save original isHelmPlugin value and restore it after the test
+	originalIsHelmPlugin := isHelmPlugin
+	defer func() {
+		isHelmPlugin = originalIsHelmPlugin
+	}()
+
+	// Test that all expected subcommands are registered regardless of mode
+	isHelmPlugin = true
+	cmd := getRootCmd()
+
+	// Check if all expected subcommands are available
+	hasCommand := func(cmd *cobra.Command, name string) bool {
+		for _, subcmd := range cmd.Commands() {
+			if subcmd.Name() == name {
+				return true
+			}
+		}
+		return false
+	}
+
+	assert.True(t, hasCommand(cmd, "override"), "override command should be available")
+	assert.True(t, hasCommand(cmd, "inspect"), "inspect command should be available")
+	assert.True(t, hasCommand(cmd, "validate"), "validate command should be available")
+
+	// Same checks in standalone mode
+	isHelmPlugin = false
+	cmd = getRootCmd()
+
+	assert.True(t, hasCommand(cmd, "override"), "override command should be available")
+	assert.True(t, hasCommand(cmd, "inspect"), "inspect command should be available")
+	assert.True(t, hasCommand(cmd, "validate"), "validate command should be available")
+}
+
+func TestRootCommandRunWithNoArgs(t *testing.T) {
+	// When no subcommand is provided, an error should be returned
+	cmd := getRootCmd()
+	cmd.SetArgs([]string{})
+	err := cmd.Execute()
+
+	assert.Error(t, err, "Executing root command with no args should return an error")
+	assert.Contains(t, err.Error(), "a subcommand is required", "Error message should indicate a subcommand is required")
+}
