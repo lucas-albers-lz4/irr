@@ -46,6 +46,8 @@ version: 0.1.0`
 */
 
 // setupMemoryFSContext sets up an in-memory filesystem with a temporary directory
+//
+//nolint:unused // This function is available for future tests requiring an in-memory filesystem with cleanup
 func setupMemoryFSContext(t *testing.T) (fs afero.Fs, tempDir string, cleanup func()) {
 	// Save original state
 	originalFS := AppFs
