@@ -13,7 +13,8 @@ import (
 	// Removed cmd import to break cycle
 )
 
-// When you run make build or make dist, Go replaces the value of binaryVersion in the compiled binary with the value from plugin.yaml.
+// BinaryVersion is replaced during build with the value from plugin.yaml.
+// When you run make build or make dist, Go replaces this value in the compiled binary.
 var BinaryVersion = "0.2.0"
 var isHelmPlugin bool
 
