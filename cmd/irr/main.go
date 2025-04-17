@@ -11,7 +11,8 @@ import (
 	"github.com/lalbers/irr/pkg/version"
 	// Removed cmd import to break cycle
 )
-//When you run make build or make dist, Go replaces the value of binaryVersion in the compiled binary with the value from plugin.yaml.
+
+// When you run make build or make dist, Go replaces the value of binaryVersion in the compiled binary with the value from plugin.yaml.
 var binaryVersion = "0.2.0"
 var isHelmPlugin bool
 
@@ -35,16 +36,23 @@ func main() {
 	// Check if we're running as a Helm plugin
 	isHelmPlugin = isRunningAsHelmPlugin()
 
+	// Log Helm environment variables when in debug mode
+	if log.IsDebugEnabled() && isHelmPlugin {
+		logHelmEnvironment()
+	}
+
 	// Initialize Helm plugin if necessary
 	if isHelmPlugin {
 		log.Debugf("Running as Helm plugin")
 		// Check Helm version compatibility
 		if err := version.CheckHelmVersion(); err != nil {
+			log.Errorf("Helm version check failed: %v", err)
 			if code, ok := exitcodes.IsExitCodeError(err); ok {
 				os.Exit(code)
 			}
 			os.Exit(1)
 		}
+		log.Debugf("Helm version check passed")
 		// initHelmPlugin will be called in init() of the root.go file
 	}
 
@@ -66,4 +74,27 @@ func main() {
 func isRunningAsHelmPlugin() bool {
 	// Check for environment variables set by Helm when running a plugin
 	return os.Getenv("HELM_PLUGIN_NAME") != "" || os.Getenv("HELM_PLUGIN_DIR") != ""
+}
+
+// logHelmEnvironment logs Helm-related environment variables for debugging
+func logHelmEnvironment() {
+	helmEnvVars := []string{
+		"HELM_PLUGIN_DIR",
+		"HELM_PLUGIN_NAME",
+		"HELM_NAMESPACE",
+		"HELM_BIN",
+		"HELM_DEBUG",
+		"HELM_PLUGINS",
+		"HELM_REGISTRY_CONFIG",
+		"HELM_REPOSITORY_CACHE",
+		"HELM_REPOSITORY_CONFIG",
+	}
+
+	log.Debugf("Helm Environment Variables:")
+	for _, envVar := range helmEnvVars {
+		value := os.Getenv(envVar)
+		if value != "" {
+			log.Debugf("  %s=%s", envVar, value)
+		}
+	}
 }
