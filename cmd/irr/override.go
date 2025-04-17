@@ -653,13 +653,7 @@ func loadChart(config *GeneratorConfig, loadFromRelease, loadFromPath bool, rele
 
 // runOverride implements the override command logic
 func runOverride(cmd *cobra.Command, args []string) error {
-	// Get configuration from flags
-	config, err := setupGeneratorConfig(cmd)
-	if err != nil {
-		return err
-	}
-
-	// Get release name and namespace if specified
+	// Get chart path or release info
 	releaseName, namespace, err := getReleaseNameAndNamespace(cmd, args)
 	if err != nil {
 		return err
@@ -676,56 +670,78 @@ func runOverride(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Get output file and dry-run flag
-	outputFile, dryRun, err := getOutputFlags(cmd, releaseName)
+	// Setup basic generator configuration
+	config, err := setupGeneratorConfig(cmd)
 	if err != nil {
 		return err
 	}
 
-	// Get path strategy
-	pathStrategy, err := cmd.Flags().GetString("strategy")
-	if err != nil {
+	// Determine if chart path or release name was provided
+	chartPathProvided := config.ChartPath != ""
+	releaseNameProvided := releaseName != ""
+
+	// Error if neither chart path nor release name is provided
+	if !chartPathProvided && !releaseNameProvided {
 		return &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get strategy flag: %w", err),
+			Err:  errors.New("either --chart-path or release name must be provided"),
 		}
 	}
 
-	// Check if running as plugin with release name from positional arg or flag
-	if releaseName != "" && isHelmPlugin {
+	// Log which input source we're using
+	if chartPathProvided {
+		log.Infof("Using chart path: %s", config.ChartPath)
+		if releaseNameProvided {
+			log.Infof("Chart path provided, ignoring release name: %s", releaseName)
+		}
+	} else if releaseNameProvided && isHelmPlugin {
+		log.Infof("Using release name: %s in namespace: %s", releaseName, namespace)
+	}
+
+	// Check if running as a Helm plugin with a release name
+	if releaseNameProvided && isHelmPlugin {
+		// Get output settings
+		outputFile, dryRun, err := getOutputFlags(cmd, releaseName)
+		if err != nil {
+			return err
+		}
+
+		// Determine path strategy
+		pathStrategy, err := cmd.Flags().GetString("strategy")
+		if err != nil {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitInputConfigurationError,
+				Err:  fmt.Errorf("failed to get strategy flag: %w", err),
+			}
+		}
+
+		// Handle Helm plugin mode with release name
 		return handleHelmPluginOverride(cmd, releaseName, namespace, &config, pathStrategy, outputFile, dryRun)
 	}
 
-	// Ensure we have either a chart path or a release name
-	if config.ChartPath == "" && releaseName == "" {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("either --chart-path or --release-name must be specified"),
-		}
-	}
+	// Normal flow with chart path
+	loadFromPath := true
+	loadFromRelease := false
 
-	// Determine if we load from release or path
-	loadFromRelease := releaseName != "" && config.ChartPath == ""
-	loadFromPath := config.ChartPath != ""
-
-	// Load chart from either release or path
-	chartSource, err := chartLoader(&config, loadFromRelease, loadFromPath, releaseName, namespace)
+	// Get chart source (either path or release info)
+	chartSource, err := loadChart(&config, loadFromRelease, loadFromPath, releaseName, namespace)
 	if err != nil {
-		return err
+		return handleChartLoadError(err, config.ChartPath)
 	}
 
-	// Generate overrides
+	// Create and execute generator
 	yamlBytes, err := createAndExecuteGenerator(chartSource, &config)
 	if err != nil {
+		return handleGenerateError(err)
+	}
+
+	// Get output flags
+	outputFile, dryRun, err := getOutputFlags(cmd, "")
+	if err != nil {
 		return err
 	}
 
-	// Output the overrides
-	if err := outputOverrides(cmd, yamlBytes, outputFile, dryRun); err != nil {
-		return err // Pass through error from output helper
-	}
-
-	// Validate the chart with overrides if requested
+	// Validate chart with generated overrides if requested
 	shouldValidate, err := cmd.Flags().GetBool("validate")
 	if err != nil {
 		return &exitcodes.ExitCodeError{
@@ -733,16 +749,19 @@ func runOverride(cmd *cobra.Command, args []string) error {
 			Err:  fmt.Errorf("failed to get validate flag: %w", err),
 		}
 	}
+
 	if shouldValidate {
 		if err := validateChart(cmd, yamlBytes, &config, loadFromPath, loadFromRelease, releaseName, namespace); err != nil {
 			return err
 		}
+		log.Infof("Validation successful! Chart renders correctly with overrides.")
 	}
 
-	return nil
+	// Output the YAML
+	return outputOverrides(cmd, yamlBytes, outputFile, dryRun)
 }
 
-// getReleaseNameAndNamespace extracts and validates release name and namespace
+// getReleaseNameAndNamespace gets the release name and namespace from the command
 func getReleaseNameAndNamespace(cmd *cobra.Command, args []string) (releaseName, namespace string, err error) {
 	// Use common function to get release name and namespace
 	return getReleaseNameAndNamespaceCommon(cmd, args)
@@ -822,7 +841,7 @@ func handlePluginOverrideOutput(cmd *cobra.Command, overrideFile, outputFile str
 		}
 
 		if _, err := fmt.Fprintln(cmd.OutOrStdout(), string(overrideFile)); err != nil {
-		return &exitcodes.ExitCodeError{
+			return &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitGeneralRuntimeError,
 				Err:  fmt.Errorf("failed to write overrides in dry run mode: %w", err),
 			}

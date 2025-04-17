@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -93,6 +94,28 @@ func runValidate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Determine if chart path or release name was provided
+	chartPathProvided := chartPath != ""
+	releaseNameProvided := releaseName != ""
+
+	// Error if neither chart path nor release name is provided
+	if !chartPathProvided && !releaseNameProvided {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  errors.New("either --chart-path or release name must be provided"),
+		}
+	}
+
+	// Log which input source we're using
+	if chartPathProvided {
+		log.Infof("Using chart path: %s", chartPath)
+		if releaseNameProvided && isHelmPlugin {
+			log.Infof("Chart path provided, ignoring release name: %s", releaseName)
+		}
+	} else if releaseNameProvided && isHelmPlugin {
+		log.Infof("Using release name: %s in namespace: %s", releaseName, namespace)
+	}
+
 	// Check if the --release-name flag was explicitly set by the user
 	releaseNameFlagSet := cmd.Flags().Changed("release-name")
 
@@ -124,7 +147,7 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check if running as plugin with release name
-	if releaseName != "" && isHelmPlugin {
+	if releaseNameProvided && isHelmPlugin && !chartPathProvided {
 		return handleHelmPluginValidate(cmd, releaseName, namespace, valuesFiles, outputFile)
 	}
 
