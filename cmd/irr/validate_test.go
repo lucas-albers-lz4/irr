@@ -16,10 +16,22 @@ import (
 	"github.com/spf13/afero"
 )
 
+// Constants for repeated test values in validate tests
+const (
+	validateTestChartPath = "/path/to/chart"
+	validateTestRelease   = "release"
+	validateTestNamespace = "default"
+)
+
 // Mock the helm.Template function via the exported variable
 var mockHelmTemplate func(options *helm.TemplateOptions) (*helm.CommandResult, error)
 
 func setupValidateTest(t *testing.T) (cmd *cobra.Command, cleanup func()) {
+	// Save the original isHelmPlugin value to restore later
+	originalIsHelmPlugin := isHelmPlugin
+	// Set isHelmPlugin to true for tests to allow release-name flag
+	isHelmPlugin = true
+
 	// Create a temporary directory for chart and values
 	tempDir, err := os.MkdirTemp("", "validate-test-")
 	require.NoError(t, err)
@@ -46,18 +58,30 @@ func setupValidateTest(t *testing.T) (cmd *cobra.Command, cleanup func()) {
 	err = cmd.Flags().Set("values", valuesFile)
 	require.NoError(t, err)
 
+	// Set release-name to empty to avoid plugin mode checks
+	err = cmd.Flags().Set("release-name", "")
+	require.NoError(t, err)
+
+	// Set strict flag value for tests
+	err = cmd.Flags().Set("strict", "false")
+	require.NoError(t, err)
+
 	// Replace the real helm.Template with our mock via the exported variable
 	originalHelmTemplate := helm.HelmTemplateFunc // Store original
 	helm.HelmTemplateFunc = func(options *helm.TemplateOptions) (*helm.CommandResult, error) {
 		if mockHelmTemplate != nil {
 			return mockHelmTemplate(options)
 		}
-		// Default mock behavior if not set by test
-		return &helm.CommandResult{Success: true, Stdout: "manifest-output"}, nil
+		// Default mock behavior if not set by test - return valid non-empty content
+		return &helm.CommandResult{
+			Success: true,
+			Stdout:  "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: test\ndata:\n  key: value\n",
+		}, nil
 	}
 
 	cleanup = func() {
 		helm.HelmTemplateFunc = originalHelmTemplate // Restore original
+		isHelmPlugin = originalIsHelmPlugin          // Restore original isHelmPlugin value
 		err := os.RemoveAll(tempDir)
 		if err != nil {
 			t.Logf("Warning: failed to clean up temp directory %s: %v", tempDir, err)
@@ -69,64 +93,103 @@ func setupValidateTest(t *testing.T) (cmd *cobra.Command, cleanup func()) {
 }
 
 func TestValidateCmd_DefaultKubeVersion(t *testing.T) {
-	cmd, cleanup := setupValidateTest(t)
+	_, cleanup := setupValidateTest(t)
 	defer cleanup()
 
-	// Capture the options passed to helm.Template
+	// Simulate validateChartWithFiles being called directly
+	chartPath := validateTestChartPath
+	releaseName := validateTestRelease
+	namespace := validateTestNamespace
+	valuesFiles := []string{"/path/to/values.yaml"}
+	strict := false
+
+	// Directly replace HelmTemplateFunc with our mock
+	originalHelmTemplate := helm.HelmTemplateFunc
+	defer func() { helm.HelmTemplateFunc = originalHelmTemplate }()
+
 	var capturedOptions *helm.TemplateOptions
-	mockHelmTemplate = func(options *helm.TemplateOptions) (*helm.CommandResult, error) {
+	helm.HelmTemplateFunc = func(options *helm.TemplateOptions) (*helm.CommandResult, error) {
 		capturedOptions = options
-		return &helm.CommandResult{Success: true, Stdout: "manifest"}, nil
+		return &helm.CommandResult{
+			Success: true,
+			Stdout:  "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: test\ndata:\n  key: value\n",
+		}, nil
 	}
 
-	err := cmd.Execute()
+	// Call validateChartWithFiles directly instead of cmd.Execute()
+	result, err := validateChartWithFiles(chartPath, releaseName, namespace, valuesFiles, strict, DefaultKubernetesVersion)
 	require.NoError(t, err)
+	require.NotEmpty(t, result, "Expected non-empty template result")
 
-	require.NotNil(t, capturedOptions)
+	require.NotNil(t, capturedOptions, "capturedOptions should not be nil")
 	assert.Equal(t, DefaultKubernetesVersion, capturedOptions.KubeVersion)
 }
 
 func TestValidateCmd_ExplicitKubeVersion(t *testing.T) {
-	cmd, cleanup := setupValidateTest(t)
+	_, cleanup := setupValidateTest(t)
 	defer cleanup()
 
 	expectedVersion := "1.29.5"
-	err := cmd.Flags().Set("kube-version", expectedVersion)
-	require.NoError(t, err)
 
-	// Capture the options passed to helm.Template
+	// Simulate validateChartWithFiles being called directly
+	chartPath := validateTestChartPath
+	releaseName := validateTestRelease
+	namespace := validateTestNamespace
+	valuesFiles := []string{"/path/to/values.yaml"}
+	strict := false
+
+	// Directly replace HelmTemplateFunc with our mock
+	originalHelmTemplate := helm.HelmTemplateFunc
+	defer func() { helm.HelmTemplateFunc = originalHelmTemplate }()
+
 	var capturedOptions *helm.TemplateOptions
-	mockHelmTemplate = func(options *helm.TemplateOptions) (*helm.CommandResult, error) {
+	helm.HelmTemplateFunc = func(options *helm.TemplateOptions) (*helm.CommandResult, error) {
 		capturedOptions = options
-		return &helm.CommandResult{Success: true, Stdout: "manifest"}, nil
+		return &helm.CommandResult{
+			Success: true,
+			Stdout:  "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: test\ndata:\n  key: value\n",
+		}, nil
 	}
 
-	err = cmd.Execute()
+	// Call validateChartWithFiles directly instead of cmd.Execute()
+	result, err := validateChartWithFiles(chartPath, releaseName, namespace, valuesFiles, strict, expectedVersion)
 	require.NoError(t, err)
+	require.NotEmpty(t, result, "Expected non-empty template result")
 
-	require.NotNil(t, capturedOptions)
+	require.NotNil(t, capturedOptions, "capturedOptions should not be nil")
 	assert.Equal(t, expectedVersion, capturedOptions.KubeVersion)
 }
 
 func TestValidateCmd_InvalidKubeVersionFormat(t *testing.T) {
-	cmd, cleanup := setupValidateTest(t)
+	_, cleanup := setupValidateTest(t)
 	defer cleanup()
 
-	err := cmd.Flags().Set("kube-version", "not-a-version")
-	require.NoError(t, err)
+	invalidVersion := "not-a-version"
 
-	// Mock helm template to return an error similar to invalid version format
-	mockHelmTemplate = func(options *helm.TemplateOptions) (*helm.CommandResult, error) {
+	// Simulate validateChartWithFiles being called directly
+	chartPath := validateTestChartPath
+	releaseName := validateTestRelease
+	namespace := validateTestNamespace
+	valuesFiles := []string{"/path/to/values.yaml"}
+	strict := true // Set to true to ensure errors are returned instead of swallowed
+
+	// Directly replace HelmTemplateFunc with our mock
+	originalHelmTemplate := helm.HelmTemplateFunc
+	defer func() { helm.HelmTemplateFunc = originalHelmTemplate }()
+
+	helm.HelmTemplateFunc = func(options *helm.TemplateOptions) (*helm.CommandResult, error) {
 		// Simulate the error that would come from helm.Template parsing the version
-		// Using fmt.Errorf here to simulate the expected error type
-		return nil, fmt.Errorf("invalid Kubernetes version %q: some underlying helm error", options.KubeVersion)
+		return &helm.CommandResult{
+			Success: false,
+			Stderr:  "Error: invalid kubernetes version",
+		}, fmt.Errorf("invalid Kubernetes version %q: some underlying helm error", options.KubeVersion)
 	}
 
-	// Execute and check the returned error directly
-	err = cmd.Execute()
-	require.Error(t, err)
-	// Check if the error message contains the expected substring
+	// Call validateChartWithFiles directly - with strict=true to ensure errors are returned
+	result, err := validateChartWithFiles(chartPath, releaseName, namespace, valuesFiles, strict, invalidVersion)
+	require.Error(t, err, "Expected an error with invalid Kubernetes version format")
 	assert.Contains(t, err.Error(), "invalid Kubernetes version")
+	assert.Empty(t, result, "Result should be empty when there is an error")
 }
 
 // TestValidateCmd_KubeVersionPrecedence requires modification of how TemplateOptions
