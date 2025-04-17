@@ -227,7 +227,9 @@ func TestWriteFileString(t *testing.T) {
 	if err != nil {
 		t.Errorf("Failed to stat written file: %v", err)
 	}
-	if info.Mode().Perm() != ReadWriteUserReadOthers {
+	if info == nil {
+		t.Errorf("File info is nil")
+	} else if info.Mode().Perm() != ReadWriteUserReadOthers {
 		t.Errorf("File permissions = %v, want %v", info.Mode().Perm(), ReadWriteUserReadOthers)
 	}
 }

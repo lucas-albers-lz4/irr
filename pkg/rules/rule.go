@@ -133,6 +133,11 @@ func splitPath(path string) []string {
 
 // setValueInMap sets a value in a nested map based on path parts
 func setValueInMap(m map[string]interface{}, parts []string, value interface{}) error {
+	// Add nil check for map
+	if m == nil {
+		return fmt.Errorf("cannot set value in nil map")
+	}
+
 	if len(parts) == 0 {
 		return fmt.Errorf("empty path")
 	}
