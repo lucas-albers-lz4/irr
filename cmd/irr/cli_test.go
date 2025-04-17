@@ -321,8 +321,8 @@ sidecar:
 				"validate",
 				"--values", valuesFile,
 			},
-			wantExit: 4,
-			wantErr:  "chart path not specified",
+			wantExit: 2,
+			wantErr:  "either --chart-path or release name must be provided",
 		},
 		{
 			name: "missing values file",
