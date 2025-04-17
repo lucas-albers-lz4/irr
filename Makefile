@@ -159,6 +159,10 @@ helm-lint:
 		echo "Install with: brew install helm (macOS) or follow https://helm.sh/docs/intro/install/"; \
 	fi
 
+update-plugin: build
+	@echo "copying plugin from $(BUILD_DIR)/$(BINARY_NAME) to ~/Library/helm/plugins/irr/bin/irr"
+	@rsync $(BUILD_DIR)/$(BINARY_NAME) ~/Library/helm/plugins/irr/bin/irr
+
 clean:
 	@echo "Cleaning..."
 	@rm -rf $(BUILD_DIR)
