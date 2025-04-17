@@ -20,37 +20,37 @@
   - [ ] Route subcommands to core IRR logic or Helm-adapter
   - [x] Use `cobra` for command handling (confirmed)
 - [ ] **[P0]** Design adapter layer between Helm plugin and core IRR
-  - [ ] Define Go interface for Helm client (GetReleaseValues, GetChartMetadata, etc.)
-  - [ ] Implement real Helm client using Helm Go SDK
-  - [ ] Implement mock Helm client for tests
-  - [ ] Add error wrapping for context (release name, namespace)
-  - [ ] Use dependency injection for Helm client and logger
-  - [ ] Ensure all file/network operations are mockable for tests
-  - [ ] Use context.Context for all blocking operations
-  - [ ] Keep all Helm-specific logic in adapter; core logic should not import Helm packages
-  - [ ] Design and implement execution mode detection (plugin vs standalone)
-    - [ ] Use `HELM_PLUGIN_DIR` environment variable to detect plugin mode
-    - [ ] Configure Helm client differently based on execution mode
-    - [ ] Only enable `--release-name` and `--namespace` flags when running in plugin mode (see PLUGIN-SPECIFIC.md)
-    - [ ] In standalone mode, error if `--release-name` or `--namespace` is provided, with clear message: "The --release-name and --namespace flags are only available when running as a Helm plugin (helm irr ...)"
-    - [ ] Document this behavior and rationale in both code comments and user documentation
-  - [ ] Implement plugin-specific initialization
-    - [ ] Use `cli.New()` from Helm SDK to get plugin environment settings
-    - [ ] Initialize action.Configuration with Helm's RESTClientGetter when in plugin mode
-    - [ ] Handle namespace inheritance from Helm environment
-  - [ ] Create robust error handling for environment differences
-    - [ ] Provide clear error messages when attempting to use plugin features in standalone mode
-    - [ ] Include helpful troubleshooting info in errors (e.g., "Run as 'helm irr' to use this feature")
-    - [ ] Document the feature limitations in different execution modes
+  - [x] Define Go interface for Helm client (GetReleaseValues, GetChartMetadata, etc.)
+  - [x] Implement real Helm client using Helm Go SDK
+  - [x] Implement mock Helm client for tests
+  - [x] Add error wrapping for context (release name, namespace)
+  - [x] Use dependency injection for Helm client and logger
+  - [x] Ensure all file/network operations are mockable for tests
+  - [x] Use context.Context for all blocking operations
+  - [x] Keep all Helm-specific logic in adapter; core logic should not import Helm packages
+  - [x] Design and implement execution mode detection (plugin vs standalone)
+    - [x] Use `HELM_PLUGIN_DIR` environment variable to detect plugin mode
+    - [x] Configure Helm client differently based on execution mode
+    - [x] Only enable `--release-name` and `--namespace` flags when running in plugin mode (see PLUGIN-SPECIFIC.md)
+    - [x] In standalone mode, error if `--release-name` or `--namespace` is provided, with clear message: "The --release-name and --namespace flags are only available when running as a Helm plugin (helm irr ...)"
+    - [x] Document this behavior and rationale in both code comments and user documentation
+  - [x] Implement plugin-specific initialization
+    - [x] Use `cli.New()` from Helm SDK to get plugin environment settings
+    - [x] Initialize action.Configuration with Helm's RESTClientGetter when in plugin mode
+    - [x] Handle namespace inheritance from Helm environment
+  - [x] Create robust error handling for environment differences
+    - [x] Provide clear error messages when attempting to use plugin features in standalone mode
+    - [x] Include helpful troubleshooting info in errors (e.g., "Run as 'helm irr' to use this feature")
+    - [x] Document the feature limitations in different execution modes
 
 **P1: Core Command Implementation**
 - [ ] **[P1]** Implement release-based context for commands
-  - [ ] Implement function to fetch release values using Helm SDK (`helm get values`)
+  - [x] Implement function to fetch release values using Helm SDK (`helm get values`)
   - [ ] Add retry logic with exponential backoff for transient errors
-  - [ ] Parse namespace from CLI flags, Helm config, or default
-  - [ ] Implement chart source resolution (from release metadata, fallback to local cache or error)
-  - [ ] Use `action.NewGetValues()` from Helm SDK for value fetching
-  - [ ] For namespace: check `--namespace` flag, then `HELM_NAMESPACE`, then default to `"default"`
+  - [x] Parse namespace from CLI flags, Helm config, or default
+  - [x] Implement chart source resolution (from release metadata, fallback to local cache or error)
+  - [x] Use `action.NewGetValues()` from Helm SDK for value fetching
+  - [x] For namespace: check `--namespace` flag, then `HELM_NAMESPACE`, then default to `"default"`
 - [ ] **[P1]** Adapt core commands to work with Helm context
   - [ ] Refactor inspect/override/validate to accept both chart path and release name as input
   - [ ] Add logic to merge values from release and user-supplied files
@@ -58,11 +58,11 @@
   - [ ] Accept both `--chart-path` and `--release-name`; error if neither provided
   - [ ] Prioritize chart path over release name if both provided (with clear logging)
 - [ ] **[P1]** Implement file handling with safety features
-  - [ ] Implement file existence check before writing output
-  - [ ] Use 0600 permissions for output files by default
+  - [x] Implement file existence check before writing output
+  - [x] Use 0600 permissions for output files by default
   - [ ] Write unit tests for file safety logic
-  - [ ] Default behavior: fail if file exists (per section 4.4 in PLUGIN-SPECIFIC.md)
-  - [ ] Use file permissions constants for necessaary permission set, those are defined in this file : `pkg/fileutil/constants.go`
+  - [x] Default behavior: fail if file exists (per section 4.4 in PLUGIN-SPECIFIC.md)
+  - [x] Use file permissions constants for necessaary permission set, those are defined in this file : `pkg/fileutil/constants.go`
 
 **P2: User Experience Enhancements**
 - [ ] **[P2]** Implement Helm-consistent output formatting
@@ -101,7 +101,7 @@
   - [ ] List all flags and environment variables in a reference table
 
 **Cross-Cutting Best Practices**
-- [ ] Use KISS and YAGNI: avoid speculative features
+- [x] Use KISS and YAGNI: avoid speculative features
 - [ ] Add code comments and docstrings for all exported functions and interfaces
 - [ ] Add structured logging for all major operations (start, success, error)
 - [ ] Schedule regular code and design reviews after each vertical slice
@@ -179,7 +179,6 @@ _**Goal:** Analyze results from the brute-force solver and chart analysis to ide
    - [ ] **Negative/Edge (No Metadata):** Test charts with empty/nil metadata; ensure no panics occur and no rules are applied
    - [ ] **Error Handling:** Unit test graceful failure (log warning, continue) if the rules registry is misconfigured or type assertion fails
 
-
 ## Phase 5: `kind` Cluster Integration Testing
 _**Goal:** Implement end-to-end tests using `kind` to validate Helm plugin interactions with a live Kubernetes API and Helm release state, ensuring read-only behavior._
 
@@ -229,4 +228,29 @@ _**Goal:** Implement end-to-end tests using `kind` to validate Helm plugin inter
      - Stop after completing a logical portion of a feature to make well reasoned git commits with changes and comments ✓
      - Request suggested git commands for committing the changes ✓
      - Review and execute the git commit commands yourself, never change git branches stay in the branch you are in until feature completion ✓
+
+## Testing Plan
+
+**Test Coverage for Helm Adapter Components**
+- [ ] Unit tests for HelmClientInterface implementations
+  - [ ] Test RealHelmClient with mocked Helm SDK components
+  - [ ] Test MockHelmClient for test fixture correctness
+- [ ] Unit tests for Adapter functionality
+  - [ ] Test InspectRelease with various input scenarios
+  - [ ] Test OverrideRelease with different registry and path strategies
+  - [ ] Test ValidateRelease with mockable filesystem and client
+- [ ] Integration tests for end-to-end command execution
+  - [ ] Test with both mock and real implementations (when possible)
+  - [ ] Test plugin mode detection and behavior differences
+  - [ ] Test all error paths with appropriate error codes
+
+**Testing Frequency**
+- [ ] Run unit tests after each significant component change
+- [ ] Run integration tests before committing feature completions
+- [ ] Add specific test cases for any bug fixes to prevent regressions
+
+**Testing Coverage Goals**
+- [ ] Aim for >85% code coverage for core adapter functionality
+- [ ] 100% coverage for critical path components (plugin detection, error handling)
+- [ ] Test all parameter combinations at the API boundaries
 
