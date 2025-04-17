@@ -44,8 +44,8 @@ func getReleaseNameAndNamespaceCommon(cmd *cobra.Command, args []string) (releas
 		}
 	}
 
-	// Check for positional argument as release name if flag is not set and we're running as a plugin
-	if releaseName == "" && isHelmPlugin && len(args) > 0 {
+	// Check for positional argument as release name if flag is not set
+	if releaseName == "" && len(args) > 0 {
 		releaseName = args[0]
 		log.Infof("Using %s as release name from positional argument", releaseName)
 	}
