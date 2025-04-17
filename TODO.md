@@ -42,11 +42,59 @@
     - [x] Provide clear error messages when attempting to use plugin features in standalone mode
     - [x] Include helpful troubleshooting info in errors (e.g., "Run as 'helm irr' to use this feature")
     - [x] Document the feature limitations in different execution modes
+- [x] **[P0] Fix Duplicate isRunningAsHelmPlugin Function**
+  - [x] Apply Solution 2 (main determines and passes the value):
+    - [x] Modify `internal/helm/adapter.go`:
+      - [x] Update `Adapter` struct to keep the `isRunningAsPlugin` field
+      - [x] Modify `NewAdapter` function signature to accept `isPlugin bool` parameter
+      - [x] Remove the `isRunningAsHelmPlugin()` function from adapter.go
+    - [x] Keep the `isRunningAsHelmPlugin()` function only in `cmd/irr/main.go`
+    - [x] Update all adapter creation sites to pass the plugin mode:
+      - [x] Find all locations where `helm.NewAdapter()` is called
+      - [x] Pass the `isHelmPlugin` global variable to each call
+    - [x] Run unit tests to verify functionality is maintained
+    - [x] Update any affected tests that might have relied on the removed function
+    - [x] Run linting to check for any unused imports
+- [x] **[P0] Unit Testing**
+  - [x] Unit tests for Helm environment variable detection (`isRunningAsHelmPlugin` in `cmd/irr/main.go`).
+  - [x] Unit tests for subcommand routing based on execution mode (plugin vs. standalone).
+  - [x] Unit tests for `cobra` flag parsing (`--release-name`, `--namespace`) in plugin mode vs standalone mode.
+  - [x] Unit tests for the `RealHelmClient` methods (`GetReleaseValues`, `GetChartFromRelease`, etc.) using mocked Helm SDK dependencies.
+  - [x] Unit tests for the `MockHelmClient` implementation to ensure mock functions behave as expected.
+  - [x] Unit tests for error wrapping logic within the adapter layer.
+  - [x] Unit tests for execution mode detection logic (`isHelmPlugin` variable determination).
+  - [x] Unit tests for plugin-specific initialization (e.g., `initHelmPlugin` in `cmd/irr/root.go`).
+  - [x] Unit tests verifying correct error messages when attempting to use plugin-only features in standalone mode.
+  - [x] Unit tests for namespace handling logic (flag vs. environment variable vs. default).
+  
+- [ ] **[P0]** Design adapter layer between Helm plugin and core IRR
+  - [ ] Define Go interface for Helm client (GetReleaseValues, GetChartMetadata, etc.)
+  - [ ] Implement real Helm client using Helm Go SDK
+  - [ ] Implement mock Helm client for tests
+  - [ ] Add error wrapping for context (release name, namespace)
+  - [ ] Use dependency injection for Helm client and logger
+  - [ ] Ensure all file/network operations are mockable for tests
+  - [ ] Use context.Context for all blocking operations
+  - [ ] Keep all Helm-specific logic in adapter; core logic should not import Helm packages
+  - [ ] Design and implement execution mode detection (plugin vs standalone)
+    - [ ] Use `HELM_PLUGIN_DIR` environment variable to detect plugin mode
+    - [ ] Configure Helm client differently based on execution mode
+    - [ ] Only enable `--release-name` and `--namespace` flags when running in plugin mode (see PLUGIN-SPECIFIC.md)
+    - [ ] In standalone mode, error if `--release-name` or `--namespace` is provided, with clear message: "The --release-name and --namespace flags are only available when running as a Helm plugin (helm irr ...)"
+    - [ ] Document this behavior and rationale in both code comments and user documentation
+  - [ ] Implement plugin-specific initialization
+    - [ ] Use `cli.New()` from Helm SDK to get plugin environment settings
+    - [ ] Initialize action.Configuration with Helm's RESTClientGetter when in plugin mode
+    - [ ] Handle namespace inheritance from Helm environment
+  - [ ] Create robust error handling for environment differences
+    - [ ] Provide clear error messages when attempting to use plugin features in standalone mode
+    - [ ] Include helpful troubleshooting info in errors (e.g., "Run as 'helm irr' to use this feature")
+    - [ ] Document the feature limitations in different execution modes
 
 **P1: Core Command Implementation**
 - [ ] **[P1]** Implement release-based context for commands
   - [x] Implement function to fetch release values using Helm SDK (`helm get values`)
-  - [ ] Add retry logic with exponential backoff for transient errors
+ 
   - [x] Parse namespace from CLI flags, Helm config, or default
   - [x] Implement chart source resolution (from release metadata, fallback to local cache or error)
   - [x] Use `action.NewGetValues()` from Helm SDK for value fetching
