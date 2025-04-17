@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/spf13/afero"
@@ -84,7 +85,7 @@ func TestWriteOutput(t *testing.T) {
 		name          string
 		analysis      *ImageAnalysis
 		flags         *InspectFlags
-		checkFs       func(t *testing.T, fs afero.Fs)
+		checkFs       func(t *testing.T, fs afero.Fs, tmpDir string)
 		expectedError bool
 	}{
 		{
@@ -105,12 +106,13 @@ func TestWriteOutput(t *testing.T) {
 			flags: &InspectFlags{
 				OutputFile: "output.yaml",
 			},
-			checkFs: func(t *testing.T, fs afero.Fs) {
-				exists, err := afero.Exists(fs, "output.yaml")
+			checkFs: func(t *testing.T, fs afero.Fs, tmpDir string) {
+				outputPath := filepath.Join(tmpDir, "output.yaml")
+				exists, err := afero.Exists(fs, outputPath)
 				assert.NoError(t, err)
 				assert.True(t, exists, "Output file should exist")
 
-				content, err := afero.ReadFile(fs, "output.yaml")
+				content, err := afero.ReadFile(fs, outputPath)
 				assert.NoError(t, err)
 				assert.Contains(t, string(content), "test-chart")
 				assert.Contains(t, string(content), "docker.io")
@@ -136,12 +138,13 @@ func TestWriteOutput(t *testing.T) {
 				GenerateConfigSkeleton: true,
 				OutputFile:             "config.yaml",
 			},
-			checkFs: func(t *testing.T, fs afero.Fs) {
-				exists, err := afero.Exists(fs, "config.yaml")
+			checkFs: func(t *testing.T, fs afero.Fs, tmpDir string) {
+				configPath := filepath.Join(tmpDir, "config.yaml")
+				exists, err := afero.Exists(fs, configPath)
 				assert.NoError(t, err)
 				assert.True(t, exists, "Config file should exist")
 
-				content, err := afero.ReadFile(fs, "config.yaml")
+				content, err := afero.ReadFile(fs, configPath)
 				assert.NoError(t, err)
 				assert.Contains(t, string(content), "docker.io")
 				assert.Contains(t, string(content), "quay.io")
@@ -160,7 +163,7 @@ func TestWriteOutput(t *testing.T) {
 			flags: &InspectFlags{
 				OutputFile: "",
 			},
-			checkFs: func(_ *testing.T, _ afero.Fs) {
+			checkFs: func(_ *testing.T, _ afero.Fs, _ string) {
 				// Nothing to check in filesystem for stdout output
 			},
 			expectedError: false,
@@ -171,6 +174,19 @@ func TestWriteOutput(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// Set up mock filesystem
 			mockFs := afero.NewMemMapFs()
+
+			// Create temporary directory
+			tmpDir := t.TempDir()
+
+			// Ensure the temporary directory exists in the mock filesystem
+			err := mockFs.MkdirAll(tmpDir, 0o755)
+			require.NoError(t, err)
+
+			// Update the flags to use the temporary directory path
+			flags := *tc.flags
+			if flags.OutputFile != "" {
+				flags.OutputFile = filepath.Join(tmpDir, flags.OutputFile)
+			}
 
 			// Replace global filesystem with mock
 			reset := SetFs(mockFs)
@@ -183,7 +199,7 @@ func TestWriteOutput(t *testing.T) {
 			os.Stdout = w
 
 			// Call the function
-			err = writeOutput(tc.analysis, tc.flags)
+			err = writeOutput(tc.analysis, &flags)
 
 			// Close pipe and restore stdout
 			errClose := w.Close()
@@ -203,12 +219,12 @@ func TestWriteOutput(t *testing.T) {
 				assert.NoError(t, err)
 
 				// For stdout output, verify content
-				if tc.flags.OutputFile == "" {
+				if flags.OutputFile == "" {
 					assert.Contains(t, output, tc.analysis.Chart.Name)
 				}
 
 				// Check filesystem state
-				tc.checkFs(t, mockFs)
+				tc.checkFs(t, mockFs, tmpDir)
 			}
 		})
 	}
