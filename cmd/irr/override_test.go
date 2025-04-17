@@ -111,7 +111,7 @@ func TestOverrideCommand_LoadChart(t *testing.T) {
 			}
 
 			// Override the chart loader function for testing
-			chartLoader = func(config *GeneratorConfig, loadFromRelease, loadFromPath bool, releaseName, namespace string) (string, error) {
+			chartLoader = func(config *GeneratorConfig, _ /*loadFromRelease*/, _ /*loadFromPath*/ bool, _ /*releaseName*/, _ /*namespace*/ string) (string, error) {
 				if config.ChartPath == testChartDir && !tc.expectError {
 					// Return success for the valid chart
 					return testChartDir, nil
@@ -128,7 +128,7 @@ func TestOverrideCommand_LoadChart(t *testing.T) {
 
 			// Override RunE to just load the chart and return
 			originalRunE := cmd.RunE
-			cmd.RunE = func(cmd *cobra.Command, args []string) error {
+			cmd.RunE = func(cmd *cobra.Command, _ /*args*/ []string) error {
 				// Just get the config and load the chart
 				config, err := setupGeneratorConfig(cmd, "")
 				if err != nil {
@@ -344,7 +344,7 @@ func TestOverrideCommand_OutputFileHandling(t *testing.T) {
 		// Get the output file path
 		outputFile, err := cmd.Flags().GetString("output-file")
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to get output-file flag: %w", err)
 		}
 
 		// If no output file is specified and there's a release name, use the default pattern
@@ -354,7 +354,10 @@ func TestOverrideCommand_OutputFileHandling(t *testing.T) {
 		}
 
 		// Check if dry run is enabled
-		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		dryRun, err := cmd.Flags().GetBool("dry-run")
+		if err != nil {
+			return fmt.Errorf("failed to get dry-run flag: %w", err)
+		}
 		if dryRun {
 			return nil // Just return for dry run
 		}
@@ -368,13 +371,13 @@ func TestOverrideCommand_OutputFileHandling(t *testing.T) {
 			dir := filepath.Dir(outputFile)
 			err := AppFs.MkdirAll(dir, 0o755)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to create directory: %w", err)
 			}
 
 			// Check if the file already exists
 			exists, err := afero.Exists(AppFs, outputFile)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to check if file exists: %w", err)
 			}
 			if exists {
 				// Return error if file exists (simulating the actual behavior)
@@ -384,7 +387,7 @@ func TestOverrideCommand_OutputFileHandling(t *testing.T) {
 			// Write the file
 			err = afero.WriteFile(AppFs, outputFile, []byte(mockOverride), 0o644)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to write file: %w", err)
 			}
 			log.Infof("Successfully wrote overrides to %s", outputFile)
 		}
@@ -406,7 +409,10 @@ func TestOverrideCommand_OutputFileHandling(t *testing.T) {
 		// Override the RunE function to use our mock handler
 		originalRunE := cmd.RunE
 		cmd.RunE = func(cmd *cobra.Command, args []string) error {
-			releaseName, _, _ := getReleaseNameAndNamespaceCommon(cmd, args)
+			releaseName, _, err := getReleaseNameAndNamespaceCommon(cmd, args)
+			if err != nil {
+				return fmt.Errorf("failed to get release name: %w", err)
+			}
 			return mockOverrideHandler(cmd, releaseName)
 		}
 		defer func() { cmd.RunE = originalRunE }()
@@ -443,7 +449,10 @@ func TestOverrideCommand_OutputFileHandling(t *testing.T) {
 		// Override the RunE function to use our mock handler
 		originalRunE := cmd.RunE
 		cmd.RunE = func(cmd *cobra.Command, args []string) error {
-			releaseName, _, _ := getReleaseNameAndNamespaceCommon(cmd, args)
+			releaseName, _, err := getReleaseNameAndNamespaceCommon(cmd, args)
+			if err != nil {
+				return fmt.Errorf("failed to get release name: %w", err)
+			}
 			return mockOverrideHandler(cmd, releaseName)
 		}
 		defer func() { cmd.RunE = originalRunE }()
@@ -472,7 +481,10 @@ func TestOverrideCommand_OutputFileHandling(t *testing.T) {
 		// Override the RunE function to use our mock handler
 		originalRunE := cmd.RunE
 		cmd.RunE = func(cmd *cobra.Command, args []string) error {
-			releaseName, _, _ := getReleaseNameAndNamespaceCommon(cmd, args)
+			releaseName, _, err := getReleaseNameAndNamespaceCommon(cmd, args)
+			if err != nil {
+				return fmt.Errorf("failed to get release name: %w", err)
+			}
 			return mockOverrideHandler(cmd, releaseName)
 		}
 		defer func() { cmd.RunE = originalRunE }()
