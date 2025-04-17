@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"testing"
 
@@ -8,6 +9,7 @@ import (
 
 	"github.com/lalbers/irr/pkg/exitcodes"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const testChartDir = "/test/chart"
@@ -164,4 +166,63 @@ func TestOverrideCommand_GeneratorError(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestOverrideCommand_ReleaseFlag_PluginMode(t *testing.T) {
+	// Save original isHelmPlugin value and restore it after the test
+	originalIsHelmPlugin := isHelmPlugin
+	defer func() {
+		isHelmPlugin = originalIsHelmPlugin
+	}()
+
+	// Set up plugin mode
+	isHelmPlugin = true
+
+	// Create the command
+	cmd := newOverrideCmd()
+
+	// Ensure release-name flag exists in plugin mode
+	flag := cmd.Flags().Lookup("release-name")
+	require.NotNil(t, flag, "release-name flag should be available in plugin mode")
+
+	// Ensure namespace flag exists in plugin mode
+	flag = cmd.Flags().Lookup("namespace")
+	require.NotNil(t, flag, "namespace flag should be available in plugin mode")
+}
+
+func TestOverrideCommand_ReleaseFlag_StandaloneMode(t *testing.T) {
+	// Save original isHelmPlugin value and restore it after the test
+	originalIsHelmPlugin := isHelmPlugin
+	defer func() {
+		isHelmPlugin = originalIsHelmPlugin
+	}()
+
+	// Set up standalone mode
+	isHelmPlugin = false
+
+	// Create the command
+	cmd := newOverrideCmd()
+
+	// The release-name flag should still exist in the command
+	// but it should be rejected when used in standalone mode
+
+	// Create a test buffer to capture output
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+
+	// Set up minimum flags needed to avoid other validation errors
+	cmd.SetArgs([]string{
+		"--chart-path", "test-chart",
+		"--target-registry", "docker.io",
+		"--source-registries", "quay.io",
+		"--release-name", "test-release", // This should cause an error in standalone mode
+	})
+
+	// This should fail because release-name is only for plugin mode
+	err := cmd.Execute()
+	require.Error(t, err, "release-name flag should be rejected in standalone mode")
+
+	// Check that the error message is descriptive about plugin mode
+	assert.Contains(t, err.Error(), "plugin", "Error should indicate this is a plugin-only feature")
 }
