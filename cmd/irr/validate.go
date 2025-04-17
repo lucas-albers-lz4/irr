@@ -377,6 +377,15 @@ func handleHelmPluginValidate(cmd *cobra.Command, releaseName, namespace string,
 		return err
 	}
 
+	// Add nil check for adapter
+	if adapter == nil {
+		log.Errorf("Failed to create Helm adapter - adapter is nil")
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitGeneralRuntimeError,
+			Err:  fmt.Errorf("validation failed: helm adapter is nil"),
+		}
+	}
+
 	// Get command context
 	ctx := getCommandContext(cmd)
 

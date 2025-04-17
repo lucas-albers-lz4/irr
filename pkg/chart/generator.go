@@ -685,6 +685,12 @@ func ValidateHelmTemplate(chartPath string, overrides []byte) error {
 	debug.FunctionEnter("ValidateHelmTemplate")
 	defer debug.FunctionExit("ValidateHelmTemplate")
 
+	// Add nil check for the chart path
+	if chartPath == "" {
+		log.Errorf("Chart path is empty in ValidateHelmTemplate")
+		return fmt.Errorf("chart path cannot be empty")
+	}
+
 	// First try - without any modification
 	err := validateHelmTemplateInternalFunc(chartPath, overrides)
 	if err == nil {
@@ -694,6 +700,13 @@ func ValidateHelmTemplate(chartPath string, overrides []byte) error {
 	// If we get an error, check if it's the specific Bitnami security error (exit code 16)
 	// that can be fixed by adding global.security.allowInsecureImages=true
 	handler := rules.NewBitnamiFallbackHandler()
+
+	// Add nil check for handler
+	if handler == nil {
+		log.Errorf("Failed to create Bitnami fallback handler in ValidateHelmTemplate")
+		return fmt.Errorf("handler creation failed, returning original error: %w", err)
+	}
+
 	if handler.ShouldRetryWithSecurityBypass(err) {
 		debug.Printf("Detected Bitnami security error, retrying with security bypass")
 
@@ -744,6 +757,11 @@ var validateHelmTemplateInternalFunc = validateHelmTemplateInternal
 
 // validateHelmTemplateInternal is the internal implementation function
 func validateHelmTemplateInternal(chartPath string, overrides []byte) error {
+	// Add nil check for chartPath
+	if chartPath == "" {
+		return fmt.Errorf("chart path cannot be empty")
+	}
+
 	tempDir, err := os.MkdirTemp("", "irr-validate-")
 	if err != nil {
 		return fmt.Errorf("failed to create temp directory: %w", err)
@@ -762,6 +780,11 @@ func validateHelmTemplateInternal(chartPath string, overrides []byte) error {
 
 	// Initialize Helm environment
 	settings := cli.New()
+	// Add nil check for settings
+	if settings == nil {
+		return fmt.Errorf("failed to initialize Helm CLI settings")
+	}
+
 	actionConfig := new(action.Configuration)
 	if err := actionConfig.Init(settings.RESTClientGetter(), settings.Namespace(), "", debug.Printf); err != nil {
 		return fmt.Errorf("failed to initialize Helm action config: %w", err)
@@ -773,10 +796,20 @@ func validateHelmTemplateInternal(chartPath string, overrides []byte) error {
 		return fmt.Errorf("failed to load chart: %w", err)
 	}
 
+	// Add nil check for loadedChart
+	if loadedChart == nil {
+		return fmt.Errorf("chart loaded from %s is nil", chartPath)
+	}
+
 	// Load values from override file
 	values, err := chartutil.ReadValuesFile(overrideFilePath)
 	if err != nil {
 		return fmt.Errorf("failed to read values file: %w", err)
+	}
+
+	// Add nil check for values
+	if values == nil {
+		return fmt.Errorf("values loaded from %s are nil", overrideFilePath)
 	}
 
 	// Create a release object
@@ -792,11 +825,21 @@ func validateHelmTemplateInternal(chartPath string, overrides []byte) error {
 		return fmt.Errorf("failed to get REST config: %w", err)
 	}
 
+	// Add nil check for restConfig
+	if restConfig == nil {
+		return fmt.Errorf("REST config is nil")
+	}
+
 	// Render the templates
 	rendered, err := engine.New(restConfig).Render(rel.Chart, rel.Config)
 	if err != nil {
 		debug.Printf("Helm template rendering failed. Error: %v", err)
 		return fmt.Errorf("helm template rendering failed: %w", err)
+	}
+
+	// Add nil check for rendered
+	if rendered == nil {
+		return fmt.Errorf("rendered templates are nil")
 	}
 
 	// Combine all rendered templates

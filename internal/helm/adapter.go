@@ -98,7 +98,14 @@ func (a *Adapter) InspectRelease(ctx context.Context, releaseName, namespace, ou
 	}
 
 	// Create detector for image analysis
-	detector := &image.Detector{} // Use image detector instead of analysis detector
+	// Fix: Use proper constructor to initialize the detector with a valid context
+	detectionContext := image.DetectionContext{
+		SourceRegistries:  []string{}, // Empty for inspection
+		ExcludeRegistries: []string{},
+	}
+
+	// Initialize detector properly
+	detector := image.NewDetector(detectionContext)
 
 	// Detect images in values
 	detectedImages, unsupported, err := detector.DetectImages(values, nil)
@@ -160,7 +167,7 @@ func (a *Adapter) InspectRelease(ctx context.Context, releaseName, namespace, ou
 
 // OverrideRelease generates Helm value overrides for a release to redirect images
 func (a *Adapter) OverrideRelease(ctx context.Context, releaseName, namespace string, targetRegistry string,
-	_ []string, pathStrategy string, _ OverrideOptions) (string, error) {
+	sourceRegistries []string, pathStrategy string, options OverrideOptions) (string, error) {
 	// Validate plugin mode
 	if !a.isRunningAsPlugin {
 		return "", &exitcodes.ExitCodeError{
@@ -189,7 +196,17 @@ func (a *Adapter) OverrideRelease(ctx context.Context, releaseName, namespace st
 	}
 
 	// Set up options as best we can
-	detector := &image.Detector{}
+	// Fix: Use proper constructor to initialize the detector with a valid context
+	// Create a detection context with source registries from the function parameter
+	detectionContext := image.DetectionContext{
+		SourceRegistries:  sourceRegistries, // Use the source registries from the parameter
+		ExcludeRegistries: []string{},
+		GlobalRegistry:    targetRegistry,     // Set the global registry from the parameter
+		Strict:            options.StrictMode, // Use the strict mode option
+	}
+
+	// Initialize detector properly
+	detector := image.NewDetector(detectionContext)
 	detectedImages, _, err := detector.DetectImages(values, nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to detect images in release values: %w", err)
@@ -278,6 +295,24 @@ func (a *Adapter) ValidateRelease(ctx context.Context, releaseName, namespace st
 		}
 	}
 
+	// Add nil check for the Helm client
+	if a.helmClient == nil {
+		log.Errorf("Helm client is nil in ValidateRelease, this is likely a configuration error")
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitGeneralRuntimeError,
+			Err:  fmt.Errorf("helm client is nil (configuration error)"),
+		}
+	}
+
+	// Add nil check for the filesystem
+	if a.fs == nil {
+		log.Errorf("Filesystem is nil in ValidateRelease, this is likely a configuration error")
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitGeneralRuntimeError,
+			Err:  fmt.Errorf("filesystem is nil (configuration error)"),
+		}
+	}
+
 	// Get release values from Helm
 	values, err := a.helmClient.GetReleaseValues(ctx, releaseName, namespace)
 	if err != nil {
@@ -295,6 +330,15 @@ func (a *Adapter) ValidateRelease(ctx context.Context, releaseName, namespace st
 	chartMeta, err := a.helmClient.GetReleaseChart(ctx, releaseName, namespace)
 	if err != nil {
 		return fmt.Errorf("failed to get chart metadata for release %q: %w", releaseName, err)
+	}
+
+	// Add nil check for chartMeta
+	if chartMeta == nil {
+		log.Errorf("Chart metadata is nil for release %q in namespace %q", releaseName, namespace)
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitChartNotFound,
+			Err:  fmt.Errorf("chart metadata is nil for release %q", releaseName),
+		}
 	}
 
 	// Resolve chart path required for template rendering

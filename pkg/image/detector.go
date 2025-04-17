@@ -55,16 +55,44 @@ type MapStructureResult struct {
 // root cause lies within the parser's handling of normalization and specific error cases.
 // See TODO.md Phase 3 for details on the parser issues.
 type Detector struct {
-	context *DetectionContext
+	context            *DetectionContext
+	shouldProcessValue func(string) bool // Function that determines if a string value should be processed
 }
 
 // NewDetector creates a new Detector with the specified detection context.
 // The context controls filtering behavior, strict mode, and template handling.
 func NewDetector(context DetectionContext) *Detector {
 	debug.Printf("NewDetector: Initializing with context: %+v", context)
-	return &Detector{
-		context: &context,
+
+	// For additional safety, create a new DetectionContext if none is provided
+	// This ensures we never have a nil context
+	detector := &Detector{
+		// Default behavior: process all string values (can be overridden by caller)
+		shouldProcessValue: func(s string) bool {
+			// Use the parameter to avoid unused parameter warning
+			// Always return true regardless of string value
+			return s != "" || s == ""
+		},
 	}
+
+	// Use the provided context or create a default one
+	if context.SourceRegistries == nil {
+		// If nil, initialize with empty slices
+		context.SourceRegistries = []string{}
+		debug.Printf("NewDetector: Initializing nil SourceRegistries with empty slice")
+	}
+
+	if context.ExcludeRegistries == nil {
+		// If nil, initialize with empty slices
+		context.ExcludeRegistries = []string{}
+		debug.Printf("NewDetector: Initializing nil ExcludeRegistries with empty slice")
+	}
+
+	// Store a copy of the context to ensure it's not modified externally
+	detector.context = &context
+
+	debug.Printf("NewDetector: Initialized Detector with context: %+v", *detector.context)
+	return detector
 }
 
 // DetectImages recursively traverses the values structure to find image references.
@@ -81,6 +109,13 @@ func NewDetector(context DetectionContext) *Detector {
 //   - error: Any error encountered during processing
 func (d *Detector) DetectImages(values interface{}, path []string) ([]DetectedImage, []UnsupportedImage, error) {
 	debug.FunctionEnter("Detector.DetectImages")
+
+	// Add nil check for context
+	if d.context == nil {
+		log.Errorf("Context is nil in Detector at path %v, this is likely a configuration error", path)
+		return nil, nil, fmt.Errorf("detector context is nil (configuration error)")
+	}
+
 	debug.DumpValue("Input values", values)
 	debug.DumpValue("Current path", path)
 	debug.DumpValue("Context", d.context)
@@ -112,6 +147,11 @@ func (d *Detector) DetectImages(values interface{}, path []string) ([]DetectedIm
 		debug.Printf("Applying post-detection filtering (non-strict mode) to %d images for path %v", len(detectedImages), path)
 		filteredDetected := make([]DetectedImage, 0, len(detectedImages))
 		for _, detected := range detectedImages {
+			// Add a nil check before attempting to normalize the Reference
+			if detected.Reference == nil {
+				debug.Printf("Skipping nil Reference at path %v", detected.Path)
+				continue
+			}
 			// Normalize before checking source registry (important for docker.io vs index.docker.io)
 			NormalizeImageReference(detected.Reference)
 			if IsSourceRegistry(detected.Reference, d.context.SourceRegistries, d.context.ExcludeRegistries) {
@@ -132,6 +172,13 @@ func (d *Detector) DetectImages(values interface{}, path []string) ([]DetectedIm
 // processMapValue handles detection of images in map values
 func (d *Detector) processMapValue(v map[string]interface{}, path []string) ([]DetectedImage, []UnsupportedImage, error) {
 	debug.Println("Processing map")
+
+	// Add nil check for context
+	if d.context == nil {
+		log.Errorf("Context is nil in Detector at path %v, this is likely a configuration error", path)
+		return nil, nil, fmt.Errorf("detector context is nil (configuration error)")
+	}
+
 	var detectedImages []DetectedImage
 	var unsupportedMatches []UnsupportedImage
 
@@ -167,6 +214,12 @@ func (d *Detector) handleImageMap(detectedImage *DetectedImage, isPotentialMap b
 	var detectedImages []DetectedImage
 	var unsupportedMatches []UnsupportedImage
 
+	// Add nil check for context
+	if d.context == nil {
+		log.Errorf("Context is nil in Detector at path %v, this is likely a configuration error", path)
+		return nil, nil, fmt.Errorf("detector context is nil (configuration error)")
+	}
+
 	if err != nil {
 		debug.Printf("Handling error from map processing at path %v: %v", path, err)
 		// Determine the type of unsupported image based on the error
@@ -193,6 +246,10 @@ func (d *Detector) handleImageMap(detectedImage *DetectedImage, isPotentialMap b
 	if isPotentialMap {
 		if detectedImage != nil {
 			// Valid image map detected
+			if detectedImage.Reference == nil {
+				debug.Printf("Skipping nil Reference for detectedImage at path %v", path)
+				return detectedImages, unsupportedMatches, nil
+			}
 			NormalizeImageReference(detectedImage.Reference)
 			if IsSourceRegistry(detectedImage.Reference, d.context.SourceRegistries, d.context.ExcludeRegistries) {
 				detectedImages = append(detectedImages, *detectedImage)
@@ -217,6 +274,13 @@ func (d *Detector) handleImageMap(detectedImage *DetectedImage, isPotentialMap b
 // processSliceValue handles detection of images in slice/array values
 func (d *Detector) processSliceValue(v []interface{}, path []string) ([]DetectedImage, []UnsupportedImage, error) {
 	debug.Println("Processing slice/array")
+
+	// Add nil check for context
+	if d.context == nil {
+		log.Errorf("Context is nil in Detector at path %v, this is likely a configuration error", path)
+		return nil, nil, fmt.Errorf("detector context is nil (configuration error)")
+	}
+
 	var detectedImages []DetectedImage
 	var unsupportedMatches []UnsupportedImage
 
@@ -243,11 +307,28 @@ func (d *Detector) processSliceValue(v []interface{}, path []string) ([]Detected
 // processStringValue handles detection of images in string values
 func (d *Detector) processStringValue(v string, path []string) ([]DetectedImage, []UnsupportedImage, error) {
 	log.Debugf("[DEBUG irr DETECT STRING] Processing string value at path %s: %q\n", pathToString(path), v)
+
+	// Add nil check for context
+	if d.context == nil {
+		log.Errorf("Context is nil in Detector at path %v, this is likely a configuration error", path)
+		return nil, nil, fmt.Errorf("detector context is nil (configuration error)")
+	}
+
 	log.Debugf("[DEBUG irr DETECT STRING] Path: %v, Value: '%s', Strict Context: %v\n", path, v, d.context.Strict)
 
 	var detectedImages []DetectedImage
 
 	isKnownImagePath := isImagePath(path)
+
+	// IMPORTANT: Added safeguard for nil shouldProcessValue - if this is triggering,
+	// the Detector struct is missing initialization of the shouldProcessValue field/function
+	if d.shouldProcessValue != nil && !d.shouldProcessValue(v) {
+		log.Debugf("Skipping string value due to shouldProcessValue filter: %q", v)
+		return nil, nil, nil
+	} else if d.shouldProcessValue == nil {
+		// If shouldProcessValue is nil, log a warning and continue processing
+		log.Warnf("shouldProcessValue function is nil in Detector, skipping filter check at path %v", path)
+	}
 
 	if d.context.Strict {
 		// Delegate strict processing entirely to the helper function
@@ -286,6 +367,12 @@ func (d *Detector) processStringValue(v string, path []string) ([]DetectedImage,
 func (d *Detector) processStringValueStrict(v string, path []string, isKnownImagePath bool) ([]DetectedImage, []UnsupportedImage, error) {
 	var detectedImages []DetectedImage
 	var unsupportedMatches []UnsupportedImage
+
+	// Add nil check for context
+	if d.context == nil {
+		log.Errorf("Context is nil in Detector at path %v, this is likely a configuration error", path)
+		return nil, nil, fmt.Errorf("detector context is nil (configuration error)")
+	}
 
 	// 1. Check if path is known (Templates are checked by tryExtractImageFromString now)
 	if !isKnownImagePath {

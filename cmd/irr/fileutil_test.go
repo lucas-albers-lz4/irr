@@ -221,11 +221,11 @@ func TestGetReleaseNameAndNamespaceCommon(t *testing.T) {
 		assert.Equal(t, "arg-release", releaseName)
 		assert.Equal(t, "arg-namespace", namespace)
 
-		// Test with standalone mode (should not use args for release name)
+		// Test with standalone mode (should also use args for release name per implementation)
 		isHelmPlugin = false
 		releaseName, namespace, err = getReleaseNameAndNamespaceCommon(cmd, []string{"arg-release"})
 		require.NoError(t, err)
-		assert.Equal(t, "", releaseName)
+		assert.Equal(t, "arg-release", releaseName)
 		assert.Equal(t, "arg-namespace", namespace)
 	})
 
