@@ -18,6 +18,11 @@ GOARCH?=$(shell go env GOARCH)
 
 all: lint helm-lint test test-integration build
 
+build-race:
+	@echo "Building $(BINARY_NAME) for $(GOOS)/$(GOARCH)..."
+	@mkdir -p $(BUILD_DIR)
+	@CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build -race -ldflags=$(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/irr
+
 build:
 	@echo "Building $(BINARY_NAME) for $(GOOS)/$(GOARCH)..."
 	@mkdir -p $(BUILD_DIR)
@@ -61,6 +66,18 @@ test: build
 	@echo "Running CLI syntax tests..."
 	@IRR_TESTING=true go test -v ./cmd/irr/cli_test.go
 	@echo "All tests completed."
+
+test-quiet: build
+	@echo "Running unit tests with minimal output..."
+	@cd cmd && IRR_TESTING=true go test ./... -count=1 2>/dev/null || true
+	@cd pkg && IRR_TESTING=true go test ./... -count=1 2>/dev/null || true
+	@cd test && IRR_TESTING=true go test ./... -count=1 2>/dev/null || true
+	@echo "All tests completed."
+
+test-filter: build
+	@echo "Running tests with filtered output (failures only)..."
+	@chmod +x ./tools/test-filter.sh
+	@IRR_TESTING=true ./tools/test-filter.sh ./...
 
 test-json: build
 	@echo "Running unit tests..."
@@ -181,6 +198,8 @@ help:
 	@echo "  dist               Create distribution tarball for current host OS/ARCH (or specify GOOS/GOARCH)"
 	@echo "  helm-lint          Run Helm lint and template validation"
 	@echo "  test               Run all unit tests"
+	@echo "  test-quiet         Run unit tests in quiet mode (minimal output)"
+	@echo "  test-filter        Run tests with output filtered to show only failures"
 	@echo "  test-json          Run unit tests with JSON output"
 	@echo "  test-packages      Run package tests (skipping cmd/irr)"
 	@echo "  test-cli           Run CLI syntax tests"
