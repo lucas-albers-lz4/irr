@@ -27,14 +27,28 @@ func addNamespaceFlag(cmd *cobra.Command) {
 
 // initHelmPlugin initializes the CLI with Helm plugin specific functionality
 func initHelmPlugin() {
-	// Add release-name flag to the root command
-	addReleaseFlag(rootCmd)
+	// Ensure release-name and namespace flags are visible in plugin mode
+	if releaseFlag := rootCmd.PersistentFlags().Lookup("release-name"); releaseFlag != nil {
+		releaseFlag.Hidden = false
+	}
 
-	// Add namespace flag to the root command
-	addNamespaceFlag(rootCmd)
+	if namespaceFlag := rootCmd.PersistentFlags().Lookup("namespace"); namespaceFlag != nil {
+		namespaceFlag.Hidden = false
+	}
 
 	// Set up any other Helm-specific flags or functionality
 	log.Debugf("Helm plugin flags initialized")
+}
+
+// removeHelmPluginFlags removes plugin-specific flags from the root command
+// This is used to ensure the root command doesn't have these flags in standalone mode
+func removeHelmPluginFlags(cmd *cobra.Command) {
+	if err := cmd.PersistentFlags().MarkHidden("release-name"); err != nil {
+		log.Warnf("Failed to mark release-name flag as hidden: %v", err)
+	}
+	if err := cmd.PersistentFlags().MarkHidden("namespace"); err != nil {
+		log.Warnf("Failed to mark namespace flag as hidden: %v", err)
+	}
 }
 
 // HelmChartInfo represents basic chart information
