@@ -13,13 +13,13 @@
   - [x] Add install/uninstall hooks for dependency checks (Go, Helm version)
   - [x] Test plugin.yaml with `helm plugin install` locally
   - [x] Reference fields: `name`, `version`, `usage`, `description`, `command`, `platforms`
-- [ ] **[P0]** Adapt plugin entrypoint (`cmd/irr/main.go`) for Helm context
-  - [ ] Adapt main.go to handle Helm-specific initialization and flags
-  - [ ] Detect Helm environment variables (HELM_PLUGIN_DIR, etc.)
-  - [ ] Add logging setup (respect --debug flag, align with Helm style)
-  - [ ] Route subcommands to core IRR logic or Helm-adapter
+- [x] **[P0]** Adapt plugin entrypoint (`cmd/irr/main.go`) for Helm context
+  - [x] Adapt main.go to handle Helm-specific initialization and flags
+  - [x] Detect Helm environment variables (HELM_PLUGIN_DIR, etc.)
+  - [x] Add logging setup (respect --debug flag, align with Helm style)
+  - [x] Route subcommands to core IRR logic or Helm-adapter
   - [x] Use `cobra` for command handling (confirmed)
-- [ ] **[P0]** Design adapter layer between Helm plugin and core IRR
+- [x] **[P0]** Design adapter layer between Helm plugin and core IRR
   - [x] Define Go interface for Helm client (GetReleaseValues, GetChartMetadata, etc.)
   - [x] Implement real Helm client using Helm Go SDK
   - [x] Implement mock Helm client for tests
@@ -102,6 +102,9 @@
 
 **Cross-Cutting Best Practices**
 - [x] Use KISS and YAGNI: avoid speculative features
+- [x] Implement single source of truth for version (plugin.yaml)
+- [x] Automate version propagation to pyproject.toml via Makefile
+- [x] Inject version into Go binary at build time using linker flags
 - [ ] Add code comments and docstrings for all exported functions and interfaces
 - [ ] Add structured logging for all major operations (start, success, error)
 - [ ] Schedule regular code and design reviews after each vertical slice
