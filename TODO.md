@@ -1,396 +1,124 @@
 # TODO.md - Helm Image Override Implementation Plan
 
 ## Completed Phases
-## Phase 1: Helm Plugin Integration - Remaining Items
-_**Goal:** Implement the Helm plugin interface that wraps around the core CLI functionality._
+## Phase 1: Helm Plugin 
+- [x] Successfully published the binary as a Helm plugin.
+- [x] Completed and tested the GitHub publish and install process.
 
-## Phase 2: Test Coverage for Core Packages (Target: 50-60% per package)
+**P0: Core Plugin Infrastructure**
+- [x] **[P0]** Create plugin.yaml file with appropriate metadata
+  Note : we have a working plugin install and build release process for installing and publishing the plugin, this is complete.
+  - [x] Draft initial plugin.yaml using Helm's plugin spec
+  - [x] Set up command aliases and help text
+  - [x] Add install/uninstall hooks for dependency checks (Go, Helm version)
+  - [x] Test plugin.yaml with `helm plugin install` locally
+  - [x] Reference fields: `name`, `version`, `usage`, `description`, `command`, `platforms`
+- [ ] **[P0]** Adapt plugin entrypoint (`cmd/irr/main.go`) for Helm context
+  - [ ] Adapt main.go to handle Helm-specific initialization and flags
+  - [ ] Detect Helm environment variables (HELM_PLUGIN_DIR, etc.)
+  - [ ] Add logging setup (respect --debug flag, align with Helm style)
+  - [ ] Route subcommands to core IRR logic or Helm-adapter
+  - [x] Use `cobra` for command handling (confirmed)
+- [ ] **[P0]** Design adapter layer between Helm plugin and core IRR
+  - [ ] Define Go interface for Helm client (GetReleaseValues, GetChartMetadata, etc.)
+  - [ ] Implement real Helm client using Helm Go SDK
+  - [ ] Implement mock Helm client for tests
+  - [ ] Add error wrapping for context (release name, namespace)
+  - [ ] Use dependency injection for Helm client and logger
+  - [ ] Ensure all file/network operations are mockable for tests
+  - [ ] Use context.Context for all blocking operations
+  - [ ] Keep all Helm-specific logic in adapter; core logic should not import Helm packages
+  - [ ] Design and implement execution mode detection (plugin vs standalone)
+    - [ ] Use `HELM_PLUGIN_DIR` environment variable to detect plugin mode
+    - [ ] Configure Helm client differently based on execution mode
+    - [ ] Only enable `--release-name` and `--namespace` flags when running in plugin mode (see PLUGIN-SPECIFIC.md)
+    - [ ] In standalone mode, error if `--release-name` or `--namespace` is provided, with clear message: "The --release-name and --namespace flags are only available when running as a Helm plugin (helm irr ...)"
+    - [ ] Document this behavior and rationale in both code comments and user documentation
+  - [ ] Implement plugin-specific initialization
+    - [ ] Use `cli.New()` from Helm SDK to get plugin environment settings
+    - [ ] Initialize action.Configuration with Helm's RESTClientGetter when in plugin mode
+    - [ ] Handle namespace inheritance from Helm environment
+  - [ ] Create robust error handling for environment differences
+    - [ ] Provide clear error messages when attempting to use plugin features in standalone mode
+    - [ ] Include helpful troubleshooting info in errors (e.g., "Run as 'helm irr' to use this feature")
+    - [ ] Document the feature limitations in different execution modes
 
-**Phase 2.1: Test Implementation Planning (COMPLETED)**
-- [x] Create detailed implementation plans for each package based on test outlines
-- [x] Break down each feature area into testable components
-- [x] Define test priorities based on complexity and risk
+**P1: Core Command Implementation**
+- [ ] **[P1]** Implement release-based context for commands
+  - [ ] Implement function to fetch release values using Helm SDK (`helm get values`)
+  - [ ] Add retry logic with exponential backoff for transient errors
+  - [ ] Parse namespace from CLI flags, Helm config, or default
+  - [ ] Implement chart source resolution (from release metadata, fallback to local cache or error)
+  - [ ] Use `action.NewGetValues()` from Helm SDK for value fetching
+  - [ ] For namespace: check `--namespace` flag, then `HELM_NAMESPACE`, then default to `"default"`
+- [ ] **[P1]** Adapt core commands to work with Helm context
+  - [ ] Refactor inspect/override/validate to accept both chart path and release name as input
+  - [ ] Add logic to merge values from release and user-supplied files
+  - [ ] Ensure all commands log the source of values and chart (for traceability)
+  - [ ] Accept both `--chart-path` and `--release-name`; error if neither provided
+  - [ ] Prioritize chart path over release name if both provided (with clear logging)
+- [ ] **[P1]** Implement file handling with safety features
+  - [ ] Implement file existence check before writing output
+  - [ ] Use 0600 permissions for output files by default
+  - [ ] Write unit tests for file safety logic
+  - [ ] Default behavior: fail if file exists (per section 4.4 in PLUGIN-SPECIFIC.md)
+  - [ ] Use file permissions constants for necessaary permission set, those are defined in this file : `pkg/fileutil/constants.go`
 
-**Phase 2.2: Test Implementation (IN PROGRESS)**
-- [x] `pkg/override` package: Implement tests to reach >70% coverage
-- [x] `pkg/rules` package: Implement tests to reach >98% coverage
+**P2: User Experience Enhancements**
+- [ ] **[P2]** Implement Helm-consistent output formatting
+  - [ ] Implement a logging utility that mimics Helm's log levels and color codes
+  - [ ] Add a --debug flag to all commands, with verbose output when enabled
+  - [ ] Write tests to verify log output format and color in TTY/non-TTY environments
+  - [ ] Use ANSI color codes for log levels (INFO: cyan, WARN: yellow, ERROR: red)
+  - [ ] For TTY detection, use the `github.com/mattn/go-isatty` package instead of manual detection
+  - [ ] Ensure logging aligns with existing debug approach (controlled by --debug flag and IRR_DEBUG env var)
+  - [ ] Maintain simple log format (without timestamps or explicit log levels in output) for consistency
+- [ ] **[P2]** Add plugin-exclusive commands
+  - [ ] Implement list-releases by calling `helm list` via SDK or subprocess
+  - [ ] Parse and display image analysis results in a table format
+  - [ ] Add circuit breaker to limit analysis to 300 releases
+  - [ ] For interactive registry selection, detect TTY and prompt user; skip in CI
+  - [ ] Skip interactive prompts if `CI` environment variable is set or not in TTY
+- [ ] **[P2]** Create comprehensive error messages
+  - [ ] Standardize error message format (prefix with ERROR/WARN/INFO)
+  - [ ] Add actionable suggestions to common errors (e.g., missing chart source)
+  - [ ] Implement credential redaction in all error/log output
+  - [ ] When chart source is missing, print specific recovery steps (see section 5.4 in PLUGIN-SPECIFIC.md)
 
-### Phase 2.1: Establish Baseline & Target Low-Hanging Fruit (Goal: Variable Minimum Coverage)
-- [x] **Step 1: Quick Wins - Simple Packages First**
-  - [x] **`pkg/exitcodes` (Target: 30%)**: Test error types and helper functions.
-    - [x] Test string formatting for each error type
-    - [x] Verify error wrapping/unwrapping behavior works correctly
-    - [x] Test detection of exit code errors via `IsExitCodeError()`
+**P3: Documentation and Testing**
+- [ ] **[P3]** Create plugin-specific tests
+  - [ ] Write unit tests for the adapter layer using Go's testing and testify/gomock
+  - [ ] Create integration tests using a local kind cluster and test Helm releases
+  - [ ] Add CLI tests for plugin entrypoint and command routing
+  - [ ] Test error handling and edge cases (e.g., missing release, invalid namespace)
+  - [ ] Test all error paths (every `if err != nil` block)
+- [ ] **[P3]** Document Helm plugin usage
+  - [ ] Write a dedicated section in docs/PLUGIN-SPECIFIC.md for plugin install/upgrade/uninstall
+  - [ ] Add usage examples for each command, including edge cases
+  - [ ] Document all plugin-specific flags and environment variables
+  - [ ] Add troubleshooting section for common errors and recovery steps
+  - [ ] Create a "Quickstart" section with install and usage examples
+  - [ ] List all flags and environment variables in a reference table
 
-  - [x] **`pkg/version` (Target: 30%)**: Test version checking logic.
-    - [x] Test with valid and invalid version strings
-    - [x] Verify correct comparison behavior for major/minor/patch versions
-    - [x] Test error handling for malformed versions
-    - [x] Fix linter errors in version_test.go (unused parameters)
+**Cross-Cutting Best Practices**
+- [ ] Use KISS and YAGNI: avoid speculative features
+- [ ] Add code comments and docstrings for all exported functions and interfaces
+- [ ] Add structured logging for all major operations (start, success, error)
+- [ ] Schedule regular code and design reviews after each vertical slice
+- [ ] Update documentation and onboarding materials after each review
+- [ ] Emphasize non-destructive philosophy - never write to the cluster, only read and generate files
+- [ ] Update docs/cli-reference.md to reflect any CLI or logging changes, ensuring documentation matches implementation (especially for debug/logging behavior)
 
-- [x] **Step 2: Filesystem Mocking Preparation**
-  - [x] Start by creating a consistent filesystem mocking pattern:
-    - [x] Identify all packages with filesystem interactions
-    - [x] **Implement hybrid approach for filesystem abstraction:**
-      - [x] Define a standard filesystem interface in a central location:
-        ```go
-        // In pkg/fileutil or a new pkg/fsutil package
-        type FS interface {
-            Open(name string) (File, error)
-            Stat(name string) (os.FileInfo, error)
-            Create(name string) (File, error)
-            ReadFile(filename string) ([]byte, error)
-            WriteFile(filename string, data []byte, perm os.FileMode) error
-            MkdirAll(path string, perm os.FileMode) error
-            Remove(name string) error
-            RemoveAll(path string) error
-            // Add other methods as needed
-        }
-        
-        // Ensure afero.Fs implements this interface
-        var _ FS = afero.NewOsFs()
-        ```
-      
-      - [x] For existing code (non-intrusive approach):
-        ```go
-        // In each package that uses filesystem
-        var fs fileutil.FS = afero.NewOsFs()
-        
-        // Helper for tests to swap the filesystem
-        func SetFs(newFs fileutil.FS) func() {
-            oldFs := fs
-            fs = newFs
-            return func() { fs = oldFs } // Return a cleanup function
-        }
-        
-        // Use throughout package
-        func ReadConfigFile(path string) ([]byte, error) {
-            return fs.ReadFile(path)
-        }
-        ```
-      
-      - [x] For new code and major refactors (dependency injection):
-        ```go
-        // Struct with explicit dependency
-        type FileOperations struct {
-            fs fileutil.FS
-        }
-        
-        // Constructor with default
-        func NewFileOperations(fs fileutil.FS) *FileOperations {
-            if fs == nil {
-                fs = afero.NewOsFs()
-            }
-            return &FileOperations{fs: fs}
-        }
-        
-        // Methods use the dependency
-        func (f *FileOperations) ReadConfig(path string) ([]byte, error) {
-            return f.fs.ReadFile(path)
-        }
-        ```
-    
-    - [x] Document implementation guidelines:
-      - [x] Favor dependency injection for new code and significant refactors
-      - [x] Use package variables for smaller, focused updates to existing code
-      - [x] Always provide test helpers for swapping filesystem implementations
-    
-    - [x] Create a detailed mocking guide in `docs/TESTING-FILESYSTEM-MOCKING.md` (COMPLETED)
-      - [x] Explain both approaches with examples
-      - [x] Provide standard test patterns
-      - [x] Document when to use each approach
-      - [x] Reference this document in other testing documentation
-
-  - [x] **`pkg/fileutil` (Target: 30%)**: Implement as first application of filesystem mocking.
-    - [x] Add `afero.Fs` variable or parameter to functions
-    - [x] Test file existence checking
-    - [x] Test directory operations
-    - [x] Use as a model for other packages
-    - [x] Fix linter errors in fileutil_test.go and utils_test.go (goconst, gocritic)
-
-- [x] **Step 3: Utility Packages with Adjusted Expectations**
-  - [x] **`pkg/log` (Target: 20%)**:
-    - [x] Test `ParseLevel` with all supported log levels
-    - [x] Test level setting and retrieval (`SetLevel`/`CurrentLevel`) 
-    - [x] Test level-based filtering (basic cases only)
-    - [x] *Note: Output capturing can be flaky - focus on core functionality*
-
-  - [x] **`pkg/debug` (Target: 20%)**:
-    - [x] Test initialization with mocked environment variables
-    - [x] Test debug state toggling (basic cases only)
-    - [x] Test simple output functions
-    - [x] *Note: Not critical path code, basic coverage is sufficient*
-
-  - [x] **`pkg/testutil` (Target: 25%)**:
-    - [x] Apply filesystem mocking pattern from Step 2
-    - [x] Test `GetChartPath` with various path inputs
-    - [x] *Note: Test utilities themselves need only moderate coverage*
-
-- [x] **Step 4: Complex Analysis Package**
-  - [x] **`pkg/analyzer` (Target: 25-30%)**:
-    - [x] Create test fixtures for representative chart values
-    - [x] Test simple pattern matching cases first:
-      ```go
-      // Start with simple patterns and simple structures
-      testValues := map[string]interface{}{
-          "image": "nginx:latest",
-          "nested": map[string]interface{}{
-              "image": "redis:alpine"
-          }
-      }
-      patterns := []string{"*.image"}
-      ```
-    - [x] Add tests for basic value traversal (simple maps first)
-    - [x] Test recursive analysis with limited nesting depth
-    - [x] *Note: Full coverage of recursive analysis is challenging, focus on key paths*
-
-- [x] **Step 5: Filesystem Mocking - Incremental Roll-out**
-  - [x] Apply consistent pattern to one package at a time:
-    - [x] `pkg/helm`: Update SDK to use injectable filesystem
-    - [x] `pkg/fileutil`: Fix error handling in filesystem mocking tests
-    - [x] `pkg/chart`: Update Loader and Generator to use injectable filesystem
-    - [x] `pkg/registry`: Update registry mapping file operations
-    - [x] `cmd/irr`: Allow filesystem injection for file operations
-  - [x] Test Strategy:
-    - [x] When testing a package, first update it to use the filesystem abstraction
-    - [x] Then write tests using the mocking capability
-    - [x] Follow the standard pattern developed in Step 2:
-      ```go
-      // Example pattern for filesystem mocking in tests
-      func TestWithMockFs(t *testing.T) {
-          // Create mock filesystem
-          mockFs := afero.NewMemMapFs()
-          
-          // Setup test files/directories
-          afero.WriteFile(mockFs, "test.yaml", []byte("test: data"), 0644)
-          
-          // Replace package filesystem with mock
-          originalFs := somepackage.Fs
-          somepackage.Fs = mockFs
-          defer func() { somepackage.Fs = originalFs }()
-          
-          // Run test with mock filesystem
-          // ...
-      }
-      ```
-  - [x] Document architectural tradeoffs and approach:
-    - [x] Add guidance about when to use global variables vs. dependency injection
-    - [x] Document patterns for test setup/teardown with mock filesystem
-    - [x] Update mocking section in testing documentation
-
-### Phase 2.2: Target Core Functionality Gaps (Goal: ~50-60% in Core Packages)
-
-#### Implementation Guidelines & Clarifications
-
-- [x] **Test Fixtures & Data Structure**:
-  - [x] Create a centralized `pkg/testutil/fixtures` directory for test data
-  - [x] Add subdirectories for each core package (e.g., `fixtures/chart`, `fixtures/rules`)
-  - [x] Include representative chart metadata, rule definitions, and image references
-  - [x] Document fixture usage patterns in a README within the directory
-
-- [x] **CI Integration**:
-  - [x] Add a coverage check using GitHub Actions or similar CI system
-  - [x] Set minimum threshold at 50% for core packages
-  - [x] Use [codecov](https://codecov.io/) or [coveralls](https://coveralls.io/) for visualization
-  - [x] Add coverage badge to README.md
-
-- [x] **Logging Test Approach**:
-  - [x] Implement a helper in `pkg/testutil` for capturing and asserting log output:
-    ```go
-    // CaptureLogOutput redirects log output during test execution and returns captured content
-    func CaptureLogOutput(logLevel log.Level, testFunc func()) string {
-        // Save original stderr
-        // Redirect to buffer
-        // Run test function
-        // Restore stderr
-        // Return captured output
-    }
-    ```
-  - [x] Use this helper when testing rule application and other logging functionality
-
-- [x] **Error Handling Standards**:
-  - [x] Always test both success and error paths
-  - [x] Verify that custom error types are properly wrapped
-  - [x] Assert error message content to ensure context is preserved
-  - [x] Verify error types using `errors.Is()` and `errors.As()` in tests
-
-- [x] **Analyze Coverage Reports:** Use `go tool cover -html=coverage.out` to visualize uncovered lines in key packages.
-
-- [x] **Increase Coverage in Core Packages:**
-  - [x] **`pkg/chart` (Current: 52.3%, New: 68.7%)**:
-    - [x] Focus on `Load`, `validateHelmTemplateInternal`, `OverridesToYAML`, error handling, rules integration.
-    - [x] **Clarification - Rules Integration**: 
-      - [x] Test chart loading with and without rules enabled
-      - [x] Add mock implementation of `rules.Registry` for testing
-      - [x] Specifically test the `SetRulesEnabled` function with valid and nil input
-      - [x] Verify rule application during the chart loading and validation process
-      - [x] Use dependency injection for testing charts with different rule sets
-
-  - [x] **`pkg/override` (Current: 72.0%)**:
-    - [x] Created detailed test implementation plan covering all untested core functionality
-    - [x] Identified and prioritized untested functions requiring coverage:
-      - [x] JSON/YAML conversion functions: `JSONToYAML`, `ToYAML`, `GenerateYAML`
-      - [x] Path utilities: `GetValueAtPath`, `flattenYAMLToHelmSet`/`flattenValue`
-      - [x] Specified detailed test scenarios for each function
-    - [x] Fixed linter issues that would affect test implementation across codebase
-    - [x] Test YAML generation (`GenerateYAMLOverrides`, `GenerateYAML`, `ToYAML`), path construction/manipulation (`ConstructPath`, `GetValueAtPath`), merging (`mergeMaps`), and error wrapping.
-    - [x] **Clarification - Error Wrapping**:
-      - [x] Test all error wrappers defined in `pkg/override/errors.go`
-      - [x] Verify that error hierarchies are maintained (e.g., `ErrPathParsing` wraps other errors)
-      - [x] Use `errors.Is()` to verify error types in all error scenarios
-      - [x] Ensure wrapped errors include context (e.g., path parts, key names)
-    - [x] **Clarification - Merging Logic**:
-      - [x] Test `mergeMaps` with the following scenarios:
-        - [x] Simple merge (non-overlapping keys)
-        - [x] Nested merge (overlapping maps)
-        - [x] Type conflicts (map vs. primitive at same key)
-        - [x] Array handling
-        - [x] Deep nesting (3+ levels)
-        - [x] Edge cases (nil maps, empty maps)
-    - [x] **New - YAML/JSON Conversion Tests**:
-      - [x] Implement `TestJSONToYAML` with these scenarios:
-        - [x] Simple JSON conversion
-        - [x] Nested JSON structures
-        - [x] Arrays and mixed types
-        - [x] Invalid JSON input
-      - [x] Create `TestToYAML` for File struct serialization:
-        - [x] Simple File structs
-        - [x] Complex nested Values
-        - [x] Empty/nil Values map
-      - [x] Add `TestGenerateYAML` for override map conversion:
-        - [x] Simple and complex map structures
-        - [x] Verify formatting and indentation
-    - [x] **New - Path Utility Tests**:
-      - [x] Enhance `TestGetValueAtPath` with:
-        - [x] Multi-level nested map access
-        - [x] Array access via path notation
-        - [x] Edge cases (empty paths, non-existent keys)
-        - [x] Error conditions and proper error wrapping
-      - [x] Add `TestFlattenYAMLToHelmSet`:
-        - [x] Simple key-value pairs
-        - [x] Nested structures with dotted path notation
-        - [x] Array indices in paths
-        - [x] Special characters handling
-    - [x] **Achievement - Coverage Goal Exceeded**:
-      - [x] Increased coverage from 51.1% to 72.0%, exceeding the target of 50-60%
-      - [x] Implemented comprehensive tests for all core functionality
-      - [x] Fixed linting issues across the codebase
-      - [x] Identified and documented bugs in `flattenYAMLToHelmSet` for future fixing
-
-  - [x] **`pkg/rules` (Current: 60.2%, New: 98.3%)**:
-    - [x] Test core rule application (`ApplyRules`, `ApplyRulesToMap`), registration (`AddRule`), enabling/disabling (`SetEnabled`), and provider detection (`DetectChartProvider`).
-    - [x] **Clarification - Provider Detection**:
-      - [x] Create a suite of test chart metadata fixtures in `pkg/testutil/fixtures/rules/chartmeta`
-      - [x] Include metadata representing different confidence levels for Bitnami detection
-      - [x] Test each confidence level with appropriate metadata combinations
-      - [x] Implement edge cases (empty metadata, conflicting indicators)
-    - [x] **Clarification - Log Output Assertions**:
-      - [x] Use the `CaptureLogOutput` helper to test that rule application logs expected info
-      - [x] Verify rule application logs include:
-        - [x] Rule name
-        - [x] Parameter path/value
-        - [x] Reason for application
-      - [x] Test with different log levels to verify filtering works correctly
-    - [x] **Achievement - Coverage Goal Exceeded**:
-      - [x] Increased coverage from 60.2% to 98.3%, exceeding the target of 50-60%
-      - [x] Implemented comprehensive tests for the rule application system
-      - [x] Fixed linting issues in rule test files
-      - [x] Added detailed tests for both BaseRule and mockTestRule implementations
-
-  - [x] **`pkg/analysis` (Current: 84.6%)**:
-    - [x] Add tests for uncovered functions (`Load`, `IsGlobalRegistry`, `ParseImageString`, `mergeAnalysis`).
-    - [x] **Clarification - Merging Analysis**:
-      - [x] Define test cases for `mergeAnalysis` specifically addressing:
-        - [x] Merging charts with different names/versions
-        - [x] Combining image lists without duplicates
-        - [x] Handling error lists and skipped items
-        - [x] Verifying pattern merging correctness
-      - [x] Document expected behavior for each scenario in comments
-
-  - [x] **`pkg/image` (Current: 77.2%)**:
-    - [x] Add tests for validation (`IsValid*`), error types, and edge cases in parsing/normalization.
-    - [x] **Clarification - Image Validation**:
-      - [x] Create a comprehensive image test fixture file with:
-        - [x] Valid images with various components (registry, repository, tag, digest)
-        - [x] Invalid images with specific validation failures
-        - [x] Edge cases (empty strings, unusual formats)
-      - [x] Test each validation function against all fixture entries
-      - [x] Document what makes an image valid/invalid in comments
-
-### Phase 2.3: Focused 15-30% Coverage on current 0% coverage (High ROI First)
-- [x] **Analyzer/analysis core functions:**
-  - [x] `analyzer.go:Match` (0% → 100%): Added direct test, now fully covered.
-  - [x] `analyzer.go:isImageString` (33% → 100%): Added comprehensive test cases.
-  - [x] `analyzer.go:Load` (0% → 75%): Added error-path test for loader.
-  - [x] `analyzer.go:analyzeInterfaceValue`: Test scaffolding and TODO added; function is now test-documented, but not fully covered due to reflection complexity.
-- [x] **General:**
-  - [x] Achieved 15-30%+ coverage on previously 0% functions in analyzer/analysis (see coverage report).
-  - [x] Lint error fixed (import shadow in analyzer_test.go).
-- [ ] **Other 0% coverage functions:**
-  - [ ] Filesystem utilities, registry mapping, and some generator/chart error wrappers remain TODO (see coverage report for details).
-
-_Note: See analyzer/analysis test files for details. Remaining 0% coverage items are lower ROI or require more extensive mocking or refactoring._
-
-### Phase 2.4: Enhance High-Coverage & Local Integration (Goal: ~70%+ in Core)
-- [ ] **Refine Existing Tests:** Improve tests in well-covered packages (`pkg/generator`, `pkg/helm`, `pkg/registry`, `pkg/strategy`) by adding edge cases or complex scenarios.
-- [ ] **Implement Local Integration Tests:**
-    - [ ] Write tests covering interactions *between* packages (e.g., `analysis` -> `override` -> `generator`).
-    - [ ] Use chart fixtures, mock dependencies (like registry interactions) where necessary.
-    - [ ] Validate end-to-end workflows locally (load chart -> analyze -> generate overrides -> apply rules -> validate output).
-
-### General Principles & Tooling for Coverage Improvement
-- [ ] **Prioritize Behavior:** Focus tests on intended functionality and critical paths, especially public APIs.
-- [ ] **Test Errors:** Explicitly test error conditions and handling.
-- [ ] **Use Coverage Tools:** Regularly run `go test -coverprofile=coverage.out ./...` and `go tool cover -html=coverage.out`.
-- [ ] **CI Integration:** Add a coverage check to CI to prevent regressions (e.g., using a tool or script to enforce a minimum threshold).
-- [ ] **Refactor for Testability:** If needed, refactor code (using interfaces, dependency injection) to make it easier to test.
-- [ ] **Document Test Patterns:** 
-  - [ ] As coverage increases, document effective test patterns used
-  - [ ] Capture lessons learned about which test approaches work best for different package types
-  - [ ] Share successful mocking strategies with the team
-- [ ] **Periodic Review:** 
-  - [ ] Revisit coverage targets after initial improvements to potentially raise them
-  - [ ] Perform focused reviews of CLI (cmd/irr) error handling after core packages
-  - [ ] Identify packages that might need architectural changes for better testability
-- [ ] **Documentation Updates:**
-  - [ ] Update package-level README files with testing guidance as patterns emerge
-  - [ ] Add code comments about test requirements for complex functions
-  - [ ] Document any non-obvious test setup requirements
+**Developer Onboarding Checklist**
+- [ ] Document required tools and environment setup (Go, Helm, kind, etc.)
+- [x] Provide a makefile or scripts for common dev tasks (build, test, lint, install plugin)
+- [ ] Add a quickstart guide for running and testing the plugin locally
+- [ ] List all relevant docs (PLUGIN-SPECIFIC.md, DEVELOPMENT.md, TESTING.md) at the top of the section
+- [x] Create makefile targets for: `build`, `test`, `lint`, `install-plugin`
+- [x] Add step-by-step quickstart: clone repo, build, install plugin, run help command
 
 ## Phase 2: Chart Parameter Handling & Rules System
 _**Goal:** Analyze results from the brute-force solver and chart analysis to identify parameters essential for successful Helm chart deployment after applying IRR overrides. Implement an intelligent rules system that distinguishes between Deployment-Critical (Type 1) and Test/Validation-Only (Type 2) parameters._
-
-Implementation steps:
-
-1. **Parameter Classification & Analysis**
-   - [x] **[P1]** Create formal distinction between Type 1 (Deployment-Critical) and Type 2 (Test/Validation-Only) parameters
-   - [x] **[P1]** Analyze solver results to identify common error patterns and required parameters
-   - [x] **[P1]** Implement first high-priority Type 1 rule: Bitnami chart security bypass
-     - [x] Define tiered confidence detection system:
-       - [x] High confidence: Require multiple indicators (homepage + GitHub/image references)
-       - [x] Medium confidence: Accept single strong indicators like homepage URL
-       - [x] Fallback detection: Identify charts that fail with exit code 16 and "unrecognized containers" error
-     - [x] Implement metadata-based detection examining:
-       - [x] Chart metadata `home` field containing "bitnami.com"
-       - [x] Chart metadata `sources` containing "github.com/bitnami/charts"
-       - [x] Chart `maintainers` field referencing "Bitnami" or "Broadcom" 
-       - [x] Chart `repository` containing "bitnamicharts"
-       - [x] `annotations.images` field containing "docker.io/bitnami/" image references
-       - [x] `dependencies` section containing tags with "bitnami-common"
-     - [x] Implement `global.security.allowInsecureImages=true` insertion for detected Bitnami charts
-       - [x] Add this parameter during the override generation phase (`irr override` command)
-       - [x] Ensure this parameter is included in the final override.yaml file
-       - [x] Update override generation logic to inject this parameter automatically
-     - [x] Test with representative Bitnami charts to verify detection accuracy and deployment success
-       - [x] Test specifically with bitnami/nginx, bitnami/memcached and other common Bitnami charts
-       - [x] Verify the override file contains the security bypass parameter
-       - [x] Confirm validation passes when the parameter is included
-     - [x] Add fallback retry mechanism for charts failing with specific error signature
-       - [x] Detect exact exit code 16 with error message containing "Original containers have been substituted for unrecognized ones"
-       - [x] Add specific error handling for the message "If you are sure you want to proceed with non-standard containers..."
-       - [x] If validation fails with this specific error, retry with `global.security.allowInsecureImages=true`
-   - [x] **[P2]** Document Type 2 parameters needed for testing (e.g., `kubeVersion`)
-   - [x] Correlate errors with chart metadata (provider, dependencies, etc.)
 
 2. **Rules Engine Implementation**
    - [x] **[P1]** Design rule format with explicit Type 1/2 classification
@@ -451,26 +179,6 @@ Implementation steps:
    - [ ] **Negative/Edge (No Metadata):** Test charts with empty/nil metadata; ensure no panics occur and no rules are applied
    - [ ] **Error Handling:** Unit test graceful failure (log warning, continue) if the rules registry is misconfigured or type assertion fails
 
-5. **Documentation & Maintainability**
-   - [x] **[P1]** Document the distinction between Type 1 and Type 2 parameters
-   - [x] **[P1]** Create user guide for the rules system
-     - [x] Document the tiered detection approach
-     - [ ] Explain fallback detection mechanism
-     - [x] Provide examples of rule definitions
-   - [x] **[P1]** Document metadata patterns used for chart provider detection
-     - [x] Document Bitnami detection patterns with examples
-     - [x] Create reference table of metadata fields for different providers
-   - [ ] **[P2]** Implement rule versioning and tracking
-   - [ ] **[P2]** Create process for rule updates based on new chart testing
-   - [x] **[P2]** Add manual override capabilities for advanced users
-
-## Phase 3: Kubernetes Version Handling in `irr validate`
-_**Goal:** Implement robust Kubernetes version specification for chart validation to ensure consistent version handling and resolve compatibility issues._
-
-## Phase 4: Bugfix for flattenValue Function ✅
-_**Goal:** Fix the slice bounds error in the flattenValue function to enable proper generation of helm-set format overrides and improve test coverage._
-**Description:** The `flattenValue` function had a critical slice bounds error that occurred when flattening maps with keys that don't contain a dot character. The bug was in the code that attempts to slice a key at the last dot position:
-
 
 ## Phase 5: `kind` Cluster Integration Testing
 _**Goal:** Implement end-to-end tests using `kind` to validate Helm plugin interactions with a live Kubernetes API and Helm release state, ensuring read-only behavior._
@@ -492,4 +200,33 @@ _**Goal:** Implement end-to-end tests using `kind` to validate Helm plugin inter
   ## REMINDER 0 (TEST BEFORE AND AFTER) Implementation Process: DONT REMOVE THIS SECTION as these hints are important to remember.
 - For each change:
   1. **Baseline Verification:**
-     - Run full test suite: `go test ./...`
+     - Run full test suite: `go test ./...` ✓
+     - Run full linting: `golangci-lint run` ✓
+     - Determine if any existing failures need to be fixed before proceeding with new feature work ✓
+  
+  2. **Pre-Change Verification:**
+     - Run targeted tests relevant to the component being modified ✓
+     - Run targeted linting to identify specific issues (e.g., `golangci-lint run --enable-only=unused` for unused variables) ✓
+  
+  3. **Make Required Changes:**
+     - Follow KISS and YAGNI principles ✓
+     - Maintain consistent code style ✓
+     - Document changes in code comments where appropriate ✓
+     - **For filesystem mocking changes:**
+       - Implement changes package by package following the guidelines in `docs/TESTING-FILESYSTEM-MOCKING.md`
+       - Start with simpler packages before tackling complex ones
+       - Always provide test helpers for swapping the filesystem implementation
+       - Run tests frequently to catch issues early
+  
+  4. **Post-Change Verification:**
+     - Run targeted tests to verify the changes work as expected ✓
+     - Run targeted linting to confirm specific issues are resolved ✓
+     - Run full test suite: `go test ./...` ✓
+     - Run full linting: `golangci-lint run` ✓
+     - **CRITICAL:** After filesystem mocking changes, verify all tests still pass with both the real and mock filesystem
+  
+  5. **Git Commit:**
+     - Stop after completing a logical portion of a feature to make well reasoned git commits with changes and comments ✓
+     - Request suggested git commands for committing the changes ✓
+     - Review and execute the git commit commands yourself, never change git branches stay in the branch you are in until feature completion ✓
+
