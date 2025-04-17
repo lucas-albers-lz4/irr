@@ -15,7 +15,7 @@ The IRR (Image Relocation and Rewrite) Helm plugin allows you to seamlessly inte
 
 ```bash
 # Clone the repository
-git clone https://github.com/org/irr
+git clone https://github.com/lalbers/irr
 cd irr
 
 # Build and install
@@ -27,7 +27,7 @@ make helm-install
 
 ```bash
 # Download the latest release
-curl -L https://github.com/org/irr/releases/latest/download/helm-irr-$(uname -s)-$(uname -m).tar.gz -o helm-irr.tar.gz
+curl -L https://github.com/lalbers/irr/releases/latest/download/helm-irr-$(uname -s)-$(uname -m).tar.gz -o helm-irr.tar.gz
 
 # Extract and install
 mkdir -p ~/.helm/plugins/irr
@@ -47,6 +47,9 @@ helm irr inspect --chart-path ./my-chart
 # Inspect an installed release
 helm irr inspect my-release
 
+# Inspect with specific namespace
+helm irr inspect my-release -n my-namespace
+
 # Generate a config skeleton from an installed release
 helm irr inspect my-release --generate-config-skeleton my-config.yaml
 ```
@@ -63,8 +66,13 @@ helm irr override --chart-path ./my-chart \
 # Generate overrides for an installed release
 helm irr override my-release \
   --target-registry registry.local \
+  --source-registries docker.io,quay.io
+
+# Override with validation
+helm irr override my-release \
+  --target-registry registry.local \
   --source-registries docker.io,quay.io \
-  --output-file overrides.yaml
+  --validate
 ```
 
 ### Validate Command
@@ -86,9 +94,19 @@ The plugin enhances the standard IRR functionality with Helm-specific features:
    - Loads the current values from the release
    - Uses the release context for generating overrides
 
-2. **Chart Resolution**: The plugin can resolve and download charts from Helm repositories based on release information.
+2. **Namespace Inheritance**: The plugin respects the Kubernetes namespace context, supporting:
+   - Explicit namespace via `-n` or `--namespace` flag
+   - Inheritance from Helm's configured namespace
+   - Default to `default` namespace if none specified
 
-3. **Values Handling**: For validation, the plugin properly combines values from the release with the override values.
+3. **File Handling**: 
+   - For overrides, automatically names output files after the release (e.g., `my-release-overrides.yaml`)
+   - Safely handles file writing with proper permissions
+   - Protects against overwriting existing files
+
+4. **Validation Integration**:
+   - Adds `--validate` flag to the override command for immediate validation
+   - Provides clear upgrade command suggestions after successful validation
 
 ## Configuration
 
@@ -120,14 +138,13 @@ helm irr inspect my-app
 # 3. Generate registry overrides
 helm irr override my-app \
   --target-registry registry.local \
-  --source-registries docker.io,quay.io \
-  --output-file overrides.yaml
+  --source-registries docker.io,quay.io
 
 # 4. Validate the overrides
-helm irr validate my-app --values overrides.yaml
+helm irr validate my-app --values my-app-overrides.yaml
 
 # 5. Apply the overrides in an upgrade
-helm upgrade my-app ./charts/my-app -f overrides.yaml
+helm upgrade my-app ./charts/my-app -f my-app-overrides.yaml
 ```
 
 ### CI/CD Pipeline
@@ -137,19 +154,23 @@ helm upgrade my-app ./charts/my-app -f overrides.yaml
 steps:
   - name: Install Helm IRR Plugin
     run: |
-      helm plugin install https://github.com/org/irr
+      helm plugin install https://github.com/lalbers/irr
 
   - name: Generate Image Overrides
     run: |
-      helm irr override --chart-path ./charts/my-app \
+      helm irr override my-app \
         --target-registry $REGISTRY \
         --source-registries docker.io,quay.io \
-        --output-file overrides.yaml
+        --non-interactive
+
+  - name: Validate Before Deployment
+    run: |
+      helm irr validate my-app --values my-app-overrides.yaml
 
   - name: Deploy with Overrides
     run: |
       helm upgrade --install my-app ./charts/my-app \
-        -f overrides.yaml
+        -f my-app-overrides.yaml
 ```
 
 ## Troubleshooting
@@ -158,11 +179,26 @@ steps:
 
 1. **Plugin Not Found**: Ensure the plugin is correctly installed with `helm plugin list`.
 
-2. **Chart Resolution Fails**: If the plugin can't resolve a chart for an installed release, check:
-   - Helm repository configuration (`helm repo list`)
-   - Release information (`helm get manifest RELEASE`)
+2. **Release Not Found**: Check that the release exists and you have specified the correct namespace with:
+   ```bash
+   helm list -n <namespace>
+   ```
 
-3. **Permission Issues**: In some environments, the plugin may need additional permissions to access release information.
+3. **Namespace Issues**: If working with multiple namespaces, always explicitly specify the namespace with `-n`:
+   ```bash
+   helm irr inspect my-release -n my-namespace
+   ```
+
+4. **File Already Exists**: The plugin prevents accidental file overwrites. Use a different filename or manually remove the existing file:
+   ```bash
+   Error: output file 'my-release-overrides.yaml' already exists
+   ```
+
+5. **Chart Resolution**: If the exact chart version cannot be found, you may see:
+   ```
+   Error: could not resolve chart path
+   ```
+   Use `--chart-path` to explicitly provide the chart location.
 
 ### Debug Mode
 
@@ -182,5 +218,5 @@ IRR_DEBUG=true helm irr inspect my-release
 
 For issues, questions, or contributions:
 
-- GitHub Issues: [github.com/org/irr/issues](https://github.com/org/irr/issues)
-- Documentation: [github.com/org/irr/docs](https://github.com/org/irr/docs) 
+- GitHub Issues: [github.com/lalbers/irr/issues](https://github.com/lalbers/irr/issues)
+- Documentation: [github.com/lalbers/irr/docs](https://github.com/lalbers/irr/docs) 

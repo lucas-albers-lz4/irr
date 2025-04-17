@@ -673,7 +673,6 @@ The plugin uses a single `--debug` flag for troubleshooting needs. When enabled,
 
 ### 6.4. Telemetry & Privacy
 - No user data collection by default
-- Opt-in anonymous usage statistics via `--enable-telemetry` flag
 - Log redaction for sensitive values (regex patterns in config)
 - Clear documentation on what is collected and how to disable if enabled
 
