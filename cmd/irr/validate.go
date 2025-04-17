@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -35,6 +34,7 @@ func newValidateCmd() *cobra.Command {
 	cmd.Flags().Bool("debug-template", false, "Print template output for debugging")
 	cmd.Flags().String("namespace", "", "Namespace to use for templating")
 	cmd.Flags().String("kube-version", "", fmt.Sprintf("Kubernetes version for validation (e.g., '1.31.0'). Defaults to %s", DefaultKubernetesVersion))
+	cmd.Flags().Bool("strict", false, "Enable strict mode (fail on any validation error)")
 
 	return cmd
 }
@@ -93,10 +93,34 @@ func runValidate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Check if the --release-name flag was explicitly set by the user
+	releaseNameFlagSet := cmd.Flags().Changed("release-name")
+
+	// If releaseName flag was explicitly set but we're not in plugin mode, return an error
+	if releaseNameFlagSet && !isHelmPlugin {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("the --release-name flag is only available when running as a Helm plugin (helm irr...)"),
+		}
+	}
+
 	// Get output flags
 	outputFile, strict, err := getValidateOutputFlags(cmd)
 	if err != nil {
 		return err
+	}
+
+	// Get Kubernetes version flag
+	kubeVersion, err := cmd.Flags().GetString("kube-version")
+	if err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get kube-version flag: %w", err),
+		}
+	}
+	// If not specified, use default
+	if kubeVersion == "" {
+		kubeVersion = DefaultKubernetesVersion
 	}
 
 	// Check if running as plugin with release name
@@ -110,8 +134,32 @@ func runValidate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Run validation
-	templateOutput, err := validateChartWithFiles(chartPath, releaseName, namespace, valuesFiles, strict)
+	// Check if values files are specified when needed
+	if len(valuesFiles) == 0 {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("at least one values file must be specified"),
+		}
+	}
+
+	// Verify that all values files exist
+	for _, valuesFile := range valuesFiles {
+		if _, err := AppFs.Stat(valuesFile); err != nil {
+			if os.IsNotExist(err) {
+				return &exitcodes.ExitCodeError{
+					Code: exitcodes.ExitChartNotFound,
+					Err:  fmt.Errorf("values file not found or inaccessible: %s", valuesFile),
+				}
+			}
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitIOError,
+				Err:  fmt.Errorf("failed to access values file %s: %w", valuesFile, err),
+			}
+		}
+	}
+
+	// Run validation with the Kubernetes version
+	templateOutput, err := validateChartWithFiles(chartPath, releaseName, namespace, valuesFiles, strict, kubeVersion)
 	if err != nil {
 		return err
 	}
@@ -142,30 +190,9 @@ func getValidateFlags(cmd *cobra.Command) (chartPath string, valuesFiles []strin
 }
 
 // getValidateReleaseNamespace retrieves release name and namespace
-func getValidateReleaseNamespace(cmd *cobra.Command, args []string) (string, string, error) {
-	releaseName, err := cmd.Flags().GetString("release-name")
-	if err != nil {
-		return "", "", &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get release-name flag: %w", err),
-		}
-	}
-
-	// Check for positional argument as release name
-	if releaseName == "" && isHelmPlugin && len(args) > 0 {
-		releaseName = args[0]
-		log.Infof("Using %s as release name from positional argument", releaseName)
-	}
-
-	namespace, err := cmd.Flags().GetString("namespace")
-	if err != nil {
-		return "", "", &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get namespace flag: %w", err),
-		}
-	}
-
-	return releaseName, namespace, nil
+func getValidateReleaseNamespace(cmd *cobra.Command, args []string) (releaseName, namespace string, err error) {
+	// Use common function to get release name and namespace
+	return getReleaseNameAndNamespaceCommon(cmd, args)
 }
 
 // getValidateOutputFlags retrieves output file and strict mode setting
@@ -232,7 +259,7 @@ func validateAndDetectChartPath(chartPath string) (string, error) {
 }
 
 // validateChartWithFiles validates a chart with values files
-func validateChartWithFiles(chartPath, releaseName, namespace string, valuesFiles []string, _ bool) (string, error) {
+func validateChartWithFiles(chartPath, releaseName, namespace string, valuesFiles []string, strict bool, kubeVersion string) (string, error) {
 	// Set default release name if not provided
 	if releaseName == "" {
 		releaseName = "irr-validation"
@@ -244,6 +271,7 @@ func validateChartWithFiles(chartPath, releaseName, namespace string, valuesFile
 		ReleaseName: releaseName,
 		ValuesFiles: valuesFiles,
 		Namespace:   namespace,
+		KubeVersion: kubeVersion,
 	}
 
 	// Log namespace if specified
@@ -251,18 +279,24 @@ func validateChartWithFiles(chartPath, releaseName, namespace string, valuesFile
 		log.Debugf("Using namespace '%s' for validation", namespace)
 	}
 
+	// Log Kubernetes version
+	log.Debugf("Using Kubernetes version '%s' for validation", kubeVersion)
+
 	// Execute Helm template command
-	result, err := helm.Template(templateOptions)
+	result, err := helm.HelmTemplateFunc(templateOptions)
 	if err != nil {
 		log.Errorf("Validation failed: Chart could not be rendered.")
 		// Print Helm's stderr for debugging
 		if result != nil && result.Stderr != "" {
 			fmt.Fprintf(os.Stderr, "--- Helm Error ---\n%s\n------------------\n", result.Stderr)
 		}
-		return "", &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitHelmCommandFailed,
-			Err:  fmt.Errorf("chart validation failed: %w", err),
+		if strict {
+			return "", &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitHelmCommandFailed,
+				Err:  fmt.Errorf("chart validation failed: %w", err),
+			}
 		}
+		return "", nil
 	}
 
 	log.Infof("Validation successful: Chart rendered successfully with values.")
@@ -274,40 +308,11 @@ func handleValidateOutput(cmd *cobra.Command, templateOutput, outputFile string)
 	// Use switch statement instead of if-else chain
 	switch {
 	case outputFile != "":
-		// Check if file exists
-		exists, err := afero.Exists(AppFs, outputFile)
+		// Use the common file handling utility
+		err := writeOutputFile(outputFile, []byte(templateOutput), "Successfully wrote rendered templates to %s")
 		if err != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitIOError,
-				Err:  fmt.Errorf("failed to check if output file exists: %w", err),
-			}
+			return err
 		}
-		if exists {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitIOError,
-				Err:  fmt.Errorf("output file '%s' already exists", outputFile),
-			}
-		}
-
-		// Create the directory if it doesn't exist
-		err = AppFs.MkdirAll(filepath.Dir(outputFile), DirPermissions)
-		if err != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitGeneralRuntimeError,
-				Err:  fmt.Errorf("failed to create output directory: %w", err),
-			}
-		}
-
-		// Write the file
-		err = afero.WriteFile(AppFs, outputFile, []byte(templateOutput), FilePermissions)
-		if err != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitGeneralRuntimeError,
-				Err:  fmt.Errorf("failed to write output file: %w", err),
-			}
-		}
-
-		log.Infof("Successfully wrote rendered templates to %s", outputFile)
 	case templateOutput != "":
 		// Just output to stdout if we have content
 		if _, err := fmt.Fprintln(cmd.OutOrStdout(), templateOutput); err != nil {
@@ -326,23 +331,14 @@ func handleValidateOutput(cmd *cobra.Command, templateOutput, outputFile string)
 
 // handleHelmPluginValidate handles validate command when running as a Helm plugin
 func handleHelmPluginValidate(cmd *cobra.Command, releaseName, namespace string, valuesFiles []string, _ string) error {
-	// Create a new Helm client
-	helmClient, err := helm.NewHelmClient()
+	// Create a new Helm client and adapter
+	adapter, err := createHelmAdapter()
 	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitHelmCommandFailed,
-			Err:  fmt.Errorf("failed to initialize Helm client: %w", err),
-		}
+		return err
 	}
 
-	// Create adapter with the Helm client
-	adapter := helm.NewAdapter(helmClient, AppFs)
-
-	// Perform the validation operation
-	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	// Get command context
+	ctx := getCommandContext(cmd)
 
 	// Call the adapter's ValidateRelease method
 	err = adapter.ValidateRelease(ctx, releaseName, namespace, valuesFiles)
