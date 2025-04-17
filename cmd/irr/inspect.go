@@ -14,10 +14,10 @@ import (
 	"helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/cli"
 
-	"github.com/lalbers/irr/internal/helm"
 	"github.com/lalbers/irr/pkg/analyzer"
 	"github.com/lalbers/irr/pkg/exitcodes"
 	"github.com/lalbers/irr/pkg/fileutil"
+	"github.com/lalbers/irr/pkg/helm"
 	"github.com/lalbers/irr/pkg/image"
 	log "github.com/lalbers/irr/pkg/log"
 	"github.com/spf13/cobra"
@@ -223,42 +223,7 @@ func runInspect(cmd *cobra.Command, args []string) error {
 
 	// Handle Helm release mode if a release name is provided and we're running as a plugin
 	if releaseName != "" {
-		if !isHelmPlugin {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitInputConfigurationError,
-				Err:  fmt.Errorf("the release name flag is only available when running as a Helm plugin (helm irr ...)"),
-			}
-		}
-
-		// Create a new Helm client
-		helmClient, err := helm.NewHelmClient()
-		if err != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitHelmCommandFailed,
-				Err:  fmt.Errorf("failed to initialize Helm client: %w", err),
-			}
-		}
-
-		// Create adapter with the Helm client
-		adapter := helm.NewAdapter(helmClient, AppFs)
-
-		// Perform the inspect operation
-		ctx := cmd.Context()
-		if ctx == nil {
-			ctx = context.Background()
-		}
-
-		// Get output file from flags
-		outputFile := flags.OutputFile
-
-		// Call the adapter's InspectRelease method with the output file
-		err = adapter.InspectRelease(ctx, releaseName, namespace, outputFile)
-		if err != nil {
-			return err
-		}
-
-		// Return success directly as the adapter has already handled the output
-		return nil
+		return inspectHelmRelease(cmd, flags, releaseName, namespace)
 	}
 
 	// If chart path is not specified, try to detect a chart in the current directory
@@ -287,6 +252,106 @@ func runInspect(cmd *cobra.Command, args []string) error {
 	}
 
 	// Filter images if source registries are provided
+	if len(flags.SourceRegistries) > 0 {
+		var filteredImages []ImageInfo
+
+		// Create a map for O(1) lookups
+		registryMap := make(map[string]bool)
+		for _, reg := range flags.SourceRegistries {
+			registryMap[reg] = true
+		}
+
+		// Filter images
+		for _, img := range analysis.Images {
+			if registryMap[img.Registry] {
+				filteredImages = append(filteredImages, img)
+			}
+		}
+
+		// Update the analysis with filtered images
+		analysis.Images = filteredImages
+		log.Infof("Filtered images to %d registries", len(flags.SourceRegistries))
+	}
+
+	// Write output
+	return writeOutput(analysis, flags)
+}
+
+// inspectHelmRelease handles inspection logic for a Helm release (extracted from runInspect)
+func inspectHelmRelease(cmd *cobra.Command, flags *InspectFlags, releaseName, namespace string) error {
+	if !isHelmPlugin {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("the release name flag is only available when running as a Helm plugin (helm irr ...)"),
+		}
+	}
+
+	// Use the global Helm client initialized in root.go
+	if helmClient == nil {
+		// Create a new Helm client if not already initialized
+		settings := helm.GetHelmSettings()
+		helmClient = helm.NewRealHelmClient(settings)
+	}
+
+	// Use the Helm client to get chart metadata and values
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	// If namespace is not provided, use the default or environment namespace
+	if namespace == "" {
+		namespace = GetReleaseNamespace(cmd)
+	}
+
+	log.Infof("Inspecting release '%s' in namespace '%s'", releaseName, namespace)
+
+	// Get chart metadata
+	metadata, err := helmClient.GetReleaseMetadata(ctx, releaseName, namespace)
+	if err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitHelmCommandFailed,
+			Err:  fmt.Errorf("failed to get chart metadata for release %s: %w", releaseName, err),
+		}
+	}
+
+	// Get release values
+	values, err := helmClient.GetReleaseValues(ctx, releaseName, namespace)
+	if err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitHelmCommandFailed,
+			Err:  fmt.Errorf("failed to get values for release %s: %w", releaseName, err),
+		}
+	}
+
+	// Create chart info
+	chartInfo := ChartInfo{
+		Name:    metadata.Name,
+		Version: metadata.Version,
+		Path:    fmt.Sprintf("release:%s", releaseName),
+	}
+
+	// Analyze values
+	patterns, err := analyzer.AnalyzeHelmValues(values, flags.AnalyzerConfig)
+	if err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitChartProcessingFailed,
+			Err:  fmt.Errorf("release analysis failed: %w", err),
+		}
+	}
+
+	// Process image patterns
+	images, skipped := processImagePatterns(patterns)
+
+	// Create analysis result
+	analysis := &ImageAnalysis{
+		Chart:    chartInfo,
+		Images:   images,
+		Patterns: patterns,
+		Skipped:  skipped,
+	}
+
+	// Apply source registry filtering if needed
 	if len(flags.SourceRegistries) > 0 {
 		var filteredImages []ImageInfo
 

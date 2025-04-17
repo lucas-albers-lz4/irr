@@ -21,6 +21,7 @@ import (
 
 	"github.com/lalbers/irr/pkg/analysis"
 	"github.com/lalbers/irr/pkg/debug"
+	"github.com/lalbers/irr/pkg/helm"
 	"github.com/lalbers/irr/pkg/override"
 	"github.com/lalbers/irr/pkg/registry"
 	"github.com/spf13/afero"
@@ -43,6 +44,9 @@ var (
 
 	// TestAnalyzeMode is a global flag to enable test mode (originally for analyze command, now for inspect)
 	TestAnalyzeMode bool
+
+	// Helm client
+	helmClient helm.ClientInterface
 )
 
 // AppFs defines the filesystem interface to use, allows mocking in tests.
@@ -159,6 +163,13 @@ It also supports linting image references for potential issues.`,
 		if integrationTestMode {
 			log.Warnf("Integration test mode enabled.")
 			// Perform actions specific to integration test mode if needed
+		}
+
+		// Initialize Helm client if running as a Helm plugin
+		if isHelmPlugin {
+			settings := helm.GetHelmSettings()
+			helmClient = helm.NewRealHelmClient(settings)
+			debug.Printf("Initialized Helm client for plugin mode")
 		}
 
 		if registryFile != "" {

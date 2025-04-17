@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -17,16 +18,56 @@ func addReleaseFlag(cmd *cobra.Command) {
 	cmd.PersistentFlags().String("release-name", "", "Helm release name to use for loading chart information")
 }
 
+// addNamespaceFlag adds a --namespace flag to the given command if it doesn't already exist
+func addNamespaceFlag(cmd *cobra.Command) {
+	if cmd.PersistentFlags().Lookup("namespace") == nil {
+		cmd.PersistentFlags().String("namespace", "", "Namespace for the Helm release (overrides the namespace from Helm environment)")
+	}
+}
+
 // initHelmPlugin initializes the CLI with Helm plugin specific functionality
 func initHelmPlugin() {
 	// Add release-name flag to the root command
 	addReleaseFlag(rootCmd)
+
+	// Add namespace flag to the root command
+	addNamespaceFlag(rootCmd)
+
+	// Set up any other Helm-specific flags or functionality
+	log.Debugf("Helm plugin flags initialized")
 }
 
 // HelmChartInfo represents basic chart information
 type HelmChartInfo struct {
 	Name    string
 	Version string
+}
+
+// GetReleaseNamespace gets the namespace for a release
+// Order of precedence:
+// 1. --namespace flag
+// 2. HELM_NAMESPACE environment variable
+// 3. Default namespace ("default")
+func GetReleaseNamespace(cmd *cobra.Command) string {
+	namespace, err := cmd.Flags().GetString("namespace")
+	if err == nil && namespace != "" {
+		return namespace
+	}
+
+	// Check HELM_NAMESPACE env var
+	envNamespace := os.Getenv("HELM_NAMESPACE")
+	if envNamespace != "" {
+		return envNamespace
+	}
+
+	// Return default namespace
+	return "default"
+}
+
+// GetHelmSettings returns the Helm CLI settings
+func GetHelmSettings() *cli.EnvSettings {
+	settings := cli.New()
+	return settings
 }
 
 // GetChartPathFromRelease attempts to get the chart path from a Helm release
@@ -36,7 +77,7 @@ func GetChartPathFromRelease(releaseName string) (string, error) {
 	}
 
 	// Initialize Helm environment
-	settings := cli.New()
+	settings := GetHelmSettings()
 
 	// Create action config
 	actionConfig := new(action.Configuration)
@@ -96,4 +137,32 @@ func GetChartPathFromRelease(releaseName string) (string, error) {
 	}
 
 	return chartPath, nil
+}
+
+// GetReleaseValues retrieves the values from a Helm release
+func GetReleaseValues(_ context.Context, releaseName, namespace string) (map[string]interface{}, error) {
+	if releaseName == "" {
+		return nil, fmt.Errorf("release name is empty")
+	}
+
+	// Initialize Helm environment
+	settings := GetHelmSettings()
+
+	// Create action config
+	actionConfig := new(action.Configuration)
+	if err := actionConfig.Init(settings.RESTClientGetter(), namespace, "", log.Infof); err != nil {
+		return nil, fmt.Errorf("failed to initialize Helm action config: %w", err)
+	}
+
+	// Create get values action
+	getValues := action.NewGetValues(actionConfig)
+	getValues.AllValues = true
+
+	// Get the values
+	vals, err := getValues.Run(releaseName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get values for release %s: %w", releaseName, err)
+	}
+
+	return vals, nil
 }
