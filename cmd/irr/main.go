@@ -4,6 +4,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/exitcodes"
@@ -28,7 +29,7 @@ func main() {
 	}
 
 	// Check for IRR_DEBUG environment variable for potential future debug setup
-	if os.Getenv("IRR_DEBUG") != "" {
+	if parseIrrDebugEnvVar() {
 		// Place any IRR_DEBUG specific setup here if needed in the future
 		fmt.Println("IRR_DEBUG environment variable detected, enabling debug logs.")
 	}
@@ -74,6 +75,18 @@ func main() {
 func isRunningAsHelmPlugin() bool {
 	// Check for environment variables set by Helm when running a plugin
 	return os.Getenv("HELM_PLUGIN_NAME") != "" || os.Getenv("HELM_PLUGIN_DIR") != ""
+}
+
+// parseIrrDebugEnvVar checks the IRR_DEBUG environment variable to determine if debugging is enabled
+func parseIrrDebugEnvVar() bool {
+	debugEnv := os.Getenv("IRR_DEBUG")
+	if debugEnv == "" {
+		return false
+	}
+
+	// Check for common "true" values
+	debugEnv = strings.ToLower(debugEnv)
+	return debugEnv == "1" || debugEnv == "true" || debugEnv == "yes"
 }
 
 // logHelmEnvironment logs Helm-related environment variables for debugging
