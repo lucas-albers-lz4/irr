@@ -742,7 +742,7 @@ func runOverride(cmd *cobra.Command, args []string) error {
 	if releaseName != "" && !isHelmPlugin {
 		return &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("release name '%s' can only be used when running as a Helm plugin (helm irr...)", releaseName),
+			Err:  fmt.Errorf("release name '%s' can only be used when running in plugin mode (helm irr...)", releaseName),
 		}
 	}
 
