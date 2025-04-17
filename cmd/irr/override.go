@@ -7,7 +7,6 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -666,6 +665,17 @@ func runOverride(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Check if the --release-name flag was explicitly set by the user
+	releaseNameFlagSet := cmd.Flags().Changed("release-name")
+
+	// If releaseName flag was explicitly set but we're not in plugin mode, return an error
+	if releaseNameFlagSet && !isHelmPlugin {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("the --release-name flag is only available when running as a Helm plugin (helm irr...)"),
+		}
+	}
+
 	// Get output file and dry-run flag
 	outputFile, dryRun, err := getOutputFlags(cmd, releaseName)
 	if err != nil {
@@ -681,9 +691,17 @@ func runOverride(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Check if running as plugin with release name
+	// Check if running as plugin with release name from positional arg or flag
 	if releaseName != "" && isHelmPlugin {
 		return handleHelmPluginOverride(cmd, releaseName, namespace, &config, pathStrategy, outputFile, dryRun)
+	}
+
+	// Ensure we have either a chart path or a release name
+	if config.ChartPath == "" && releaseName == "" {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("either --chart-path or --release-name must be specified"),
+		}
 	}
 
 	// Determine if we load from release or path
@@ -725,30 +743,9 @@ func runOverride(cmd *cobra.Command, args []string) error {
 }
 
 // getReleaseNameAndNamespace extracts and validates release name and namespace
-func getReleaseNameAndNamespace(cmd *cobra.Command, args []string) (string, string, error) {
-	releaseName, err := cmd.Flags().GetString("release-name")
-	if err != nil {
-		return "", "", &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get release-name flag: %w", err),
-		}
-	}
-
-	// Check for positional argument as release name if flag is not set and we're running as a plugin
-	if releaseName == "" && isHelmPlugin && len(args) > 0 {
-		releaseName = args[0]
-		log.Infof("Using %s as release name from positional argument", releaseName)
-	}
-
-	namespace, err := cmd.Flags().GetString("namespace")
-	if err != nil {
-		return "", "", &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get namespace flag: %w", err),
-		}
-	}
-
-	return releaseName, namespace, nil
+func getReleaseNameAndNamespace(cmd *cobra.Command, args []string) (releaseName, namespace string, err error) {
+	// Use common function to get release name and namespace
+	return getReleaseNameAndNamespaceCommon(cmd, args)
 }
 
 // getOutputFlags retrieves output file path and dry-run flag
@@ -783,24 +780,14 @@ func getOutputFlags(cmd *cobra.Command, releaseName string) (outputFile string, 
 
 // handleHelmPluginOverride handles the override command when running as a Helm plugin
 func handleHelmPluginOverride(cmd *cobra.Command, releaseName, namespace string, config *GeneratorConfig, pathStrategy, outputFile string, dryRun bool) error {
-
-	// Create a new Helm client
-	helmClient, err := helm.NewHelmClient()
+	// Create a new Helm client and adapter
+	adapter, err := createHelmAdapter()
 	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitHelmCommandFailed,
-			Err:  fmt.Errorf("failed to initialize Helm client: %w", err),
-		}
+		return err
 	}
 
-	// Create adapter with the Helm client
-	adapter := helm.NewAdapter(helmClient, AppFs)
-
-	// Perform the override operation
-	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	// Get command context
+	ctx := getCommandContext(cmd)
 
 	// Get the target registry
 	targetRegistry := config.TargetRegistry
@@ -823,7 +810,6 @@ func handleHelmPluginOverride(cmd *cobra.Command, releaseName, namespace string,
 
 // handlePluginOverrideOutput handles the output of the override operation
 func handlePluginOverrideOutput(cmd *cobra.Command, overrideFile, outputFile string, dryRun bool, releaseName, namespace string) error {
-
 	// Use switch statement instead of if-else chain
 	switch {
 	case dryRun:
@@ -836,7 +822,7 @@ func handlePluginOverrideOutput(cmd *cobra.Command, overrideFile, outputFile str
 		}
 
 		if _, err := fmt.Fprintln(cmd.OutOrStdout(), string(overrideFile)); err != nil {
-			return &exitcodes.ExitCodeError{
+		return &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitGeneralRuntimeError,
 				Err:  fmt.Errorf("failed to write overrides in dry run mode: %w", err),
 			}
@@ -849,40 +835,11 @@ func handlePluginOverrideOutput(cmd *cobra.Command, overrideFile, outputFile str
 			}
 		}
 	case outputFile != "":
-		// Check if file exists
-		exists, err := afero.Exists(AppFs, outputFile)
+		// Use the common file handling utility
+		err := writeOutputFile(outputFile, []byte(overrideFile), "Successfully wrote overrides to %s")
 		if err != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitIOError,
-				Err:  fmt.Errorf("failed to check if output file exists: %w", err),
-			}
+			return err
 		}
-		if exists {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitIOError,
-				Err:  fmt.Errorf("output file '%s' already exists", outputFile),
-			}
-		}
-
-		// Create the directory if it doesn't exist
-		err = AppFs.MkdirAll(filepath.Dir(outputFile), DirPermissions)
-		if err != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitGeneralRuntimeError,
-				Err:  fmt.Errorf("failed to create output directory: %w", err),
-			}
-		}
-
-		// Write the file
-		err = afero.WriteFile(AppFs, outputFile, []byte(overrideFile), FilePermissions)
-		if err != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitGeneralRuntimeError,
-				Err:  fmt.Errorf("failed to write override file: %w", err),
-			}
-		}
-
-		log.Infof("Successfully wrote overrides to %s", outputFile)
 	default:
 		// Just output to stdout
 		_, err := fmt.Fprintln(cmd.OutOrStdout(), string(overrideFile))
@@ -900,7 +857,6 @@ func handlePluginOverrideOutput(cmd *cobra.Command, overrideFile, outputFile str
 
 // validatePluginOverrides validates the generated overrides
 func validatePluginOverrides(cmd *cobra.Command, overrideFile, outputFile string, dryRun bool, releaseName, namespace string) error {
-
 	shouldValidate, err := cmd.Flags().GetBool("validate")
 	if err == nil && shouldValidate {
 		// If we've created an override file, use that directly
@@ -935,23 +891,14 @@ func validatePluginOverrides(cmd *cobra.Command, overrideFile, outputFile string
 			overrideFiles = append(overrideFiles, tempFile.Name())
 		}
 
-		// Create a new Helm client
-		helmClient, err := helm.NewHelmClient()
+		// Create a new Helm client and adapter
+		adapter, err := createHelmAdapter()
 		if err != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitHelmCommandFailed,
-				Err:  fmt.Errorf("failed to initialize Helm client: %w", err),
-			}
+			return err
 		}
 
-		// Create adapter with the Helm client
-		adapter := helm.NewAdapter(helmClient, AppFs)
-
-		// Call the adapter to validate the release with overrides
-		ctx := cmd.Context()
-		if ctx == nil {
-			ctx = context.Background()
-		}
+		// Get command context
+		ctx := getCommandContext(cmd)
 
 		err = adapter.ValidateRelease(ctx, releaseName, namespace, overrideFiles)
 		if err != nil {
