@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -221,8 +222,30 @@ func runInspect(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Determine if chart path or release name was provided
+	chartPathProvided := flags.ChartPath != ""
+	releaseNameProvided := releaseName != ""
+
+	// Error if neither chart path nor release name is provided
+	if !chartPathProvided && !releaseNameProvided {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  errors.New("either --chart-path or release name must be provided"),
+		}
+	}
+
+	// Log which input source we're using
+	if chartPathProvided {
+		log.Infof("Using chart path: %s", flags.ChartPath)
+		if releaseNameProvided && isHelmPlugin {
+			log.Infof("Chart path provided, ignoring release name: %s", releaseName)
+		}
+	} else if releaseNameProvided && isHelmPlugin {
+		log.Infof("Using release name: %s in namespace: %s", releaseName, namespace)
+	}
+
 	// Handle Helm release mode if a release name is provided and we're running as a plugin
-	if releaseName != "" {
+	if releaseNameProvided && isHelmPlugin && !chartPathProvided {
 		return inspectHelmRelease(cmd, flags, releaseName, namespace)
 	}
 
@@ -251,26 +274,21 @@ func runInspect(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Filter images if source registries are provided
+	// Filter images by source registry if specified
 	if len(flags.SourceRegistries) > 0 {
-		var filteredImages []ImageInfo
-
-		// Create a map for O(1) lookups
-		registryMap := make(map[string]bool)
+		registrySet := make(map[string]bool)
 		for _, reg := range flags.SourceRegistries {
-			registryMap[reg] = true
+			registrySet[reg] = true
 		}
 
-		// Filter images
+		var filteredImages []ImageInfo
 		for _, img := range analysis.Images {
-			if registryMap[img.Registry] {
+			if registrySet[img.Registry] {
 				filteredImages = append(filteredImages, img)
 			}
 		}
-
-		// Update the analysis with filtered images
 		analysis.Images = filteredImages
-		log.Infof("Filtered images to %d registries", len(flags.SourceRegistries))
+		log.Infof("Filtered images by source registries: %v", flags.SourceRegistries)
 	}
 
 	// Write output
