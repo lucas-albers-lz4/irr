@@ -66,30 +66,13 @@
   - [x] Unit tests for plugin-specific initialization (e.g., `initHelmPlugin` in `cmd/irr/root.go`).
   - [x] Unit tests verifying correct error messages when attempting to use plugin-only features in standalone mode.
   - [x] Unit tests for namespace handling logic (flag vs. environment variable vs. default).
-  
-- [ ] **[P0]** Design adapter layer between Helm plugin and core IRR
-  - [ ] Define Go interface for Helm client (GetReleaseValues, GetChartMetadata, etc.)
-  - [ ] Implement real Helm client using Helm Go SDK
-  - [ ] Implement mock Helm client for tests
-  - [ ] Add error wrapping for context (release name, namespace)
-  - [ ] Use dependency injection for Helm client and logger
-  - [ ] Ensure all file/network operations are mockable for tests
-  - [ ] Use context.Context for all blocking operations
-  - [ ] Keep all Helm-specific logic in adapter; core logic should not import Helm packages
-  - [ ] Design and implement execution mode detection (plugin vs standalone)
-    - [ ] Use `HELM_PLUGIN_DIR` environment variable to detect plugin mode
-    - [ ] Configure Helm client differently based on execution mode
-    - [ ] Only enable `--release-name` and `--namespace` flags when running in plugin mode (see PLUGIN-SPECIFIC.md)
-    - [ ] In standalone mode, error if `--release-name` or `--namespace` is provided, with clear message: "The --release-name and --namespace flags are only available when running as a Helm plugin (helm irr ...)"
-    - [ ] Document this behavior and rationale in both code comments and user documentation
-  - [ ] Implement plugin-specific initialization
-    - [ ] Use `cli.New()` from Helm SDK to get plugin environment settings
-    - [ ] Initialize action.Configuration with Helm's RESTClientGetter when in plugin mode
-    - [ ] Handle namespace inheritance from Helm environment
-  - [ ] Create robust error handling for environment differences
-    - [ ] Provide clear error messages when attempting to use plugin features in standalone mode
-    - [ ] Include helpful troubleshooting info in errors (e.g., "Run as 'helm irr' to use this feature")
-    - [ ] Document the feature limitations in different execution modes
+- [x] **[P0] Fix Linting Issues in Test Files**
+  - [x] Add constants for repeated test values to avoid duplicated strings
+  - [x] Fix unchecked error returns in kube_version_test.go
+  - [x] Update validateChartWithFiles to use HelmTemplateFunc instead of Template
+  - [x] Fix TestKubeVersionInValidateChartWithFiles and TestKubeVersionPassthrough tests
+  - [x] Fix validateChartWithFiles validation test expectations
+  - [x] Add proper strict mode handling in TestKubeVersionPassthrough
 
 **P1: Core Command Implementation**
 - [ ] **[P1]** Implement release-based context for commands
