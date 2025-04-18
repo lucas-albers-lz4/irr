@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/lalbers/irr/pkg/fileutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -56,7 +57,7 @@ image:
   tag: "1.21.0
   This is not valid YAML at all
   - broken: array
-`), 0o600)
+`), fileutil.ReadWriteUserPermission)
 	require.NoError(t, err, "Should be able to create invalid values file")
 
 	// Run the validate command with invalid values
@@ -80,12 +81,12 @@ func TestValidateWithMultipleValuesFiles(t *testing.T) {
 
 	// Create first values file
 	valuesFile1 := filepath.Join(harness.tempDir, "values1.yaml")
-	err := os.WriteFile(valuesFile1, []byte("global:\n  imageRegistry: test-registry.local"), 0o600)
+	err := os.WriteFile(valuesFile1, []byte("global:\n  imageRegistry: test-registry.local"), fileutil.ReadWriteUserPermission)
 	require.NoError(t, err, "Should be able to create first values file")
 
 	// Create second values file
 	valuesFile2 := filepath.Join(harness.tempDir, "values2.yaml")
-	err = os.WriteFile(valuesFile2, []byte("nginx:\n  tag: latest"), 0o600)
+	err = os.WriteFile(valuesFile2, []byte("nginx:\n  tag: latest"), fileutil.ReadWriteUserPermission)
 	require.NoError(t, err, "Should be able to create second values file")
 
 	// Run the validate command with multiple values files

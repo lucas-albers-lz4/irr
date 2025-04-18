@@ -12,7 +12,6 @@ import (
 	log "github.com/lalbers/irr/pkg/log"
 	"github.com/spf13/afero"
 	"helm.sh/helm/v3/pkg/action"
-	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/chartutil"
 	"helm.sh/helm/v3/pkg/cli"
@@ -35,7 +34,7 @@ type ClientInterface interface {
 	GetReleaseChart(ctx context.Context, releaseName string, namespace string) (*ChartMetadata, error)
 
 	// Chart operations
-	TemplateChart(ctx context.Context, releaseName string, chartPath string, values map[string]interface{}, namespace string) (string, error)
+	TemplateChart(ctx context.Context, releaseName string, chartPath string, values map[string]interface{}, namespace string, kubeVersion string) (string, error)
 
 	// Environment information
 	GetCurrentNamespace() string
@@ -119,70 +118,44 @@ func (c *RealHelmClient) GetReleaseChart(_ context.Context, releaseName, namespa
 }
 
 // TemplateChart renders a chart with the given values
-func (c *RealHelmClient) TemplateChart(_ context.Context, releaseName, chartPath string, values map[string]interface{}, namespace string) (string, error) {
+func (c *RealHelmClient) TemplateChart(_ context.Context, releaseName, chartPath string, values map[string]interface{}, namespace, kubeVersion string) (string, error) {
 	debug.Printf("Templating chart %q with release name %q in namespace %q", chartPath, releaseName, namespace)
 
-	// Configure namespace
-	if namespace == "" {
-		namespace = c.settings.Namespace()
-	}
-
-	// Create a new install action configured for templating
 	client := action.NewInstall(c.actionConfig)
+	client.ClientOnly = true
 	client.DryRun = true
 	client.ReleaseName = releaseName
 	client.Replace = true
-	client.ClientOnly = true
-	client.IncludeCRDs = false
+	client.IncludeCRDs = true
 	client.Namespace = namespace
 
-	// Check if chartPath exists
-	stat, err := os.Stat(chartPath)
-	if err != nil {
-		return "", fmt.Errorf("chart path error: %w", err)
+	if kubeVersion != "" {
+		client.KubeVersion = &chartutil.KubeVersion{Version: kubeVersion}
 	}
 
-	var chrt *chart.Chart
-	if stat.IsDir() {
-		// Load from directory
-		chrt, err = loader.LoadDir(chartPath)
-	} else {
-		// Load from file (assuming .tgz)
-		absPath, err := filepath.Abs(chartPath)
-		if err != nil {
-			return "", fmt.Errorf("failed to get absolute path: %w", err)
-		}
-		var loadErr error
-		chrt, loadErr = loader.Load(absPath)
-		if loadErr != nil {
-			return "", fmt.Errorf("failed to load chart: %w", loadErr)
-		}
-	}
-
+	// Create chart
+	chart, err := loader.Load(chartPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to load chart: %w", err)
 	}
 
-	// For helm template command we need values in a specific format
-	// If no values provided, use empty map
-	vals := values
-	if vals == nil {
-		vals = make(map[string]interface{})
-	}
-
-	// Merge with chart's default values
-	mergedValues, err := chartutil.CoalesceValues(chrt, chartutil.Values(vals))
+	// We need to merge chart values with provided values
+	filteredVals, err := chartutil.CoalesceValues(chart, values)
 	if err != nil {
-		return "", fmt.Errorf("failed to merge values: %w", err)
+		return "", fmt.Errorf("failed to merge chart values: %w", err)
 	}
 
-	// Render the templates
-	rel, err := client.Run(chrt, mergedValues)
+	if validationErr := chart.Validate(); validationErr != nil {
+		return "", fmt.Errorf("chart validation error: %w", validationErr)
+	}
+
+	// Template the release
+	release, err := client.Run(chart, filteredVals)
 	if err != nil {
-		return "", fmt.Errorf("template rendering failed: %w", err)
+		return "", fmt.Errorf("chart templating error: %w", err)
 	}
 
-	return rel.Manifest, nil
+	return release.Manifest, nil
 }
 
 // GetCurrentNamespace returns the current namespace from Helm environment

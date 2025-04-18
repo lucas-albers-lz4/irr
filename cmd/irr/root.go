@@ -142,7 +142,6 @@ It also supports linting image references for potential issues.`,
 		// Prioritize the command-line flag if set to true.
 		if debugEnabled { // Check the flag first
 			debug.Enabled = true
-			log.SetLevel(log.LevelDebug)                        // Ensure log level is also debug
 			debug.Printf("--debug flag enabled debug logging.") // Use debug.Printf
 		} else { // If flag is not set, check the environment variable
 			debugEnv := os.Getenv("IRR_DEBUG")
@@ -158,7 +157,6 @@ It also supports linting image references for potential issues.`,
 				} else {
 					debug.Enabled = debugVal
 					if debugVal { // If IRR_DEBUG=true, ensure log level is also debug
-						log.SetLevel(log.LevelDebug)
 						debug.Printf("IRR_DEBUG environment variable enabled debug logging.") // Use debug.Printf
 					}
 				}
@@ -170,7 +168,7 @@ It also supports linting image references for potential issues.`,
 
 		// Only log level in debug mode to avoid duplicate output
 		if debug.Enabled {
-			log.Infof("Log level set to %s", level)
+			debug.Printf("Effective log level set to %s", level)
 		}
 		debug.Printf("Debug package enabled: %t", debug.Enabled)
 

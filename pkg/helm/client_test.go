@@ -99,16 +99,17 @@ func TestMockHelmClient_GetReleaseMetadata(t *testing.T) {
 
 // TestMockHelmClient_TemplateChart tests the MockHelmClient's TemplateChart method
 func TestMockHelmClient_TemplateChart(t *testing.T) {
-	// Create a mock client with custom mock function
+	// Create a mock client
 	client := &MockHelmClient{
-		MockTemplateChart: func(_ context.Context, chartPath, releaseName, namespace string, values map[string]interface{}) (string, error) {
-			// Verify input parameters
+		MockTemplateChart: func(_ context.Context, chartPath, releaseName, namespace string, values map[string]interface{}, kubeVersion string) (string, error) {
+			// Verify inputs
 			assert.Equal(t, "test-chart-path", chartPath)
 			assert.Equal(t, "test-release", releaseName)
 			assert.Equal(t, "test-namespace", namespace)
 			assert.Equal(t, "test-value", values["test-key"])
+			assert.Equal(t, "1.21.0", kubeVersion)
 
-			// Return mock data
+			// Return a mock output
 			return "templated-yaml-content", nil
 		},
 	}
@@ -120,6 +121,7 @@ func TestMockHelmClient_TemplateChart(t *testing.T) {
 		"test-release",
 		"test-namespace",
 		map[string]interface{}{"test-key": "test-value"},
+		"1.21.0",
 	)
 
 	// Verify result
@@ -150,7 +152,7 @@ func TestNewMockHelmClient(t *testing.T) {
 	assert.NotNil(t, metadata)
 	assert.Equal(t, "mock-chart", metadata.Name)
 
-	templateOutput, err := client.TemplateChart(context.Background(), "some-path", "some-release", "some-namespace", nil)
+	templateOutput, err := client.TemplateChart(context.Background(), "some-path", "some-release", "some-namespace", nil, "")
 	require.NoError(t, err)
 	assert.Equal(t, "mock-template-output", templateOutput)
 }

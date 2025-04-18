@@ -295,30 +295,31 @@ func sanitizeRegistryForPath(registry string) string {
 }
 
 // ValidateRelease validates a Helm release with override values
-func (a *Adapter) ValidateRelease(ctx context.Context, releaseName, namespace string, overrideFiles []string) error {
+func (a *Adapter) ValidateRelease(ctx context.Context, releaseName, namespace string, overrideFiles []string, kubeVersion string) error {
+	// Validate inputs
+	if a.helmClient == nil {
+		log.Errorf("Helm client is nil in ValidateRelease, this is likely a configuration error")
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitGeneralRuntimeError,
+			Err:  fmt.Errorf("helm client not properly initialized"),
+		}
+	}
+
+	if a.fs == nil {
+		log.Errorf("Filesystem is nil in ValidateRelease, this is likely a configuration error")
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitGeneralRuntimeError,
+			Err:  fmt.Errorf("filesystem not properly initialized"),
+		}
+	}
+
+	debug.Printf("ValidateRelease called with kubeVersion=%q", kubeVersion)
+
 	// Validate plugin mode
 	if !a.isRunningAsPlugin {
 		return &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitInputConfigurationError,
 			Err:  fmt.Errorf("the release name flag is only available when running as a Helm plugin (helm irr ...)"),
-		}
-	}
-
-	// Add nil check for the Helm client
-	if a.helmClient == nil {
-		log.Errorf("Helm client is nil in ValidateRelease, this is likely a configuration error")
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitGeneralRuntimeError,
-			Err:  fmt.Errorf("helm client is nil (configuration error)"),
-		}
-	}
-
-	// Add nil check for the filesystem
-	if a.fs == nil {
-		log.Errorf("Filesystem is nil in ValidateRelease, this is likely a configuration error")
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitGeneralRuntimeError,
-			Err:  fmt.Errorf("filesystem is nil (configuration error)"),
 		}
 	}
 
@@ -394,7 +395,7 @@ func (a *Adapter) ValidateRelease(ctx context.Context, releaseName, namespace st
 
 	// Perform validation
 	// For now, just attempt to template with the override values
-	_, err = a.helmClient.TemplateChart(ctx, releaseName, chartPath, values, namespace)
+	_, err = a.helmClient.TemplateChart(ctx, releaseName, chartPath, values, namespace, kubeVersion)
 	if err != nil {
 		// If templating fails with a "Chart.yaml file is missing" error, try to handle it
 		if strings.Contains(err.Error(), "Chart.yaml file is missing") {
@@ -408,7 +409,7 @@ func (a *Adapter) ValidateRelease(ctx context.Context, releaseName, namespace st
 					log.Infof("Found alternative chart path: %s", altPath)
 
 					// Try templating again with the new path
-					_, err = a.helmClient.TemplateChart(ctx, releaseName, altPath, values, namespace)
+					_, err = a.helmClient.TemplateChart(ctx, releaseName, altPath, values, namespace, kubeVersion)
 					if err == nil {
 						// Success with alternative path!
 						log.Infof("Successfully validated chart with alternative path")

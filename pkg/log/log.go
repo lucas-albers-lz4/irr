@@ -71,8 +71,9 @@ func CurrentLevel() Level {
 // SetLevel sets the logging level
 func SetLevel(level Level) {
 	currentLevel = level
+	// Log the level change to stderr
+	fmt.Fprintf(os.Stderr, "Log level set to %s\n", level.String())
 	// Removed debug.Init(true) - decouple from debug package
-	fmt.Fprintf(os.Stderr, "Log level set to %s\n", level)
 }
 
 // Debugf logs a debug message if debug logging is enabled

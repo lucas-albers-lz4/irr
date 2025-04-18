@@ -78,7 +78,7 @@ func (m *MockHelmClient) GetReleaseChart(_ context.Context, releaseName, namespa
 }
 
 // TemplateChart returns a mocked template result
-func (m *MockHelmClient) TemplateChart(_ context.Context, releaseName, chartPath string, _ map[string]interface{}, namespace string) (string, error) {
+func (m *MockHelmClient) TemplateChart(_ context.Context, releaseName, chartPath string, _ map[string]interface{}, namespace, kubeVersion string) (string, error) {
 	m.TemplateCallCount++
 
 	if m.TemplateError != nil {
@@ -88,8 +88,8 @@ func (m *MockHelmClient) TemplateChart(_ context.Context, releaseName, chartPath
 	result, exists := m.TemplateResults[chartPath]
 	if !exists {
 		// Return a default templated output if none configured
-		return fmt.Sprintf("# Templated output for chart %s with release %s in namespace %s",
-			chartPath, releaseName, namespace), nil
+		return fmt.Sprintf("# Templated output for chart %s with release %s in namespace %s (kubeVersion: %s)",
+			chartPath, releaseName, namespace, kubeVersion), nil
 	}
 
 	return result, nil

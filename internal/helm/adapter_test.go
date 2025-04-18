@@ -252,7 +252,7 @@ func TestValidateRelease(t *testing.T) {
 
 	// Call ValidateRelease
 	ctx := context.Background()
-	err := adapter.ValidateRelease(ctx, "test-release", "default", []string{})
+	err := adapter.ValidateRelease(ctx, "test-release", "default", []string{}, "")
 
 	// Should succeed with our mock
 	require.NoError(t, err)

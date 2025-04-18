@@ -143,21 +143,34 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get Kubernetes version flag
-	kubeVersion, err := cmd.Flags().GetString("kube-version")
+	kubeVersionFlag, err := cmd.Flags().GetString("kube-version")
 	if err != nil {
 		return &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitInputConfigurationError,
 			Err:  fmt.Errorf("failed to get kube-version flag: %w", err),
 		}
 	}
-	// If not specified, use default
-	if kubeVersion == "" {
-		kubeVersion = DefaultKubernetesVersion
+
+	// Determine the final Kubernetes version to use
+	var kubeVersionToUse string
+	switch {
+	case kubeVersionFlag != "":
+		// User explicitly provided the flag, use their value
+		kubeVersionToUse = kubeVersionFlag
+		log.Debugf("Using user-specified Kubernetes version: %s", kubeVersionToUse)
+	case isHelmPlugin:
+		// Running as plugin and no flag provided: Use Helm's context default (by passing empty string)
+		kubeVersionToUse = ""
+		log.Debugf("Running as plugin, letting Helm use context Kubernetes version")
+	default:
+		// Running standalone and no flag provided: Use the hardcoded default
+		kubeVersionToUse = DefaultKubernetesVersion
+		log.Debugf("Running standalone, using default Kubernetes version: %s", kubeVersionToUse)
 	}
 
 	// Check if running as plugin with release name
 	if releaseNameProvided && isHelmPlugin && !chartPathProvided {
-		return handleHelmPluginValidate(cmd, releaseName, namespace, valuesFiles, outputFile)
+		return handleHelmPluginValidate(cmd, releaseName, namespace, valuesFiles, kubeVersionToUse)
 	}
 
 	// Check if chart path exists or is detectable
@@ -191,7 +204,7 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Run validation with the Kubernetes version
-	templateOutput, err := validateChartWithFiles(chartPath, releaseName, namespace, valuesFiles, strict, kubeVersion)
+	templateOutput, err := validateChartWithFiles(chartPath, releaseName, namespace, valuesFiles, strict, kubeVersionToUse)
 	if err != nil {
 		return err
 	}
@@ -442,7 +455,7 @@ func handleValidateOutput(cmd *cobra.Command, templateOutput, outputFile string)
 }
 
 // handleHelmPluginValidate handles validate command when running as a Helm plugin
-func handleHelmPluginValidate(cmd *cobra.Command, releaseName, namespace string, valuesFiles []string, _ string) error {
+func handleHelmPluginValidate(cmd *cobra.Command, releaseName, namespace string, valuesFiles []string, kubeVersion string) error {
 	// If in test mode, return success without calling Helm
 	if isValidateTestMode {
 		log.Infof("Test mode - Skipping actual validation for release %s in namespace %s", releaseName, namespace)
@@ -468,8 +481,8 @@ func handleHelmPluginValidate(cmd *cobra.Command, releaseName, namespace string,
 	// Get command context
 	ctx := getCommandContext(cmd)
 
-	// Call the adapter's ValidateRelease method
-	err = adapter.ValidateRelease(ctx, releaseName, namespace, valuesFiles)
+	// Call the adapter's ValidateRelease method with the kubeVersion parameter
+	err = adapter.ValidateRelease(ctx, releaseName, namespace, valuesFiles, kubeVersion)
 	if err != nil {
 		return &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitHelmCommandFailed,

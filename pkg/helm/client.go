@@ -8,6 +8,7 @@ import (
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
+	"helm.sh/helm/v3/pkg/chartutil"
 	"helm.sh/helm/v3/pkg/cli"
 
 	"github.com/lalbers/irr/pkg/exitcodes"
@@ -27,7 +28,7 @@ type ClientInterface interface {
 	GetReleaseMetadata(_ context.Context, releaseName, namespace string) (*chart.Metadata, error)
 
 	// TemplateChart templates a chart with the provided values.
-	TemplateChart(_ context.Context, chartPath, releaseName, namespace string, values map[string]interface{}) (string, error)
+	TemplateChart(_ context.Context, chartPath, releaseName, namespace string, values map[string]interface{}, kubeVersion string) (string, error)
 }
 
 // RealHelmClient implements ClientInterface using the real Helm SDK.
@@ -117,7 +118,7 @@ func (c *RealHelmClient) GetReleaseMetadata(_ context.Context, releaseName, name
 }
 
 // TemplateChart implements ClientInterface.
-func (c *RealHelmClient) TemplateChart(_ context.Context, chartPath, releaseName, namespace string, values map[string]interface{}) (string, error) {
+func (c *RealHelmClient) TemplateChart(_ context.Context, chartPath, releaseName, namespace string, values map[string]interface{}, kubeVersion string) (string, error) {
 	// Create action config
 	actionConfig := new(action.Configuration)
 	if err := actionConfig.Init(c.settings.RESTClientGetter(), namespace, "", log.Infof); err != nil {
@@ -135,6 +136,11 @@ func (c *RealHelmClient) TemplateChart(_ context.Context, chartPath, releaseName
 	template.Replace = true      // Skip the name check
 	template.ClientOnly = true   // Don't contact Kubernetes
 	template.IncludeCRDs = false // Skip rendering CRDs to avoid warnings
+
+	// Set Kubernetes version if specified
+	if kubeVersion != "" {
+		template.KubeVersion = &chartutil.KubeVersion{Version: kubeVersion}
+	}
 
 	// Load the chart
 	chartPathResolved, err := template.LocateChart(chartPath, c.settings)
@@ -172,7 +178,7 @@ type MockHelmClient struct {
 	MockGetReleaseValues    func(_ context.Context, releaseName, namespace string) (map[string]interface{}, error)
 	MockGetChartFromRelease func(_ context.Context, releaseName, namespace string) (*chart.Chart, error)
 	MockGetReleaseMetadata  func(_ context.Context, releaseName, namespace string) (*chart.Metadata, error)
-	MockTemplateChart       func(_ context.Context, chartPath, releaseName, namespace string, values map[string]interface{}) (string, error)
+	MockTemplateChart       func(_ context.Context, chartPath, releaseName, namespace string, values map[string]interface{}, kubeVersion string) (string, error)
 }
 
 // NewMockHelmClient creates a new MockHelmClient with default mock functions.
@@ -195,7 +201,7 @@ func NewMockHelmClient() *MockHelmClient {
 				Version: "1.0.0",
 			}, nil
 		},
-		MockTemplateChart: func(_ context.Context, _, _, _ string, _ map[string]interface{}) (string, error) {
+		MockTemplateChart: func(_ context.Context, _, _, _ string, _ map[string]interface{}, _ string) (string, error) {
 			return "mock-template-output", nil
 		},
 	}
@@ -217,8 +223,8 @@ func (m *MockHelmClient) GetReleaseMetadata(_ context.Context, releaseName, name
 }
 
 // TemplateChart implements ClientInterface.
-func (m *MockHelmClient) TemplateChart(_ context.Context, chartPath, releaseName, namespace string, values map[string]interface{}) (string, error) {
-	return m.MockTemplateChart(nil, chartPath, releaseName, namespace, values)
+func (m *MockHelmClient) TemplateChart(_ context.Context, chartPath, releaseName, namespace string, values map[string]interface{}, kubeVersion string) (string, error) {
+	return m.MockTemplateChart(nil, chartPath, releaseName, namespace, values, kubeVersion)
 }
 
 // GetHelmSettings returns the Helm CLI settings

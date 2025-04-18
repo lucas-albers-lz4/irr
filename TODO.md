@@ -66,23 +66,14 @@
 ## Phase 3 bugfix
 
 - [ ] Fix `--kube-version` handling in `irr validate`:
-    - [ ] **Identify Code:** Locate flag definition (`cmd/irr/validate.go`), plugin detection logic, and `helm template` execution call (likely `internal/helm/helm.go` or `validate.go`).
-    - [ ] **Update `validate` Logic:**
-        - Retrieve user-provided `--kube-version` value.
-        - Check if running as Helm plugin (e.g., `HELM_PLUGIN_NAME` env var).
-        - Determine final `kubeVersion` string for `helm template`:
-            - If user provided flag: Use user's value.
-            - If plugin mode AND no flag: Use empty string/`nil` (to omit flag).
-            - If standalone mode AND no flag: Use hardcoded default (e.g., "1.31.0").
-    - [ ] **Update `helm template` Call:**
-        - Modify argument building for `helm template` execution.
-        - Conditionally add `"--kube-version"` and the determined `kubeVersion` string to the command arguments *only if* the string is not empty/`nil`.
-    - [ ] **Add/Update Tests:** Create/modify integration tests for `validate` covering:
-        - Plugin mode, no flag (verify correct template outcome, implicitly testing context usage).
-        - Plugin mode, with flag (verify flag value is used).
-        - Standalone mode, no flag (verify default value is used).
-        - Standalone mode, with flag (verify flag value is used).
-    - [ ] **Verify Docs:** Ensure `docs/PLUGIN-SPECIFIC.md` accurately reflects the fixed behavior.
+    - [x] Standalone mode: Confirmed working. Passing `--kube-version` correctly sets the version for Helm template rendering, and debug output is visible.
+    - [ ] Plugin mode: **Bug is isolated to plugin path.** The `--kube-version` value is not being passed through the plugin adapter (`ValidateRelease`) to the Helm SDK/template logic. No debug output is visible in plugin mode.
+    - [ ] **Action:**
+        - Update the plugin adapter (`ValidateRelease` and any related methods) to accept a `kubeVersion` argument.
+        - Pass the `kubeVersion` value from the CLI all the way through the adapter to the Helm SDK/template call.
+        - Add debug logging in the adapter to confirm the value is received and used.
+    - [ ] Add/Update Tests: Ensure plugin mode with `--kube-version` works and debug output is visible.
+    - [ ] Verify Docs: Ensure `docs/PLUGIN-SPECIFIC.md` and `docs/LOGGING.md` reflect the fixed behavior and plugin-specific handling.
 
 ## Phase 5: `kind` Cluster Integration Testing
 _**Goal:** Implement end-to-end tests using `kind` to validate Helm plugin interactions with a live Kubernetes API and Helm release state, ensuring read-only behavior._
@@ -134,7 +125,7 @@ _**Goal:** Implement end-to-end tests using `kind` to validate Helm plugin inter
      - Request suggested git commands for committing the changes ✓
      - Review and execute the git commit commands yourself, never change git branches stay in the branch you are in until feature completion ✓
 
-  6. **Build hints**
+  6. **Building and Tesing Hints**
      - `make build` builds product, `make update-plugin` updates the plugin copy so we test that build
        `make test-filter` runs the test but filters the output, if this fails you can run the normal test to get more detail
 ##END REMINDER On the Implementation Process: 

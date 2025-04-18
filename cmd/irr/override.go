@@ -1014,6 +1014,19 @@ func validatePluginOverrides(cmd *cobra.Command, overrideFile, outputFile string
 			overrideFiles = append(overrideFiles, tempFile.Name())
 		}
 
+		// Get Helm version flag
+		kubeVersion, err := cmd.Flags().GetString("kube-version")
+		if err != nil {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitInputConfigurationError,
+				Err:  fmt.Errorf("failed to get kube-version flag: %w", err),
+			}
+		}
+		// If not specified, use default
+		if kubeVersion == "" {
+			kubeVersion = DefaultKubernetesVersion
+		}
+
 		// Create a new Helm client and adapter
 		adapter, err := createHelmAdapter()
 		if err != nil {
@@ -1023,7 +1036,7 @@ func validatePluginOverrides(cmd *cobra.Command, overrideFile, outputFile string
 		// Get command context
 		ctx := getCommandContext(cmd)
 
-		err = adapter.ValidateRelease(ctx, releaseName, namespace, overrideFiles)
+		err = adapter.ValidateRelease(ctx, releaseName, namespace, overrideFiles, kubeVersion)
 		if err != nil {
 			return &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitHelmCommandFailed,
@@ -1150,7 +1163,7 @@ func validateChart(cmd *cobra.Command, yamlBytes []byte, config *GeneratorConfig
 		ctx := getCommandContext(cmd)
 
 		// Validate the release with the overrides
-		valErr := adapter.ValidateRelease(ctx, releaseName, namespace, []string{tempFile.Name()})
+		valErr := adapter.ValidateRelease(ctx, releaseName, namespace, []string{tempFile.Name()}, kubeVersion)
 		if valErr != nil {
 			err = &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitHelmCommandFailed,
