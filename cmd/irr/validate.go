@@ -5,12 +5,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/lalbers/irr/internal/helm"
 	"github.com/lalbers/irr/pkg/exitcodes"
 	log "github.com/lalbers/irr/pkg/log"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
+	"helm.sh/helm/v3/pkg/action"
+	"helm.sh/helm/v3/pkg/cli"
 )
 
 // DefaultKubernetesVersion defines the default K8s version used for validation
@@ -319,6 +322,33 @@ func validateChartWithFiles(chartPath, releaseName, namespace string, valuesFile
 		if result != nil && result.Stderr != "" {
 			fmt.Fprintf(os.Stderr, "--- Helm Error ---\n%s\n------------------\n", result.Stderr)
 		}
+
+		// Check if this is a Chart.yaml missing error and try to handle it
+		if strings.Contains(err.Error(), "Chart.yaml file is missing") {
+			// Try to find the chart in alternative locations
+			resolvedPath, resolveErr := handleChartYamlMissingErrors(err, chartPath)
+			if resolveErr != nil {
+				// Could not resolve path, return the resolve error
+				return "", resolveErr
+			}
+
+			// If we found an alternative path, try validation again
+			if resolvedPath != chartPath {
+				log.Infof("Retrying validation with resolved chart path: %s", resolvedPath)
+				templateOptions.ChartPath = resolvedPath
+				retryResult, retryErr := helm.HelmTemplateFunc(templateOptions)
+				if retryErr == nil {
+					log.Infof("Validation successful with resolved chart path!")
+					return retryResult.Stdout, nil
+				}
+
+				log.Errorf("Validation still failed with resolved path: %v", retryErr)
+				if retryResult != nil && retryResult.Stderr != "" {
+					fmt.Fprintf(os.Stderr, "--- Helm Error (Retry) ---\n%s\n------------------------\n", retryResult.Stderr)
+				}
+			}
+		}
+
 		if strict {
 			return "", &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitHelmCommandFailed,
@@ -402,4 +432,200 @@ func handleHelmPluginValidate(cmd *cobra.Command, releaseName, namespace string,
 	log.Infof("Validation successful! Chart renders correctly with provided values.")
 
 	return nil
+}
+
+// handleChartYamlMissingErrors detects and handles "Chart.yaml file is missing" errors.
+// It implements fallback path resolution strategies to locate the chart when Chart.yaml cannot be found.
+// Returns the resolved chart path if found, or an error with clear user guidance if no valid path can be resolved.
+func handleChartYamlMissingErrors(originalErr error, originalChartPath string) (string, error) {
+	// Check if this is a Chart.yaml missing error (exit code 16)
+	if strings.Contains(originalErr.Error(), "Chart.yaml file is missing") {
+		log.Debugf("Detected Chart.yaml missing error for path: %s", originalChartPath)
+
+		// Try to extract chart name and version from the path
+		chartName := filepath.Base(originalChartPath)
+		chartVersion := ""
+
+		// Strip .tgz if present and try to extract version
+		chartName = strings.TrimSuffix(chartName, ".tgz")
+
+		// Try to extract version from name-version pattern
+		nameParts := strings.Split(chartName, "-")
+		if len(nameParts) > 1 {
+			// Assume last part might be version
+			possibleVersion := nameParts[len(nameParts)-1]
+			// Check if it looks like a version (starts with digit)
+			if possibleVersion != "" && (possibleVersion[0] >= '0' && possibleVersion[0] <= '9') {
+				chartVersion = possibleVersion
+				// Reconstruct name without version
+				chartName = strings.Join(nameParts[:len(nameParts)-1], "-")
+			}
+		}
+
+		log.Debugf("Extracted chart name: %s, version: %s", chartName, chartVersion)
+
+		// First, try to use Helm SDK to locate the chart
+		settings := cli.New()
+		chartPathOptions := &action.ChartPathOptions{
+			Version: chartVersion,
+		}
+
+		// Try to locate chart using Helm's built-in functionality
+		log.Debugf("Attempting to locate chart %s using Helm SDK", chartName)
+		locatedPath, err := chartPathOptions.LocateChart(chartName, settings)
+		if err == nil {
+			log.Infof("Found chart using Helm SDK at: %s", locatedPath)
+			return locatedPath, nil
+		}
+		log.Debugf("Failed to locate chart using Helm SDK: %v", err)
+
+		// Try to find the chart in Helm's repository cache
+		cacheDir := settings.RepositoryCache
+		if cacheDir != "" {
+			log.Debugf("Checking Helm repository cache at: %s", cacheDir)
+
+			// Try exact match first if we have a version
+			if chartVersion != "" {
+				cachePath := filepath.Join(cacheDir, fmt.Sprintf("%s-%s.tgz", chartName, chartVersion))
+				if _, err := AppFs.Stat(cachePath); err == nil {
+					log.Infof("Found chart in Helm repository cache: %s", cachePath)
+					return cachePath, nil
+				}
+			}
+
+			// Try to find matching chart files
+			entries, err := afero.ReadDir(AppFs, cacheDir)
+			if err == nil {
+				for _, entry := range entries {
+					if !entry.IsDir() && strings.HasPrefix(entry.Name(), chartName+"-") {
+						chartPath := filepath.Join(cacheDir, entry.Name())
+						log.Infof("Found chart in Helm repository cache: %s", chartPath)
+						return chartPath, nil
+					}
+				}
+			}
+		}
+
+		// Try to find the chart in Helm's cache directory first
+		helmCachePaths := []string{
+			// macOS Helm cache path
+			filepath.Join(os.Getenv("HOME"), "Library", "Caches", "helm", "repository"),
+			// Linux/Unix Helm cache path
+			filepath.Join(os.Getenv("HOME"), ".cache", "helm", "repository"),
+			// Windows Helm cache path - uses APPDATA
+			filepath.Join(os.Getenv("APPDATA"), "helm", "repository"),
+		}
+
+		log.Debugf("Looking for chart %s in Helm cache directories", chartName)
+
+		// Try to find the chart in Helm's cache
+		for _, cachePath := range helmCachePaths {
+			// Skip if this is the same as repository cache we already checked
+			if cachePath == cacheDir {
+				continue
+			}
+
+			// Check if cache path exists
+			if _, err := AppFs.Stat(cachePath); os.IsNotExist(err) {
+				log.Debugf("Helm cache path does not exist: %s", cachePath)
+				continue
+			}
+
+			// Try to find an exact match for the chart
+			entries, err := afero.ReadDir(AppFs, cachePath)
+			if err != nil {
+				log.Debugf("Failed to read Helm cache directory %s: %v", cachePath, err)
+				continue
+			}
+
+			// Look for matching chart files
+			for _, entry := range entries {
+				if !entry.IsDir() && strings.HasPrefix(entry.Name(), chartName+"-") || entry.Name() == chartName+".tgz" {
+					chartPath := filepath.Join(cachePath, entry.Name())
+					log.Infof("Found chart in Helm cache: %s", chartPath)
+					return chartPath, nil
+				}
+			}
+		}
+
+		// List of possible locations to check relative to original path
+		possibleLocations := []string{
+			// Current path
+			originalChartPath,
+			// charts/ subdirectory
+			filepath.Join(originalChartPath, "charts"),
+			// Parent directory
+			filepath.Dir(originalChartPath),
+			// Current working directory
+			".",
+			// The "chart" subdirectory if it exists
+			filepath.Join(originalChartPath, "chart"),
+		}
+
+		// If original path looks like a tgz file but might be extracted in a directory
+		if strings.HasSuffix(originalChartPath, ".tgz") {
+			baseName := strings.TrimSuffix(filepath.Base(originalChartPath), ".tgz")
+			possibleLocations = append(possibleLocations,
+				// Check for extracted directory next to tgz
+				filepath.Join(filepath.Dir(originalChartPath), baseName),
+				// Check for extracted directory in current directory
+				baseName,
+			)
+		}
+
+		log.Debugf("Attempting fallback resolution with %d possible chart locations", len(possibleLocations))
+
+		// Try each location
+		if found, err := findChartInPossibleLocations(originalChartPath, possibleLocations); err == nil && found != "" {
+			return found, nil
+		}
+
+		// No valid chart path found, provide helpful error message
+		return "", &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitChartNotFound,
+			Err:  fmt.Errorf("chart.yaml not found at %s or any fallback locations. Please provide the correct chart path using --chart-path", originalChartPath),
+		}
+	}
+
+	// Not a Chart.yaml missing error, return original error
+	return "", originalErr
+}
+
+// findChartInPossibleLocations tries to find a Chart.yaml in a list of possible locations.
+func findChartInPossibleLocations(_ string, possibleLocations []string) (string, error) {
+	for _, location := range possibleLocations {
+		// First check if location exists
+		if _, err := AppFs.Stat(location); os.IsNotExist(err) {
+			log.Debugf("Location does not exist: %s", location)
+			continue
+		}
+
+		// Check for Chart.yaml in this location
+		chartYamlPath := filepath.Join(location, "Chart.yaml")
+		if _, err := AppFs.Stat(chartYamlPath); err == nil {
+			log.Infof("Found Chart.yaml at alternative location: %s", location)
+			return location, nil
+		}
+
+		// If location is a directory, check subdirectories for Chart.yaml
+		entries, err := afero.ReadDir(AppFs, location)
+		if err != nil {
+			log.Debugf("Failed to read directory %s: %v", location, err)
+			continue
+		}
+
+		for _, entry := range entries {
+			if entry.IsDir() {
+				subdir := filepath.Join(location, entry.Name())
+				chartYamlPath := filepath.Join(subdir, "Chart.yaml")
+				if _, err := AppFs.Stat(chartYamlPath); err == nil {
+					log.Infof("Found Chart.yaml in subdirectory: %s", subdir)
+					return subdir, nil
+				}
+			}
+		}
+
+		log.Debugf("No Chart.yaml found in location: %s", location)
+	}
+	return "", nil
 }
