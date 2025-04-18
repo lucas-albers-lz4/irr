@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -12,6 +13,7 @@ import (
 	log "github.com/lalbers/irr/pkg/log"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/cli"
 )
@@ -41,7 +43,6 @@ func newValidateCmd() *cobra.Command {
 	cmd.Flags().StringSlice("values", []string{}, "Values files to use (can be specified multiple times)")
 	cmd.Flags().StringSlice("set", []string{}, "Set values on the command line (can be specified multiple times)")
 	cmd.Flags().String("output-file", "", "Write template output to file instead of validating")
-	cmd.Flags().Bool("debug-template", false, "Print template output for debugging")
 	cmd.Flags().String("namespace", "", "Namespace to use for templating")
 	cmd.Flags().String("kube-version", "", fmt.Sprintf("Kubernetes version for validation (e.g., '1.31.0'). Defaults to %s", DefaultKubernetesVersion))
 	cmd.Flags().Bool("strict", false, "Enable strict mode (fail on any validation error)")
@@ -89,128 +90,33 @@ func detectChartInCurrentDirectoryIfNeeded(chartPath string) (string, error) {
 	return "", fmt.Errorf("no Helm chart found in current directory")
 }
 
-// runValidate implements the validate command logic
+// runValidate is the main entry point for the validate command
 func runValidate(cmd *cobra.Command, args []string) error {
-	// Get flags
-	chartPath, valuesFiles, err := getValidateFlags(cmd)
-	if err != nil {
-		return err
-	}
-
-	// Get release name and namespace if specified
+	// Get the release name from args or --release-name flag
 	releaseName, namespace, err := getValidateReleaseNamespace(cmd, args)
 	if err != nil {
 		return err
 	}
 
-	// Determine if chart path or release name was provided
-	chartPathProvided := chartPath != ""
-	releaseNameProvided := releaseName != ""
-
-	// Error if neither chart path nor release name is provided
-	if !chartPathProvided && !releaseNameProvided {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  errors.New("either --chart-path or release name must be provided"),
-		}
+	// Default namespace to "default" if not specified
+	if namespace == "" {
+		namespace = "default"
+		log.Infof("No namespace specified, using default namespace: %s", namespace)
 	}
 
-	// Log which input source we're using
-	if chartPathProvided {
-		log.Infof("Using chart path: %s", chartPath)
-		if releaseNameProvided && isHelmPlugin {
-			log.Infof("Chart path provided, ignoring release name: %s", releaseName)
-		}
-	} else if releaseNameProvided && isHelmPlugin {
-		log.Infof("Using release name: %s in namespace: %s", releaseName, namespace)
+	// Skip actual validation in test mode
+	if isValidateTestMode {
+		log.Infof("Validate test mode enabled, skipping actual validation for '%s'", releaseName)
+		return nil
 	}
 
-	// Check if the --release-name flag was explicitly set by the user
-	releaseNameFlagSet := cmd.Flags().Changed("release-name")
-
-	// If releaseName flag was explicitly set but we're not in plugin mode, return an error
-	if releaseNameFlagSet && !isHelmPlugin {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("the --release-name flag is only available when running as a Helm plugin (helm irr...)"),
-		}
+	// Handle plugin mode validation
+	if isHelmPlugin && releaseName != "" {
+		return handlePluginValidate(cmd, releaseName, namespace)
 	}
 
-	// Get output flags
-	outputFile, strict, err := getValidateOutputFlags(cmd)
-	if err != nil {
-		return err
-	}
-
-	// Get Kubernetes version flag
-	kubeVersionFlag, err := cmd.Flags().GetString("kube-version")
-	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get kube-version flag: %w", err),
-		}
-	}
-
-	// Determine the final Kubernetes version to use
-	var kubeVersionToUse string
-	switch {
-	case kubeVersionFlag != "":
-		// User explicitly provided the flag, use their value
-		kubeVersionToUse = kubeVersionFlag
-		log.Debugf("Using user-specified Kubernetes version: %s", kubeVersionToUse)
-	case isHelmPlugin:
-		// Running as plugin and no flag provided: Use Helm's context default (by passing empty string)
-		kubeVersionToUse = ""
-		log.Debugf("Running as plugin, letting Helm use context Kubernetes version")
-	default:
-		// Running standalone and no flag provided: Use the hardcoded default
-		kubeVersionToUse = DefaultKubernetesVersion
-		log.Debugf("Running standalone, using default Kubernetes version: %s", kubeVersionToUse)
-	}
-
-	// Check if running as plugin with release name
-	if releaseNameProvided && isHelmPlugin && !chartPathProvided {
-		return handleHelmPluginValidate(cmd, releaseName, namespace, valuesFiles, kubeVersionToUse)
-	}
-
-	// Check if chart path exists or is detectable
-	chartPath, err = validateAndDetectChartPath(chartPath)
-	if err != nil {
-		return err
-	}
-
-	// Check if values files are specified when needed
-	if len(valuesFiles) == 0 {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("at least one values file must be specified"),
-		}
-	}
-
-	// Verify that all values files exist
-	for _, valuesFile := range valuesFiles {
-		if _, err := AppFs.Stat(valuesFile); err != nil {
-			if os.IsNotExist(err) {
-				return &exitcodes.ExitCodeError{
-					Code: exitcodes.ExitChartNotFound,
-					Err:  fmt.Errorf("values file not found or inaccessible: %s", valuesFile),
-				}
-			}
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitIOError,
-				Err:  fmt.Errorf("failed to access values file %s: %w", valuesFile, err),
-			}
-		}
-	}
-
-	// Run validation with the Kubernetes version
-	templateOutput, err := validateChartWithFiles(chartPath, releaseName, namespace, valuesFiles, strict, kubeVersionToUse)
-	if err != nil {
-		return err
-	}
-
-	// Handle output
-	return handleValidateOutput(cmd, templateOutput, outputFile)
+	// Handle standalone mode validation
+	return handleStandaloneValidate(cmd)
 }
 
 // getValidateFlags retrieves the basic flags for validate command
@@ -454,46 +360,282 @@ func handleValidateOutput(cmd *cobra.Command, templateOutput, outputFile string)
 	return nil
 }
 
-// handleHelmPluginValidate handles validate command when running as a Helm plugin
-func handleHelmPluginValidate(cmd *cobra.Command, releaseName, namespace string, valuesFiles []string, kubeVersion string) error {
-	// If in test mode, return success without calling Helm
-	if isValidateTestMode {
-		log.Infof("Test mode - Skipping actual validation for release %s in namespace %s", releaseName, namespace)
-		log.Infof("Validation successful! Chart renders correctly with provided values.")
-		return nil
+// handlePluginValidate handles validation when running as a Helm plugin with a release name
+func handlePluginValidate(cmd *cobra.Command, releaseName, namespace string) error {
+	// Get values files
+	valuesFiles, err := cmd.Flags().GetStringSlice("values")
+	if err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get values flag: %w", err),
+		}
 	}
 
-	// Create a new Helm client and adapter
-	adapter, err := createHelmAdapter()
+	// Get Kubernetes version flag
+	kubeVersionFlag, err := cmd.Flags().GetString("kube-version")
+	if err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get kube-version flag: %w", err),
+		}
+	}
+
+	// Determine the final Kubernetes version to use
+	kubeVersionToUse := kubeVersionFlag
+	if kubeVersionToUse == "" {
+		// Running as plugin and no flag provided: Use Helm's context default (by passing empty string)
+		log.Debugf("Running as plugin, letting Helm use context Kubernetes version")
+	} else {
+		log.Debugf("Using user-specified Kubernetes version: %s", kubeVersionToUse)
+	}
+
+	// Get output flags
+	outputFile, strict, err := getValidateOutputFlags(cmd)
 	if err != nil {
 		return err
 	}
 
-	// Add nil check for adapter
-	if adapter == nil {
-		log.Errorf("Failed to create Helm adapter - adapter is nil")
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitGeneralRuntimeError,
-			Err:  fmt.Errorf("validation failed: helm adapter is nil"),
-		}
+	return handleHelmPluginValidate(cmd, releaseName, namespace, valuesFiles, kubeVersionToUse, outputFile, strict)
+}
+
+// handleStandaloneValidate handles validation when running in standalone mode
+func handleStandaloneValidate(cmd *cobra.Command) error {
+	// Get flags
+	chartPath, valuesFiles, err := getValidateFlags(cmd)
+	if err != nil {
+		return err
 	}
 
-	// Get command context
-	ctx := getCommandContext(cmd)
+	// Get output flags
+	outputFile, strict, err := getValidateOutputFlags(cmd)
+	if err != nil {
+		return err
+	}
 
-	// Call the adapter's ValidateRelease method with the kubeVersion parameter
-	err = adapter.ValidateRelease(ctx, releaseName, namespace, valuesFiles, kubeVersion)
+	// Get release name and namespace
+	releaseName, namespace, err := getValidateReleaseNamespace(cmd, nil)
+	if err != nil {
+		return err
+	}
+
+	// If namespace is empty, use default
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	// Get Kubernetes version flag
+	kubeVersionFlag, err := cmd.Flags().GetString("kube-version")
 	if err != nil {
 		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitHelmCommandFailed,
-			Err:  fmt.Errorf("validation failed: %w", err),
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get kube-version flag: %w", err),
 		}
 	}
 
-	// Since we don't have result output in this case, simply log success
-	log.Infof("Validation successful! Chart renders correctly with provided values.")
+	// Determine the final Kubernetes version to use
+	kubeVersionToUse := kubeVersionFlag
+	if kubeVersionToUse == "" {
+		// Use the hardcoded default for standalone mode
+		kubeVersionToUse = DefaultKubernetesVersion
+		log.Debugf("Running standalone, using default Kubernetes version: %s", kubeVersionToUse)
+	} else {
+		log.Debugf("Using user-specified Kubernetes version: %s", kubeVersionToUse)
+	}
 
-	return nil
+	// Check if chart path exists or is detectable
+	chartPath, err = validateAndDetectChartPath(chartPath)
+	if err != nil {
+		return err
+	}
+
+	// Check if values files are specified when needed
+	if len(valuesFiles) == 0 {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("at least one values file must be specified"),
+		}
+	}
+
+	// Verify that all values files exist
+	for _, valuesFile := range valuesFiles {
+		if _, err := AppFs.Stat(valuesFile); err != nil {
+			if os.IsNotExist(err) {
+				return &exitcodes.ExitCodeError{
+					Code: exitcodes.ExitChartNotFound,
+					Err:  fmt.Errorf("values file not found or inaccessible: %s", valuesFile),
+				}
+			}
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitIOError,
+				Err:  fmt.Errorf("failed to access values file %s: %w", valuesFile, err),
+			}
+		}
+	}
+
+	// Run validation with the Kubernetes version
+	templateOutput, err := validateChartWithFiles(chartPath, releaseName, namespace, valuesFiles, strict, kubeVersionToUse)
+	if err != nil {
+		return err
+	}
+
+	// Handle output
+	return handleValidateOutput(cmd, templateOutput, outputFile)
+}
+
+// handleHelmPluginValidate runs validation using helm plugin mode
+func handleHelmPluginValidate(cmd *cobra.Command, releaseName, namespace string, valuesFiles []string, kubeVersion string, outputFile string, strict bool) error {
+	// Check that Helm client is initialized
+	if helmClient == nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitHelmInteractionError,
+			Err:  errors.New("Helm client not initialized"),
+		}
+	}
+
+	// Create a context
+	ctx := context.Background()
+
+	// Get release values from Helm
+	log.Infof("Getting values for release %s in namespace %s", releaseName, namespace)
+	releaseValues, err := helmClient.GetReleaseValues(ctx, releaseName, namespace)
+	if err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitHelmInteractionError,
+			Err:  fmt.Errorf("failed to get values for release %s: %w", releaseName, err),
+		}
+	}
+
+	// Get chart from release
+	log.Infof("Getting chart for release %s", releaseName)
+	releaseChart, err := helmClient.GetChartFromRelease(ctx, releaseName, namespace)
+	if err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitHelmInteractionError,
+			Err:  fmt.Errorf("failed to get chart for release %s: %w", releaseName, err),
+		}
+	}
+
+	// Since we have the chart loaded directly from Helm's release storage
+	// we don't need to download it, but we need to use it correctly with the right values
+	log.Infof("Running helm template on chart %s with %d values file(s)", releaseChart.Name(), len(valuesFiles))
+
+	// Write release values to a temporary file
+	tmpDir, err := os.MkdirTemp("", "irr-validate-")
+	if err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitIOError,
+			Err:  fmt.Errorf("failed to create temporary directory: %w", err),
+		}
+	}
+	defer os.RemoveAll(tmpDir)
+
+	releaseValuesFile := filepath.Join(tmpDir, "release-values.yaml")
+	releaseValuesYAML, err := yaml.Marshal(releaseValues)
+	if err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitGeneralRuntimeError,
+			Err:  fmt.Errorf("failed to marshal release values to YAML: %w", err),
+		}
+	}
+
+	if err := os.WriteFile(releaseValuesFile, releaseValuesYAML, 0600); err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitIOError,
+			Err:  fmt.Errorf("failed to write release values to temporary file: %w", err),
+		}
+	}
+
+	// Create a temporary directory for the chart
+	chartDir := filepath.Join(tmpDir, "chart")
+	if err := os.MkdirAll(chartDir, 0700); err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitIOError,
+			Err:  fmt.Errorf("failed to create temporary chart directory: %w", err),
+		}
+	}
+
+	// We need to write the chart to disk using helm.Save
+	chartPath := filepath.Join(chartDir, releaseChart.Name())
+	if err := os.MkdirAll(chartPath, 0700); err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitIOError,
+			Err:  fmt.Errorf("failed to create chart directory: %w", err),
+		}
+	}
+
+	// Manually write chart files
+	// First write Chart.yaml
+	chartFile := filepath.Join(chartPath, "Chart.yaml")
+	chartYaml, err := yaml.Marshal(releaseChart.Metadata)
+	if err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitGeneralRuntimeError,
+			Err:  fmt.Errorf("failed to marshal chart metadata: %w", err),
+		}
+	}
+	if err := os.WriteFile(chartFile, chartYaml, 0600); err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitIOError,
+			Err:  fmt.Errorf("failed to write Chart.yaml: %w", err),
+		}
+	}
+
+	// Write templates directory and files
+	templatesDir := filepath.Join(chartPath, "templates")
+	if err := os.MkdirAll(templatesDir, 0700); err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitIOError,
+			Err:  fmt.Errorf("failed to create templates directory: %w", err),
+		}
+	}
+
+	// If the chart has template files, write them
+	for _, data := range releaseChart.Templates {
+		templateFile := filepath.Join(templatesDir, data.Name)
+		// Create subdirectories if needed
+		if err := os.MkdirAll(filepath.Dir(templateFile), 0700); err != nil {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitIOError,
+				Err:  fmt.Errorf("failed to create template subdirectory: %w", err),
+			}
+		}
+		if err := os.WriteFile(templateFile, data.Data, 0600); err != nil {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitIOError,
+				Err:  fmt.Errorf("failed to write template file %s: %w", data.Name, err),
+			}
+		}
+	}
+
+	// Write values.yaml if it exists
+	if releaseChart.Values != nil {
+		valuesFile := filepath.Join(chartPath, "values.yaml")
+		valuesYaml, err := yaml.Marshal(releaseChart.Values)
+		if err != nil {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitGeneralRuntimeError,
+				Err:  fmt.Errorf("failed to marshal chart values: %w", err),
+			}
+		}
+		if err := os.WriteFile(valuesFile, valuesYaml, 0600); err != nil {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitIOError,
+				Err:  fmt.Errorf("failed to write values.yaml: %w", err),
+			}
+		}
+	}
+
+	// Combine release values and additional values files
+	combinedValues := append([]string{releaseValuesFile}, valuesFiles...)
+
+	// Run validation with combined values
+	templateOutput, err := validateChartWithFiles(chartPath, releaseName, namespace, combinedValues, strict, kubeVersion)
+	if err != nil {
+		return err
+	}
+
+	// Handle output
+	return handleValidateOutput(cmd, templateOutput, outputFile)
 }
 
 // handleChartYamlMissingErrors detects and handles "Chart.yaml file is missing" errors.

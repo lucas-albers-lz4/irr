@@ -17,6 +17,7 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/lalbers/irr/pkg/exitcodes"
 	log "github.com/lalbers/irr/pkg/log"
 
 	"github.com/lalbers/irr/pkg/analysis"
@@ -97,10 +98,169 @@ type GeneratorInterface interface {
 // Regular expression for validating registry names (simplified based on common usage)
 // var registryRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9](:\\d+)?$`)
 
+// ChartSource represents the source information for a chart operation.
+// It consolidates chart path, release name, and namespace information.
+type ChartSource struct {
+	// ChartPath is the path to the chart directory or tarball
+	ChartPath string
+	// ReleaseName is the name of the Helm release
+	ReleaseName string
+	// Namespace is the Kubernetes namespace
+	Namespace string
+	// SourceType indicates how the chart source was determined
+	// Valid values: "chart", "release", "auto-detected"
+	SourceType string
+	// Message contains additional information about how the source was determined
+	Message string
+}
+
+// getChartSource retrieves and standardizes chart source information from flags and arguments.
+// It implements the unified logic for --chart-path and --release-name flags:
+// - Both flags can be used together
+// - Auto-detection when only one is provided
+// - Default to --release-name in plugin mode; default to --chart-path in standalone mode
+// - Namespace always defaults to "default" when not provided
+//
+// The function returns a ChartSource struct with all necessary information.
+func getChartSource(cmd *cobra.Command, args []string) (*ChartSource, error) {
+	// Initialize result
+	result := &ChartSource{
+		SourceType: "unknown",
+	}
+
+	// Get chart path
+	chartPath, err := cmd.Flags().GetString("chart-path")
+	if err != nil {
+		return nil, &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get chart-path flag: %w", err),
+		}
+	}
+	result.ChartPath = chartPath
+	chartPathProvided := chartPath != ""
+	chartPathFlag := cmd.Flags().Changed("chart-path")
+
+	// Get release name from --release-name flag or positional argument
+	releaseNameFlag, err := cmd.Flags().GetString("release-name")
+	if err != nil {
+		return nil, &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get release-name flag: %w", err),
+		}
+	}
+
+	// Get release name from args or flag
+	var releaseName string
+	if len(args) > 0 {
+		releaseName = args[0]
+		result.Message = "Release name provided as argument"
+	} else if releaseNameFlag != "" {
+		releaseName = releaseNameFlag
+		result.Message = "Release name provided via --release-name flag"
+	}
+	result.ReleaseName = releaseName
+	releaseNameProvided := releaseName != ""
+	releaseNameFlagSet := cmd.Flags().Changed("release-name")
+
+	// Get namespace with default
+	namespace, err := cmd.Flags().GetString("namespace")
+	if err != nil {
+		return nil, &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get namespace flag: %w", err),
+		}
+	}
+
+	// Default namespace to "default" if not provided
+	if namespace == "" {
+		namespace = "default"
+		debug.Printf("No namespace specified, using default: %s", namespace)
+	}
+	result.Namespace = namespace
+
+	// Handle the case where neither is provided - attempt auto-detection
+	if !chartPathProvided && !releaseNameProvided {
+		// Try to detect chart in current directory - use the one from inspect.go
+		detectedPath, err := detectChartInCurrentDirectory()
+		if err != nil {
+			// In plugin mode with no inputs, return clear error
+			if isHelmPlugin {
+				return nil, &exitcodes.ExitCodeError{
+					Code: exitcodes.ExitInputConfigurationError,
+					Err:  fmt.Errorf("either --chart-path or release name must be provided"),
+				}
+			}
+
+			// In standalone mode with no inputs, return clear error
+			return nil, &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitInputConfigurationError,
+				Err:  fmt.Errorf("chart path not provided and could not auto-detect chart in current directory: %w", err),
+			}
+		}
+
+		// Successfully auto-detected
+		result.ChartPath = detectedPath
+		result.SourceType = "auto-detected"
+		result.Message = "Auto-detected chart in current directory"
+		debug.Printf("Auto-detected chart path: %s", detectedPath)
+		return result, nil
+	}
+
+	// If releaseName is provided but we're not in plugin mode, that's an error
+	if releaseNameProvided && !chartPathProvided && !isHelmPlugin {
+		return nil, &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("release name provided but not running as Helm plugin. Use --chart-path in standalone mode"),
+		}
+	}
+
+	// If the --release-name flag was explicitly set but we're not in plugin mode, that's an error
+	if releaseNameFlagSet && !isHelmPlugin {
+		return nil, &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("the --release-name flag is only available when running as a Helm plugin (helm irr...)"),
+		}
+	}
+
+	// If both are provided, use chart path primarily (with warning if there's potential conflict)
+	if chartPathProvided && releaseNameProvided {
+		if chartPathFlag && isHelmPlugin {
+			// Both explicitly provided in plugin mode - prioritize chart path
+			debug.Printf("Both chart path and release name provided, using chart path: %s", chartPath)
+			result.SourceType = "chart"
+			result.Message = "Using chart path (release name ignored)"
+		} else {
+			// In plugin mode without explicit chart path, prefer release name
+			if isHelmPlugin && !chartPathFlag {
+				result.SourceType = "release"
+				result.Message = "Using release name in plugin mode"
+			} else {
+				// Default to chart path in other cases
+				result.SourceType = "chart"
+				result.Message = "Using chart path"
+			}
+		}
+		return result, nil
+	}
+
+	// At this point, only one of chartPath or releaseName is provided
+	if chartPathProvided {
+		result.SourceType = "chart"
+		result.Message = "Using chart path"
+	} else if releaseNameProvided && isHelmPlugin {
+		result.SourceType = "release"
+		result.Message = "Using release name in plugin mode"
+	}
+
+	return result, nil
+}
+
+// detectChartInCurrentDirectory is defined in inspect.go to prevent duplicate functions
+
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Use:   "irr",
-	Short: "Image Registry Redirect - Helm chart image registry override tool",
+	Short: "Image Relocation and Rewrite tool for Helm Charts and K8s YAML",
 	Long: `irr (Image Relocation and Rewrite) is a tool for generating Helm override values
 that redirect container image references from public registries to a private registry.
 
