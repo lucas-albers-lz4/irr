@@ -115,7 +115,9 @@
   - [ ] Implement credential redaction in all error/log output
   - [ ] When chart source is missing, print specific recovery steps (see section 5.4 in PLUGIN-SPECIFIC.md)
 
-**P3: Documentation and Testing**
+**P4: Get test coverage back to threshold after P0, P1, P2 feature work**
+
+**P4: Documentation and Testing**
 - [ ] **[P3]** Create plugin-specific tests
   - [x] Write unit tests for the adapter layer using Go's testing and testify/gomock
   - [x] Create integration tests using a local kind cluster and test Helm releases
@@ -200,17 +202,55 @@ _**Goal:** Analyze results from the brute-force solver and chart analysis to ide
    - [ ] **[P2]** Measure improvement in chart validation success rate with rules system
    - [x] **[P2]** Create automated tests for rule application logic
 
-   # Prioritized Additional Test Cases for Rules System
-   - [ ] **Integration (Core + Disable):** Run `irr override` on real Bitnami charts (e.g., nginx) and non-Bitnami charts to verify:
-     - [ ] Override file contains `global.security.allowInsecureImages: true` only for detected Bitnami charts (medium/high confidence)
-     - [ ] The CLI flag `--disable-rules` prevents rule application
-   - [ ] **Unit Coverage (Detection & Application):**
-     - [ ] Verify core detection logic handles different metadata combinations correctly (covering confidence levels)
-     - [ ] Test rule application logic merges parameters correctly into simple and complex existing override maps
-     - [ ] Include checks for case sensitivity and whitespace variations in metadata
-   - [ ] **Type 2 Exclusion:** Validate that parameters from rules marked as `TypeValidationOnly` are never included in the final override map (can use a dummy rule for testing)
-   - [ ] **Negative/Edge (No Metadata):** Test charts with empty/nil metadata; ensure no panics occur and no rules are applied
-   - [ ] **Error Handling:** Unit test graceful failure (log warning, continue) if the rules registry is misconfigured or type assertion fails
+5. **Exit Code 16 Error Handling System**
+   - [ ] **[P0]** Implement fallback detection for "Chart.yaml file is missing" errors:
+     - [ ] Create error handler specifically for exit code 16 errors in validation
+     - [ ] Add detection logic that triggers when Chart.yaml cannot be found
+     - [ ] Implement recovery mechanism to locate chart files through alternate paths
+     - [ ] Add logging to indicate fallback path is being used
+     - [ ] Implement robust chart path resolution that checks multiple locations (absolute, relative to CWD, cached locations)
+     - [ ] Create a chart location cache to remember successful resolutions
+     - [ ] Add retry logic with different path strategies on initial failure
+     - [ ] Support relative path resolution based on current working directory
+     - [ ] Add detection patterns specific to Harbor chart structure
+     - [ ] Create test cases using Harbor chart to verify resolution
+     - [ ] Document Harbor-specific workarounds in troubleshooting section
+     - [ ] Create unit tests that simulate "Chart.yaml missing" scenarios
+     - [ ] Add integration tests using charts known to trigger this error
+     - [ ] Implement test fixtures that reproduce the exit code 16 condition
+     - [ ] Verify error messages are helpful and suggest correct resolution steps
+
+   - [ ] **[P0] Error Messaging and User Guidance:**
+     - [ ] When fallback fails, emit a clear, specific error:
+       - State the missing Chart.yaml and list attempted paths
+       - Instruct user to provide --chart-path
+       - Reference override file as the only supported change interface
+       - Cross-reference relevant documentation
+     - [ ] Add a sample error message to docs/PLUGIN-SPECIFIC.md and docs/HELM-PLUGIN.md
+
+   - [ ] **[P0] Testing for No-Fallback Scenario:**
+     - [ ] Test that the error is specific, actionable, and does not suggest unsupported workarounds
+
+   - [ ] **[P0] Explicitly Out-of-Scope:**
+     - [ ] Document that the tool will not attempt to download, reconstruct, or guess the chart; only user-supplied --chart-path is supported
+
+   # Prioritized Implementation Steps for Exit Code 16 Handling
+   1. Implement base fallback detection for exit code 16
+   2. Add Harbor-specific chart detection patterns
+   3. Enhance path resolution with multiple location checking
+   4. Create comprehensive unit and integration tests
+   5. Update documentation with troubleshooting information
+
+   # Usage Example for New Flag to Support Fallback
+   ```bash
+   # When automatic detection fails
+   helm irr override harbor --namespace harbor --target-registry registry.example.com --source-registries docker.io --output-file harbor.yaml --chart-path /path/to/harbor/chart
+   ```
+
+   # Documentation Updates Required
+   - [ ] Add troubleshooting section explaining exit code 16 errors
+   - [ ] Document --chart-path flag in CLI reference
+   - [ ] Update examples to show error recovery scenarios
 
 ## Phase 5: `kind` Cluster Integration Testing
 _**Goal:** Implement end-to-end tests using `kind` to validate Helm plugin interactions with a live Kubernetes API and Helm release state, ensuring read-only behavior._
