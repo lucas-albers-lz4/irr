@@ -20,7 +20,7 @@
 
 ### Phase 1: Flag Cleanup (P0: User Experience Enhancements)
 - [ ] **[P0]** Remove unused or confusing flags
-  - [ ] Remove `--output-format` flag (Not used, always YAML)
+  - [x] Remove `--output-format` flag (Not used, always YAML)
   - [ ] Remove `--debug-template` flag (Not implemented/used) 
   - [ ] Remove `--threshold` flag (No clear use case; binary success preferred)
   - [ ] Hide or remove `--strategy` flag (Only one strategy implemented; hide/remove for now)
@@ -74,13 +74,13 @@
   - [ ] Use consistent format: `<release-name>-overrides.yaml`
   - [ ] Remove any namespace component from the filename
   - [ ] Document naming convention in help text and documentation
-- [ ] **[P1]** Handle unrecognized registries sensibly
-  - [ ] Default: Skip unrecognized registries with clear warnings
-  - [ ] Add `--strict` flag that fails when unrecognized registries are found
-  - [ ] Without `--strict`: Log warnings about unrecognized registries but continue processing
-  - [ ] With `--strict`: Fail with non-zero exit code when unrecognized registries are found
-  - [ ] In both modes: Clearly log which registries were detected and which were skipped
-  - [ ] Provide specific suggestions for missing mappings
+- [x] **[P1]** Handle unrecognized registries sensibly
+  - [x] Default: Skip unrecognized registries with clear warnings
+  - [x] Add `--strict` flag that fails when unrecognized registries are found
+  - [x] Without `--strict`: Log warnings about unrecognized registries but continue processing
+  - [x] With `--strict`: Fail with non-zero exit code when unrecognized registries are found
+  - [x] In both modes: Clearly log which registries were detected and which were skipped
+  - [x] Provide specific suggestions for missing mappings
 - [ ] **[P1]** Integrate validation into override command
   - [ ] Run validation by default after generating overrides
   - [ ] Add `--no-validate` flag to skip validation
@@ -123,10 +123,10 @@
 - [ ] Test permission handling for output files
 
 ### Strict Mode Tests
-- [ ] Test normal mode skips unrecognized registries with warnings
-- [ ] Test strict mode fails on unrecognized registries
-- [ ] Test logging output in both modes
-- [ ] Test exit codes match specification
+- [x] Test normal mode skips unrecognized registries with warnings
+- [x] Test strict mode fails on unrecognized registries
+- [x] Test logging output in both modes
+- [x] Test exit codes match specification
 
 ### Error Handling Tests
 - [ ] Test each distinct error condition produces correct error code
