@@ -10,6 +10,7 @@ import (
 
 	"github.com/lalbers/irr/internal/helm"
 	"github.com/lalbers/irr/pkg/exitcodes"
+	"github.com/lalbers/irr/pkg/fileutil"
 	log "github.com/lalbers/irr/pkg/log"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
@@ -483,12 +484,13 @@ func handleStandaloneValidate(cmd *cobra.Command) error {
 }
 
 // handleHelmPluginValidate runs validation using helm plugin mode
-func handleHelmPluginValidate(cmd *cobra.Command, releaseName, namespace string, valuesFiles []string, kubeVersion string, outputFile string, strict bool) error {
+func handleHelmPluginValidate(cmd *cobra.Command, releaseName, namespace string, valuesFiles []string, kubeVersion, outputFile string, strict bool) error {
 	// Check that Helm client is initialized
 	if helmClient == nil {
 		return &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitHelmInteractionError,
-			Err:  errors.New("Helm client not initialized"),
+			// nolint:staticcheck // ST1005: Preserving capitalization for consistent user-facing errors
+			Err: errors.New("Helm client not initialized"),
 		}
 	}
 
@@ -527,7 +529,11 @@ func handleHelmPluginValidate(cmd *cobra.Command, releaseName, namespace string,
 			Err:  fmt.Errorf("failed to create temporary directory: %w", err),
 		}
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if rmErr := os.RemoveAll(tmpDir); rmErr != nil {
+			log.Warnf("Failed to remove temp dir: %v", rmErr)
+		}
+	}()
 
 	releaseValuesFile := filepath.Join(tmpDir, "release-values.yaml")
 	releaseValuesYAML, err := yaml.Marshal(releaseValues)
@@ -538,7 +544,7 @@ func handleHelmPluginValidate(cmd *cobra.Command, releaseName, namespace string,
 		}
 	}
 
-	if err := os.WriteFile(releaseValuesFile, releaseValuesYAML, 0600); err != nil {
+	if err := os.WriteFile(releaseValuesFile, releaseValuesYAML, fileutil.ReadWriteUserPermission); err != nil {
 		return &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitIOError,
 			Err:  fmt.Errorf("failed to write release values to temporary file: %w", err),
@@ -547,7 +553,7 @@ func handleHelmPluginValidate(cmd *cobra.Command, releaseName, namespace string,
 
 	// Create a temporary directory for the chart
 	chartDir := filepath.Join(tmpDir, "chart")
-	if err := os.MkdirAll(chartDir, 0700); err != nil {
+	if err := os.MkdirAll(chartDir, fileutil.ReadWriteExecuteUserReadExecuteOthers); err != nil {
 		return &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitIOError,
 			Err:  fmt.Errorf("failed to create temporary chart directory: %w", err),
@@ -556,7 +562,7 @@ func handleHelmPluginValidate(cmd *cobra.Command, releaseName, namespace string,
 
 	// We need to write the chart to disk using helm.Save
 	chartPath := filepath.Join(chartDir, releaseChart.Name())
-	if err := os.MkdirAll(chartPath, 0700); err != nil {
+	if err := os.MkdirAll(chartPath, fileutil.ReadWriteExecuteUserReadExecuteOthers); err != nil {
 		return &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitIOError,
 			Err:  fmt.Errorf("failed to create chart directory: %w", err),
@@ -573,7 +579,7 @@ func handleHelmPluginValidate(cmd *cobra.Command, releaseName, namespace string,
 			Err:  fmt.Errorf("failed to marshal chart metadata: %w", err),
 		}
 	}
-	if err := os.WriteFile(chartFile, chartYaml, 0600); err != nil {
+	if err := os.WriteFile(chartFile, chartYaml, fileutil.ReadWriteUserPermission); err != nil {
 		return &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitIOError,
 			Err:  fmt.Errorf("failed to write Chart.yaml: %w", err),
@@ -582,7 +588,7 @@ func handleHelmPluginValidate(cmd *cobra.Command, releaseName, namespace string,
 
 	// Write templates directory and files
 	templatesDir := filepath.Join(chartPath, "templates")
-	if err := os.MkdirAll(templatesDir, 0700); err != nil {
+	if err := os.MkdirAll(templatesDir, fileutil.ReadWriteExecuteUserReadExecuteOthers); err != nil {
 		return &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitIOError,
 			Err:  fmt.Errorf("failed to create templates directory: %w", err),
@@ -593,13 +599,13 @@ func handleHelmPluginValidate(cmd *cobra.Command, releaseName, namespace string,
 	for _, data := range releaseChart.Templates {
 		templateFile := filepath.Join(templatesDir, data.Name)
 		// Create subdirectories if needed
-		if err := os.MkdirAll(filepath.Dir(templateFile), 0700); err != nil {
+		if err := os.MkdirAll(filepath.Dir(templateFile), fileutil.ReadWriteExecuteUserReadExecuteOthers); err != nil {
 			return &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitIOError,
 				Err:  fmt.Errorf("failed to create template subdirectory: %w", err),
 			}
 		}
-		if err := os.WriteFile(templateFile, data.Data, 0600); err != nil {
+		if err := os.WriteFile(templateFile, data.Data, fileutil.ReadWriteUserPermission); err != nil {
 			return &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitIOError,
 				Err:  fmt.Errorf("failed to write template file %s: %w", data.Name, err),
@@ -617,7 +623,7 @@ func handleHelmPluginValidate(cmd *cobra.Command, releaseName, namespace string,
 				Err:  fmt.Errorf("failed to marshal chart values: %w", err),
 			}
 		}
-		if err := os.WriteFile(valuesFile, valuesYaml, 0600); err != nil {
+		if err := os.WriteFile(valuesFile, valuesYaml, fileutil.ReadWriteUserPermission); err != nil {
 			return &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitIOError,
 				Err:  fmt.Errorf("failed to write values.yaml: %w", err),
