@@ -44,7 +44,11 @@ linters:
     # Additionally recommended linters
     - whitespace
     - asciicheck
-    
+#tells you about too complex functions low false positive rate
+    - maintidx
+    - dogsled
+    - interfacebloat
+    - nolintlint
     # Custom linters will be added once the path to the binary is set up
     # - fileperm
 

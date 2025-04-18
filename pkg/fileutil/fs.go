@@ -9,6 +9,8 @@ import (
 )
 
 // File represents a file in the filesystem.
+//
+//nolint:interfacebloat // Compatibility with os.File and afero.File requires a large interface
 type File interface {
 	io.Closer
 	io.Reader
@@ -26,6 +28,8 @@ type File interface {
 }
 
 // FS defines the filesystem operations needed by IRR
+//
+//nolint:interfacebloat // Compatibility with afero.Fs and os filesystem abstractions requires a large interface
 type FS interface {
 	Create(name string) (File, error)
 	Mkdir(name string, perm os.FileMode) error

@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// nolint:unused // Kept for potential future uses
+//nolint:unused // Kept for potential future uses
 var arrayIndexPattern = regexp.MustCompile(`^(.*)\[(\d+)\]$`)
 
 // DeepCopy creates a deep copy of a map[string]interface{} structure.

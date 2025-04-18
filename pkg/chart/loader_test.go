@@ -150,7 +150,7 @@ image:
 
 		// This would be the ideal test, but Helm's loader doesn't support afero
 		// We're deliberately ignoring the return values but adding a comment to explain why
-		// nolint:errcheck // These return values are intentionally ignored as this code path doesn't execute (test is skipped)
+		//nolint:errcheck // These return values are intentionally ignored as this code path doesn't execute (test is skipped)
 		_, _ = loader.Load(chartDir)
 
 		// In a more advanced implementation, we would need to adapt Helm's loader

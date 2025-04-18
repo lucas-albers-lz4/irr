@@ -54,7 +54,7 @@ func setupTestRepo(t *testing.T) (tmpDir string, srv *repotest.Server, settings 
 }
 
 func TestRepositoryManager_GetRepositories(t *testing.T) {
-	_, _, _, rm, cleanup := setupTestRepo(t)
+	_, _, _, rm, cleanup := setupTestRepo(t) //nolint:dogsled // Only rm and cleanup are needed; function signature is fixed for compatibility
 	defer cleanup()
 
 	// Test GetRepositories
@@ -77,7 +77,7 @@ func TestRepositoryManager_GetRepositories(t *testing.T) {
 }
 
 func TestRepositoryManager_FindChartInRepositories(t *testing.T) {
-	_, _, _, rm, cleanup := setupTestRepo(t)
+	_, _, _, rm, cleanup := setupTestRepo(t) //nolint:dogsled // Only rm and cleanup are needed; function signature is fixed for compatibility
 	defer cleanup()
 
 	// Test finding non-existent chart (should return error)
@@ -105,7 +105,7 @@ func TestRepositoryManager_FindChartInRepositories(t *testing.T) {
 }
 
 func TestRepositoryManager_ClearCache(t *testing.T) {
-	_, _, _, rm, cleanup := setupTestRepo(t)
+	_, _, _, rm, cleanup := setupTestRepo(t) //nolint:dogsled // Only rm and cleanup are needed; function signature is fixed for compatibility
 	defer cleanup()
 
 	// Get repositories to populate cache

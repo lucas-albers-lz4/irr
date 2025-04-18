@@ -23,7 +23,7 @@ type PathStrategy interface {
 	GeneratePath(originalRef *image.Reference, targetRegistry string) (string, error)
 }
 
-// nolint:unused // Kept for potential future uses
+//nolint:unused // Kept for potential future uses
 var strategyRegistry = map[string]PathStrategy{
 	"prefix-source-registry": NewPrefixSourceRegistryStrategy(),
 	"flat":                   NewFlatStrategy(),

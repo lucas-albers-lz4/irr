@@ -16,7 +16,7 @@ var (
 
 func init() {
 	// Get the directory containing this file
-	_, thisFile, _, _ := runtime.Caller(0)
+	_, thisFile, _, _ := runtime.Caller(0) //nolint:dogsled // Only thisFile is needed
 	projectRoot := filepath.Join(filepath.Dir(thisFile), "..", "..")
 
 	// Initialize the test data directories

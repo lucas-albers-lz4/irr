@@ -354,8 +354,8 @@ func TestValidateCmd_InvalidKubeVersionFormat(t *testing.T) {
 		assert.Equal(t, invalidVersion, options.KubeVersion, "Kubernetes version should match invalid value")
 		return &helm.CommandResult{
 			Success: false,
-			Stderr:  "Error: Helm client not initialized",
-		}, fmt.Errorf("Helm client not initialized")
+			Stderr:  "Error: helm client not initialized",
+		}, fmt.Errorf("helm client not initialized")
 	}
 
 	// Setup temporary filesystem
@@ -388,7 +388,7 @@ func TestValidateCmd_InvalidKubeVersionFormat(t *testing.T) {
 	// Run the command - should fail with error
 	err := cmd.Execute()
 	require.Error(t, err, "Command should fail with invalid Kubernetes version")
-	assert.Contains(t, err.Error(), "Helm client not initialized", "Error should mention invalid version")
+	assert.Contains(t, err.Error(), "helm client not initialized", "Error should mention invalid version")
 
 	// Save original isHelmPlugin value and restore after test
 	originalIsHelmPlugin := isHelmPlugin
@@ -417,7 +417,7 @@ func TestValidateCmd_InvalidKubeVersionFormat(t *testing.T) {
 	// Execute command - should fail with error
 	err = cmd.Execute()
 	require.Error(t, err, "Command should fail with invalid Kubernetes version")
-	assert.Contains(t, err.Error(), "Helm client not initialized", "Error should mention invalid version")
+	assert.Contains(t, err.Error(), "helm client not initialized", "Error should mention invalid version")
 }
 
 // TestValidateCmd_KubeVersionPrecedence requires modification of how TemplateOptions

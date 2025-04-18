@@ -282,48 +282,65 @@ func (h *TestHarness) GenerateOverrides(extraArgs ...string) error {
 func (h *TestHarness) ValidateOverrides() error {
 	h.logger.Printf("Validating overrides for chart: %s", h.chartPath)
 
-	// Load mappings first to determine expected target registries.
-	// This was moved to the beginning to fix an issue where the mapping file
-	// was potentially parsed incorrectly later using a simple map[string]string.
-	// Loading here ensures the correct structure (registry.Mappings) is used
-	// and avoids redundant file reads.
-	mappings := &registry.Mappings{} // Initialize as non-nil
+	mappings, err := h.loadMappings()
+	if err != nil {
+		return err
+	}
+
+	expectedTargets := h.determineExpectedTargets(mappings)
+	h.logger.Printf("Expecting images to use target registries: %v", expectedTargets)
+
+	tempValidationOverridesPath, err := h.readAndWriteOverrides()
+	if err != nil {
+		return err
+	}
+
+	args := h.buildHelmArgs(tempValidationOverridesPath)
+
+	output, err := h.ExecuteHelm(args...)
+	if err != nil {
+		return fmt.Errorf("helm template validation failed: %w\nOutput:\n%s", err, output)
+	}
+
+	actualOverrides, getOverridesErr := h.getOverrides()
+	actualTargetsUsed := make(map[string]bool)
+
+	err = h.validateHelmOutput(getOverridesErr, mappings, output, actualOverrides, actualTargetsUsed)
+	if err != nil {
+		return err
+	}
+
+	h.t.Log("Helm template validation successful.")
+	return nil
+}
+
+func (h *TestHarness) loadMappings() (*registry.Mappings, error) {
+	mappings := &registry.Mappings{}
 	if h.mappingsPath != "" {
-		// Ensure the file exists before attempting to load
 		_, statErr := os.Stat(h.mappingsPath)
 		switch {
 		case statErr == nil:
-			// Path traversal for harness loading is now handled via skipCWDRestriction parameter
-
-			// Load using afero.NewOsFs() and the absolute path, skipping CWD check
-			loadedMappings, loadErr := registry.LoadMappings(afero.NewOsFs(), h.mappingsPath, true) // Pass true for skipCWDRestriction
+			loadedMappings, loadErr := registry.LoadMappings(afero.NewOsFs(), h.mappingsPath, true)
 			if loadErr != nil {
-				// Propagate error if mappings file specified but cannot be loaded
-				return fmt.Errorf(
-					"failed to load mappings file %s for validation: %w",
-					h.mappingsPath,
-					loadErr,
-				)
+				return nil, fmt.Errorf("failed to load mappings file %s for validation: %w", h.mappingsPath, loadErr)
 			}
 			mappings = loadedMappings
 			h.logger.Printf("Successfully loaded mappings from %s", h.mappingsPath)
 		case os.IsNotExist(statErr):
-			// File doesn't exist, proceed without mappings
 			h.logger.Printf("Mappings file %s does not exist, proceeding without mappings.", h.mappingsPath)
 		default:
-			// Log other errors encountered during stat
 			h.logger.Printf("Warning: Error stating mappings file %s: %v", h.mappingsPath, statErr)
 		}
 	} else {
 		h.logger.Printf("No mappings file path specified for harness.")
 	}
+	return mappings, nil
+}
 
-	// Determine expected target registries based on mapping file or default target
+func (h *TestHarness) determineExpectedTargets(mappings *registry.Mappings) []string {
 	expectedTargets := []string{}
-
 	switch {
 	case mappings != nil && len(mappings.Entries) > 0:
-		// Use targets from mappings if available
 		uniqueTargets := make(map[string]struct{})
 		for _, entry := range mappings.Entries {
 			if entry.Target != "" {
@@ -334,18 +351,13 @@ func (h *TestHarness) ValidateOverrides() error {
 				}
 			}
 		}
-
-		// If mappings exist but have no targets, fall back to default
 		if len(expectedTargets) == 0 {
 			h.logger.Printf("Mappings file loaded but contains no target registries. Falling back to default.")
 			expectedTargets = append(expectedTargets, image.NormalizeRegistry(h.targetReg))
 		}
 	default:
-		// No mappings file or empty mappings, use the default target registry
 		expectedTargets = append(expectedTargets, image.NormalizeRegistry(h.targetReg))
 	}
-
-	// Remove duplicates just in case the fallback logic added one already present
 	finalExpectedTargets := []string{}
 	seenTargets := make(map[string]bool)
 	for _, target := range expectedTargets {
@@ -354,12 +366,10 @@ func (h *TestHarness) ValidateOverrides() error {
 			seenTargets[target] = true
 		}
 	}
-	expectedTargets = finalExpectedTargets // Use the cleaned list
+	return finalExpectedTargets
+}
 
-	h.logger.Printf("Expecting images to use target registries: %v", expectedTargets)
-
-	// Read the generated overrides file content for validation
-	// #nosec G304 -- Reading a test-generated file from the test's temp directory is safe.
+func (h *TestHarness) readAndWriteOverrides() (string, error) {
 	currentOverridesBytes, err := os.ReadFile(h.overridePath)
 	if err != nil {
 		h.t.Logf("Warning: failed to read overrides file %s locally for modification: %v", h.overridePath, err)
@@ -367,119 +377,89 @@ func (h *TestHarness) ValidateOverrides() error {
 	} else {
 		h.t.Logf("Read %d bytes from overrides file: %s", len(currentOverridesBytes), h.overridePath)
 	}
-
-	// Write the potentially modified overrides to a *temporary* file for helm template validation
 	tempValidationOverridesPath := filepath.Join(h.tempDir, "validation-overrides.yaml")
-	// #nosec G306 -- Using secure permissions (0600) for test-generated file
 	if err := os.WriteFile(tempValidationOverridesPath, currentOverridesBytes, defaultFilePerm); err != nil {
-		return fmt.Errorf(
-			"failed to write temporary validation overrides file %s: %w",
-			tempValidationOverridesPath,
-			err,
-		)
+		return "", fmt.Errorf("failed to write temporary validation overrides file %s: %w", tempValidationOverridesPath, err)
 	}
 	h.t.Logf("Wrote %d bytes to temporary validation file: %s", len(currentOverridesBytes), tempValidationOverridesPath)
+	return tempValidationOverridesPath, nil
+}
 
-	// Helm template command for validation (using tempValidationOverridesPath)
+func (h *TestHarness) buildHelmArgs(tempValidationOverridesPath string) []string {
 	args := []string{"template", "test-release", h.chartPath, "-f", tempValidationOverridesPath}
-
-	// HACK: Bitnami charts often have validation that fails if images are changed.
-	// Allow insecure images for known Bitnami charts to pass validation.
-	// TODO: Find a more robust way to detect/handle this.
-	if h.chartName == "ingress-nginx" { // Assuming h.chartName is reliably set
+	if h.chartName == "ingress-nginx" {
 		args = append(args, "--set", "global.security.allowInsecureImages=true")
 		h.logger.Printf("Detected ingress-nginx chart, adding --set global.security.allowInsecureImages=true for validation")
 	}
+	return args
+}
 
-	// ... (Add bitnami flags etc.)
-
-	output, err := h.ExecuteHelm(args...)
-	if err != nil {
-		return fmt.Errorf("helm template validation failed: %w\nOutput:\n%s", err, output)
-	}
-
-	// Get the actual overrides generated to find the real target registries used.
-	actualOverrides, getOverridesErr := h.getOverrides()
-	actualTargetsUsed := make(map[string]bool)
-
+func (h *TestHarness) validateHelmOutput(getOverridesErr error, mappings *registry.Mappings, output string, actualOverrides map[string]interface{}, actualTargetsUsed map[string]bool) error {
 	switch {
 	case getOverridesErr != nil:
 		h.t.Logf("Warning: Could not read overrides file (%s) for validation: %v. Falling back to checking configured targets.", h.overridePath, getOverridesErr)
-
-		// -- Fallback Check Logic --
-		expectedTargets := []string{h.targetReg}
-		if mappings != nil {
-			for _, entry := range mappings.Entries {
-				if entry.Target != "" {
-					expectedTargets = append(expectedTargets, entry.Target)
-				}
-			}
-		}
-		foundExpectedTarget := false
-		for _, target := range expectedTargets {
-			// Use image.NormalizeRegistry (assuming import added)
-			normTarget := image.NormalizeRegistry(target)
-			if normTarget != "" && strings.Contains(output, normTarget) {
-				foundExpectedTarget = true
-				h.t.Logf("[Fallback Check] Found configured target registry %s (normalized) in Helm output.", normTarget)
-				break
-			}
-		}
-		if !foundExpectedTarget {
-			return fmt.Errorf(
-				"[Fallback Check] no configured target registry "+
-					"(default: %s or mapped: %v) found in validated helm template output",
-				h.targetReg,
-				expectedTargets,
-			)
-		}
-		// -- End Fallback Check --
-
+		return h.fallbackCheck(mappings, output)
 	case len(actualOverrides) == 0:
 		h.t.Log("Overrides file is empty. Skipping registry validation in Helm output.")
-
+		return nil
 	default:
-		// Successfully read overrides, find actual targets used.
-		h.WalkImageFields(actualOverrides, func(_ []string, value interface{}) { // Fix: Mark path as unused with _
+		h.WalkImageFields(actualOverrides, func(_ []string, value interface{}) {
 			if imageMap, ok := value.(map[string]interface{}); ok {
 				if reg, ok := imageMap["registry"].(string); ok && reg != "" {
-					actualTargetsUsed[image.NormalizeRegistry(reg)] = true // Normalize here too
+					actualTargetsUsed[image.NormalizeRegistry(reg)] = true
 				}
 			}
 			if imageStr, ok := value.(string); ok && imageStr != "" {
 				ref, parseErr := image.ParseImageReference(imageStr)
 				if parseErr == nil && ref != nil && ref.Registry != "" {
-					actualTargetsUsed[image.NormalizeRegistry(ref.Registry)] = true // Normalize here too
+					actualTargetsUsed[image.NormalizeRegistry(ref.Registry)] = true
 				}
 			}
 		})
-
 		if len(actualTargetsUsed) == 0 {
 			h.t.Log("No image registry keys/values found in the generated overrides file. Validation check skipped.")
-		} else {
-			foundActualTargetInOutput := false
-			for target := range actualTargetsUsed {
-				if strings.Contains(output, target) { // Check against normalized target
-					foundActualTargetInOutput = true
-					h.t.Logf("Found actual target registry %s from overrides in Helm output.", target)
-					break
-				}
+			return nil
+		}
+		foundActualTargetInOutput := false
+		for target := range actualTargetsUsed {
+			if strings.Contains(output, target) {
+				foundActualTargetInOutput = true
+				h.t.Logf("Found actual target registry %s from overrides in Helm output.", target)
+				break
 			}
-			if !foundActualTargetInOutput {
-				targetsSlice := make([]string, 0, len(actualTargetsUsed))
-				for target := range actualTargetsUsed {
-					targetsSlice = append(targetsSlice, target)
-				}
-				return fmt.Errorf(
-					"no actual target registry used in overrides (%v) "+
-						"found in validated helm template output",
-					targetsSlice,
-				)
+		}
+		if !foundActualTargetInOutput {
+			targetsSlice := make([]string, 0, len(actualTargetsUsed))
+			for target := range actualTargetsUsed {
+				targetsSlice = append(targetsSlice, target)
+			}
+			return fmt.Errorf("no actual target registry used in overrides (%v) found in validated helm template output", targetsSlice)
+		}
+		return nil
+	}
+}
+
+func (h *TestHarness) fallbackCheck(mappings *registry.Mappings, output string) error {
+	expectedTargets := []string{h.targetReg}
+	if mappings != nil {
+		for _, entry := range mappings.Entries {
+			if entry.Target != "" {
+				expectedTargets = append(expectedTargets, entry.Target)
 			}
 		}
 	}
-
-	h.t.Log("Helm template validation successful.")
+	foundExpectedTarget := false
+	for _, target := range expectedTargets {
+		normTarget := image.NormalizeRegistry(target)
+		if normTarget != "" && strings.Contains(output, normTarget) {
+			foundExpectedTarget = true
+			h.t.Logf("[Fallback Check] Found configured target registry %s (normalized) in Helm output.", normTarget)
+			break
+		}
+	}
+	if !foundExpectedTarget {
+		return fmt.Errorf("[Fallback Check] no configured target registry (default: %s or mapped: %v) found in validated helm template output", h.targetReg, expectedTargets)
+	}
 	return nil
 }
 
