@@ -65,15 +65,8 @@
 
 ## Phase 3 bugfix
 
-- [ ] Fix `--kube-version` handling in `irr validate`:
-    - [x] Standalone mode: Confirmed working. Passing `--kube-version` correctly sets the version for Helm template rendering, and debug output is visible.
-    - [ ] Plugin mode: **Bug is isolated to plugin path.** The `--kube-version` value is not being passed through the plugin adapter (`ValidateRelease`) to the Helm SDK/template logic. No debug output is visible in plugin mode.
-    - [ ] **Action:**
-        - Update the plugin adapter (`ValidateRelease` and any related methods) to accept a `kubeVersion` argument.
-        - Pass the `kubeVersion` value from the CLI all the way through the adapter to the Helm SDK/template call.
-        - Add debug logging in the adapter to confirm the value is received and used.
-    - [ ] Add/Update Tests: Ensure plugin mode with `--kube-version` works and debug output is visible.
-    - [ ] Verify Docs: Ensure `docs/PLUGIN-SPECIFIC.md` and `docs/LOGGING.md` reflect the fixed behavior and plugin-specific handling.
+
+    example commands to reproduce the problem : standalone : `bin/irr validate --chart-path /Users/lalbers/Library/Caches/helm/repository/cert-manager-v1.17.1.tgz --values cert-manager-overrides.yaml --kube-version 1.29.0 --debug`; and to test the plugin : ` helm irr validate cert-manager -n cert-manager --values cert-manager-overrides.yaml --debug` and test plugin with setting the kube-version : `helm irr validate cert-manager -n cert-manager --values cert-manager-overrides.yaml --debug --kube-version 1.29.0`
 
 ## Phase 5: `kind` Cluster Integration Testing
 _**Goal:** Implement end-to-end tests using `kind` to validate Helm plugin interactions with a live Kubernetes API and Helm release state, ensuring read-only behavior._
