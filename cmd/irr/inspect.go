@@ -2,8 +2,9 @@ package main
 
 import (
 	"context"
-	"errors"
+	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -27,6 +28,12 @@ import (
 const (
 	// SecureFilePerms is the permission set used for files created by the inspect command
 	SecureFilePerms = 0o600
+
+	// SecureDirPerms is the permission set used for directories created by the inspect command
+	SecureDirPerms = 0o700
+
+	// DefaultConfigSkeletonFilename is the default filename for the generated config skeleton
+	DefaultConfigSkeletonFilename = "irr-config.yaml"
 )
 
 // ChartInfo represents basic chart information
@@ -48,11 +55,11 @@ type ImageInfo struct {
 
 // ImageAnalysis represents the result of analyzing a chart for images
 type ImageAnalysis struct {
-	Chart    ChartInfo               `json:"chart" yaml:"chart"`
-	Images   []ImageInfo             `json:"images" yaml:"images"`
-	Patterns []analyzer.ImagePattern `json:"patterns" yaml:"patterns"`
-	Errors   []string                `json:"errors,omitempty" yaml:"errors,omitempty"`
-	Skipped  []string                `json:"skipped,omitempty" yaml:"skipped,omitempty"`
+	Chart         ChartInfo               `json:"chart" yaml:"chart"`
+	Images        []ImageInfo             `json:"images" yaml:"images"`
+	ImagePatterns []analyzer.ImagePattern `json:"imagePatterns" yaml:"imagePatterns"`
+	Errors        []string                `json:"errors,omitempty" yaml:"errors,omitempty"`
+	Skipped       []string                `json:"skipped,omitempty" yaml:"skipped,omitempty"`
 }
 
 // InspectFlags holds the command line flags for the inspect command
@@ -140,10 +147,10 @@ func analyzeChart(chartData *chart.Chart, config *analyzer.Config) (*ImageAnalys
 
 	// Create analysis result
 	analysis := &ImageAnalysis{
-		Chart:    chartInfo,
-		Images:   images,
-		Patterns: patterns,
-		Skipped:  skipped,
+		Chart:         chartInfo,
+		Images:        images,
+		ImagePatterns: patterns,
+		Skipped:       skipped,
 	}
 
 	return analysis, nil
@@ -155,7 +162,7 @@ func writeOutput(analysis *ImageAnalysis, flags *InspectFlags) error {
 	if flags.GenerateConfigSkeleton {
 		skeletonFile := flags.OutputFile
 		if skeletonFile == "" {
-			skeletonFile = "irr-config.yaml"
+			skeletonFile = DefaultConfigSkeletonFilename
 		}
 		if err := createConfigSkeleton(analysis.Images, skeletonFile); err != nil {
 			return &exitcodes.ExitCodeError{
@@ -166,12 +173,26 @@ func writeOutput(analysis *ImageAnalysis, flags *InspectFlags) error {
 		return nil
 	}
 
-	// Marshal analysis to YAML
-	output, err := yaml.Marshal(analysis)
-	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitGeneralRuntimeError,
-			Err:  fmt.Errorf("failed to marshal analysis to YAML: %w", err),
+	// Marshal analysis to YAML or JSON based on output format
+	var output []byte
+	var err error
+
+	if flags.OutputFormat == "json" {
+		output, err = json.Marshal(analysis)
+		if err != nil {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitGeneralRuntimeError,
+				Err:  fmt.Errorf("failed to marshal analysis to JSON: %w", err),
+			}
+		}
+	} else {
+		// Default to YAML
+		output, err = yaml.Marshal(analysis)
+		if err != nil {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitGeneralRuntimeError,
+				Err:  fmt.Errorf("failed to marshal analysis to YAML: %w", err),
+			}
 		}
 	}
 
@@ -193,115 +214,121 @@ func writeOutput(analysis *ImageAnalysis, flags *InspectFlags) error {
 
 // runInspect implements the inspect command logic
 func runInspect(cmd *cobra.Command, args []string) error {
-	// Add debug logging
-	log.Debugf("runInspect called with args: %v, isHelmPlugin: %v", args, isHelmPlugin)
-
-	// Check if a release name was provided (either via flag or positional argument)
-	releaseName, err := cmd.Flags().GetString("release-name")
-	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get release-name flag: %w", err),
-		}
-	}
-	log.Debugf("Release name from flag: %q", releaseName)
-
-	// Check for positional argument as release name if flag is not set and we're running as a plugin
-	if releaseName == "" && len(args) > 0 {
-		releaseName = args[0]
-		log.Debugf("Using %q as release name from positional argument", releaseName)
-	}
-
-	// Get namespace for Helm operations
-	namespace, err := cmd.Flags().GetString("namespace")
-	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get namespace flag: %w", err),
-		}
-	}
-	log.Debugf("Namespace: %q", namespace)
-
-	// Determine if release name was provided
-	releaseNameProvided := releaseName != ""
-	log.Debugf("Release name provided: %v (%q)", releaseNameProvided, releaseName)
-
-	// Get command flags - only require chart-path if we're not using a release name in Helm plugin mode
-	flags, err := getInspectFlags(cmd, releaseNameProvided && isHelmPlugin)
+	// Get flags
+	flags, err := getInspectFlags(cmd, len(args) > 0)
 	if err != nil {
 		return err
 	}
 
-	// Determine if chart path was provided
-	chartPathProvided := flags.ChartPath != ""
-
-	// Error if neither chart path nor release name is provided
-	if !chartPathProvided && !releaseNameProvided {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  errors.New("either --chart-path or release name must be provided"),
+	// If running as a Helm plugin with a release name, use that approach
+	if isHelmPlugin && len(args) > 0 {
+		releaseName := args[0]
+		namespace, err := cmd.Flags().GetString("namespace")
+		if err != nil {
+			namespace = ""
 		}
-	}
-
-	// Log which input source we're using
-	if chartPathProvided {
-		log.Infof("Using chart path: %s", flags.ChartPath)
-		if releaseNameProvided && isHelmPlugin {
-			log.Infof("Chart path provided, ignoring release name: %s", releaseName)
-		}
-	} else if releaseNameProvided && isHelmPlugin {
-		log.Infof("Using release name: %s in namespace: %s", releaseName, namespace)
-	}
-
-	// Handle Helm release mode if a release name is provided and we're running as a plugin
-	if releaseNameProvided && isHelmPlugin && !chartPathProvided {
 		return inspectHelmRelease(cmd, flags, releaseName, namespace)
 	}
 
-	// If chart path is not specified, try to detect a chart in the current directory
-	if flags.ChartPath == "" {
-		chartPath, err := detectChartInCurrentDirectory()
+	// Determine chart path
+	chartPath := flags.ChartPath
+	if chartPath == "" {
+		// Try to detect chart in current directory
+		detectedPath, err := detectChartInCurrentDirectory()
 		if err != nil {
+			log.Errorf("No chart path provided and failed to detect chart: %v", err)
 			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitChartNotFound,
-				Err:  fmt.Errorf("chart path not specified and %w", err),
+				Code: exitcodes.ExitInputConfigurationError,
+				Err:  fmt.Errorf("neither chart path nor release name provided, and failed to auto-detect chart"),
 			}
 		}
-		flags.ChartPath = chartPath
-		log.Infof("Detected chart at %s", chartPath)
+		chartPath = detectedPath
+		log.Infof("Auto-detected chart path: %s", chartPath)
 	}
+	log.Infof("Using chart path: %s", chartPath)
 
-	// Load chart
-	chartData, err := loadHelmChart(flags.ChartPath)
+	// Load the chart
+	chartData, err := loadHelmChart(chartPath)
 	if err != nil {
-		return err
+		log.Errorf("Failed to load chart: %s", err)
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitChartNotFound,
+			Err:  fmt.Errorf("chart path not found or invalid: %w", err),
+		}
 	}
 
 	// Analyze chart
 	analysis, err := analyzeChart(chartData, flags.AnalyzerConfig)
 	if err != nil {
-		return err
+		log.Errorf("Chart analysis failed: %s", err)
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitHelmCommandFailed,
+			Err:  fmt.Errorf("chart analysis failed: %w", err),
+		}
 	}
 
-	// Filter images by source registry if specified
+	// Filter images based on source registries if provided
 	if len(flags.SourceRegistries) > 0 {
-		registrySet := make(map[string]bool)
-		for _, reg := range flags.SourceRegistries {
-			registrySet[reg] = true
-		}
-
 		var filteredImages []ImageInfo
 		for _, img := range analysis.Images {
-			if registrySet[img.Registry] {
-				filteredImages = append(filteredImages, img)
+			// Check if this image's registry is in the source registries list
+			for _, srcReg := range flags.SourceRegistries {
+				if strings.EqualFold(img.Registry, srcReg) {
+					filteredImages = append(filteredImages, img)
+					break
+				}
 			}
 		}
-		analysis.Images = filteredImages
-		log.Infof("Filtered images by source registries: %v", flags.SourceRegistries)
+		// Replace the images with filtered list
+		if len(filteredImages) < len(analysis.Images) {
+			log.Infof("Filtered images from %d to %d based on source registries", len(analysis.Images), len(filteredImages))
+			analysis.Images = filteredImages
+		}
+	}
+
+	// Generate config skeleton if requested
+	if flags.GenerateConfigSkeleton {
+		// If no specific output file was provided for the config skeleton,
+		// use the default in the current working directory
+		configFile := DefaultConfigSkeletonFilename
+		if flags.OutputFile != "" {
+			configFile = flags.OutputFile
+		}
+
+		// If the file path is not absolute, make it absolute from current directory
+		if !filepath.IsAbs(configFile) {
+			// Get current working directory
+			cwd, err := os.Getwd()
+			if err != nil {
+				log.Warnf("Failed to get current working directory: %v", err)
+			} else {
+				configFile = filepath.Join(cwd, configFile)
+			}
+		}
+
+		err := createConfigSkeleton(analysis.Images, configFile)
+		if err != nil {
+			log.Errorf("Failed to generate config skeleton: %s", err)
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitGeneralRuntimeError,
+				Err:  fmt.Errorf("failed to generate config skeleton: %w", err),
+			}
+		}
+		// Already wrote config file, don't also write analysis output
+		return nil
 	}
 
 	// Write output
-	return writeOutput(analysis, flags)
+	err = writeOutput(analysis, flags)
+	if err != nil {
+		log.Errorf("Failed to write output: %s", err)
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitGeneralRuntimeError,
+			Err:  fmt.Errorf("failed to write output: %w", err),
+		}
+	}
+
+	return nil
 }
 
 // inspectHelmRelease handles inspection logic for a Helm release (extracted from runInspect)
@@ -372,10 +399,10 @@ func inspectHelmRelease(cmd *cobra.Command, flags *InspectFlags, releaseName, na
 
 	// Create analysis result
 	analysis := &ImageAnalysis{
-		Chart:    chartInfo,
-		Images:   images,
-		Patterns: patterns,
-		Skipped:  skipped,
+		Chart:         chartInfo,
+		Images:        images,
+		ImagePatterns: patterns,
+		Skipped:       skipped,
 	}
 
 	// Apply source registry filtering if needed
@@ -455,10 +482,10 @@ func getInspectFlags(cmd *cobra.Command, releaseNameProvided bool) (*InspectFlag
 
 	// Validate output format
 	outputFormat = strings.ToLower(outputFormat)
-	if outputFormat != "yaml" {
+	if outputFormat != "yaml" && outputFormat != "json" {
 		return nil, &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("unsupported output format: %s (only 'yaml' supported)", outputFormat),
+			Err:  fmt.Errorf("unsupported output format: %s (supported formats: 'yaml', 'json')", outputFormat),
 		}
 	}
 
@@ -634,6 +661,20 @@ func detectChartInCurrentDirectory() (string, error) {
 
 // createConfigSkeleton generates a configuration skeleton based on the image analysis
 func createConfigSkeleton(images []ImageInfo, outputFile string) error {
+	// Use default filename if none specified
+	if outputFile == "" {
+		outputFile = DefaultConfigSkeletonFilename
+		log.Infof("No output file specified, using default: %s", outputFile)
+	}
+
+	// Ensure the directory exists before trying to write the file
+	dir := filepath.Dir(outputFile)
+	if dir != "" && dir != "." {
+		if err := AppFs.MkdirAll(dir, SecureDirPerms); err != nil {
+			return fmt.Errorf("failed to create directory for config skeleton: %w", err)
+		}
+	}
+
 	// Extract unique registries from images
 	registries := make(map[string]bool)
 	for _, img := range images {
@@ -652,12 +693,10 @@ func createConfigSkeleton(images []ImageInfo, outputFile string) error {
 	// Create skeleton config
 	config := struct {
 		RegistryMappings  map[string]string `yaml:"registry_mappings"`
-		ExcludeRegistries []string          `yaml:"exclude_registries,omitempty"`
-		PathStrategy      string            `yaml:"path_strategy"`
+		PrivateRegistries []string          `yaml:"private_registries"`
 	}{
 		RegistryMappings:  make(map[string]string),
-		ExcludeRegistries: []string{},
-		PathStrategy:      "prefix-source-registry", // default
+		PrivateRegistries: []string{},
 	}
 
 	// Fill in registry mappings with placeholders
@@ -665,17 +704,31 @@ func createConfigSkeleton(images []ImageInfo, outputFile string) error {
 		config.RegistryMappings[registry] = "registry.local/" + strings.ReplaceAll(registry, ".", "-")
 	}
 
-	// Convert to YAML
+	// Marshal to YAML
 	configYAML, err := yaml.Marshal(config)
 	if err != nil {
-		return fmt.Errorf("failed to generate YAML: %w", err)
+		return fmt.Errorf("failed to marshal config skeleton: %w", err)
 	}
 
-	// Add comments to the YAML
-	yamlWithComments := "# IRR Configuration Skeleton\n" +
-		"# Generated based on image analysis\n" +
-		"# Replace placeholder values with your actual registry mappings\n\n" +
-		string(configYAML)
+	// Add helpful comments
+	yamlWithComments := strings.ReplaceAll(
+		fmt.Sprintf(`# IRR Configuration File
+# 
+# This is a skeleton configuration for IRR based on the chart analysis.
+# Update the target registry mappings with your actual registries.
+# 
+# Uncomment and populate the private_registries section if you need to authenticate to any registries.
+# Example:
+# private_registries:
+#   - registry: registry.example.com
+#     username: username
+#     password: password  # Or use password_file to reference a file containing the password
+#     insecure: false     # Set to true to skip TLS verification
+#
+%s`, string(configYAML)),
+		"\n  - []\n",
+		"\n#  - registry: registry.example.com\n#    username: username\n#    password: password\n",
+	)
 
 	// Write the skeleton file
 	err = afero.WriteFile(AppFs, outputFile, []byte(yamlWithComments), SecureFilePerms)
@@ -683,6 +736,11 @@ func createConfigSkeleton(images []ImageInfo, outputFile string) error {
 		return fmt.Errorf("failed to write config skeleton: %w", err)
 	}
 
-	log.Infof("Config skeleton written to %s", outputFile)
+	absPath, err := filepath.Abs(outputFile)
+	if err == nil {
+		log.Infof("Config skeleton written to %s", absPath)
+	} else {
+		log.Infof("Config skeleton written to %s", outputFile)
+	}
 	return nil
 }

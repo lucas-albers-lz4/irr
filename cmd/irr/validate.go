@@ -304,6 +304,7 @@ func validateChartWithFiles(chartPath, releaseName, namespace string, valuesFile
 		ValuesFiles: valuesFiles,
 		Namespace:   namespace,
 		KubeVersion: kubeVersion,
+		Strict:      strict, // Set strict flag in options
 	}
 
 	// Log namespace if specified
@@ -313,6 +314,11 @@ func validateChartWithFiles(chartPath, releaseName, namespace string, valuesFile
 
 	// Log Kubernetes version
 	log.Debugf("Using Kubernetes version '%s' for validation", kubeVersion)
+
+	// Log if strict mode is enabled
+	if strict {
+		log.Debugf("Strict validation mode enabled")
+	}
 
 	// Execute Helm template command
 	result, err := helm.HelmTemplateFunc(templateOptions)
@@ -355,13 +361,50 @@ func validateChartWithFiles(chartPath, releaseName, namespace string, valuesFile
 			}
 		}
 
+		// Check for YAML parsing errors which indicate invalid values file
+		if strings.Contains(err.Error(), "yaml:") || strings.Contains(err.Error(), "YAML") {
+			return "", &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitInputConfigurationError,
+				Err:  fmt.Errorf("validation failed due to invalid YAML: %w", err),
+			}
+		}
+
+		// In strict mode, return the error with appropriate exit code
 		if strict {
 			return "", &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitHelmCommandFailed,
-				Err:  fmt.Errorf("chart validation failed: %w", err),
+				Err:  fmt.Errorf("chart validation failed in strict mode: %w", err),
 			}
 		}
-		return "", nil
+
+		// If not in strict mode, still return the error for validation failures
+		return "", &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitHelmCommandFailed,
+			Err:  fmt.Errorf("chart validation failed: %w", err),
+		}
+	}
+
+	// If in strict mode, perform additional validation on the rendered output
+	if strict && result != nil && result.Stdout != "" {
+		output := result.Stdout
+
+		// Check for unresolved Helm template variables like {{ .Values.something }}
+		if strings.Contains(output, "{{") && strings.Contains(output, "}}") {
+			log.Errorf("Strict validation failed: Found unresolved template variables in output")
+			return "", &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitHelmCommandFailed,
+				Err:  fmt.Errorf("strict validation failed: unresolved template variables found in rendered output"),
+			}
+		}
+
+		// Check for other problematic patterns
+		if strings.Contains(output, "<no value>") {
+			log.Errorf("Strict validation failed: Found <no value> placeholders in output")
+			return "", &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitHelmCommandFailed,
+				Err:  fmt.Errorf("strict validation failed: <no value> placeholders found in rendered output"),
+			}
+		}
 	}
 
 	log.Infof("Validation successful: Chart rendered successfully with values.")

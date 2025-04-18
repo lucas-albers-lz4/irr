@@ -611,6 +611,56 @@ func (h *TestHarness) ExecuteIRR(args ...string) (output string, err error) {
 	return outputStr, nil
 }
 
+// ExecuteIRRWithStderr runs the 'irr' binary with the given arguments and returns both stdout and stderr separately.
+func (h *TestHarness) ExecuteIRRWithStderr(args ...string) (stdout, stderr string, err error) {
+	path := h.getBinaryPath()
+
+	h.logger.Printf("Running: %s %s", path, strings.Join(args, " "))
+
+	// For integration tests, we need to enable debug warning messages to help with diagnostics
+	debug.EnableDebugEnvVarWarnings()
+	defer func() {
+		debug.ShowDebugEnvWarnings = false
+	}()
+
+	// Always include the integration-test flag to allow loading registry files from temp directories
+	args = append([]string{"--integration-test"}, args...)
+
+	// #nosec G204 -- This is test code and args are controlled by tests
+	cmd := exec.Command(path, args...)
+	cmd.Dir = h.rootDir // Run from project root
+
+	// Capture stdout and stderr separately
+	var outBuf bytes.Buffer
+	var stderrBuf bytes.Buffer
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &stderrBuf
+
+	// Run the command
+	err = cmd.Run()
+	stdout = outBuf.String()
+	stderr = stderrBuf.String()
+
+	// ALWAYS log the full output for debugging purposes
+	if stdout != "" {
+		h.logger.Printf("[HARNESS EXECUTE_IRR_WITH_STDERR] Stdout:\n%s", stdout)
+	}
+
+	if stderr != "" {
+		h.logger.Printf("[HARNESS EXECUTE_IRR_WITH_STDERR] Stderr:\n%s", stderr)
+	}
+
+	if err != nil {
+		// Return error along with stdout and stderr
+		return stdout, stderr, fmt.Errorf(
+			"irr command execution failed: %w",
+			err,
+		)
+	}
+
+	return stdout, stderr, nil
+}
+
 // ExecuteHelm runs the helm binary with the given arguments.
 func (h *TestHarness) ExecuteHelm(args ...string) (output string, err error) {
 	// #nosec G204 // Test harness executes helm with test-controlled arguments

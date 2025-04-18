@@ -3,6 +3,7 @@ package helm
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -280,9 +281,14 @@ func (a *Adapter) OverrideRelease(ctx context.Context, releaseName, namespace st
 
 // sanitizeRegistryForPath sanitizes a registry name for use in a path
 func sanitizeRegistryForPath(registry string) string {
-	// Replace dots and slashes with nothing
-	s := registry
-	s = filepath.Base(s) // Remove any paths
+	// Split off port if present
+	hostPart := registry
+	if host, _, err := net.SplitHostPort(registry); err == nil {
+		hostPart = host
+	}
+
+	// Replace dots and dashes with nothing
+	s := hostPart
 	s = strings.ReplaceAll(s, ".", "")
 	s = strings.ReplaceAll(s, "-", "")
 	return s

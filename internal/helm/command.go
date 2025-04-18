@@ -34,6 +34,7 @@ type TemplateOptions struct {
 	SetValues   []string
 	Namespace   string
 	KubeVersion string
+	Strict      bool
 }
 
 // GetValuesOptions represents options for helm get values command
@@ -60,6 +61,13 @@ func Template(options *TemplateOptions) (*CommandResult, error) {
 	install.DryRun = true       // Perform a template operation
 	install.ClientOnly = true   // Do not connect to a cluster
 	install.IncludeCRDs = false // Typically not needed for simple validation
+
+	// Log if strict mode is enabled
+	if options.Strict {
+		log.Debugf("Using strict mode for templating")
+		// Note: Helm SDK doesn't support strict mode via action.Install directly
+		// We'll implement our own strict validation after the template is generated
+	}
 
 	// Set namespace if provided
 	if options.Namespace != "" {

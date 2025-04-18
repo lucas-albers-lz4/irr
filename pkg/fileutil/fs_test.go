@@ -397,3 +397,37 @@ func TestAferoFile(t *testing.T) {
 	err = file.Close()
 	assert.NoError(t, err, "Close should not return an error")
 }
+
+func TestGetUnderlyingFs(t *testing.T) {
+	// Create different types of filesystems
+	osFs := afero.NewOsFs()
+	memFs := afero.NewMemMapFs()
+
+	// Test with regular OsFs
+	underlyingFs := GetUnderlyingFs(osFs)
+	assert.Equal(t, osFs, underlyingFs, "OsFs should return itself as the underlying fs")
+
+	// Test with regular MemMapFs
+	underlyingFs = GetUnderlyingFs(memFs)
+	assert.Equal(t, memFs, underlyingFs, "MemMapFs should return itself as the underlying fs")
+
+	// Test with a BasePathFs
+	basePathFs := afero.NewBasePathFs(memFs, "/base")
+	underlyingFs = GetUnderlyingFs(basePathFs)
+	assert.Equal(t, memFs, underlyingFs, "BasePathFs should return its underlying MemMapFs")
+
+	// Test with nested BasePathFs
+	nestedBasePathFs := afero.NewBasePathFs(basePathFs, "/nested")
+	underlyingFs = GetUnderlyingFs(nestedBasePathFs)
+	assert.Equal(t, memFs, underlyingFs, "Nested BasePathFs should return the root underlying MemMapFs")
+
+	// Test with ReadOnlyFs
+	readOnlyFs := afero.NewReadOnlyFs(memFs)
+	underlyingFs = GetUnderlyingFs(readOnlyFs)
+	assert.Equal(t, memFs, underlyingFs, "ReadOnlyFs should return its underlying MemMapFs")
+
+	// Test with complex nesting
+	complexFs := afero.NewReadOnlyFs(afero.NewBasePathFs(afero.NewReadOnlyFs(memFs), "/complex"))
+	underlyingFs = GetUnderlyingFs(complexFs)
+	assert.Equal(t, memFs, underlyingFs, "Complex nested Fs should return the root underlying MemMapFs")
+}

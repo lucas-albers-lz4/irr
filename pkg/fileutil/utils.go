@@ -81,6 +81,9 @@ func JoinPath(elem ...string) string {
 
 // GetAbsPath returns the absolute path of a file
 func GetAbsPath(path string) (string, error) {
+	if path == "" {
+		return "", fmt.Errorf("path cannot be empty")
+	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return "", fmt.Errorf("failed to get absolute path: %w", err)
