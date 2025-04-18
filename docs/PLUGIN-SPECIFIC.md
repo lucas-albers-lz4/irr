@@ -612,7 +612,21 @@ Troubleshooting:
 4. See documentation: [Link to validation troubleshooting]
 ```
 
-### 5.5 CI/CD Integration Example
+### 5.5. Kubernetes Version Handling During Validation
+
+A key difference between the plugin and standalone execution lies in how the Kubernetes version is determined for the `helm template` operation performed by `validate`:
+
+*   **Plugin Mode (`helm irr validate <release-name> ...`)**:
+    *   **Default Behavior:** When running as a plugin, if the user *does not* explicitly provide the `--kube-version` flag, `irr` **will not** pass the `--kube-version` flag to the underlying `helm template` command. This allows `helm template` to utilize the Kubernetes version associated with the current Helm/`kubectl` context, ensuring validation uses the target environment's version by default.
+    *   **User Override:** If the `--kube-version` flag *is* provided by the user, its value is explicitly passed to `helm template`, overriding the context-derived version.
+
+*   **Standalone Mode (`irr validate --chart-path ...`)**:
+    *   **Default Behavior:** When running standalone, there is no inherent cluster context. If the user *does not* provide the `--kube-version` flag, `irr` **must** pass a hardcoded default version (e.g., `1.31.0`, matching the current help text) to the underlying `helm template` command via the `--kube-version` flag.
+    *   **User Override:** If the `--kube-version` flag *is* provided, its value is explicitly passed to `helm template`.
+
+*   **Testing Considerations:** For deterministic testing of the `validate` command (in both plugin and standalone modes), tests should typically provide an explicit `--kube-version` to simulate specific target environments and ensure reproducible results, regardless of the test runner's local context.
+
+### 5.6 CI/CD Integration Example
 ```yaml
 # GitHub Actions workflow snippet
 - name: Generate IRR overrides

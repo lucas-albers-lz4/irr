@@ -1,96 +1,7 @@
 # TODO.md - Helm Image Override Implementation Plan
 
 ## Completed Phases
-## Phase 1: Helm Plugin 
-- [x] Successfully published the binary as a Helm plugin.
-- [x] Completed and tested the GitHub publish and install process.
 
-**P0: Core Plugin Infrastructure**
-- [x] **[P0]** Create plugin.yaml file with appropriate metadata
-  Note : we have a working plugin install and build release process for installing and publishing the plugin, this is complete.
-  - [x] Draft initial plugin.yaml using Helm's plugin spec
-  - [x] Set up command aliases and help text
-  - [x] Add install/uninstall hooks for dependency checks (Go, Helm version)
-  - [x] Test plugin.yaml with `helm plugin install` locally
-  - [x] Reference fields: `name`, `version`, `usage`, `description`, `command`, `platforms`
-- [x] **[P0]** Adapt plugin entrypoint (`cmd/irr/main.go`) for Helm context
-  - [x] Adapt main.go to handle Helm-specific initialization and flags
-  - [x] Detect Helm environment variables (HELM_PLUGIN_DIR, etc.)
-  - [x] Add logging setup (respect --debug flag, align with Helm style)
-  - [x] Route subcommands to core IRR logic or Helm-adapter
-  - [x] Use `cobra` for command handling (confirmed)
-- [x] **[P0]** Design adapter layer between Helm plugin and core IRR
-  - [x] Define Go interface for Helm client (GetReleaseValues, GetChartMetadata, etc.)
-  - [x] Implement real Helm client using Helm Go SDK
-  - [x] Implement mock Helm client for tests
-  - [x] Add error wrapping for context (release name, namespace)
-  - [x] Use dependency injection for Helm client and logger
-  - [x] Ensure all file/network operations are mockable for tests
-  - [x] Use context.Context for all blocking operations
-  - [x] Keep all Helm-specific logic in adapter; core logic should not import Helm packages
-  - [x] Design and implement execution mode detection (plugin vs standalone)
-    - [x] Use `HELM_PLUGIN_DIR` environment variable to detect plugin mode
-    - [x] Configure Helm client differently based on execution mode
-    - [x] Only enable `--release-name` and `--namespace` flags when running in plugin mode (see PLUGIN-SPECIFIC.md)
-    - [x] In standalone mode, error if `--release-name` or `--namespace` is provided, with clear message: "The --release-name and --namespace flags are only available when running as a Helm plugin (helm irr ...)"
-    - [x] Document this behavior and rationale in both code comments and user documentation
-  - [x] Implement plugin-specific initialization
-    - [x] Use `cli.New()` from Helm SDK to get plugin environment settings
-    - [x] Initialize action.Configuration with Helm's RESTClientGetter when in plugin mode
-    - [x] Handle namespace inheritance from Helm environment
-  - [x] Create robust error handling for environment differences
-    - [x] Provide clear error messages when attempting to use plugin features in standalone mode
-    - [x] Include helpful troubleshooting info in errors (e.g., "Run as 'helm irr' to use this feature")
-    - [x] Document the feature limitations in different execution modes
-- [x] **[P0] Fix Duplicate isRunningAsHelmPlugin Function**
-  - [x] Apply Solution 2 (main determines and passes the value):
-    - [x] Modify `internal/helm/adapter.go`:
-      - [x] Update `Adapter` struct to keep the `isRunningAsPlugin` field
-      - [x] Modify `NewAdapter` function signature to accept `isPlugin bool` parameter
-      - [x] Remove the `isRunningAsHelmPlugin()` function from adapter.go
-    - [x] Keep the `isRunningAsHelmPlugin()` function only in `cmd/irr/main.go`
-    - [x] Update all adapter creation sites to pass the plugin mode:
-      - [x] Find all locations where `helm.NewAdapter()` is called
-      - [x] Pass the `isHelmPlugin` global variable to each call
-    - [x] Run unit tests to verify functionality is maintained
-    - [x] Update any affected tests that might have relied on the removed function
-    - [x] Run linting to check for any unused imports
-- [x] **[P0] Unit Testing**
-  - [x] Unit tests for Helm environment variable detection (`isRunningAsHelmPlugin` in `cmd/irr/main.go`).
-  - [x] Unit tests for subcommand routing based on execution mode (plugin vs. standalone).
-  - [x] Unit tests for `cobra` flag parsing (`--release-name`, `--namespace`) in plugin mode vs standalone mode.
-  - [x] Unit tests for the `RealHelmClient` methods (`GetReleaseValues`, `GetChartFromRelease`, etc.) using mocked Helm SDK dependencies.
-  - [x] Unit tests for the `MockHelmClient` implementation to ensure mock functions behave as expected.
-  - [x] Unit tests for error wrapping logic within the adapter layer.
-  - [x] Unit tests for execution mode detection logic (`isHelmPlugin` variable determination).
-  - [x] Unit tests for plugin-specific initialization (e.g., `initHelmPlugin` in `cmd/irr/root.go`).
-  - [x] Unit tests verifying correct error messages when attempting to use plugin-only features in standalone mode.
-  - [x] Unit tests for namespace handling logic (flag vs. environment variable vs. default).
-- [x] **[P0] Fix Linting Issues in Test Files**
-  - [x] Add constants for repeated test values to avoid duplicated strings
-  - [x] Fix unchecked error returns in kube_version_test.go
-  - [x] Update validateChartWithFiles to use HelmTemplateFunc instead of Template
-  - [x] Fix TestKubeVersionInValidateChartWithFiles and TestKubeVersionPassthrough tests
-  - [x] Fix validateChartWithFiles validation test expectations
-  - [x] Add proper strict mode handling in TestKubeVersionPassthrough
-
-**P1: Core Command Implementation**
-- [x] **[P1]** Implement release-based context for commands
-  - [x] Implement function to fetch release values using Helm SDK (`helm get values`)
-  - [x] Parse namespace from CLI flags, Helm config, or default
-  - [x] Implement chart source resolution (from release metadata, fallback to local cache or error)
-  - [x] Use `action.NewGetValues()` from Helm SDK for value fetching
-  - [x] For namespace: check `--namespace` flag, then `HELM_NAMESPACE`, then default to `"default"`
-- [x] **[P1]** Adapt core commands to work with Helm context
-  - [x] Refactor inspect/override/validate to accept both chart path and release name as input
-  - [x] Add logic to merge values from release and user-supplied files
-  - [x] Ensure all commands log the source of values and chart (for traceability)
-  - [x] Accept both `--chart-path` and `--release-name`; error if neither provided
-  - [x] Prioritize chart path over release name if both provided (with clear logging)
-- [x] **[P1]** Implement file handling with safety features
-  - [x] Implement file existence check before writing output
-  - [x] Use 0600 permissions for output files by default
-  - [x] Write unit tests for file safety logic
   - [x] Default behavior: fail if file exists (per section 4.4 in PLUGIN-SPECIFIC.md)
   - [x] Use file permissions constants for necessaary permission set, those are defined in this file : `pkg/fileutil/constants.go`
 
@@ -152,105 +63,26 @@
 - [x] Create makefile targets for: `build`, `test`, `lint`, `install-plugin`
 - [x] Add step-by-step quickstart: clone repo, build, install plugin, run help command
 
-## Phase 2: Chart Parameter Handling & Rules System
-_**Goal:** Analyze results from the brute-force solver and chart analysis to identify parameters essential for successful Helm chart deployment after applying IRR overrides. Implement an intelligent rules system that distinguishes between Deployment-Critical (Type 1) and Test/Validation-Only (Type 2) parameters._
+## Phase 3 bugfix
 
-2. **Rules Engine Implementation**
-   - [x] **[P1]** Design rule format with explicit Type 1/2 classification
-     - [x] Define structured rule format in YAML with versioning
-     - [x] Support tiered confidence levels in detection criteria
-     - [x] Include fallback detection based on error patterns
-     - [x] Allow rule actions to modify override values
-   - [x] **[P1]** Implement rule application logic in Go that adds only Type 1 parameters to override.yaml
-   - [x] **[P1]** Create configuration options to control rule application
-   - [ ] **[P1]** Create test script to extract and analyze metadata from test chart corpus
-     - [ ] Develop script to process Chart.yaml files from test corpus
-     - [Note: Reconfirming - The existing test/tools/test-charts.py script processes the test chart corpus and WILL be adapted or leveraged for this analysis. No new script will be created.]
-     - [ ] Generate statistics on different chart providers based on metadata patterns
-     - [ ] Produce report identifying reliable detection patterns for major providers
-   - [x] **[P2]** Add test-only parameter handling for validation (Type 2)
-   - [ ] **[P2]** Implement chart grouping based on shared parameter requirements
-   - [ ] **[P1]** Enhance log output for applied rules:
-     - [ ] When a rule adds a Type 1 parameter (e.g., Bitnami rule adding `global.security.allowInsecureImages`), log an `INFO` message.
-     - [ ] Log message should include: Rule Name, Parameter Path/Value, Brief Reason/Description, and Reference URL (e.g., Bitnami GitHub issue).
-     - [ ] Implement by adding logging logic within the rule application function (e.g., `ApplyRulesToMap`).
-     - [ ] Consider adding a `ReferenceURL` or `Explanation` field/method to the `Rule` interface for better context sourcing.
-     - [ ] Update tests (e.g., integration tests) to assert the presence and content of this log message.
-     - [ ] Update documentation (`docs/RULES.md`) to mention this log output.
-     - [ ] Ensure `README.md` prominently links to `docs/RULES.md`.
-
-3. **Chart Provider Detection System**
-   - [x] **[P1]** Implement metadata-based chart provider detection:
-     - [x] Bitnami chart detection (highest priority)
-       - [x] Primary: Check for "bitnami.com" in `home` field
-       - [x] Secondary: Check for "bitnami" in image references
-       - [x] Tertiary: Check for "bitnami-common" in dependency tags
-       - [x] Implement tiered confidence levels (high/medium)
-       - [ ] Add fallback detection for exit code 16 errors
-     - [ ] VMware/Tanzu chart detection (often similar to Bitnami)
-     - [ ] Standard/common chart repositories 
-     - [ ] Custom/enterprise chart detection
-   - [x] **[P1]** Create extensible detection framework for future providers
-   - [ ] **[P2]** Add fallback detection based on chart internal structure and patterns
-
-4. **Testing & Validation Framework**
-   - [x] **[P1]** Create test cases for Type 1 parameter insertion
-   - [ ] **[P1]** Analyze and report statistics on detection accuracy across test chart corpus
-   - [ ] **[P1]** Validate Bitnami charts deploy successfully with inserted parameters
-   - [ ] **[P1]** Test fallback mechanism with intentionally undetected Bitnami charts
-   - [x] **[P2]** Implement test framework for Type 2 parameters in validation context
-   - [ ] **[P2]** Measure improvement in chart validation success rate with rules system
-   - [x] **[P2]** Create automated tests for rule application logic
-
-5. **Exit Code 16 Error Handling System**
-   - [ ] **[P0]** Implement fallback detection for "Chart.yaml file is missing" errors:
-     - [ ] Create error handler specifically for exit code 16 errors in validation
-     - [ ] Add detection logic that triggers when Chart.yaml cannot be found
-     - [ ] Implement recovery mechanism to locate chart files through alternate paths
-     - [ ] Add logging to indicate fallback path is being used
-     - [ ] Implement robust chart path resolution that checks multiple locations (absolute, relative to CWD, cached locations)
-     - [ ] Create a chart location cache to remember successful resolutions
-     - [ ] Add retry logic with different path strategies on initial failure
-     - [ ] Support relative path resolution based on current working directory
-     - [ ] Add detection patterns specific to Harbor chart structure
-     - [ ] Create test cases using Harbor chart to verify resolution
-     - [ ] Document Harbor-specific workarounds in troubleshooting section
-     - [ ] Create unit tests that simulate "Chart.yaml missing" scenarios
-     - [ ] Add integration tests using charts known to trigger this error
-     - [ ] Implement test fixtures that reproduce the exit code 16 condition
-     - [ ] Verify error messages are helpful and suggest correct resolution steps
-
-   - [ ] **[P0] Error Messaging and User Guidance:**
-     - [ ] When fallback fails, emit a clear, specific error:
-       - State the missing Chart.yaml and list attempted paths
-       - Instruct user to provide --chart-path
-       - Reference override file as the only supported change interface
-       - Cross-reference relevant documentation
-     - [ ] Add a sample error message to docs/PLUGIN-SPECIFIC.md and docs/HELM-PLUGIN.md
-
-   - [ ] **[P0] Testing for No-Fallback Scenario:**
-     - [ ] Test that the error is specific, actionable, and does not suggest unsupported workarounds
-
-   - [ ] **[P0] Explicitly Out-of-Scope:**
-     - [ ] Document that the tool will not attempt to download, reconstruct, or guess the chart; only user-supplied --chart-path is supported
-
-   # Prioritized Implementation Steps for Exit Code 16 Handling
-   1. Implement base fallback detection for exit code 16
-   2. Add Harbor-specific chart detection patterns
-   3. Enhance path resolution with multiple location checking
-   4. Create comprehensive unit and integration tests
-   5. Update documentation with troubleshooting information
-
-   # Usage Example for New Flag to Support Fallback
-   ```bash
-   # When automatic detection fails
-   helm irr override harbor --namespace harbor --target-registry registry.example.com --source-registries docker.io --output-file harbor.yaml --chart-path /path/to/harbor/chart
-   ```
-
-   # Documentation Updates Required
-   - [ ] Add troubleshooting section explaining exit code 16 errors
-   - [ ] Document --chart-path flag in CLI reference
-   - [ ] Update examples to show error recovery scenarios
+- [ ] Fix `--kube-version` handling in `irr validate`:
+    - [ ] **Identify Code:** Locate flag definition (`cmd/irr/validate.go`), plugin detection logic, and `helm template` execution call (likely `internal/helm/helm.go` or `validate.go`).
+    - [ ] **Update `validate` Logic:**
+        - Retrieve user-provided `--kube-version` value.
+        - Check if running as Helm plugin (e.g., `HELM_PLUGIN_NAME` env var).
+        - Determine final `kubeVersion` string for `helm template`:
+            - If user provided flag: Use user's value.
+            - If plugin mode AND no flag: Use empty string/`nil` (to omit flag).
+            - If standalone mode AND no flag: Use hardcoded default (e.g., "1.31.0").
+    - [ ] **Update `helm template` Call:**
+        - Modify argument building for `helm template` execution.
+        - Conditionally add `"--kube-version"` and the determined `kubeVersion` string to the command arguments *only if* the string is not empty/`nil`.
+    - [ ] **Add/Update Tests:** Create/modify integration tests for `validate` covering:
+        - Plugin mode, no flag (verify correct template outcome, implicitly testing context usage).
+        - Plugin mode, with flag (verify flag value is used).
+        - Standalone mode, no flag (verify default value is used).
+        - Standalone mode, with flag (verify flag value is used).
+    - [ ] **Verify Docs:** Ensure `docs/PLUGIN-SPECIFIC.md` accurately reflects the fixed behavior.
 
 ## Phase 5: `kind` Cluster Integration Testing
 _**Goal:** Implement end-to-end tests using `kind` to validate Helm plugin interactions with a live Kubernetes API and Helm release state, ensuring read-only behavior._
@@ -269,7 +101,7 @@ _**Goal:** Implement end-to-end tests using `kind` to validate Helm plugin inter
 - [ ] **[P1]** Test compatibility with latest Helm version in `kind`:
   - [ ] Set up CI configuration to run `
  
-  ## REMINDER 0 (TEST BEFORE AND AFTER) Implementation Process: DONT REMOVE THIS SECTION as these hints are important to remember.
+  ## REMINDER On the Implementation Process: (DONT REMOVE THIS SECTION)
 - For each change:
   1. **Baseline Verification:**
      - Run full test suite: `go test ./...` ✓
@@ -302,28 +134,7 @@ _**Goal:** Implement end-to-end tests using `kind` to validate Helm plugin inter
      - Request suggested git commands for committing the changes ✓
      - Review and execute the git commit commands yourself, never change git branches stay in the branch you are in until feature completion ✓
 
-## Testing Plan
-
-**Test Coverage for Helm Adapter Components**
-- [ ] Unit tests for HelmClientInterface implementations
-  - [ ] Test RealHelmClient with mocked Helm SDK components
-  - [ ] Test MockHelmClient for test fixture correctness
-- [ ] Unit tests for Adapter functionality
-  - [ ] Test InspectRelease with various input scenarios
-  - [ ] Test OverrideRelease with different registry and path strategies
-  - [ ] Test ValidateRelease with mockable filesystem and client
-- [ ] Integration tests for end-to-end command execution
-  - [ ] Test with both mock and real implementations (when possible)
-  - [ ] Test plugin mode detection and behavior differences
-  - [ ] Test all error paths with appropriate error codes
-
-**Testing Frequency**
-- [ ] Run unit tests after each significant component change
-- [ ] Run integration tests before committing feature completions
-- [ ] Add specific test cases for any bug fixes to prevent regressions
-
-**Testing Coverage Goals**
-- [ ] Aim for >85% code coverage for core adapter functionality
-- [ ] 100% coverage for critical path components (plugin detection, error handling)
-- [ ] Test all parameter combinations at the API boundaries
-
+  6. **Build hints**
+     - `make build` builds product, `make update-plugin` updates the plugin copy so we test that build
+       `make test-filter` runs the test but filters the output, if this fails you can run the normal test to get more detail
+##END REMINDER On the Implementation Process: 
