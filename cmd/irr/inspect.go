@@ -65,8 +65,8 @@ type ImageAnalysis struct {
 // InspectFlags holds the command line flags for the inspect command
 type InspectFlags struct {
 	ChartPath              string
-	OutputFormat           string
 	OutputFile             string
+	OutputFormat           string
 	GenerateConfigSkeleton bool
 	AnalyzerConfig         *analyzer.Config
 	SourceRegistries       []string
@@ -84,12 +84,11 @@ This command analyzes the chart's values.yaml and templates to find image refere
 	}
 
 	cmd.Flags().String("chart-path", "", "Path to the Helm chart")
-	cmd.Flags().String("output-format", "yaml", "Output format (yaml or json)")
 	cmd.Flags().String("output-file", "", "Write output to file instead of stdout")
+	cmd.Flags().String("output-format", "", "Output format (yaml or json)")
 	cmd.Flags().Bool("generate-config-skeleton", false, "Generate a config skeleton based on found images")
 	cmd.Flags().StringSlice("include-pattern", nil, "Glob patterns for values paths to include during analysis")
 	cmd.Flags().StringSlice("exclude-pattern", nil, "Glob patterns for values paths to exclude during analysis")
-	cmd.Flags().StringSlice("known-image-paths", nil, "Specific dot-notation paths known to contain images")
 	cmd.Flags().StringSliceP("source-registries", "r", nil, "Source registries to filter results (optional)")
 	cmd.Flags().String("release-name", "", "Release name for Helm plugin mode")
 	cmd.Flags().String("namespace", "", "Kubernetes namespace for the release")
@@ -156,7 +155,7 @@ func analyzeChart(chartData *chart.Chart, config *analyzer.Config) (*ImageAnalys
 	return analysis, nil
 }
 
-// writeOutput writes the analysis output to file or stdout
+// writeOutput writes the analysis to a file or stdout
 func writeOutput(analysis *ImageAnalysis, flags *InspectFlags) error {
 	// Handle generate-config-skeleton flag
 	if flags.GenerateConfigSkeleton {
@@ -173,11 +172,12 @@ func writeOutput(analysis *ImageAnalysis, flags *InspectFlags) error {
 		return nil
 	}
 
-	// Marshal analysis to YAML or JSON based on output format
+	// Determine output format (yaml or json)
 	var output []byte
 	var err error
 
-	if flags.OutputFormat == "json" {
+	switch strings.ToLower(flags.OutputFormat) {
+	case "json":
 		output, err = json.Marshal(analysis)
 		if err != nil {
 			return &exitcodes.ExitCodeError{
@@ -185,7 +185,7 @@ func writeOutput(analysis *ImageAnalysis, flags *InspectFlags) error {
 				Err:  fmt.Errorf("failed to marshal analysis to JSON: %w", err),
 			}
 		}
-	} else {
+	default:
 		// Default to YAML
 		output, err = yaml.Marshal(analysis)
 		if err != nil {
@@ -471,30 +471,21 @@ func getInspectFlags(cmd *cobra.Command, releaseNameProvided bool) (*InspectFlag
 		}
 	}
 
-	// Get output format
-	outputFormat, err := cmd.Flags().GetString("output-format")
-	if err != nil {
-		return nil, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get output-format flag: %w", err),
-		}
-	}
-
-	// Validate output format
-	outputFormat = strings.ToLower(outputFormat)
-	if outputFormat != "yaml" && outputFormat != "json" {
-		return nil, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("unsupported output format: %s (supported formats: 'yaml', 'json')", outputFormat),
-		}
-	}
-
 	// Get output file
 	outputFile, err := cmd.Flags().GetString("output-file")
 	if err != nil {
 		return nil, &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitInputConfigurationError,
 			Err:  fmt.Errorf("failed to get output-file flag: %w", err),
+		}
+	}
+
+	// Get output format
+	outputFormat, err := cmd.Flags().GetString("output-format")
+	if err != nil {
+		return nil, &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get output-format flag: %w", err),
 		}
 	}
 
@@ -508,7 +499,7 @@ func getInspectFlags(cmd *cobra.Command, releaseNameProvided bool) (*InspectFlag
 	}
 
 	// Get analysis patterns
-	includePatterns, excludePatterns, knownPaths, err := getAnalysisPatterns(cmd)
+	includePatterns, excludePatterns, err := getAnalysisPatterns(cmd)
 	if err != nil {
 		return nil, err
 	}
@@ -517,7 +508,6 @@ func getInspectFlags(cmd *cobra.Command, releaseNameProvided bool) (*InspectFlag
 	analyzerConfig := &analyzer.Config{
 		IncludePatterns: includePatterns,
 		ExcludePatterns: excludePatterns,
-		KnownPaths:      knownPaths,
 	}
 
 	// Get source registries
@@ -531,8 +521,8 @@ func getInspectFlags(cmd *cobra.Command, releaseNameProvided bool) (*InspectFlag
 
 	return &InspectFlags{
 		ChartPath:              chartPath,
-		OutputFormat:           outputFormat,
 		OutputFile:             outputFile,
+		OutputFormat:           outputFormat,
 		GenerateConfigSkeleton: generateConfigSkeleton,
 		AnalyzerConfig:         analyzerConfig,
 		SourceRegistries:       sourceRegistries,
@@ -540,11 +530,11 @@ func getInspectFlags(cmd *cobra.Command, releaseNameProvided bool) (*InspectFlag
 }
 
 // getAnalysisPatterns retrieves the analysis pattern flags
-func getAnalysisPatterns(cmd *cobra.Command) (includePatterns, excludePatterns, knownPaths []string, err error) {
+func getAnalysisPatterns(cmd *cobra.Command) (includePatterns, excludePatterns []string, err error) {
 	// Get include patterns
 	includePatterns, err = cmd.Flags().GetStringSlice("include-pattern")
 	if err != nil {
-		return nil, nil, nil, &exitcodes.ExitCodeError{
+		return nil, nil, &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitInputConfigurationError,
 			Err:  fmt.Errorf("failed to get include-pattern flag: %w", err),
 		}
@@ -553,22 +543,13 @@ func getAnalysisPatterns(cmd *cobra.Command) (includePatterns, excludePatterns, 
 	// Get exclude patterns
 	excludePatterns, err = cmd.Flags().GetStringSlice("exclude-pattern")
 	if err != nil {
-		return nil, nil, nil, &exitcodes.ExitCodeError{
+		return nil, nil, &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitInputConfigurationError,
 			Err:  fmt.Errorf("failed to get exclude-pattern flag: %w", err),
 		}
 	}
 
-	// Get known image paths
-	knownPaths, err = cmd.Flags().GetStringSlice("known-image-paths")
-	if err != nil {
-		return nil, nil, nil, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get known-image-paths flag: %w", err),
-		}
-	}
-
-	return includePatterns, excludePatterns, knownPaths, nil
+	return includePatterns, excludePatterns, nil
 }
 
 // processImagePatterns extracts image information from detected patterns
