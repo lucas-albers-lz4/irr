@@ -339,12 +339,18 @@ func validateChartWithFiles(chartPath, releaseName, namespace string, valuesFile
 				retryResult, retryErr := helm.HelmTemplateFunc(templateOptions)
 				if retryErr == nil {
 					log.Infof("Validation successful with resolved chart path!")
-					return retryResult.Stdout, nil
+					if retryResult != nil {
+						return retryResult.Stdout, nil
+					}
+					log.Warnf("HelmTemplateFunc returned nil retryResult after successful retry")
+					return "", nil
 				}
 
 				log.Errorf("Validation still failed with resolved path: %v", retryErr)
 				if retryResult != nil && retryResult.Stderr != "" {
 					fmt.Fprintf(os.Stderr, "--- Helm Error (Retry) ---\n%s\n------------------------\n", retryResult.Stderr)
+				} else if retryResult == nil {
+					log.Warnf("HelmTemplateFunc returned nil retryResult after retrying with resolved path")
 				}
 			}
 		}
