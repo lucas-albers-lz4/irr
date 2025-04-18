@@ -171,9 +171,9 @@ func getChartSource(cmd *cobra.Command, args []string) (*ChartSource, error) {
 		}
 	}
 
-	// Default namespace to "default" if not provided
+	// Default namespace to constant if not provided
 	if namespace == "" {
-		namespace = "default"
+		namespace = validateTestNamespace
 		debug.Printf("No namespace specified, using default: %s", namespace)
 	}
 	result.Namespace = namespace
@@ -200,7 +200,7 @@ func getChartSource(cmd *cobra.Command, args []string) (*ChartSource, error) {
 
 		// Successfully auto-detected
 		result.ChartPath = detectedPath
-		result.SourceType = "auto-detected"
+		result.SourceType = ChartSourceTypeAutoDetected
 		result.Message = "Auto-detected chart in current directory"
 		debug.Printf("Auto-detected chart path: %s", detectedPath)
 		return result, nil
@@ -227,16 +227,16 @@ func getChartSource(cmd *cobra.Command, args []string) (*ChartSource, error) {
 		if chartPathFlag && isHelmPlugin {
 			// Both explicitly provided in plugin mode - prioritize chart path
 			debug.Printf("Both chart path and release name provided, using chart path: %s", chartPath)
-			result.SourceType = "chart"
+			result.SourceType = ChartSourceTypeChart
 			result.Message = "Using chart path (release name ignored)"
 		} else {
 			// In plugin mode without explicit chart path, prefer release name
 			if isHelmPlugin && !chartPathFlag {
-				result.SourceType = "release"
+				result.SourceType = ChartSourceTypeRelease
 				result.Message = "Using release name in plugin mode"
 			} else {
 				// Default to chart path in other cases
-				result.SourceType = "chart"
+				result.SourceType = ChartSourceTypeChart
 				result.Message = "Using chart path"
 			}
 		}
@@ -245,10 +245,10 @@ func getChartSource(cmd *cobra.Command, args []string) (*ChartSource, error) {
 
 	// At this point, only one of chartPath or releaseName is provided
 	if chartPathProvided {
-		result.SourceType = "chart"
+		result.SourceType = ChartSourceTypeChart
 		result.Message = "Using chart path"
 	} else if releaseNameProvided && isHelmPlugin {
-		result.SourceType = "release"
+		result.SourceType = ChartSourceTypeRelease
 		result.Message = "Using release name in plugin mode"
 	}
 
