@@ -36,7 +36,10 @@ const (
 	// ExitHelmInteractionError is returned when there's an error during Helm SDK interaction
 	ExitHelmInteractionError = 17
 	// ExitInternalError is returned when there's an internal error in command execution
-	ExitInternalError = 30
+	ExitInternalError       = 30
+	chartSourceTypeChart    = "chart"
+	chartSourceTypeRelease  = "release"
+	autoDetectedChartSource = "auto-detected"
 )
 
 // Variables for testing
@@ -545,11 +548,11 @@ func createAndExecuteGenerator(chartSource *ChartSource, config *GeneratorConfig
 	// Check if we have a chart path or need to derive it from release name
 	chartSourceDescription := "unknown"
 	switch chartSource.SourceType {
-	case "chart":
+	case chartSourceTypeChart:
 		chartSourceDescription = chartSource.ChartPath
-	case "release":
+	case chartSourceTypeRelease:
 		chartSourceDescription = fmt.Sprintf("helm-release:%s", chartSource.ReleaseName)
-	case "auto-detected":
+	case autoDetectedChartSource:
 		chartSourceDescription = fmt.Sprintf("auto-detected:%s", chartSource.ChartPath)
 	}
 
@@ -578,7 +581,7 @@ func createAndExecuteGenerator(chartSource *ChartSource, config *GeneratorConfig
 }
 
 // createGenerator creates a generator for the given chart source
-func createGenerator(chartSource *ChartSource, config *GeneratorConfig) (GeneratorInterface, error) {
+func createGenerator(_ *ChartSource, config *GeneratorConfig) (GeneratorInterface, error) {
 	// Validate the config
 	if config == nil {
 		return nil, errors.New("config is nil")
@@ -622,11 +625,11 @@ func loadChart(cs *ChartSource) (*helmchart.Chart, error) {
 	}
 
 	// Check if the file exists when using a physical chart path
-	if cs.SourceType == "chart" {
+	if cs.SourceType == chartSourceTypeChart {
 		// Check if the file exists
 		if _, err := os.Stat(cs.ChartPath); os.IsNotExist(err) {
 			log.Errorf("Chart not found at path: %s", cs.ChartPath)
-			return nil, fmt.Errorf("chart not found: %s", err)
+			return nil, fmt.Errorf("chart not found: %w", err)
 		}
 	}
 
@@ -638,7 +641,7 @@ func loadChart(cs *ChartSource) (*helmchart.Chart, error) {
 	c, err := loader.Load(cs.ChartPath)
 	if err != nil {
 		log.Errorf("Failed to load chart: %v", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to load chart: %w", err)
 	}
 
 	return c, nil
@@ -976,144 +979,6 @@ func validatePluginOverrides(cmd *cobra.Command, overrideFile, outputFile string
 	return nil
 }
 
-// handleChartLoadError handles errors from loading a chart
-func handleChartLoadError(err error, chartPath string) error {
-	// Check if it's already an ExitCodeError
-	var exitErr *exitcodes.ExitCodeError
-	if errors.As(err, &exitErr) {
-		return exitErr
-	}
-
-	// Handle common chart loading errors
-	if os.IsNotExist(err) || strings.Contains(err.Error(), "no such file or directory") {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitChartNotFound,
-			Err:  fmt.Errorf("chart not found at path %s: %w", chartPath, err),
-		}
-	}
-
-	// Generic chart loading error
-	return &exitcodes.ExitCodeError{
-		Code: exitcodes.ExitChartNotFound,
-		Err:  fmt.Errorf("failed to load chart from %s: %w", chartPath, err),
-	}
-}
-
-// isStdOutRequested returns true if output should go to stdout (either specifically requested or dry-run mode)
-func isStdOutRequested(cmd *cobra.Command) bool {
-	// Check for dry-run flag
-	dryRun, err := cmd.Flags().GetBool("dry-run")
-	if err != nil {
-		log.Warnf("Failed to get dry-run flag: %v", err)
-		return false
-	}
-	if dryRun {
-		return true
-	}
-
-	// Check for stdout flag
-	stdout, err := cmd.Flags().GetBool("stdout")
-	if err != nil {
-		log.Warnf("Failed to get stdout flag: %v", err)
-		return false
-	}
-	return stdout
-}
-
-// validateChart validates a chart with the generated overrides
-func validateChart(cmd *cobra.Command, yamlBytes []byte, config *GeneratorConfig, loadFromPath, loadFromRelease bool, releaseName, namespace string) error {
-	// Add nil check for config
-	if config == nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitGeneralRuntimeError,
-			Err:  errors.New("internal error: generator config is nil in validateChart"),
-		}
-	}
-
-	// Create a temporary file to store the overrides
-	tempFile, err := afero.TempFile(AppFs, "", "irr-override-*.yaml")
-	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitIOError,
-			Err:  fmt.Errorf("failed to create temporary file for validation: %w", err),
-		}
-	}
-	defer func() {
-		if err := tempFile.Close(); err != nil {
-			log.Warnf("Failed to close temporary file: %v", err)
-		}
-		if err := AppFs.Remove(tempFile.Name()); err != nil {
-			log.Warnf("Failed to remove temporary file: %v", err)
-		}
-	}()
-
-	// Write the overrides to the temporary file
-	if _, err := tempFile.Write(yamlBytes); err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitIOError,
-			Err:  fmt.Errorf("failed to write overrides to temporary file: %w", err),
-		}
-	}
-
-	// Get Helm version flag
-	kubeVersion, err := cmd.Flags().GetString("kube-version")
-	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get kube-version flag: %w", err),
-		}
-	}
-	// If not specified, use default
-	if kubeVersion == "" {
-		kubeVersion = DefaultKubernetesVersion
-	}
-
-	// Get strict mode flag
-	strictMode := config.StrictMode
-
-	var validationResult string
-	switch {
-	case loadFromPath:
-		// Validate chart with overrides
-		validationResult, err = validateChartWithFiles(config.ChartPath, "", "", []string{tempFile.Name()}, strictMode, kubeVersion)
-	case loadFromRelease:
-		// For release, use adapter to validate
-		adapter, adapterErr := createHelmAdapter()
-		if adapterErr != nil {
-			return adapterErr
-		}
-
-		// Get command context
-		ctx := getCommandContext(cmd)
-
-		// Validate the release with the overrides
-		valErr := adapter.ValidateRelease(ctx, releaseName, namespace, []string{tempFile.Name()}, kubeVersion)
-		if valErr != nil {
-			err = &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitHelmCommandFailed,
-				Err:  fmt.Errorf("failed to validate release: %w", valErr),
-			}
-		} else {
-			validationResult = "Validation successful! Chart renders correctly with overrides."
-		}
-	default:
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  errors.New("internal error: neither loadFromPath nor loadFromRelease is true"),
-		}
-	}
-
-	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitHelmCommandFailed,
-			Err:  fmt.Errorf("failed to validate chart with overrides: %w", err),
-		}
-	}
-
-	log.Infof(validationResult)
-	return nil
-}
-
 // handleTestModeOverride handles the override logic when IRR_TESTING is set.
 func handleTestModeOverride(cmd *cobra.Command, releaseName string) error {
 	// Get output flags
@@ -1237,73 +1102,117 @@ func handleTestModeOverride(cmd *cobra.Command, releaseName string) error {
 	return nil
 }
 
-// generateValuesOverrides generates Helm values overrides for the chart images
-func generateValuesOverrides(
-	c *helmchart.Chart,
-	targetRegistry string,
-	sourceRegistries []string,
-	pathStrategy strategy.PathStrategy,
-	strictMode bool,
-) ([]byte, error) {
-	if c == nil {
-		return nil, fmt.Errorf("chart is nil")
+// validateChart validates a chart with the generated overrides
+func validateChart(cmd *cobra.Command, yamlBytes []byte, config *GeneratorConfig, loadFromPath, loadFromRelease bool, releaseName, namespace string) error {
+	// Add nil check for config
+	if config == nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitGeneralRuntimeError,
+			Err:  errors.New("internal error: generator config is nil in validateChart"),
+		}
 	}
 
-	// Create a generator with the chart and settings
-	chartPath := "" // Not needed for direct chart object
-	loader := chart.NewLoader()
-
-	generator := chart.NewGenerator(
-		chartPath,
-		targetRegistry,
-		sourceRegistries,
-		[]string{}, // No exclude registries
-		pathStrategy,
-		nil,                 // No mappings
-		map[string]string{}, // No config mappings
-		strictMode,
-		0, // No threshold
-		loader,
-		nil, nil, nil, // No include/exclude patterns or known paths
-	)
-
-	// Generate the overrides
-	result, err := generator.Generate()
+	// Create a temporary file to store the overrides
+	tempFile, err := afero.TempFile(AppFs, "", "irr-override-*.yaml")
 	if err != nil {
-		return nil, err
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitIOError,
+			Err:  fmt.Errorf("failed to create temporary file for validation: %w", err),
+		}
+	}
+	defer func() {
+		if err := tempFile.Close(); err != nil {
+			log.Warnf("Failed to close temporary file: %v", err)
+		}
+		if err := AppFs.Remove(tempFile.Name()); err != nil {
+			log.Warnf("Failed to remove temporary file: %v", err)
+		}
+	}()
+
+	// Write the overrides to the temporary file
+	if _, err := tempFile.Write(yamlBytes); err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitIOError,
+			Err:  fmt.Errorf("failed to write overrides to temporary file: %w", err),
+		}
 	}
 
-	// Convert to YAML
-	yamlBytes, err := yaml.Marshal(result.Values)
+	// Get Helm version flag
+	kubeVersion, err := cmd.Flags().GetString("kube-version")
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal values to YAML: %w", err)
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get kube-version flag: %w", err),
+		}
+	}
+	// If not specified, use default
+	if kubeVersion == "" {
+		kubeVersion = DefaultKubernetesVersion
 	}
 
-	return yamlBytes, nil
+	// Get strict mode flag
+	strictMode := config.StrictMode
+
+	var validationResult string
+	switch {
+	case loadFromPath:
+		// Validate chart with overrides
+		validationResult, err = validateChartWithFiles(config.ChartPath, "", "", []string{tempFile.Name()}, strictMode, kubeVersion)
+	case loadFromRelease:
+		// For release, use adapter to validate
+		adapter, adapterErr := createHelmAdapter()
+		if adapterErr != nil {
+			return adapterErr
+		}
+
+		// Get command context
+		ctx := getCommandContext(cmd)
+
+		// Validate the release with the overrides
+		valErr := adapter.ValidateRelease(ctx, releaseName, namespace, []string{tempFile.Name()}, kubeVersion)
+		if valErr != nil {
+			err = &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitHelmCommandFailed,
+				Err:  fmt.Errorf("failed to validate release: %w", valErr),
+			}
+		} else {
+			validationResult = "Validation successful! Chart renders correctly with overrides."
+		}
+	default:
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  errors.New("internal error: neither loadFromPath nor loadFromRelease is true"),
+		}
+	}
+
+	if err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitHelmCommandFailed,
+			Err:  fmt.Errorf("failed to validate chart with overrides: %w", err),
+		}
+	}
+
+	log.Infof(validationResult)
+	return nil
 }
 
-// getChartFromCurrentDir attempts to load a chart from the current directory
-func getChartFromCurrentDir() (*helmchart.Chart, error) {
-	// Get the current working directory
-	cwd, err := os.Getwd()
+// isStdOutRequested returns true if output should go to stdout (either specifically requested or dry-run mode)
+func isStdOutRequested(cmd *cobra.Command) bool {
+	// Check for dry-run flag
+	dryRun, err := cmd.Flags().GetBool("dry-run")
 	if err != nil {
-		log.Errorf("Failed to get current working directory: %v", err)
-		return nil, err
+		log.Warnf("Failed to get dry-run flag: %v", err)
+		return false
+	}
+	if dryRun {
+		return true
 	}
 
-	// Check if Chart.yaml exists in the current directory
-	if _, err := os.Stat(filepath.Join(cwd, "Chart.yaml")); os.IsNotExist(err) {
-		log.Debugf("No Chart.yaml found in current directory: %s", cwd)
-		return nil, fmt.Errorf("no chart found in current directory: %w", err)
-	}
-
-	// Load the chart
-	loader := chart.NewLoader()
-	c, err := loader.Load(cwd)
+	// Check for stdout flag
+	stdout, err := cmd.Flags().GetBool("stdout")
 	if err != nil {
-		log.Errorf("Failed to load chart from current directory: %v", err)
-		return nil, err
+		log.Warnf("Failed to get stdout flag: %v", err)
+		return false
 	}
-
-	return c, nil
+	return stdout
 }
