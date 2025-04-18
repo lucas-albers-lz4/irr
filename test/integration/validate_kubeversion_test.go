@@ -45,7 +45,8 @@ func TestValidateWithExplicitKubeVersion(t *testing.T) {
 	assert.Contains(t, stderr, "Validation successful", "Output should include validation success message")
 
 	// Read the output file and verify it contains standard Kubernetes resource elements
-	content, err := os.ReadFile(outputFile)
+	// #nosec G304 - This is a test-generated file in a test-controlled directory
+	content, err := os.ReadFile(filepath.Clean(outputFile))
 	require.NoError(t, err, "Should be able to read output file")
 
 	// Check for common elements that should be in the rendered template
@@ -197,7 +198,8 @@ func TestVersionDependentTemplate(t *testing.T) {
 
 	// Create a special test chart with Kubernetes version conditionals
 	chartDir := filepath.Join(harness.tempDir, "version-test-chart")
-	require.NoError(t, os.MkdirAll(filepath.Join(chartDir, "templates"), 0755), "Failed to create chart directory")
+	// #nosec G301 - Using TestDirPermissions (0750) from harness.go instead of 0755
+	require.NoError(t, os.MkdirAll(filepath.Join(chartDir, "templates"), TestDirPermissions), "Failed to create chart directory")
 
 	// Create Chart.yaml
 	chartYaml := []byte(`apiVersion: v2
@@ -251,10 +253,12 @@ data:
 	require.NoError(t, err, "validate command should succeed with newer Kubernetes version")
 
 	// Read both outputs and verify differences
-	oldContent, err := os.ReadFile(outputOldVersion)
+	// #nosec G304 - These are test-generated files in a test-controlled directory
+	oldContent, err := os.ReadFile(filepath.Clean(outputOldVersion))
 	require.NoError(t, err, "Should be able to read old version output file")
 
-	newContent, err := os.ReadFile(outputNewVersion)
+	// #nosec G304 - These are test-generated files in a test-controlled directory
+	newContent, err := os.ReadFile(filepath.Clean(outputNewVersion))
 	require.NoError(t, err, "Should be able to read new version output file")
 
 	// Verify the version-dependent differences
