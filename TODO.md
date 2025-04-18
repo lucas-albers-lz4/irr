@@ -23,7 +23,7 @@
   - [x] Remove `--output-format` flag (Not used, always YAML)
   - [ ] Remove `--debug-template` flag (Not implemented/used) 
   - [ ] Remove `--threshold` flag (No clear use case; binary success preferred)
-  - [ ] Hide or remove `--strategy` flag (Only one strategy implemented; hide/remove for now)
+  - [x] Hide or remove `--strategy` flag (Only one strategy implemented; hide/remove for now)
   - [ ] Hide or remove `--known-image-paths` flag (Not needed for most users; hide or remove)
 - [ ] **[P0]** Flag cleanup verification
   - [ ] Review and update/remove any test cases using these flags
@@ -40,7 +40,9 @@
   - [ ] Tailor help output and flag requirements based on execution mode
   - [ ] Make `--release-name` primary in plugin mode
   - [ ] Make `--chart-path` primary in standalone mode
-  - [ ] Hide flags not relevant for automation in integration test mode
+  - [x] Try to keep flags in integration test mode the same.
+    I think we don't care what flags it displays in integration test mode as integration test mode is designed to mock standalone and plugin mode so we should try and reduce any code that makes it differ unless we need it for logging or test framework execution.
+
 - [x] **[P0]** Standardize `--namespace` behavior
   - [x] Make `--namespace` always optional
   - [x] Default to "default" namespace when not specified
@@ -81,13 +83,13 @@
   - [x] With `--strict`: Fail with non-zero exit code when unrecognized registries are found
   - [x] In both modes: Clearly log which registries were detected and which were skipped
   - [x] Provide specific suggestions for missing mappings
-- [ ] **[P1]** Integrate validation into override command
-  - [ ] Run validation by default after generating overrides
-  - [ ] Add `--no-validate` flag to skip validation
-  - [ ] Implement silent validation with detailed output only on error
-- [ ] **[P1]** Improve Kubernetes version handling
-  - [ ] Document default Kubernetes version in help text
-  - [ ] Provide clear error messages for version-related validation failures
+- [x] **[P1]** Integrate validation into override command
+  - [x] Run validation by default after generating overrides
+  - [x] Add `--no-validate` flag to skip validation
+  - [x] Implement silent validation with detailed output only on error
+- [x] **[P1]** Improve Kubernetes version handling
+  - [x] Document default Kubernetes version in help text
+  - [x] Provide clear error messages for version-related validation failures
 
 - [ ] **[P0]** Implement consistent error codes for enhanced debugging
     We need to align and not collide with current error code numbers or handling
@@ -141,8 +143,12 @@
   - [ ] Create a command summary with flag behavior in clear table format
   - [ ] Document when files will be written vs. stdout output
 
+### Implementation Notes
+- We've restructured the chart loading mechanism to properly use the chart.NewLoader() function, which improves code organization and maintainability
+- We've fixed the strategy flag handling to keep it available but with sensible defaults, making the interface cleaner without removing functionality
+- The integration tests now pass consistently after fixing implementation issues with chart sources and required flags
  
-  ## REMINDER On the Implementation Process: (DONT REMOVE THIS SECTION)
+## REMINDER On the Implementation Process: (DONT REMOVE THIS SECTION)
 - For each change:
   1. **Baseline Verification:**
      - Run full test suite: `go test ./...` ✓

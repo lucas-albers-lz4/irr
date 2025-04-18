@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	helmchart "helm.sh/helm/v3/pkg/chart"
 )
 
 // Test constants
@@ -110,17 +111,18 @@ func TestOverrideCommand_LoadChart(t *testing.T) {
 			}
 
 			// Override the chart loader function for testing
-			chartLoader = func(config *GeneratorConfig, _ /*loadFromRelease*/, _ /*loadFromPath*/ bool, _ /*releaseName*/, _ /*namespace*/ string) (*ChartSource, error) {
-				if config.ChartPath == testChartDir && !tc.expectError {
-					// Return success for the valid chart
-					return &ChartSource{
-						ChartPath:  testChartDir,
-						SourceType: "chart",
-						Message:    "Using chart path",
+			chartLoader = func(cs *ChartSource) (*helmchart.Chart, error) {
+				if cs.ChartPath == testChartDir && !tc.expectError {
+					// Return a mock helm chart for the valid chart
+					return &helmchart.Chart{
+						Metadata: &helmchart.Metadata{
+							Name:    "test-chart",
+							Version: "1.0.0",
+						},
 					}, nil
-				} else if config.ChartPath == "/does/not/exist" {
+				} else if cs.ChartPath == "/does/not/exist" {
 					// Return error for the non-existent chart
-					return nil, fmt.Errorf("chart path not found: %s", config.ChartPath)
+					return nil, fmt.Errorf("chart path not found: %s", cs.ChartPath)
 				}
 				// Default error
 				return nil, fmt.Errorf("unsupported configuration in test")
@@ -141,8 +143,14 @@ func TestOverrideCommand_LoadChart(t *testing.T) {
 				// Log the chart path being used
 				log.Infof("Using chart path: %s", config.ChartPath)
 
+				// Get chart source
+				chartSource, err := getChartSource(cmd, []string{})
+				if err != nil {
+					return err
+				}
+
 				// Load the chart
-				_, err = chartLoader(&config, false, true, "", "")
+				_, err = chartLoader(chartSource)
 				if err != nil {
 					if tc.expectError {
 						// For expected errors, return without additional handling

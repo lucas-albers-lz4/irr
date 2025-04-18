@@ -585,10 +585,10 @@ func createGenerator(chartSource *ChartSource, config *GeneratorConfig) (Generat
 	}
 
 	// Create chart loader instance
-	loader := helmchart.NewDefaultLoader(nil)
+	loader := chart.NewLoader()
 
 	// --- Create Override Generator ---
-	generator := helmchart.NewGenerator(
+	generator := chart.NewGenerator(
 		config.ChartPath,
 		config.TargetRegistry,
 		config.SourceRegistries,
@@ -605,8 +605,10 @@ func createGenerator(chartSource *ChartSource, config *GeneratorConfig) (Generat
 	)
 
 	// Configure rules system
-	generator.SetRulesEnabled(config.RulesEnabled)
-	if !config.RulesEnabled {
+	if config.RulesEnabled {
+		generator.SetRulesEnabled(true)
+	} else {
+		generator.SetRulesEnabled(false)
 		log.Infof("Chart parameter rules system is disabled")
 	}
 
@@ -614,13 +616,13 @@ func createGenerator(chartSource *ChartSource, config *GeneratorConfig) (Generat
 }
 
 // loadChart loads a Helm chart from the configured source
-func loadChart(
-	cfg *Config,
-	cs *ChartSource,
-	options *OverrideOptions,
-) (*helmchart.Chart, error) {
-	// Create a Helm chart loader with the configured logger
-	if cs.SourceType == chartSourceTypeFile {
+func loadChart(cs *ChartSource) (*helmchart.Chart, error) {
+	if cs == nil {
+		return nil, fmt.Errorf("chart source is nil")
+	}
+
+	// Check if the file exists when using a physical chart path
+	if cs.SourceType == "chart" {
 		// Check if the file exists
 		if _, err := os.Stat(cs.ChartPath); os.IsNotExist(err) {
 			log.Errorf("Chart not found at path: %s", cs.ChartPath)
@@ -628,10 +630,10 @@ func loadChart(
 		}
 	}
 
-	// Create the Helm settings and loader based on the chart source type
+	// Create loader using the package function
 	loader := chart.NewLoader()
 
-	// Load the chart based on the source type
+	// Load the chart
 	log.Debugf("Loading chart from source: %s", cs.Message)
 	c, err := loader.Load(cs.ChartPath)
 	if err != nil {
@@ -1240,17 +1242,44 @@ func generateValuesOverrides(
 	c *helmchart.Chart,
 	targetRegistry string,
 	sourceRegistries []string,
-	strategyType strategy.StrategyType,
 	pathStrategy strategy.PathStrategy,
-	flags *OutputFlags,
 	strictMode bool,
 ) ([]byte, error) {
-	// ... existing code ...
+	if c == nil {
+		return nil, fmt.Errorf("chart is nil")
+	}
 
-	// Create a new generators for the chart
-	generator := chart.NewGenerator()
+	// Create a generator with the chart and settings
+	chartPath := "" // Not needed for direct chart object
+	loader := chart.NewLoader()
 
-	// ... existing code ...
+	generator := chart.NewGenerator(
+		chartPath,
+		targetRegistry,
+		sourceRegistries,
+		[]string{}, // No exclude registries
+		pathStrategy,
+		nil,                 // No mappings
+		map[string]string{}, // No config mappings
+		strictMode,
+		0, // No threshold
+		loader,
+		nil, nil, nil, // No include/exclude patterns or known paths
+	)
+
+	// Generate the overrides
+	result, err := generator.Generate()
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert to YAML
+	yamlBytes, err := yaml.Marshal(result.Values)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal values to YAML: %w", err)
+	}
+
+	return yamlBytes, nil
 }
 
 // getChartFromCurrentDir attempts to load a chart from the current directory
