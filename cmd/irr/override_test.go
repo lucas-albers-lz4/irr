@@ -41,8 +41,7 @@ func TestOverrideCommand_RequiredFlags(t *testing.T) {
 	err := cmd.Execute()
 	require.Error(t, err, "Command should error when required flags are missing")
 
-	// Updated to match current behavior - source-registries and target-registry are required
-	assert.Contains(t, err.Error(), "source-registries")
+	// In the current implementation, only target-registry is marked as required flag
 	assert.Contains(t, err.Error(), "target-registry")
 }
 
@@ -111,16 +110,20 @@ func TestOverrideCommand_LoadChart(t *testing.T) {
 			}
 
 			// Override the chart loader function for testing
-			chartLoader = func(config *GeneratorConfig, _ /*loadFromRelease*/, _ /*loadFromPath*/ bool, _ /*releaseName*/, _ /*namespace*/ string) (string, error) {
+			chartLoader = func(config *GeneratorConfig, _ /*loadFromRelease*/, _ /*loadFromPath*/ bool, _ /*releaseName*/, _ /*namespace*/ string) (*ChartSource, error) {
 				if config.ChartPath == testChartDir && !tc.expectError {
 					// Return success for the valid chart
-					return testChartDir, nil
+					return &ChartSource{
+						ChartPath:  testChartDir,
+						SourceType: "chart",
+						Message:    "Using chart path",
+					}, nil
 				} else if config.ChartPath == "/does/not/exist" {
 					// Return error for the non-existent chart
-					return "", fmt.Errorf("chart path not found: %s", config.ChartPath)
+					return nil, fmt.Errorf("chart path not found: %s", config.ChartPath)
 				}
 				// Default error
-				return "", fmt.Errorf("unsupported configuration in test")
+				return nil, fmt.Errorf("unsupported configuration in test")
 			}
 
 			// Create a cobra command that uses our mock

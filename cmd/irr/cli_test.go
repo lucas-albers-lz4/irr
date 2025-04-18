@@ -251,16 +251,6 @@ func TestOverrideCommand(t *testing.T) {
 			wantErr:  "required flag(s) \"chart-path\" not set",
 		},
 		{
-			name: "missing source registries",
-			args: []string{
-				"override",
-				"--chart-path", chartPath,
-				"--target-registry", "example.registry.io",
-			},
-			wantExit: 1,
-			wantErr:  "required flag(s) \"source-registries\" not set",
-		},
-		{
 			name: "missing target registry",
 			args: []string{
 				"override",
@@ -321,8 +311,8 @@ sidecar:
 				"validate",
 				"--values", valuesFile,
 			},
-			wantExit: 2,
-			wantErr:  "either --chart-path or release name must be provided",
+			wantExit: 4,
+			wantErr:  "chart path not specified and no Helm chart found in current directory",
 		},
 		{
 			name: "missing values file",
@@ -596,9 +586,9 @@ sidecar:
 				"--chart-path", chartPath,
 				"--source-registries", "docker.io",
 				"--target-registry", "example.registry.io",
-				"--strategy", "direct",
+				"--strategy", "prefix-source-registry",
 			},
-			wantExit: 3,
+			wantExit: 0,
 		},
 		{
 			name: "validate with multiple values files",

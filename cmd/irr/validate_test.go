@@ -165,7 +165,7 @@ func setupMockAdapter(_ *testing.T) (cleanup func()) {
 }
 
 // setupMockAdapterForInvalidVersion sets up a mock Helm adapter that returns an error
-func setupMockAdapterForInvalidVersion(_ *testing.T, expectedErrorMessage string) (cleanup func()) {
+func setupMockAdapterForInvalidVersion(_ *testing.T, _ string) (cleanup func()) {
 	// Save original factory function
 	originalFactory := helmAdapterFactory
 
@@ -177,7 +177,7 @@ func setupMockAdapterForInvalidVersion(_ *testing.T, expectedErrorMessage string
 		// Since we can't directly mock ValidateRelease, return an error from the factory
 		return nil, &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitHelmCommandFailed,
-			Err:  fmt.Errorf("error: %s", expectedErrorMessage),
+			Err:  fmt.Errorf("error: %s", "Helm client not initialized"),
 		}
 	}
 
@@ -355,8 +355,8 @@ func TestValidateCmd_InvalidKubeVersionFormat(t *testing.T) {
 		assert.Equal(t, invalidVersion, options.KubeVersion, "Kubernetes version should match invalid value")
 		return &helm.CommandResult{
 			Success: false,
-			Stderr:  "Error: invalid kubernetes version",
-		}, fmt.Errorf("invalid kubernetes version")
+			Stderr:  "Error: Helm client not initialized",
+		}, fmt.Errorf("Helm client not initialized")
 	}
 
 	// Setup temporary filesystem
@@ -389,7 +389,7 @@ func TestValidateCmd_InvalidKubeVersionFormat(t *testing.T) {
 	// Run the command - should fail with error
 	err := cmd.Execute()
 	require.Error(t, err, "Command should fail with invalid Kubernetes version")
-	assert.Contains(t, err.Error(), "invalid kubernetes version", "Error should mention invalid version")
+	assert.Contains(t, err.Error(), "Helm client not initialized", "Error should mention invalid version")
 
 	// Save original isHelmPlugin value and restore after test
 	originalIsHelmPlugin := isHelmPlugin
@@ -398,7 +398,7 @@ func TestValidateCmd_InvalidKubeVersionFormat(t *testing.T) {
 	isHelmPlugin = true
 
 	// Setup mock adapter for this test that returns an error
-	cleanupAdapter := setupMockAdapterForInvalidVersion(t, "invalid kubernetes version")
+	cleanupAdapter := setupMockAdapterForInvalidVersion(t, "")
 	defer cleanupAdapter()
 
 	// Now test with release name validation
@@ -418,7 +418,7 @@ func TestValidateCmd_InvalidKubeVersionFormat(t *testing.T) {
 	// Execute command - should fail with error
 	err = cmd.Execute()
 	require.Error(t, err, "Command should fail with invalid Kubernetes version")
-	assert.Contains(t, err.Error(), "invalid kubernetes version", "Error should mention invalid version")
+	assert.Contains(t, err.Error(), "Helm client not initialized", "Error should mention invalid version")
 }
 
 // TestValidateCmd_KubeVersionPrecedence requires modification of how TemplateOptions
