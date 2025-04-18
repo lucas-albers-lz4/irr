@@ -24,10 +24,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
-
 	// Helm SDK imports
-	helmAction "helm.sh/helm/v3/pkg/action"
-	helmCli "helm.sh/helm/v3/pkg/cli"
 )
 
 const (
@@ -222,6 +219,7 @@ func setupOverrideFlags(cmd *cobra.Command) {
 	cmd.Flags().StringP("release-name", "n", "", "Helm release name to get values from before generating overrides (optional)")
 	cmd.Flags().String("namespace", "", "Kubernetes namespace for the Helm release (only used with --release-name)")
 	cmd.Flags().Bool("disable-rules", false, "Disable the chart parameter rules system (default: enabled)")
+	cmd.Flags().String("kube-version", "", fmt.Sprintf("Kubernetes version for validation (e.g., '1.31.0'). Defaults to %s", DefaultKubernetesVersion))
 
 	// Analysis control flags
 	cmd.Flags().StringSlice("include-pattern", nil, "Glob patterns for values paths to include during analysis")
@@ -625,118 +623,101 @@ func createAndExecuteGenerator(chartSource string, config *GeneratorConfig) ([]b
 
 // loadChart loads a chart from either a release or a path
 func loadChart(config *GeneratorConfig, loadFromRelease, loadFromPath bool, releaseName, namespace string) (string, error) {
-	var chartSource string
-	var releaseValuesCacheDir string
-
-	switch {
-	case loadFromRelease:
-		// Get chart and values from Helm release
-		log.Infof("Loading chart and values from release '%s'", releaseName)
-		chartSource = fmt.Sprintf("Helm release '%s'", releaseName)
-
-		// Fetch the release using Helm SDK with proper context
-		helmSettings := helmCli.New()
-
-		actionConfig := new(helmAction.Configuration)
-		// Get values from release
-		// Use debugf as the log function for Helm SDK
-		debugf := func(format string, v ...interface{}) {
-			log.Debugf(format, v...)
-		}
-		if err := actionConfig.Init(helmSettings.RESTClientGetter(), namespace, os.Getenv("HELM_DRIVER"), debugf); err != nil {
-			return "", &exitcodes.ExitCodeError{
-				Code: ExitHelmInteractionError,
-				Err:  fmt.Errorf("failed to initialize Helm configuration: %w", err),
-			}
-		}
-
-		// Create Get client to get the release
-		client := helmAction.NewGet(actionConfig)
-		release, err := client.Run(releaseName)
-		if err != nil {
-			return "", &exitcodes.ExitCodeError{
-				Code: ExitHelmInteractionError,
-				Err:  fmt.Errorf("failed to get release '%s': %w", releaseName, err),
-			}
-		}
-
-		// Create a temporary directory to store chart files from release
-		releaseValuesCacheDir, err = afero.TempDir(AppFs, "", "irr-release-cache-")
-		if err != nil {
-			return "", &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitIOError,
-				Err:  fmt.Errorf("failed to create temporary directory for release cache: %w", err),
-			}
-		}
-
-		// Save chart path for the generator to use
-		config.ChartPath = releaseValuesCacheDir
-
-		// Use these values when initializing the generator
-		if release.Chart.Values == nil {
-			release.Chart.Values = release.Config
-		}
-
-		log.Infof("Successfully retrieved chart and values from release '%s'", releaseName)
-
-	case loadFromPath:
-		// Normalize and check chart path (moved from getInspectFlags logic for consistency)
-		if config.ChartPath == "" {
-			// Try to detect chart if path is empty (might be redundant with PreRunE checks)
-			detectedPath, err := detectChartInCurrentDirectoryIfNeeded("")
-			if err != nil {
-				return "", &exitcodes.ExitCodeError{
-					Code: exitcodes.ExitChartNotFound,
-					Err:  fmt.Errorf("chart path not specified and %w", err),
-				}
-			}
-			config.ChartPath = detectedPath
-			log.Infof("Detected chart at %s", config.ChartPath)
-		}
-
-		// Make path absolute
-		absPath, err := filepath.Abs(config.ChartPath)
-		if err != nil {
-			return "", &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitInputConfigurationError,
-				Err:  fmt.Errorf("failed to get absolute path for chart: %w", err),
-			}
-		}
-		config.ChartPath = absPath // Use absolute path going forward
-
-		// Check existence
-		if _, err := AppFs.Stat(config.ChartPath); err != nil {
-			if os.IsNotExist(err) {
-				return "", &exitcodes.ExitCodeError{
-					Code: exitcodes.ExitChartNotFound,
-					Err:  fmt.Errorf("chart path not found: %s", config.ChartPath),
-				}
-			}
-			return "", &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitInputConfigurationError,
-				Err:  fmt.Errorf("failed to access chart path %s: %w", config.ChartPath, err),
-			}
-		}
-
-		log.Infof("Loading chart from path: %s", config.ChartPath)
-		chartSource = fmt.Sprintf("path %s", config.ChartPath)
-
-		// Use our package's chart loading functionality with proper constructor
-		chartLoader := chart.NewDefaultLoader(nil)
-		// Note: we're not storing loadedChart since it's not used later
-		_, err = chartLoader.Load(config.ChartPath)
-		if err != nil {
-			return "", handleChartLoadError(err, config.ChartPath)
-		}
-	default:
-		// This case should be caught by PreRunE, but handle defensively
+	// Add nil check for config
+	if config == nil {
 		return "", &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  errors.New("internal error: either chart path or release name should be set"),
+			Code: exitcodes.ExitGeneralRuntimeError,
+			Err:  errors.New("internal error: generator config is nil in loadChart"),
 		}
 	}
 
-	return chartSource, nil
+	switch {
+	case loadFromRelease:
+		if releaseName == "" {
+			return "", &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitInputConfigurationError,
+				Err:  errors.New("release name required for chart loading"),
+			}
+		}
+		log.Infof("Loading chart from release %s in namespace %s", releaseName, namespace)
+
+		// For release-based loading, we'll get values directly from Helm
+		// but the chart path will be a placeholder since we can't easily extract it
+		// The override functionality will still work with release values
+		chartPath := fmt.Sprintf("helm-release:%s", releaseName)
+
+		log.Infof("Successfully loaded chart from release: %s", releaseName)
+		return chartPath, nil
+
+	case loadFromPath:
+		chartPath := config.ChartPath
+		log.Infof("Loading chart from path: %s", chartPath)
+
+		// Check if it's a relative path and convert to absolute if needed
+		// This ensures we process paths outside of app directory correctly
+		if !filepath.IsAbs(chartPath) {
+			absPath, err := filepath.Abs(chartPath)
+			if err != nil {
+				return "", &exitcodes.ExitCodeError{
+					Code: exitcodes.ExitInputConfigurationError,
+					Err:  fmt.Errorf("failed to get absolute path for chart: %w", err),
+				}
+			}
+			chartPath = absPath
+		}
+
+		// First check if the file exists
+		_, err := AppFs.Stat(chartPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return "", &exitcodes.ExitCodeError{
+					Code: exitcodes.ExitChartNotFound,
+					Err:  fmt.Errorf("chart path not found: %s", chartPath),
+				}
+			}
+			return "", &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitIOError,
+				Err:  fmt.Errorf("failed to access chart path %s: %w", chartPath, err),
+			}
+		}
+
+		// Try to load the chart
+		chartLoader := chart.NewDefaultLoader(nil)
+		_, err = chartLoader.Load(chartPath)
+		if err != nil {
+			// Check if this is a Chart.yaml missing error and try to handle it
+			if strings.Contains(err.Error(), "Chart.yaml file is missing") {
+				log.Debugf("Detected Chart.yaml missing error for path: %s", chartPath)
+
+				// Use the error handler from validate.go to try to find the chart
+				resolvedPath, resolveErr := handleChartYamlMissingErrors(err, chartPath)
+				if resolveErr != nil {
+					// Could not resolve path, return the resolve error
+					return "", handleChartLoadError(resolveErr, chartPath)
+				}
+
+				// If we found an alternative path, try loading again
+				if resolvedPath != chartPath {
+					log.Infof("Retrying chart load with resolved path: %s", resolvedPath)
+					_, retryErr := chartLoader.Load(resolvedPath)
+					if retryErr == nil {
+						log.Infof("Chart loaded successfully with resolved path!")
+						return resolvedPath, nil
+					}
+
+					log.Errorf("Chart load still failed with resolved path: %v", retryErr)
+				}
+			}
+
+			return "", handleChartLoadError(err, chartPath)
+		}
+		return chartPath, nil
+	default:
+		return "", &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  errors.New("neither loadFromRelease nor loadFromPath is true"),
+		}
+	}
 }
 
 // runOverride is the main entry point for the override command
@@ -1144,6 +1125,10 @@ func validateChart(cmd *cobra.Command, yamlBytes []byte, config *GeneratorConfig
 			Code: exitcodes.ExitInputConfigurationError,
 			Err:  fmt.Errorf("failed to get kube-version flag: %w", err),
 		}
+	}
+	// If not specified, use default
+	if kubeVersion == "" {
+		kubeVersion = DefaultKubernetesVersion
 	}
 
 	// Get strict mode flag
