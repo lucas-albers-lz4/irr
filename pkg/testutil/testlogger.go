@@ -25,7 +25,10 @@ func SuppressLogging() func() {
 	originalOut = os.Stdout
 	originalErr = os.Stderr
 
-	null, _ := os.Open(os.DevNull)
+	null, err := os.Open(os.DevNull)
+	if err != nil {
+		panic(err)
+	}
 	os.Stdout = null
 	os.Stderr = null
 
@@ -35,7 +38,10 @@ func SuppressLogging() func() {
 
 		os.Stdout = originalOut
 		os.Stderr = originalErr
-		null.Close()
+		err := null.Close()
+		if err != nil {
+			panic(err)
+		}
 	}
 }
 
@@ -48,8 +54,14 @@ func CaptureLogging() func() (string, string) {
 	originalOut = os.Stdout
 	originalErr = os.Stderr
 
-	outReader, outWriter, _ := os.Pipe()
-	errReader, errWriter, _ := os.Pipe()
+	outReader, outWriter, err := os.Pipe()
+	if err != nil {
+		panic(err)
+	}
+	errReader, errWriter, err := os.Pipe()
+	if err != nil {
+		panic(err)
+	}
 
 	os.Stdout = outWriter
 	os.Stderr = errWriter
@@ -58,12 +70,18 @@ func CaptureLogging() func() (string, string) {
 	errChan := make(chan string)
 
 	go func() {
-		outBytes, _ := io.ReadAll(outReader)
+		outBytes, err := io.ReadAll(outReader)
+		if err != nil {
+			panic(err)
+		}
 		outChan <- string(outBytes)
 	}()
 
 	go func() {
-		errBytes, _ := io.ReadAll(errReader)
+		errBytes, err := io.ReadAll(errReader)
+		if err != nil {
+			panic(err)
+		}
 		errChan <- string(errBytes)
 	}()
 
@@ -71,8 +89,14 @@ func CaptureLogging() func() (string, string) {
 		mutex.Lock()
 		defer mutex.Unlock()
 
-		outWriter.Close()
-		errWriter.Close()
+		err := outWriter.Close()
+		if err != nil {
+			panic(err)
+		}
+		err = errWriter.Close()
+		if err != nil {
+			panic(err)
+		}
 
 		os.Stdout = originalOut
 		os.Stderr = originalErr
