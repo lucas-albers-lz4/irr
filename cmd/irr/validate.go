@@ -489,8 +489,7 @@ func handleHelmPluginValidate(cmd *cobra.Command, releaseName, namespace string,
 	if helmClient == nil {
 		return &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitHelmInteractionError,
-			// nolint:staticcheck // ST1005: Preserving capitalization for consistent user-facing errors
-			Err: errors.New("Helm client not initialized"),
+			Err:  errors.New("helm client not initialized"),
 		}
 	}
 
