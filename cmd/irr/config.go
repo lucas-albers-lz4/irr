@@ -57,7 +57,7 @@ Mappings are stored in a YAML file and used by the 'override' command.`,
 }
 
 // configCmdRun executes the config command
-func configCmdRun(cmd *cobra.Command, args []string) error {
+func configCmdRun(_ *cobra.Command, _ []string) error {
 	// Check command options
 	if configListOnly {
 		return listMappings()
