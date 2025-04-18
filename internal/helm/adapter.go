@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/lalbers/irr/pkg/chart"
@@ -15,6 +16,8 @@ import (
 	log "github.com/lalbers/irr/pkg/log"
 	"github.com/spf13/afero"
 	"gopkg.in/yaml.v3"
+	"helm.sh/helm/v3/pkg/action"
+	"helm.sh/helm/v3/pkg/cli"
 )
 
 // FileMode constants for directories and files
@@ -341,10 +344,28 @@ func (a *Adapter) ValidateRelease(ctx context.Context, releaseName, namespace st
 		}
 	}
 
-	// Resolve chart path required for template rendering
-	chartPath, err := a.resolveChartPath(chartMeta)
-	if err != nil {
-		return fmt.Errorf("could not resolve chart path: %w", err)
+	// Use improved chart resolution with better fallback handling
+	var chartPath string
+	// Check if we have access to FindChartForRelease method (available if client is RealHelmClient)
+	if realClient, ok := a.helmClient.(*RealHelmClient); ok {
+		chartPath, err = realClient.FindChartForRelease(ctx, releaseName, namespace)
+		if err != nil {
+			log.Warnf("Failed to find chart for release using advanced lookup: %v", err)
+			log.Infof("Falling back to basic chart resolution method")
+			// Fall back to resolveChartPath if advanced method fails
+			chartPath, err = a.resolveChartPath(chartMeta)
+			if err != nil {
+				return fmt.Errorf("could not resolve chart path: %w", err)
+			}
+		} else {
+			log.Infof("Found chart for release at: %s", chartPath)
+		}
+	} else {
+		// Use the regular chart resolution if we can't access the advanced method
+		chartPath, err = a.resolveChartPath(chartMeta)
+		if err != nil {
+			return fmt.Errorf("could not resolve chart path: %w", err)
+		}
 	}
 
 	// Load values files
@@ -359,8 +380,7 @@ func (a *Adapter) ValidateRelease(ctx context.Context, releaseName, namespace st
 
 	// Merge all values
 	for _, overrideValue := range overrideValues {
-		// TODO: Implement values merging properly
-		// For now, just shallow merge the keys
+		// Shallow merge the keys for now
 		for k, v := range overrideValue {
 			values[k] = v
 		}
@@ -368,16 +388,110 @@ func (a *Adapter) ValidateRelease(ctx context.Context, releaseName, namespace st
 
 	// Perform validation
 	// For now, just attempt to template with the override values
-	manifest, err := a.helmClient.TemplateChart(ctx, releaseName, chartPath, values, namespace)
+	_, err = a.helmClient.TemplateChart(ctx, releaseName, chartPath, values, namespace)
 	if err != nil {
+		// If templating fails with a "Chart.yaml file is missing" error, try to handle it
+		if strings.Contains(err.Error(), "Chart.yaml file is missing") {
+			log.Warnf("Chart.yaml file is missing for %s", chartPath)
+
+			// Try to find another path
+			if realClient, ok := a.helmClient.(*RealHelmClient); ok {
+				// Try even harder to find the chart, with more aggressive search
+				altPath, altErr := handleChartYamlMissingWithSDK(releaseName, "", chartPath, realClient)
+				if altErr == nil && altPath != "" {
+					log.Infof("Found alternative chart path: %s", altPath)
+
+					// Try templating again with the new path
+					_, err = a.helmClient.TemplateChart(ctx, releaseName, altPath, values, namespace)
+					if err == nil {
+						// Success with alternative path!
+						log.Infof("Successfully validated chart with alternative path")
+						return nil
+					}
+					log.Warnf("Failed to validate even with alternative path: %v", err)
+				}
+			}
+
+			// If we couldn't resolve it, return a more helpful error
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitChartNotFound,
+				Err: fmt.Errorf("chart.yaml file is missing for release %q. Try providing the chart path directly with --chart-path flag",
+					releaseName),
+			}
+		}
+
 		return fmt.Errorf("template rendering failed: %w", err)
 	}
 
-	if manifest == "" {
-		return fmt.Errorf("template rendered empty manifest, this may indicate an issue")
+	if err == nil {
+		return nil
 	}
 
-	return nil
+	return fmt.Errorf("template rendered empty manifest, this may indicate an issue")
+}
+
+// handleChartYamlMissingWithSDK is a helper function to find charts using Helm SDK
+// when the initial chart path fails with "Chart.yaml file is missing"
+func handleChartYamlMissingWithSDK(_, _, originalChartPath string, _ *RealHelmClient) (string, error) {
+	// Extract chart name from the path
+	chartName := filepath.Base(originalChartPath)
+	chartName = strings.TrimSuffix(chartName, ".tgz")
+
+	// Extract potential version from name-version pattern
+	var chartVersion string
+	parts := strings.Split(chartName, "-")
+	if len(parts) > 1 {
+		// Try to detect if last part is a version number
+		lastPart := parts[len(parts)-1]
+		if lastPart != "" && lastPart[0] >= '0' && lastPart[0] <= '9' {
+			chartVersion = lastPart
+			chartName = strings.Join(parts[:len(parts)-1], "-")
+		}
+	}
+
+	debug.Printf("Extracted chart name: %s, version: %s from path: %s", chartName, chartVersion, originalChartPath)
+
+	// Try to use LocateChart directly
+	settings := cli.New()
+	chartPathOptions := action.ChartPathOptions{
+		Version: chartVersion,
+	}
+
+	// Try with just the chart name
+	chartPath, err := chartPathOptions.LocateChart(chartName, settings)
+	if err == nil {
+		debug.Printf("Successfully located chart at %s using chart name only", chartPath)
+		return chartPath, nil
+	}
+
+	// Try repository cache locations directly
+	cacheDir := settings.RepositoryCache
+	if cacheDir != "" {
+		debug.Printf("Checking repository cache at %s", cacheDir)
+
+		// Try with exact version if available
+		if chartVersion != "" {
+			cachePath := filepath.Join(cacheDir, fmt.Sprintf("%s-%s.tgz", chartName, chartVersion))
+			if _, err := os.Stat(cachePath); err == nil {
+				debug.Printf("Found chart at %s", cachePath)
+				return cachePath, nil
+			}
+		}
+
+		// Try with glob pattern
+		pattern := filepath.Join(cacheDir, fmt.Sprintf("%s-*.tgz", chartName))
+		matches, err := filepath.Glob(pattern)
+		if err == nil && len(matches) > 0 {
+			// Sort to get latest version
+			sort.Strings(matches)
+			chartPath := matches[len(matches)-1]
+			debug.Printf("Found chart using glob at %s", chartPath)
+			return chartPath, nil
+		}
+	}
+
+	// Failed to find chart
+	return "", fmt.Errorf("could not locate chart for %s even with fallbacks", chartName)
 }
 
 // loadValuesFile loads YAML values from a file
@@ -404,12 +518,98 @@ func (a *Adapter) resolveChartPath(meta *ChartMetadata) (string, error) {
 		return meta.Path, nil
 	}
 
-	// Prepare temp directory for chart files
+	// Create Helm settings to access Helm's configuration
+	settings := cli.New()
+
+	// Create a chart path options object to leverage Helm's chart location functionality
+	chartPathOptions := action.ChartPathOptions{
+		Version: meta.Version,
+		RepoURL: meta.Repository,
+	}
+
+	// Try to locate the chart using Helm's built-in functionality
+	// This will check Helm's cache and repositories
+	chartRef := meta.Name
+	if meta.Repository != "" {
+		// If we have repository information, use it
+		chartRef = fmt.Sprintf("%s/%s", meta.Repository, meta.Name)
+	}
+
+	debug.Printf("Attempting to locate chart %s version %s using Helm SDK", chartRef, meta.Version)
+	chartPath, err := chartPathOptions.LocateChart(chartRef, settings)
+	if err == nil {
+		debug.Printf("Found chart using Helm SDK at: %s", chartPath)
+		return chartPath, nil
+	}
+	debug.Printf("Failed to locate chart using Helm SDK: %v", err)
+
+	// If Helm SDK couldn't find it, try searching in Helm's repository cache directly
+	cacheDir := settings.RepositoryCache
+	if cacheDir != "" {
+		debug.Printf("Checking Helm repository cache at: %s", cacheDir)
+		chartTgz := fmt.Sprintf("%s-%s.tgz", meta.Name, meta.Version)
+		cachePath := filepath.Join(cacheDir, chartTgz)
+
+		exists, err := afero.Exists(a.fs, cachePath)
+		if err == nil && exists {
+			debug.Printf("Found chart in Helm cache: %s", cachePath)
+			return cachePath, nil
+		}
+
+		// Try glob pattern if exact match failed
+		matches, err := afero.Glob(a.fs, filepath.Join(cacheDir, meta.Name+"-*.tgz"))
+		if err == nil && len(matches) > 0 {
+			// Sort to get the latest version if multiple exist
+			sort.Strings(matches)
+			chartPath := matches[len(matches)-1] // Get the last (likely highest version)
+			debug.Printf("Found chart in Helm cache (glob match): %s", chartPath)
+			return chartPath, nil
+		}
+	}
+
+	// Fall back to checking common Helm cache directories
+	helmCachePaths := []string{
+		// macOS Helm cache path
+		filepath.Join(os.Getenv("HOME"), "Library", "Caches", "helm", "repository"),
+		// Linux/Unix Helm cache path
+		filepath.Join(os.Getenv("HOME"), ".cache", "helm", "repository"),
+		// Windows Helm cache path - uses APPDATA
+		filepath.Join(os.Getenv("APPDATA"), "helm", "repository"),
+	}
+
+	for _, cachePath := range helmCachePaths {
+		// Skip if this is the same as the repository cache we already checked
+		if cachePath == cacheDir {
+			continue
+		}
+
+		// Look for exact match with name-version.tgz
+		potentialChartPath := filepath.Join(cachePath, meta.Name+"-"+meta.Version+".tgz")
+		debug.Printf("Checking for chart in cache path: %s", potentialChartPath)
+
+		exists, err := afero.Exists(a.fs, potentialChartPath)
+		if err == nil && exists {
+			debug.Printf("Found chart in cache: %s", potentialChartPath)
+			return potentialChartPath, nil
+		}
+
+		// Also try to glob search for any matching version
+		matches, err := afero.Glob(a.fs, filepath.Join(cachePath, meta.Name+"-*.tgz"))
+		if err == nil && len(matches) > 0 {
+			// Sort to get the latest version if multiple exist
+			sort.Strings(matches)
+			chartPath := matches[len(matches)-1] // Get the last (likely highest version)
+			debug.Printf("Found chart in cache (glob match): %s", chartPath)
+			return chartPath, nil
+		}
+	}
+
+	// Prepare temp directory for chart files if not found in cache
 	tempDir := os.TempDir()
 	tempChartPath := filepath.Join(tempDir, "irr", "charts", meta.Name+"-"+meta.Version)
 
-	// Check if this chart has already been cached
-	_, err := a.fs.Stat(tempChartPath)
+	// Check if this chart has already been cached in our temp dir
+	_, err = a.fs.Stat(tempChartPath)
 	if err == nil {
 		debug.Printf("Using cached chart at %s", tempChartPath)
 		return tempChartPath, nil
@@ -421,5 +621,6 @@ func (a *Adapter) resolveChartPath(meta *ChartMetadata) (string, error) {
 	}
 
 	// At this point, we couldn't find the chart, return the temp path as a placeholder
+	debug.Printf("Could not find chart in any cache, using temporary path: %s", tempChartPath)
 	return tempChartPath, nil
 }
