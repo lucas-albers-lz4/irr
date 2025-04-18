@@ -50,6 +50,13 @@ func TestAferoFS_Create(t *testing.T) {
 	data, err := afero.ReadFile(memFs, testFileName)
 	assert.NoError(t, err, "ReadFile should not return an error")
 	assert.Equal(t, testData, data, "File contents should match written data")
+
+	// Test error case with a read-only filesystem
+	readOnlyFs := afero.NewReadOnlyFs(afero.NewMemMapFs())
+	readOnlyAferoFs := NewAferoFS(readOnlyFs)
+	_, err = readOnlyAferoFs.Create("should-fail.txt")
+	assert.Error(t, err, "Create should return an error with read-only filesystem")
+	assert.Contains(t, err.Error(), "failed to create file", "Error message should contain 'failed to create file'")
 }
 
 func TestAferoFS_Mkdir(t *testing.T) {
@@ -113,6 +120,13 @@ func TestAferoFS_MkdirAll(t *testing.T) {
 	// Test creating a directory that already exists
 	err = fs.MkdirAll(nestedDir, ReadWriteExecuteUserReadExecuteOthers)
 	assert.NoError(t, err, "MkdirAll should not return an error for existing directory")
+
+	// Test error case with a read-only filesystem
+	readOnlyFs := afero.NewReadOnlyFs(afero.NewMemMapFs())
+	readOnlyAferoFs := NewAferoFS(readOnlyFs)
+	err = readOnlyAferoFs.MkdirAll("should-fail", ReadWriteExecuteUserReadExecuteOthers)
+	assert.Error(t, err, "MkdirAll should return an error with read-only filesystem")
+	assert.Contains(t, err.Error(), "failed to create directory path", "Error message should contain 'failed to create directory path'")
 }
 
 func TestAferoFS_Open(t *testing.T) {
@@ -226,6 +240,19 @@ func TestAferoFS_RemoveAll(t *testing.T) {
 	// Test removing a non-existent directory
 	err = fs.RemoveAll("nonexistent")
 	assert.NoError(t, err, "RemoveAll should not return an error for non-existent path")
+
+	// Test error case with a read-only filesystem
+	// First create a directory in the underlying memfs
+	memMapFs := afero.NewMemMapFs()
+	err = memMapFs.MkdirAll("test-readonly", ReadWriteExecuteUserReadExecuteOthers)
+	if err != nil {
+		t.Fatalf("Failed to create test-readonly directory: %v", err)
+	}
+	roFs := afero.NewReadOnlyFs(memMapFs)
+	roAferoFs := NewAferoFS(roFs)
+	err = roAferoFs.RemoveAll("test-readonly")
+	assert.Error(t, err, "RemoveAll should return an error with read-only filesystem")
+	assert.Contains(t, err.Error(), "failed to remove path", "Error message should contain 'failed to remove path'")
 }
 
 func TestAferoFS_Rename(t *testing.T) {
@@ -307,23 +334,31 @@ func TestAferoFS_WriteFile(t *testing.T) {
 	fs := NewAferoFS(memFs)
 
 	// Test writing a file
-	err := fs.WriteFile(testFileName, []byte("test data"), ReadWriteUserReadOthers)
+	testData := []byte("test data")
+	err := fs.WriteFile(testFileName, testData, ReadWriteUserReadOthers)
 	assert.NoError(t, err, "WriteFile should not return an error")
 
 	// Verify the file was written correctly
 	data, err := afero.ReadFile(memFs, testFileName)
 	assert.NoError(t, err, "ReadFile should not return an error")
-	assert.Equal(t, []byte("test data"), data, "File contents should match written data")
+	assert.Equal(t, testData, data, "File contents should match written data")
 
 	// Test overwriting an existing file
 	newData := []byte("new data")
 	err = fs.WriteFile(testFileName, newData, ReadWriteUserReadOthers)
 	assert.NoError(t, err, "WriteFile should not return an error when overwriting")
 
-	// Verify the file was overwritten
+	// Verify the file was updated
 	data, err = afero.ReadFile(memFs, testFileName)
 	assert.NoError(t, err, "ReadFile should not return an error")
 	assert.Equal(t, newData, data, "File contents should match new data")
+
+	// Test error case with a read-only filesystem
+	roFs := afero.NewReadOnlyFs(afero.NewMemMapFs())
+	roAferoFs := NewAferoFS(roFs)
+	err = roAferoFs.WriteFile("should-fail.txt", []byte("test"), ReadWriteUserReadOthers)
+	assert.Error(t, err, "WriteFile should return an error with read-only filesystem")
+	assert.Contains(t, err.Error(), "failed to write file", "Error message should contain 'failed to write file'")
 }
 
 func TestSetFS(t *testing.T) {
@@ -430,4 +465,29 @@ func TestGetUnderlyingFs(t *testing.T) {
 	complexFs := afero.NewReadOnlyFs(afero.NewBasePathFs(afero.NewReadOnlyFs(memFs), "/complex"))
 	underlyingFs = GetUnderlyingFs(complexFs)
 	assert.Equal(t, memFs, underlyingFs, "Complex nested Fs should return the root underlying MemMapFs")
+}
+
+func TestAferoFS_GetUnderlyingFs(t *testing.T) {
+	// Create different types of filesystems
+	osFs := afero.NewOsFs()
+	memFs := afero.NewMemMapFs()
+
+	// Create AferoFS instances
+	osAferoFS := NewAferoFS(osFs)
+	memAferoFS := NewAferoFS(memFs)
+
+	// Test with OsFs
+	underlyingFs := osAferoFS.GetUnderlyingFs()
+	assert.Equal(t, osFs, underlyingFs, "AferoFS.GetUnderlyingFs should return the original OsFs")
+
+	// Test with MemMapFs
+	underlyingFs = memAferoFS.GetUnderlyingFs()
+	assert.Equal(t, memFs, underlyingFs, "AferoFS.GetUnderlyingFs should return the original MemMapFs")
+
+	// Test with nil fs (should return default OsFs)
+	nilAferoFS := NewAferoFS(nil)
+	underlyingFs = nilAferoFS.GetUnderlyingFs()
+	assert.NotNil(t, underlyingFs, "AferoFS.GetUnderlyingFs should never return nil")
+	_, isOsFs := underlyingFs.(*afero.OsFs)
+	assert.True(t, isOsFs, "AferoFS created with nil should have OsFs as underlying fs")
 }

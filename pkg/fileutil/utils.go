@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // FileExists checks if a file exists at the given path
@@ -13,14 +14,23 @@ func FileExists(path string) (bool, error) {
 		if os.IsNotExist(err) {
 			return false, nil
 		}
-		// Don't wrap "file not found" errors
-		if err.Error() == os.ErrNotExist.Error() ||
-			err.Error() == "file does not exist" ||
-			err.Error() == "no such file or directory" {
+		// Don't propagate "file not found" errors
+		errMsg := err.Error()
+		if errMsg == os.ErrNotExist.Error() ||
+			errMsg == "file does not exist" ||
+			errMsg == "no such file or directory" ||
+			strings.Contains(errMsg, "file does not exist") ||
+			strings.Contains(errMsg, "no such file or directory") {
 			return false, nil
 		}
 		return false, fmt.Errorf("failed to check if file exists: %w", err)
 	}
+
+	// Defensive check against nil FileInfo
+	if info == nil {
+		return false, fmt.Errorf("received nil FileInfo with no error from Stat")
+	}
+
 	return !info.IsDir(), nil
 }
 
@@ -31,14 +41,23 @@ func DirExists(path string) (bool, error) {
 		if os.IsNotExist(err) {
 			return false, nil
 		}
-		// Don't wrap "file not found" errors
-		if err.Error() == os.ErrNotExist.Error() ||
-			err.Error() == "file does not exist" ||
-			err.Error() == "no such file or directory" {
+		// Don't propagate "file not found" errors
+		errMsg := err.Error()
+		if errMsg == os.ErrNotExist.Error() ||
+			errMsg == "file does not exist" ||
+			errMsg == "no such file or directory" ||
+			strings.Contains(errMsg, "file does not exist") ||
+			strings.Contains(errMsg, "no such file or directory") {
 			return false, nil
 		}
 		return false, fmt.Errorf("failed to stat directory: %w", err)
 	}
+
+	// Defensive check against nil FileInfo
+	if info == nil {
+		return false, fmt.Errorf("received nil FileInfo with no error from Stat")
+	}
+
 	return info.IsDir(), nil
 }
 
@@ -49,6 +68,15 @@ func EnsureDirExists(path string) error {
 		return err
 	}
 	if !exists {
+		// Check if path exists as a file (not a directory)
+		fileExists, err := FileExists(path)
+		if err != nil {
+			return err
+		}
+		if fileExists {
+			return fmt.Errorf("cannot create directory at %s: path exists as a file", path)
+		}
+
 		if err := DefaultFS.MkdirAll(path, ReadWriteExecuteUserReadExecuteOthers); err != nil {
 			return fmt.Errorf("failed to create directory: %w", err)
 		}
