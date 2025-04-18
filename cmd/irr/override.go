@@ -1022,7 +1022,7 @@ func handleTestModeOverride(cmd *cobra.Command, releaseName string) error {
 		if err == nil {
 			// If no namespace specified, use "default"
 			if namespace == "" {
-				namespace = "default"
+				namespace = validateTestNamespace
 			}
 			yamlContent += fmt.Sprintf("namespace: %s\n", namespace)
 		}
