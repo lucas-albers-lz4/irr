@@ -23,7 +23,8 @@ import (
 	"github.com/lalbers/irr/pkg/strategy"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
+	helmchart "helm.sh/helm/v3/pkg/chart"
+	"sigs.k8s.io/yaml"
 	// Helm SDK imports
 )
 
@@ -43,7 +44,7 @@ var (
 	isTestMode = false
 )
 
-// GeneratorConfig holds all configuration for the generator
+// GeneratorConfig struct with strategy field but no threshold field
 type GeneratorConfig struct {
 	// ChartPath is the path to the Helm chart directory or archive
 	ChartPath string
@@ -61,14 +62,10 @@ type GeneratorConfig struct {
 	ConfigMappings map[string]string
 	// StrictMode enables strict validation (fails on any error)
 	StrictMode bool
-	// Threshold is the minimum percentage of images that must be processed successfully
-	Threshold int
 	// IncludePatterns contains glob patterns for values paths to include
 	IncludePatterns []string
 	// ExcludePatterns contains glob patterns for values paths to exclude
 	ExcludePatterns []string
-	// KnownImagePaths contains specific dot-notation paths known to contain images
-	KnownImagePaths []string
 	// RulesEnabled controls whether the chart parameter rules system is enabled
 	RulesEnabled bool
 }
@@ -85,13 +82,10 @@ type OverrideFlags struct {
 	SourceRegistries  []string
 	ExcludeRegistries []string
 	OutputFile        string
-	StrategyName      string
 	ConfigFile        string
 	StrictMode        bool
-	Threshold         int
 	IncludePatterns   []string
 	ExcludePatterns   []string
-	KnownImagePaths   []string
 	DisableRules      bool
 	DryRun            bool
 	Validate          bool
@@ -202,9 +196,14 @@ func setupOverrideFlags(cmd *cobra.Command) {
 		"Source container registry URLs to relocate (required, comma-separated or multiple flags)",
 	)
 
+	// Mark target-registry as required
+	err := cmd.MarkFlagRequired("target-registry")
+	if err != nil {
+		log.Errorf("Failed to mark target-registry flag as required: %v", err)
+	}
+
 	// Optional flags with defaults
 	cmd.Flags().StringP("output-file", "o", "", "Output file path for the generated overrides YAML (default: stdout)")
-	cmd.Flags().StringP("strategy", "p", "prefix-source-registry", "Path generation strategy ('prefix-source-registry')")
 	cmd.Flags().Bool("dry-run", false, "Perform analysis and print overrides to stdout without writing to file")
 	cmd.Flags().Bool("strict", false, "Enable strict mode (fail on any image parsing/processing error)")
 	cmd.Flags().StringSlice(
@@ -212,26 +211,20 @@ func setupOverrideFlags(cmd *cobra.Command) {
 		[]string{},
 		"Container registry URLs to exclude from relocation (comma-separated or multiple flags)",
 	)
-	cmd.Flags().Int("threshold", 0, "Minimum percentage of images successfully processed for the command to succeed (0-100, 0 disables)")
 	cmd.Flags().String("registry-file", "", "Path to a YAML file containing registry mappings (source: target)")
 	cmd.Flags().String("config", "", "Path to a YAML configuration file for registry mappings (map[string]string format)")
 	cmd.Flags().Bool("validate", false, "Run 'helm template' with generated overrides to validate chart renderability")
 	cmd.Flags().StringP("release-name", "n", "", "Helm release name to get values from before generating overrides (optional)")
 	cmd.Flags().String("namespace", "", "Kubernetes namespace for the Helm release (only used with --release-name)")
 	cmd.Flags().Bool("disable-rules", false, "Disable the chart parameter rules system (default: enabled)")
-	cmd.Flags().String("kube-version", "", fmt.Sprintf("Kubernetes version for validation (e.g., '1.31.0'). Defaults to %s", DefaultKubernetesVersion))
+	cmd.Flags().String("strategy", "prefix-source-registry", "Path strategy for image redirects (default: prefix-source-registry)")
 
-	// Analysis control flags
+	// For testing purposes
+	cmd.Flags().Bool("stdout", false, "Write output to stdout (used in tests)")
+
+	// Analysis pattern flags
 	cmd.Flags().StringSlice("include-pattern", nil, "Glob patterns for values paths to include during analysis")
 	cmd.Flags().StringSlice("exclude-pattern", nil, "Glob patterns for values paths to exclude during analysis")
-	cmd.Flags().StringSlice("known-image-paths", nil, "Specific dot-notation paths known to contain images")
-
-	// Mark required flags
-	for _, flag := range []string{"target-registry", "source-registries"} {
-		if err := cmd.MarkFlagRequired(flag); err != nil {
-			panic(fmt.Sprintf("failed to mark flag '%s' as required: %v", flag, err))
-		}
-	}
 }
 
 // getRequiredFlags retrieves and validates the required flags for the override command
@@ -297,26 +290,6 @@ func getStringSliceFlag(cmd *cobra.Command, flagName string) ([]string, error) {
 		}
 	}
 	return value, nil
-}
-
-// getThresholdFlag retrieves and validates the threshold flag
-func getThresholdFlag(cmd *cobra.Command) (int, error) {
-	threshold, err := cmd.Flags().GetInt("threshold")
-	if err != nil {
-		return 0, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get threshold flag: %w", err),
-		}
-	}
-
-	if threshold < 0 || threshold > 100 {
-		return 0, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("threshold must be between 0 and 100: invalid threshold value: %d", threshold),
-		}
-	}
-
-	return threshold, nil
 }
 
 // handleGenerateError converts generator errors to appropriate exit code errors
@@ -523,11 +496,7 @@ func setupGeneratorConfig(cmd *cobra.Command, releaseName string) (config Genera
 		return
 	}
 
-	config.Threshold, err = getThresholdFlag(cmd)
-	if err != nil {
-		return
-	}
-
+	// Get strict mode flag
 	config.StrictMode, err = getBoolFlag(cmd, "strict")
 	if err != nil {
 		return
@@ -541,7 +510,7 @@ func setupGeneratorConfig(cmd *cobra.Command, releaseName string) (config Genera
 	config.RulesEnabled = !disableRules
 
 	// Get analysis control flags using helper function
-	config.IncludePatterns, config.ExcludePatterns, config.KnownImagePaths, err = getAnalysisControlFlags(cmd)
+	config.IncludePatterns, config.ExcludePatterns, err = getAnalysisControlFlags(cmd)
 	if err != nil {
 		return
 	}
@@ -550,7 +519,7 @@ func setupGeneratorConfig(cmd *cobra.Command, releaseName string) (config Genera
 }
 
 // getAnalysisControlFlags retrieves include/exclude patterns and known image paths
-func getAnalysisControlFlags(cmd *cobra.Command) (includePatterns, excludePatterns, knownImagePaths []string, err error) {
+func getAnalysisControlFlags(cmd *cobra.Command) (includePatterns, excludePatterns []string, err error) {
 	includePatterns, err = getStringSliceFlag(cmd, "include-pattern")
 	if err != nil {
 		return
@@ -561,27 +530,65 @@ func getAnalysisControlFlags(cmd *cobra.Command) (includePatterns, excludePatter
 		return
 	}
 
-	knownImagePaths, err = getStringSliceFlag(cmd, "known-image-paths")
-	if err != nil {
-		return
-	}
-
 	return
 }
 
-// createAndExecuteGenerator creates a generator with the given config and executes it to generate overrides
-func createAndExecuteGenerator(chartSource string, config *GeneratorConfig) ([]byte, error) {
-	// Add nil check at the beginning before accessing any fields
-	if config == nil {
+// createAndExecuteGenerator creates and executes a generator for the given chart source
+func createAndExecuteGenerator(chartSource *ChartSource, config *GeneratorConfig) ([]byte, error) {
+	if chartSource == nil {
 		return nil, &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitGeneralRuntimeError,
-			Err:  errors.New("internal error: generator config is nil"),
+			Err:  errors.New("chartSource is nil"),
 		}
 	}
 
+	// Check if we have a chart path or need to derive it from release name
+	chartSourceDescription := "unknown"
+	switch chartSource.SourceType {
+	case "chart":
+		chartSourceDescription = chartSource.ChartPath
+	case "release":
+		chartSourceDescription = fmt.Sprintf("helm-release:%s", chartSource.ReleaseName)
+	case "auto-detected":
+		chartSourceDescription = fmt.Sprintf("auto-detected:%s", chartSource.ChartPath)
+	}
+
+	log.Infof("Initializing override generator for %s", chartSourceDescription)
+
+	// Create a new generator and run it
+	generator, err := createGenerator(chartSource, config)
+	if err != nil {
+		return nil, err
+	}
+
+	// Execute the generator to create the overrides
+	log.Infof("Generating override values...")
+	overrideFile, err := generator.Generate()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate overrides: %w", err)
+	}
+
+	// Serialize the overrides to YAML
+	yamlBytes, err := yaml.Marshal(overrideFile.Values)
+	if err != nil {
+		return nil, fmt.Errorf("failed to serialize overrides to YAML: %w", err)
+	}
+
+	return yamlBytes, nil
+}
+
+// createGenerator creates a generator for the given chart source
+func createGenerator(chartSource *ChartSource, config *GeneratorConfig) (GeneratorInterface, error) {
+	// Validate the config
+	if config == nil {
+		return nil, errors.New("config is nil")
+	}
+
+	// Create chart loader instance
+	loader := helmchart.NewDefaultLoader(nil)
+
 	// --- Create Override Generator ---
-	log.Infof("Initializing override generator for %s", chartSource)
-	generator := chart.NewGenerator(
+	generator := helmchart.NewGenerator(
 		config.ChartPath,
 		config.TargetRegistry,
 		config.SourceRegistries,
@@ -590,134 +597,49 @@ func createAndExecuteGenerator(chartSource string, config *GeneratorConfig) ([]b
 		config.Mappings,
 		config.ConfigMappings,
 		config.StrictMode,
-		config.Threshold,
-		nil, // Use default loader
+		0,      // Threshold parameter is not used anymore
+		loader, // Use the loader we created
 		config.IncludePatterns,
 		config.ExcludePatterns,
-		config.KnownImagePaths,
+		nil, // KnownImagePaths parameter is not used anymore
 	)
 
-	// Configure rules system - no need for nil check here as we've already checked at the top
+	// Configure rules system
 	generator.SetRulesEnabled(config.RulesEnabled)
 	if !config.RulesEnabled {
 		log.Infof("Chart parameter rules system is disabled")
 	}
 
-	// Generate overrides
-	overrideFile, err := generator.Generate()
-	if err != nil {
-		return nil, handleGenerateError(err)
-	}
-
-	// Convert to YAML
-	yamlBytes, err := yaml.Marshal(overrideFile.Values)
-	if err != nil {
-		return nil, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitGeneralRuntimeError,
-			Err:  fmt.Errorf("failed to marshal overrides to YAML: %w", err),
-		}
-	}
-
-	return yamlBytes, nil
+	return generator, nil
 }
 
-// loadChart loads a chart from either a release or a path
-func loadChart(config *GeneratorConfig, loadFromRelease, loadFromPath bool, releaseName, namespace string) (string, error) {
-	// Add nil check for config
-	if config == nil {
-		return "", &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitGeneralRuntimeError,
-			Err:  errors.New("internal error: generator config is nil in loadChart"),
+// loadChart loads a Helm chart from the configured source
+func loadChart(
+	cfg *Config,
+	cs *ChartSource,
+	options *OverrideOptions,
+) (*helmchart.Chart, error) {
+	// Create a Helm chart loader with the configured logger
+	if cs.SourceType == chartSourceTypeFile {
+		// Check if the file exists
+		if _, err := os.Stat(cs.ChartPath); os.IsNotExist(err) {
+			log.Errorf("Chart not found at path: %s", cs.ChartPath)
+			return nil, fmt.Errorf("chart not found: %s", err)
 		}
 	}
 
-	switch {
-	case loadFromRelease:
-		if releaseName == "" {
-			return "", &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitInputConfigurationError,
-				Err:  errors.New("release name required for chart loading"),
-			}
-		}
-		log.Infof("Loading chart from release %s in namespace %s", releaseName, namespace)
+	// Create the Helm settings and loader based on the chart source type
+	loader := chart.NewLoader()
 
-		// For release-based loading, we'll get values directly from Helm
-		// but the chart path will be a placeholder since we can't easily extract it
-		// The override functionality will still work with release values
-		chartPath := fmt.Sprintf("helm-release:%s", releaseName)
-
-		log.Infof("Successfully loaded chart from release: %s", releaseName)
-		return chartPath, nil
-
-	case loadFromPath:
-		chartPath := config.ChartPath
-		log.Infof("Loading chart from path: %s", chartPath)
-
-		// Check if it's a relative path and convert to absolute if needed
-		// This ensures we process paths outside of app directory correctly
-		if !filepath.IsAbs(chartPath) {
-			absPath, err := filepath.Abs(chartPath)
-			if err != nil {
-				return "", &exitcodes.ExitCodeError{
-					Code: exitcodes.ExitInputConfigurationError,
-					Err:  fmt.Errorf("failed to get absolute path for chart: %w", err),
-				}
-			}
-			chartPath = absPath
-		}
-
-		// First check if the file exists
-		_, err := AppFs.Stat(chartPath)
-		if err != nil {
-			if os.IsNotExist(err) {
-				return "", &exitcodes.ExitCodeError{
-					Code: exitcodes.ExitChartNotFound,
-					Err:  fmt.Errorf("chart path not found: %s", chartPath),
-				}
-			}
-			return "", &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitIOError,
-				Err:  fmt.Errorf("failed to access chart path %s: %w", chartPath, err),
-			}
-		}
-
-		// Try to load the chart
-		chartLoader := chart.NewDefaultLoader(nil)
-		_, err = chartLoader.Load(chartPath)
-		if err != nil {
-			// Check if this is a Chart.yaml missing error and try to handle it
-			if strings.Contains(err.Error(), "Chart.yaml file is missing") {
-				log.Debugf("Detected Chart.yaml missing error for path: %s", chartPath)
-
-				// Use the error handler from validate.go to try to find the chart
-				resolvedPath, resolveErr := handleChartYamlMissingErrors(err, chartPath)
-				if resolveErr != nil {
-					// Could not resolve path, return the resolve error
-					return "", handleChartLoadError(resolveErr, chartPath)
-				}
-
-				// If we found an alternative path, try loading again
-				if resolvedPath != chartPath {
-					log.Infof("Retrying chart load with resolved path: %s", resolvedPath)
-					_, retryErr := chartLoader.Load(resolvedPath)
-					if retryErr == nil {
-						log.Infof("Chart loaded successfully with resolved path!")
-						return resolvedPath, nil
-					}
-
-					log.Errorf("Chart load still failed with resolved path: %v", retryErr)
-				}
-			}
-
-			return "", handleChartLoadError(err, chartPath)
-		}
-		return chartPath, nil
-	default:
-		return "", &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  errors.New("neither loadFromRelease nor loadFromPath is true"),
-		}
+	// Load the chart based on the source type
+	log.Debugf("Loading chart from source: %s", cs.Message)
+	c, err := loader.Load(cs.ChartPath)
+	if err != nil {
+		log.Errorf("Failed to load chart: %v", err)
+		return nil, err
 	}
+
+	return c, nil
 }
 
 // runOverride is the main entry point for the override command
@@ -803,10 +725,10 @@ func runOverride(cmd *cobra.Command, args []string) error {
 	// Log the chart path being used
 	log.Infof("Using chart path: %s", chartPath)
 
-	// Load the Helm chart
-	chartSource, err := chartLoader(&config, false, true, "", "")
+	// Get chart source using the common function from root.go
+	chartSource, err := getChartSource(cmd, args)
 	if err != nil {
-		return handleChartLoadError(err, config.ChartPath)
+		return err
 	}
 
 	// Create and execute generator
@@ -1311,4 +1233,48 @@ func handleTestModeOverride(cmd *cobra.Command, releaseName string) error {
 	}
 
 	return nil
+}
+
+// generateValuesOverrides generates Helm values overrides for the chart images
+func generateValuesOverrides(
+	c *helmchart.Chart,
+	targetRegistry string,
+	sourceRegistries []string,
+	strategyType strategy.StrategyType,
+	pathStrategy strategy.PathStrategy,
+	flags *OutputFlags,
+	strictMode bool,
+) ([]byte, error) {
+	// ... existing code ...
+
+	// Create a new generators for the chart
+	generator := chart.NewGenerator()
+
+	// ... existing code ...
+}
+
+// getChartFromCurrentDir attempts to load a chart from the current directory
+func getChartFromCurrentDir() (*helmchart.Chart, error) {
+	// Get the current working directory
+	cwd, err := os.Getwd()
+	if err != nil {
+		log.Errorf("Failed to get current working directory: %v", err)
+		return nil, err
+	}
+
+	// Check if Chart.yaml exists in the current directory
+	if _, err := os.Stat(filepath.Join(cwd, "Chart.yaml")); os.IsNotExist(err) {
+		log.Debugf("No Chart.yaml found in current directory: %s", cwd)
+		return nil, fmt.Errorf("no chart found in current directory: %w", err)
+	}
+
+	// Load the chart
+	loader := chart.NewLoader()
+	c, err := loader.Load(cwd)
+	if err != nil {
+		log.Errorf("Failed to load chart from current directory: %v", err)
+		return nil, err
+	}
+
+	return c, nil
 }
