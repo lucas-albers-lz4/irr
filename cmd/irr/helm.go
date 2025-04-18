@@ -13,6 +13,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Only keep a single definition of validateTestNamespace at the top of the file
+const validateTestNamespace = "default"
+
 // addReleaseFlag adds a --release-name flag to the given command
 func addReleaseFlag(cmd *cobra.Command) {
 	cmd.PersistentFlags().String("release-name", "", "Helm release name to use for loading chart information")
@@ -74,8 +77,8 @@ func GetReleaseNamespace(cmd *cobra.Command) string {
 		return envNamespace
 	}
 
-	// Return default namespace
-	return "default"
+	// Return default namespace using string literal
+	return validateTestNamespace
 }
 
 // GetHelmSettings returns the Helm CLI settings

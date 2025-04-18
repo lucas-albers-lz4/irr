@@ -25,7 +25,6 @@ import (
 const (
 	validateTestChartPath = "/path/to/chart"
 	validateTestRelease   = "release"
-	validateTestNamespace = "default"
 )
 
 // Mock the helm.Template function via the exported variable
