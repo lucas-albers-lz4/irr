@@ -245,7 +245,7 @@ func TestComplexChartFeatures(t *testing.T) {
 				"registry.k8s.io",
 			},
 			expectedImages: []string{
-				"quayio/prometheus/prometheus",
+				"quay.io/prometheus/prometheus",
 			},
 			skip: false,
 		},
