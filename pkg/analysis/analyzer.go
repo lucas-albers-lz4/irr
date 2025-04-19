@@ -548,7 +548,7 @@ func (a *Analyzer) isImageString(val string) bool {
 			// Check if the part after colon looks like a version or tag (simple heuristic)
 			tag := colonParts[1]
 			// Simple patterns like "nginx:latest" should be recognized as images
-			if len(tag) > 0 && len(tag) <= 128 {
+			if tag != "" && len(tag) <= 128 {
 				// Check if the repository part looks like an image name
 				repo := colonParts[0]
 				// Common simple image names
@@ -573,12 +573,20 @@ func (a *Analyzer) isImageString(val string) bool {
 // isVersionLike checks if a string looks like a version number
 func isVersionLike(s string) bool {
 	// Check for semver-like patterns (1.2.3, v1.2, etc.)
-	if matched, _ := regexp.MatchString(`^v?\d+(\.\d+)*(-[a-zA-Z0-9.]+)?$`, s); matched {
+	matched, err := regexp.MatchString(`^v?\d+(\.\d+)*(-[a-zA-Z0-9.]+)?$`, s)
+	if err != nil {
+		return false
+	}
+	if matched {
 		return true
 	}
 
 	// Check for simple numeric versions
-	if matched, _ := regexp.MatchString(`^\d+$`, s); matched {
+	matched, err = regexp.MatchString(`^\d+$`, s)
+	if err != nil {
+		return false
+	}
+	if matched {
 		return true
 	}
 

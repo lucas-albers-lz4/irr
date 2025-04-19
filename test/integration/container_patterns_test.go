@@ -310,7 +310,7 @@ controller:
 			// Extract the image repositories
 			foundImages := make(map[string]bool)
 			h.WalkImageFields(overrides, func(path []string, imageValue interface{}) {
-				t.Logf("Found image at path: %v, value: %v", path, imageValue)
+				t.Logf("Found image value: %v", imageValue)
 
 				switch v := imageValue.(type) {
 				case map[string]interface{}:
@@ -670,8 +670,8 @@ sidecars:
 
 			// Extract the image repositories
 			foundImages := make(map[string]bool)
-			h.WalkImageFields(overrides, func(path []string, imageValue interface{}) {
-				t.Logf("Found image at path: %v, value: %v", path, imageValue)
+			h.WalkImageFields(overrides, func(_ []string, imageValue interface{}) {
+				t.Logf("Found image value: %v", imageValue)
 
 				switch v := imageValue.(type) {
 				case map[string]interface{}:

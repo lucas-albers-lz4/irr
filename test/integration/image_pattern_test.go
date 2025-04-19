@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lalbers/irr/pkg/fileutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
@@ -575,11 +576,6 @@ admissionWebhooks:
 	}
 }
 
-// Helper function to sanitize registry names (similar to what IRR does)
-func sanitizeRegistryName(registry string) string {
-	return strings.ReplaceAll(strings.ReplaceAll(registry, ".", ""), ":", "")
-}
-
 // createTestChartWithValues creates a minimal test chart with the given values content
 func createTestChartWithValues(t *testing.T, h *TestHarness, valuesContent string) string {
 	t.Helper()
@@ -593,10 +589,10 @@ description: A test chart for IRR
 type: application
 version: 0.1.0
 `
-	require.NoError(t, os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), []byte(chartYaml), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), []byte(chartYaml), fileutil.ReadWriteUserPermission))
 
 	// Create values.yaml with the specified content
-	require.NoError(t, os.WriteFile(filepath.Join(chartDir, "values.yaml"), []byte(valuesContent), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(chartDir, "values.yaml"), []byte(valuesContent), fileutil.ReadWriteUserPermission))
 
 	// Create templates directory and a simple deployment.yaml
 	templateDir := filepath.Join(chartDir, "templates")
@@ -616,7 +612,7 @@ spec:
       - name: main
         image: {{ .Values.image | default "nginx:latest" }}
 `
-	require.NoError(t, os.WriteFile(filepath.Join(templateDir, "deployment.yaml"), []byte(deploymentYaml), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(templateDir, "deployment.yaml"), []byte(deploymentYaml), fileutil.ReadWriteUserPermission))
 
 	return chartDir
 }

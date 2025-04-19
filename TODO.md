@@ -337,7 +337,7 @@ The current implementation in `test/integration/kube_prometheus_stack_test.go` p
 - Test with intentional failures to ensure appropriate information is still shown
 - Validate that output is meaningful enough to diagnose problems without excessive verbosity
 
-## Phase 6: Image Pattern Detection Improvements
+## Phase 7: Image Pattern Detection Improvements
 
 ### Overview
 Improve the analyzer's ability to detect and process image references in complex Helm charts, particularly focusing on init containers, admission webhooks, and other specialized configurations.
@@ -349,20 +349,20 @@ Improve the analyzer's ability to detect and process image references in complex
 
 ### Implementation Steps
 
-#### Phase 6.1: Debugging and Analysis
+#### Phase 7.1: Debugging and Analysis
 - [x] **[P0]** Add debugging output to trace image detection
   - [x] Add debug logging to analyzeMapValue, analyzeStringValue, and analyzeArray functions
   - [x] Log detailed path information for all analyzed values
   - [x] Log detection results to identify missed patterns
   - [x] Run failing test cases with debug output to identify issues
 
-#### Phase 6.2: Image Pattern Detection Improvements
+#### Phase 7.2: Image Pattern Detection Improvements
 - [x] **[P0]** Fix ingress-nginx admission webhook image detection
   - [x] Add debug output to identify missed patterns
   - [x] Run focused test for ingress-nginx chart with admission webhook
   - [x] Verify all expected images are detected properly
   
-#### Phase 6.3: Additional Chart Coverage
+#### Phase 7.3: Additional Chart Coverage
 - [x] **[P1]** Expand test coverage to more complex charts
   - [ ] Review and enable previously skipped test cases
   - [x] Add tests for charts with init containers
@@ -371,3 +371,13 @@ Improve the analyzer's ability to detect and process image references in complex
   - [x] Add proper handling for template-string image references
   - [ ] Fix simplified-prometheus-stack test case
 
+Phase 7.4: Kube-State-Metrics Detection Fix
+[ ] [P1] Improve detection of kube-state-metrics component
+[ ] Examine how the chart structures kube-state-metrics (appears at kube-state-metrics.image path)
+[ ] Update the analyzer to properly identify and transform this component as a top-level element
+[ ] Add debug logging to trace exactly what paths are being examined
+[ ] Log which patterns are being detected but not properly transformed
+[ ] Update the test to be more resilient than the current file-overwriting approach
+[ ] Consider making the special case more robust by verifying correct file reading
+[ ] Ensure kube-state-metrics is properly nested at the right hierarchy level
+[ ] Compare with other subchart components to ensure consistent handling
