@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/lalbers/irr/pkg/debug"
+	"github.com/lalbers/irr/pkg/fileutil"
 	"github.com/lalbers/irr/pkg/image"
 	"github.com/lalbers/irr/pkg/registry"
 	"github.com/spf13/afero"
@@ -913,8 +914,8 @@ func buildIrrBinary() error { // Removed t *testing.T argument
 	return nil
 }
 
-// ValidateFullyQualifiedOverrides checks for registry/target combinations
-func (h *TestHarness) ValidateFullyQualifiedOverrides(registry string, targets []string) {
+// ValidateFullyQualifiedOverrides validates that all images are fully qualified with the specified target registry
+func (h *TestHarness) ValidateFullyQualifiedOverrides(targetRegistry string, targets []string) {
 	// Read the overrides file
 	_, err := os.ReadFile(h.overridePath)
 	if err != nil {
@@ -924,15 +925,15 @@ func (h *TestHarness) ValidateFullyQualifiedOverrides(registry string, targets [
 	// Create combined qualifiers to check for
 	var qualifiers []string
 	for _, target := range targets {
-		qualifiers = append(qualifiers, fmt.Sprintf("%s/%s", registry, target))
+		qualifiers = append(qualifiers, fmt.Sprintf("%s/%s", targetRegistry, target))
 	}
 
 	// Validate the helm template contains all expected registry combinations
 	h.ValidateHelmTemplate(qualifiers, "")
 }
 
-// ValidateWithRegistryPrefix validates that the registry is directly used
-func (h *TestHarness) ValidateWithRegistryPrefix(registry string) {
+// ValidateWithRegistryPrefix validates the generated overrides contain the expected target registry prefix
+func (h *TestHarness) ValidateWithRegistryPrefix(targetRegistry string) {
 	// Read the overrides file
 	_, err := os.ReadFile(h.overridePath)
 	if err != nil {
@@ -940,13 +941,13 @@ func (h *TestHarness) ValidateWithRegistryPrefix(registry string) {
 	}
 
 	// Look for direct registry usage
-	h.ValidateHelmTemplate([]string{registry}, "")
+	h.ValidateHelmTemplate([]string{targetRegistry}, "")
 }
 
 // CreateRegistryMappingsFile creates a registry mappings file with the given content.
 func (h *TestHarness) CreateRegistryMappingsFile(mappings string) string {
 	mappingFile := filepath.Join(h.tempDir, "registry-mappings.yaml")
-	err := os.WriteFile(mappingFile, []byte(mappings), 0o600)
+	err := os.WriteFile(mappingFile, []byte(mappings), fileutil.ReadWriteUserPermission)
 	if err != nil {
 		h.t.Fatalf("Failed to create registry mappings file: %v", err)
 	}

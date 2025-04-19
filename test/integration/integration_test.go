@@ -165,8 +165,8 @@ func TestKubePrometheusStack(t *testing.T) {
 	}
 }
 
-// validateExpectedImages is a helper function to validate found images against expected ones
-func validateExpectedImages(t *testing.T, expectedImages []string, foundImages map[string]bool, targetReg string) {
+// validateExpectedImages checks if all expected image repositories are found in the actual repositories
+func validateExpectedImages(t *testing.T, expectedImages []string, foundImages map[string]bool, _ string) {
 	for _, expectedImage := range expectedImages {
 		// Strip any tag or digest since we're just comparing repository paths
 		expectedRepo := strings.Split(expectedImage, ":")[0]
@@ -359,7 +359,7 @@ func TestComplexChartFeatures(t *testing.T) {
 			}
 
 			// Validate that the expected images are present in the generated overrides
-			validateExpectedImages(t, tc.expectedImages, foundImageRepos, harness.targetReg)
+			validateExpectedImages(t, tc.expectedImages, foundImageRepos, "")
 		})
 	}
 }

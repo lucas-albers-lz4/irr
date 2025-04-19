@@ -25,6 +25,9 @@ const (
 	testChartYaml = "apiVersion: v2\nname: test-chart\nversion: 0.1.0\n"
 )
 
+// Define the common test YAML string
+const TestNginxYaml = "image:\n  repository: docker.io/library/nginx\n  tag: 1.21.0\n"
+
 // Define a mock registry validator for tests
 var validateRegistry = func(_ string) error {
 	// Default implementation - always valid
@@ -86,7 +89,7 @@ func TestOverrideCommand_LoadChart(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create a values.yaml file
-	valuesYaml := "image:\n  repository: docker.io/library/nginx\n  tag: 1.21.0\n"
+	valuesYaml := TestNginxYaml
 	err = afero.WriteFile(AppFs, filepath.Join(testChartDir, "values.yaml"), []byte(valuesYaml), 0o644)
 	require.NoError(t, err)
 
@@ -568,7 +571,7 @@ func TestOverrideCommand_ValidationHandling(t *testing.T) {
 		require.NoError(t, afero.WriteFile(AppFs, filepath.Join(chartDir, "Chart.yaml"), []byte(chartYaml), 0o644))
 
 		// Create values.yaml
-		valuesYaml := "image:\n  repository: docker.io/library/nginx\n  tag: 1.21.0\n"
+		valuesYaml := TestNginxYaml
 		require.NoError(t, afero.WriteFile(AppFs, filepath.Join(chartDir, "values.yaml"), []byte(valuesYaml), 0o644))
 
 		// Create templates directory and a template file
@@ -626,7 +629,7 @@ spec:
 
 		// Modify the command to use a mock generator for validation
 		originalRunE := cmd.RunE
-		cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 			// Create a mock override file for testing
 			content := `image:
 registry: registry.example.com
@@ -762,7 +765,7 @@ func TestOverrideCommand_NamespaceHandling(t *testing.T) {
 		require.NoError(t, afero.WriteFile(AppFs, filepath.Join(chartDir, "Chart.yaml"), []byte(chartYaml), 0o644))
 
 		// Create values.yaml
-		valuesYaml := "image:\n  repository: docker.io/library/nginx\n  tag: 1.21.0\n"
+		valuesYaml := TestNginxYaml
 		require.NoError(t, afero.WriteFile(AppFs, filepath.Join(chartDir, "values.yaml"), []byte(valuesYaml), 0o644))
 
 		// Override the chart loader function to return a mock chart
@@ -835,7 +838,7 @@ image:
 		require.NoError(t, afero.WriteFile(AppFs, filepath.Join(chartDir, "Chart.yaml"), []byte(chartYaml), 0o644))
 
 		// Create values.yaml
-		valuesYaml := "image:\n  repository: docker.io/library/nginx\n  tag: 1.21.0\n"
+		valuesYaml := TestNginxYaml
 		require.NoError(t, afero.WriteFile(AppFs, filepath.Join(chartDir, "values.yaml"), []byte(valuesYaml), 0o644))
 
 		// Override the chart loader function to return a mock chart
@@ -1273,7 +1276,7 @@ func TestOverrideCommand_EdgeCases(t *testing.T) {
 		require.NoError(t, afero.WriteFile(AppFs, filepath.Join(chartDir, "Chart.yaml"), []byte(chartYaml), 0o644))
 
 		// Create values.yaml
-		valuesYaml := "image:\n  repository: docker.io/library/nginx\n  tag: 1.21.0\n"
+		valuesYaml := TestNginxYaml
 		require.NoError(t, afero.WriteFile(AppFs, filepath.Join(chartDir, "values.yaml"), []byte(valuesYaml), 0o644))
 
 		// Capture log output

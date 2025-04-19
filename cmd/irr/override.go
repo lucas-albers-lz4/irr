@@ -556,7 +556,6 @@ func setupGeneratorConfig(cmd *cobra.Command, _ string) (config GeneratorConfig,
 
 		// If registry mappings are configured, verify source registries are mappable
 		if (config.Mappings != nil && len(config.Mappings.Entries) > 0) || len(config.ConfigMappings) > 0 {
-
 			// Track which source registries have mappings
 			unmappableRegistries := make([]string, 0)
 
