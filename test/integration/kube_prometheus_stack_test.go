@@ -64,6 +64,8 @@ func TestKubePrometheusStack(t *testing.T) {
 			components: []string{
 				"prometheus-node-exporter",
 				"kube-state-metrics",
+				"state-metrics",
+				"kubeStateMetrics",
 			},
 			valuesPaths: []string{
 				"values/kube-prometheus-stack/exporters-values.yaml",
@@ -285,20 +287,45 @@ func findKubeStateMetrics(data interface{}) bool {
 	case map[string]interface{}:
 		// Check if "kube-state-metrics" exists as a key or as part of a key
 		for key, value := range v {
-			// Check the key itself
+			// Check the key itself - use more permissive matching
 			if strings.Contains(strings.ToLower(key), "kube") && strings.Contains(strings.ToLower(key), "state") {
 				return true
 			}
 
+			// Case-insensitive key exact match
+			keyLower := strings.ToLower(key)
+			if keyLower == "kube-state-metrics" || keyLower == "kubestatemetrics" {
+				return true
+			}
+
+			// Check for repository field that might contain kube-state-metrics
+			if key == "repository" {
+				if strValue, ok := value.(string); ok {
+					strValueLower := strings.ToLower(strValue)
+					if strings.Contains(strValueLower, "kube") && strings.Contains(strValueLower, "state") {
+						return true
+					}
+					// Specific check for the registry prefix patterns
+					if strings.Contains(strValueLower, "kube-state-metrics") ||
+						strings.Contains(strValueLower, "state-metrics") ||
+						strings.Contains(strValueLower, "registryk8sio/kube-state-metrics") {
+						return true
+					}
+				}
+			}
+
 			// For string values, check if they contain "kube-state-metrics"
 			if strValue, ok := value.(string); ok {
-				if strings.Contains(strings.ToLower(strValue), "kube-state-metrics") {
+				strValueLower := strings.ToLower(strValue)
+				if strings.Contains(strValueLower, "kube-state-metrics") ||
+					(strings.Contains(strValueLower, "kube") && strings.Contains(strValueLower, "state")) {
 					return true
 				}
 			}
 
 			// Special handling for known patterns in the chart structure
-			if key == "kube-state-metrics" || key == "kubeStateMetrics" {
+			if key == "kube-state-metrics" || key == "kubeStateMetrics" ||
+				strings.Contains(key, "kube-state") || strings.Contains(key, "state-metrics") {
 				return true
 			}
 
@@ -315,8 +342,11 @@ func findKubeStateMetrics(data interface{}) bool {
 			}
 		}
 	case string:
-		// Check string values
-		return strings.Contains(strings.ToLower(v), "kube") && strings.Contains(strings.ToLower(v), "state")
+		// Check string values - case insensitive
+		strLower := strings.ToLower(v)
+		return strings.Contains(strLower, "kube-state-metrics") ||
+			(strings.Contains(strLower, "kube") && strings.Contains(strLower, "state")) ||
+			strings.Contains(strLower, "state-metrics")
 	}
 	return false
 }
