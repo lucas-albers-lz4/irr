@@ -7,28 +7,28 @@
 - Phase 3 (Output Behavior) should be completed before implementing strict mode in Phase 3.5 
 
 ## Phase 0: Configuration Setup (P0: Critical Usability)
-- [ ] **[P0]** Implement `helm irr config` command (flag-driven only)
-  - [ ] Allow user to set or update a mapping via flags (e.g., `--source quay.io --target harbor.local/quay`)
-  - [ ] If the source already exists, update its target; otherwise, add a new mapping
-  - [ ] No validation of endpoints; user is responsible for correctness
-  - [ ] When running `inspect`, suggest likely mappings based on detected registries in the environment
-  - [ ] Document that override/validate can run without config, but correctness depends on user configuration
-- [ ] **[P0]** Analyze existing error code usage
-  - [ ] Document current error codes and their conditions
-  - [ ] Identify gaps in error handling
-  - [ ] Create mapping between planned new error codes and existing ones
+- [x] **[P0]** Implement `helm irr config` command (flag-driven only)
+  - [x] Allow user to set or update a mapping via flags (e.g., `--source quay.io --target harbor.local/quay`)
+  - [x] If the source already exists, update its target; otherwise, add a new mapping
+  - [x] No validation of endpoints; user is responsible for correctness
+  - [x] When running `inspect`, suggest likely mappings based on detected registries in the environment
+  - [x] Document that override/validate can run without config, but correctness depends on user configuration
+- [x] **[P0]** Analyze existing error code usage
+  - [x] Document current error codes and their conditions
+  - [x] Identify gaps in error handling
+  - [x] Create mapping between planned new error codes and existing ones
 
 ### Phase 1: Flag Cleanup (P0: User Experience Enhancements)
-- [ ] **[P0]** Remove unused or confusing flags
+- [x] **[P0]** Remove unused or confusing flags
   - [x] Remove `--output-format` flag (Not used, always YAML)
-  - [ ] Remove `--debug-template` flag (Not implemented/used) 
-  - [ ] Remove `--threshold` flag (No clear use case; binary success preferred)
+  - [x] Remove `--debug-template` flag (Not implemented/used) 
+  - [x] Remove `--threshold` flag (No clear use case; binary success preferred)
   - [x] Hide or remove `--strategy` flag (Only one strategy implemented; hide/remove for now)
-  - [ ] Hide or remove `--known-image-paths` flag (Not needed for most users; hide or remove)
-- [ ] **[P0]** Flag cleanup verification
-  - [ ] Review and update/remove any test cases using these flags
-  - [ ] Test and lint after each change
-  - [ ] Update CLI and other documentation to remove references to these flags
+  - [x] Hide or remove `--known-image-paths` flag (Not needed for most users; hide or remove)
+- [x] **[P0]** Flag cleanup verification
+  - [x] Review and update/remove any test cases using these flags
+  - [x] Test and lint after each change
+  - [x] Update CLI and other documentation to remove references to these flags
 
 ### Phase 2: Flag Consistency and Defaults (P0: User Experience Enhancements)
 - [x] **[P0]** Unify `--chart-path` and `--release-name` behavior
@@ -36,46 +36,46 @@
   - [x] Implement auto-detection when only one is provided
   - [x] Document precedence rules
   - [x] Default to `--release-name` in plugin mode; default to `--chart-path` in standalone mode
-- [ ] **[P0]** Implement mode-specific flag presentation
-  - [ ] Tailor help output and flag requirements based on execution mode
-  - [ ] Make `--release-name` primary in plugin mode
-  - [ ] Make `--chart-path` primary in standalone mode
+- [x] **[P0]** Implement mode-specific flag presentation
+  - [x] Tailor help output and flag requirements based on execution mode
+  - [x] Make `--release-name` primary in plugin mode
+  - [x] Make `--chart-path` primary in standalone mode
   - [x] Try to keep flags in integration test mode the same.
     I think we don't care what flags it displays in integration test mode as integration test mode is designed to mock standalone and plugin mode so we should try and reduce any code that makes it differ unless we need it for logging or test framework execution.
 
 - [x] **[P0]** Standardize `--namespace` behavior
   - [x] Make `--namespace` always optional
   - [x] Default to "default" namespace when not specified
-- [ ] **[P0]** Make `--source-registries` optional in override when config or auto-detection is present
+- [x] **[P0]** Make `--source-registries` optional in override when config or auto-detection is present
 
 ### Phase 3: Output File Behavior Standardization (P0: User Experience Enhancements)
-- [ ] **[P0]** Standardize `--output-file` behavior across commands
-  - [ ] `inspect`: Default to stdout if not specified
-  - [ ] `override`: 
-    - [ ] Default to stdout in standalone mode
-    - [ ] Default to `<release-name>-overrides.yaml` in plugin mode with release name
-    - [ ] Ensure explicit override with `--output-file` always works
-    - [ ] Implement check to never overwrite existing files without explicit user action (e.g., `--force`; We don't have a `--force` command or plan to implement it)
-  - [ ] `validate`: Only write file output when `--output-file` is specified
-- [ ] **[P0]** Implement consistent error handling for file operations
-  - [ ] Add clear error messages when file operations fail
-  - [ ] Implement uniform permission handling across all commands
+- [x] **[P0]** Standardize `--output-file` behavior across commands
+  - [x] `inspect`: Default to stdout if not specified
+  - [x] `override`: 
+    - [x] Default to stdout in standalone mode
+    - [x] Default to `<release-name>-overrides.yaml` in plugin mode with release name
+    - [x] Ensure explicit override with `--output-file` always works
+    - [x] Implement check to never overwrite existing files without explicit user action (e.g., `--force`; We don't have a `--force` command or plan to implement it)
+  - [x] `validate`: Only write file output when `--output-file` is specified
+- [x] **[P0]** Implement consistent error handling for file operations
+  - [x] Add clear error messages when file operations fail
+  - [x] Implement uniform permission handling across all commands
 
 ### Phase 3.5: Streamlined Workflow Implementation (P1: User Experience Enhancements)
-- [ ] **[P1]** Implement enhanced source registry handling
-  - [ ] Add explicit `--all-registries` flag for clarity
-  - [ ] Implement auto-detection of registries with clear user feedback
-  - [ ] Use two-stage approach for registry auto-detection:
-    - [ ] In `inspect`: Auto-detect and show clear output about what was found
-    - [ ] In `override`: Auto-detect, but clearly show what will be changed by:
-      - [ ] Displaying a summary of detected registries before processing
-      - [ ] Showing which registries will be remapped and which will be skipped
-      - [ ] Providing a clear indication when processing is complete
-  - [ ] Add `--dry-run` flag to show changes without writing files
-- [ ] **[P1]** Standardize override file naming
-  - [ ] Use consistent format: `<release-name>-overrides.yaml`
-  - [ ] Remove any namespace component from the filename
-  - [ ] Document naming convention in help text and documentation
+- [x] **[P1]** Implement enhanced source registry handling
+  - [x] Add explicit `--all-registries` flag for clarity
+  - [x] Implement auto-detection of registries with clear user feedback
+  - [x] Use two-stage approach for registry auto-detection:
+    - [x] In `inspect`: Auto-detect and show clear output about what was found
+    - [x] In `override`: Auto-detect, but clearly show what will be changed by:
+      - [x] Displaying a summary of detected registries before processing
+      - [x] Showing which registries will be remapped and which will be skipped
+      - [x] Providing a clear indication when processing is complete
+  - [x] Add `--dry-run` flag to show changes without writing files
+- [x] **[P1]** Standardize override file naming
+  - [x] Use consistent format: `<release-name>-overrides.yaml`
+  - [x] Remove any namespace component from the filename
+  - [x] Document naming convention in help text and documentation
 - [x] **[P1]** Handle unrecognized registries sensibly
   - [x] Default: Skip unrecognized registries with clear warnings
   - [x] Add `--strict` flag that fails when unrecognized registries are found
@@ -91,38 +91,38 @@
   - [x] Document default Kubernetes version in help text
   - [x] Provide clear error messages for version-related validation failures
 
-- [ ] **[P0]** Implement consistent error codes for enhanced debugging
+- [x] **[P0]** Implement consistent error codes for enhanced debugging
     We need to align and not collide with current error code numbers or handling
     The actual error number can be decided we just want distinct error codes to handle more conditions
     We should extend the existing error code system rather than replace it
     Analysis of current codebase is needed to identify existing error codes before assigning new ones
-  - [ ] Exit 0: Success
-  - [ ] Exit 1: General error
-  - [ ] Exit 2: Configuration error (missing/invalid registry mappings)
-  - [ ] Exit 3: Validation error (helm template validation failed)
-  - [ ] Exit 4: File operation error (file exists, permission denied)
-  - [ ] Exit 5: Registry detection error (no registries found or mapped)
-  - [ ] Ensure all error messages include the error code for reference
+  - [x] Exit 0: Success
+  - [x] Exit 1: General error
+  - [x] Exit 2: Configuration error (missing/invalid registry mappings)
+  - [x] Exit 3: Validation error (helm template validation failed)
+  - [x] Exit 4: File operation error (file exists, permission denied)
+  - [x] Exit 5: Registry detection error (no registries found or mapped)
+  - [x] Ensure all error messages include the error code for reference
   
 ## Testing Strategy for CLI Enhancements
 
 ### Configuration Command Tests
-- [ ] Test updating existing mapping with new target
-- [ ] Test adding new mapping when source doesn't exist
-- [ ] Test reading from existing mapping file
-- [ ] Test config command creates file with correct permissions
+- [x] Test updating existing mapping with new target
+- [x] Test adding new mapping when source doesn't exist
+- [x] Test reading from existing mapping file
+- [x] Test config command creates file with correct permissions
 
 ### Registry Auto-detection Tests
-- [ ] Test detection of common registries (docker.io, quay.io, gcr.io, etc.)
-- [ ] Test detection with incomplete/ambiguous registry specifications
-- [ ] Test behavior when no registries are detected
-- [ ] Test behavior with mixed recognized/unrecognized registries
+- [x] Test detection of common registries (docker.io, quay.io, gcr.io, etc.)
+- [x] Test detection with incomplete/ambiguous registry specifications
+- [x] Test behavior when no registries are detected
+- [x] Test behavior with mixed recognized/unrecognized registries
 
 ### File Naming and Output Tests
-- [ ] Test default file naming follows `<release-name>-overrides.yaml` format
-- [ ] Test behavior when output file already exists
-- [ ] Test custom output path with `--output-file` flag
-- [ ] Test permission handling for output files
+- [x] Test default file naming follows `<release-name>-overrides.yaml` format
+- [x] Test behavior when output file already exists
+- [x] Test custom output path with `--output-file` flag
+- [x] Test permission handling for output files
 
 ### Strict Mode Tests
 - [x] Test normal mode skips unrecognized registries with warnings
@@ -131,17 +131,17 @@
 - [x] Test exit codes match specification
 
 ### Error Handling Tests
-- [ ] Test each distinct error condition produces correct error code
-- [ ] Test error messages are informative and actionable
-- [ ] Test behavior with invalid input combinations
-- [ ] Test command continues/fails as expected for each error type
+- [x] Test each distinct error condition produces correct error code
+- [x] Test error messages are informative and actionable
+- [x] Test behavior with invalid input combinations
+- [x] Test command continues/fails as expected for each error type
 
 ### Phase 4: Documentation Updates (P0: User Experience Enhancements)
-- [ ] **[P0]** Update documentation to reflect CLI changes
-  - [ ] Document all flag defaults and required/optional status in help output
-  - [ ] Update CLI reference guide with new behavior
-  - [ ] Create a command summary with flag behavior in clear table format
-  - [ ] Document when files will be written vs. stdout output
+- [x] **[P0]** Update documentation to reflect CLI changes
+  - [x] Document all flag defaults and required/optional status in help output
+  - [x] Update CLI reference guide with new behavior
+  - [x] Create a command summary with flag behavior in clear table format
+  - [x] Document when files will be written vs. stdout output
 
 ### Implementation Notes
 - We've restructured the chart loading mechanism to properly use the chart.NewLoader() function, which improves code organization and maintainability

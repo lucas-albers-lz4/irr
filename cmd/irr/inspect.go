@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -22,6 +21,7 @@ import (
 	"github.com/lalbers/irr/pkg/helm"
 	"github.com/lalbers/irr/pkg/image"
 	log "github.com/lalbers/irr/pkg/log"
+	"github.com/lalbers/irr/pkg/registry"
 	"github.com/spf13/cobra"
 )
 
@@ -214,117 +214,179 @@ func writeOutput(analysis *ImageAnalysis, flags *InspectFlags) error {
 
 // runInspect implements the inspect command logic
 func runInspect(cmd *cobra.Command, args []string) error {
-	// Get flags
-	flags, err := getInspectFlags(cmd, len(args) > 0)
+	// Get flags for the inspect command
+	var flags *InspectFlags
+	var err error
+
+	// Check if we're being run with a release name
+	releaseNameProvided := len(args) > 0
+	if releaseNameProvided && !isHelmPlugin {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("release name can only be used in Helm plugin mode"),
+		}
+	}
+
+	flags, err = getInspectFlags(cmd, releaseNameProvided)
 	if err != nil {
 		return err
 	}
 
-	// If running as a Helm plugin with a release name, use that approach
-	if isHelmPlugin && len(args) > 0 {
+	// We should have either chart path or release name at this point
+	if releaseNameProvided {
+		// We're in plugin mode with a release name
 		releaseName := args[0]
 		namespace, err := cmd.Flags().GetString("namespace")
 		if err != nil {
-			namespace = ""
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitInputConfigurationError,
+				Err:  fmt.Errorf("failed to get namespace flag: %w", err),
+			}
 		}
+		if namespace == "" {
+			namespace = validateTestNamespace
+		}
+
 		return inspectHelmRelease(cmd, flags, releaseName, namespace)
 	}
 
-	// Determine chart path
+	// At this point we are using a chart path, either explicit or auto-detected
 	chartPath := flags.ChartPath
 	if chartPath == "" {
-		// Try to detect chart in current directory
-		detectedPath, err := detectChartInCurrentDirectory()
+		var err error
+		chartPath, err = detectChartInCurrentDirectory()
 		if err != nil {
-			log.Errorf("No chart path provided and failed to detect chart: %v", err)
 			return &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitInputConfigurationError,
-				Err:  fmt.Errorf("neither chart path nor release name provided, and failed to auto-detect chart"),
+				Err:  fmt.Errorf("chart path not provided and could not auto-detect chart in current directory: %w", err),
 			}
 		}
-		chartPath = detectedPath
 		log.Infof("Auto-detected chart path: %s", chartPath)
 	}
-	log.Infof("Using chart path: %s", chartPath)
 
-	// Load the chart
+	// Configure analyzer
+	analyzerConfig := &analyzer.Config{}
+	includePatterns, excludePatterns, err := getAnalysisPatterns(cmd)
+	if err != nil {
+		return err
+	}
+	analyzerConfig.IncludePatterns = includePatterns
+	analyzerConfig.ExcludePatterns = excludePatterns
+
+	// Source registries filter
+	sourceRegistries, err := cmd.Flags().GetStringSlice("source-registries")
+	if err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get source-registries flag: %w", err),
+		}
+	}
+	flags.SourceRegistries = sourceRegistries
+
+	// Load chart
 	chartData, err := loadHelmChart(chartPath)
 	if err != nil {
-		log.Errorf("Failed to load chart: %s", err)
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitChartNotFound,
-			Err:  fmt.Errorf("chart path not found or invalid: %w", err),
-		}
+		return err
 	}
 
 	// Analyze chart
-	analysis, err := analyzeChart(chartData, flags.AnalyzerConfig)
+	analysis, err := analyzeChart(chartData, analyzerConfig)
 	if err != nil {
-		log.Errorf("Chart analysis failed: %s", err)
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitHelmCommandFailed,
-			Err:  fmt.Errorf("chart analysis failed: %w", err),
-		}
+		return err
 	}
 
-	// Filter images based on source registries if provided
+	// Filter by source registries if provided
 	if len(flags.SourceRegistries) > 0 {
+		log.Infof("Filtering results to only include registries: %s", strings.Join(flags.SourceRegistries, ", "))
 		var filteredImages []ImageInfo
 		for _, img := range analysis.Images {
-			// Check if this image's registry is in the source registries list
-			for _, srcReg := range flags.SourceRegistries {
-				if strings.EqualFold(img.Registry, srcReg) {
+			for _, sourceReg := range flags.SourceRegistries {
+				if img.Registry == sourceReg {
 					filteredImages = append(filteredImages, img)
 					break
 				}
 			}
 		}
-		// Replace the images with filtered list
-		if len(filteredImages) < len(analysis.Images) {
-			log.Infof("Filtered images from %d to %d based on source registries", len(analysis.Images), len(filteredImages))
-			analysis.Images = filteredImages
+		if len(filteredImages) == 0 && len(analysis.Images) > 0 {
+			log.Warnf("No images found matching the provided source registries")
+			// Don't return an error, just show an empty result
+		}
+		analysis.Images = filteredImages
+	}
+
+	// Check for registry detection issues
+	if len(analysis.Images) == 0 {
+		log.Warnf("No registries detected in the chart")
+		log.Infof("If you expected to find registry references, check your chart's structure or try different analysis patterns")
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitRegistryDetectionError,
+			Err:  fmt.Errorf("no registries detected in chart '%s'", chartPath),
 		}
 	}
 
-	// Generate config skeleton if requested
+	// Extract all unique registries for suggestions
+	registries := make(map[string]bool)
+	for _, img := range analysis.Images {
+		if img.Registry != "" {
+			registries[img.Registry] = true
+		}
+	}
+
+	// Generate output
 	if flags.GenerateConfigSkeleton {
-		// If no specific output file was provided for the config skeleton,
-		// use the default in the current working directory
-		configFile := DefaultConfigSkeletonFilename
-		if flags.OutputFile != "" {
-			configFile = flags.OutputFile
-		}
-
-		// If the file path is not absolute, make it absolute from current directory
-		if !filepath.IsAbs(configFile) {
-			// Get current working directory
-			cwd, err := os.Getwd()
-			if err != nil {
-				log.Warnf("Failed to get current working directory: %v", err)
-			} else {
-				configFile = filepath.Join(cwd, configFile)
-			}
-		}
-
-		err := createConfigSkeleton(analysis.Images, configFile)
+		err = createConfigSkeleton(analysis.Images, flags.OutputFile)
 		if err != nil {
-			log.Errorf("Failed to generate config skeleton: %s", err)
 			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitGeneralRuntimeError,
-				Err:  fmt.Errorf("failed to generate config skeleton: %w", err),
+				Code: exitcodes.ExitIOError,
+				Err:  fmt.Errorf("failed to create config skeleton: %w", err),
 			}
 		}
-		// Already wrote config file, don't also write analysis output
+
+		// Display registry mapping suggestions
+		if len(registries) > 0 {
+			log.Infof("\nDetected registries you may want to configure:")
+			var regList []string
+			for reg := range registries {
+				regList = append(regList, reg)
+			}
+			sort.Strings(regList)
+
+			for _, reg := range regList {
+				log.Infof("  %s -> YOUR_REGISTRY/%s", reg, strings.ReplaceAll(reg, ".", "-"))
+			}
+
+			log.Infof("\nYou can configure these mappings with:")
+			for _, reg := range regList {
+				log.Infof("  irr config --source %s --target YOUR_REGISTRY/%s",
+					reg, strings.ReplaceAll(reg, ".", "-"))
+			}
+		}
+
 		return nil
 	}
 
-	// Write output
+	// Write regular analysis output
 	err = writeOutput(analysis, flags)
 	if err != nil {
-		log.Errorf("Failed to write output: %s", err)
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitGeneralRuntimeError,
-			Err:  fmt.Errorf("failed to write output: %w", err),
+		return err
+	}
+
+	// Display registry configuration suggestion if registries were found
+	if len(registries) > 0 {
+		log.Infof("\nRegistry configuration suggestions:")
+		log.Infof("To generate a config file with detected registries, run:")
+		log.Infof("  irr inspect --chart-path %s --generate-config-skeleton", chartPath)
+		log.Infof("Or configure individual mappings with:")
+
+		var regList []string
+		for reg := range registries {
+			regList = append(regList, reg)
+		}
+		sort.Strings(regList)
+
+		for _, reg := range regList {
+			log.Infof("  irr config --source %s --target YOUR_REGISTRY/%s",
+				reg, strings.ReplaceAll(reg, ".", "-"))
 		}
 	}
 
@@ -505,10 +567,9 @@ func getInspectFlags(cmd *cobra.Command, releaseNameProvided bool) (*InspectFlag
 	}
 
 	// Create analyzer config
-	analyzerConfig := &analyzer.Config{
-		IncludePatterns: includePatterns,
-		ExcludePatterns: excludePatterns,
-	}
+	analyzerConfig := &analyzer.Config{}
+	analyzerConfig.IncludePatterns = includePatterns
+	analyzerConfig.ExcludePatterns = excludePatterns
 
 	// Get source registries
 	sourceRegistries, err := cmd.Flags().GetStringSlice("source-registries")
@@ -671,18 +732,27 @@ func createConfigSkeleton(images []ImageInfo, outputFile string) error {
 	}
 	sort.Strings(registryList)
 
-	// Create skeleton config
-	config := struct {
-		RegistryMappings  map[string]string `yaml:"registry_mappings"`
-		PrivateRegistries []string          `yaml:"private_registries"`
-	}{
-		RegistryMappings:  make(map[string]string),
-		PrivateRegistries: []string{},
+	// Create structured registry mappings
+	mappings := make([]registry.RegMapping, 0, len(registryList))
+	for _, reg := range registryList {
+		// Generate a sanitized target registry path
+		targetPath := strings.ReplaceAll(reg, ".", "-")
+		mappings = append(mappings, registry.RegMapping{
+			Source:      reg,
+			Target:      "registry.local/" + targetPath,
+			Description: fmt.Sprintf("Mapping for %s", reg),
+			Enabled:     true,
+		})
 	}
 
-	// Fill in registry mappings with placeholders
-	for _, registry := range registryList {
-		config.RegistryMappings[registry] = "registry.local/" + strings.ReplaceAll(registry, ".", "-")
+	// Create config structure using the registry package format
+	config := registry.Config{
+		Version: "1.0",
+		Registries: registry.RegConfig{
+			Mappings:      mappings,
+			DefaultTarget: "registry.local/default",
+			StrictMode:    false,
+		},
 	}
 
 	// Marshal to YAML
@@ -692,24 +762,26 @@ func createConfigSkeleton(images []ImageInfo, outputFile string) error {
 	}
 
 	// Add helpful comments
-	yamlWithComments := strings.ReplaceAll(
-		fmt.Sprintf(`# IRR Configuration File
+	yamlWithComments := fmt.Sprintf(`# IRR Configuration File
 # 
-# This is a skeleton configuration for IRR based on the chart analysis.
-# Update the target registry mappings with your actual registries.
-# 
-# Uncomment and populate the private_registries section if you need to authenticate to any registries.
-# Example:
-# private_registries:
-#   - registry: registry.example.com
-#     username: username
-#     password: password  # Or use password_file to reference a file containing the password
-#     insecure: false     # Set to true to skip TLS verification
+# This file contains registry mappings for redirecting container images
+# from public registries to your private registry. Update the target values
+# to match your registry configuration.
 #
-%s`, string(configYAML)),
-		"\n  - []\n",
-		"\n#  - registry: registry.example.com\n#    username: username\n#    password: password\n",
-	)
+# USAGE INSTRUCTIONS:
+# 1. Update the 'target' fields with your actual registry paths
+# 2. Use with 'irr override' command to generate image overrides
+# 3. Validate generated overrides with 'irr validate'
+#
+# IMPORTANT NOTES:
+# - The 'override' and 'validate' commands can run without this config, 
+#   but image redirection correctness depends on your configuration
+# - When using Harbor as a pull-through cache, ensure your target paths
+#   match your Harbor project configuration
+# - You can set or update mappings using 'irr config --source <reg> --target <path>'
+# - This file was auto-generated from detected registries in your chart
+#
+%s`, string(configYAML))
 
 	// Write the skeleton file
 	err = afero.WriteFile(AppFs, outputFile, []byte(yamlWithComments), SecureFilePerms)
@@ -723,5 +795,7 @@ func createConfigSkeleton(images []ImageInfo, outputFile string) error {
 	} else {
 		log.Infof("Config skeleton written to %s", outputFile)
 	}
+
+	log.Infof("Update the target registry paths and use with 'irr config' to set up your configuration")
 	return nil
 }

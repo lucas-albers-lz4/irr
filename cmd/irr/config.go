@@ -30,7 +30,15 @@ func init() {
 		Short: "Configure registry mappings",
 		Long: `Configure registry mappings for image redirects.
 This command allows you to view, add, update, or remove registry mappings.
-Mappings are stored in a YAML file and used by the 'override' command.`,
+Mappings are stored in a YAML file and used by the 'override' command.
+
+IMPORTANT NOTES:
+- The 'override' and 'validate' commands can run without a config file,
+  but image redirection correctness depends on your configuration.
+- When using Harbor as a pull-through cache, ensure your target paths
+  match your Harbor project configuration.
+- For best results, first use 'irr inspect --generate-config-skeleton'
+  to create a base config with detected registries.`,
 		Example: `  # Add or update a mapping
   irr config --source quay.io --target harbor.local/quay
 
@@ -41,7 +49,12 @@ Mappings are stored in a YAML file and used by the 'override' command.`,
   irr config --source quay.io --remove
 
   # Specify a custom config file
-  irr config --file ./my-mappings.yaml --source docker.io --target registry.local/docker`,
+  irr config --file ./my-mappings.yaml --source docker.io --target registry.local/docker
+
+  # Workflow example
+  irr inspect --chart-path ./my-chart --generate-config-skeleton
+  irr config --source docker.io --target registry.example.com/docker
+  irr override --chart-path ./my-chart --target-registry registry.example.com --source-registries docker.io`,
 		RunE: configCmdRun,
 	}
 

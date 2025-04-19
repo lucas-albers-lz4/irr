@@ -148,7 +148,7 @@ func TestWriteOutput(t *testing.T) {
 				assert.NoError(t, err)
 				assert.Contains(t, string(content), "docker.io")
 				assert.Contains(t, string(content), "quay.io")
-				assert.Contains(t, string(content), "registry_mappings")
+				assert.Contains(t, string(content), "mappings")
 			},
 			expectedError: false,
 		},

@@ -130,9 +130,6 @@ func setupCommandForTest() *cobra.Command {
 	// Don't run the PreRun function during tests
 	cmd.PreRunE = nil
 
-	// Add release-name flag for tests
-	cmd.Flags().String("release-name", "", "Release name for testing")
-
 	return cmd
 }
 
@@ -193,6 +190,13 @@ func TestValidateCmd_DefaultKubeVersion(t *testing.T) {
 	// Save original functionality and restore after tests
 	originalTemplateFunc := helm.HelmTemplateFunc
 	defer func() { helm.HelmTemplateFunc = originalTemplateFunc }()
+
+	// Save original test mode state and restore it after the test
+	originalTestMode := isValidateTestMode
+	defer func() { isValidateTestMode = originalTestMode }()
+
+	// Set test mode to true to avoid actual Helm calls
+	isValidateTestMode = true
 
 	// Set up our mock template function
 	helm.HelmTemplateFunc = func(options *helm.TemplateOptions) (*helm.CommandResult, error) {
@@ -268,6 +272,13 @@ func TestValidateCmd_ExplicitKubeVersion(t *testing.T) {
 	// Save original functionality and restore after tests
 	originalTemplateFunc := helm.HelmTemplateFunc
 	defer func() { helm.HelmTemplateFunc = originalTemplateFunc }()
+
+	// Save original test mode state and restore it after the test
+	originalTestMode := isValidateTestMode
+	defer func() { isValidateTestMode = originalTestMode }()
+
+	// Set test mode to true to avoid actual Helm calls
+	isValidateTestMode = true
 
 	// Set the expected Kubernetes version
 	expectedVersion := "1.21.0"
@@ -345,6 +356,14 @@ func TestValidateCmd_InvalidKubeVersionFormat(t *testing.T) {
 	// Save original functionality and restore after tests
 	originalTemplateFunc := helm.HelmTemplateFunc
 	defer func() { helm.HelmTemplateFunc = originalTemplateFunc }()
+
+	// Save original test mode state and restore it after the test
+	originalTestMode := isValidateTestMode
+	defer func() { isValidateTestMode = originalTestMode }()
+
+	// Do NOT set test mode to true for this test
+	// We want to actually test the error handling
+	isValidateTestMode = false
 
 	// Set an invalid Kubernetes version
 	invalidVersion := "not-a-semver"

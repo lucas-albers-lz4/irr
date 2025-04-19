@@ -33,20 +33,33 @@ func newValidateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "validate [release-name]",
 		Short: "Validate a Helm chart with override values",
-		Long: `Validate a Helm chart with override values.\n` +
-			`This command validates that the chart can be templated with the provided values.\n` +
-			fmt.Sprintf("Defaults to Kubernetes version %s if --kube-version is not specified.", DefaultKubernetesVersion),
+		Long: `Validates that a Helm chart can be rendered correctly with the specified override values.
+This command runs 'helm template' with the chart and values, and checks for rendering errors.
+
+The validation can operate on either:
+- A local chart directory or tarball file (using --chart-path)
+- An installed Helm release (when running as a Helm plugin with [release-name])
+
+IMPORTANT NOTES:
+- This command can run without a config file, but image redirection correctness depends on your configuration
+- Use 'irr inspect' to identify registries in your chart and 'irr config' to configure mappings
+- When used with 'irr override', validation ensures your override values are syntactically correct`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: runValidate,
 	}
 
-	cmd.Flags().String("chart-path", "", "Path to the Helm chart")
-	cmd.Flags().StringSlice("values", []string{}, "Values files to use (can be specified multiple times)")
-	cmd.Flags().StringSlice("set", []string{}, "Set values on the command line (can be specified multiple times)")
-	cmd.Flags().String("output-file", "", "Write template output to file instead of validating")
-	cmd.Flags().String("namespace", "", "Namespace to use for templating")
-	cmd.Flags().String("kube-version", "", fmt.Sprintf("Kubernetes version for validation (e.g., '1.31.0'). Defaults to %s", DefaultKubernetesVersion))
-	cmd.Flags().Bool("strict", false, "Enable strict mode (fail on any validation error)")
+	cmd.Flags().StringP("chart-path", "c", "", "Path to the Helm chart directory or tarball")
+
+	// Only add release-name flag if it doesn't already exist (should be inherited from root)
+	if cmd.Flags().Lookup("release-name") == nil {
+		cmd.Flags().StringP("release-name", "r", "", "Release name to use (default: chart name)")
+	}
+
+	cmd.Flags().StringSliceP("values", "f", []string{}, "Values files to use (can specify multiple)")
+	cmd.Flags().StringP("namespace", "n", "default", "Namespace to use (default: default)")
+	cmd.Flags().StringP("output-file", "o", "", "Write rendering output to file instead of discarding")
+	cmd.Flags().Bool("strict", false, "Fail on any warning, not just errors")
+	cmd.Flags().String("kube-version", "", "Kubernetes version to use for validation (defaults to current client version)")
 
 	return cmd
 }
@@ -93,31 +106,26 @@ func detectChartInCurrentDirectoryIfNeeded(chartPath string) (string, error) {
 
 // runValidate is the main entry point for the validate command
 func runValidate(cmd *cobra.Command, args []string) error {
-	// Get the release name from args or --release-name flag
-	releaseName, namespace, err := getValidateReleaseNamespace(cmd, args)
+	// Get required flags
+	chartPath, valuesFiles, err := getValidateFlags(cmd)
 	if err != nil {
 		return err
 	}
 
-	// Default namespace to "default" if not specified
-	if namespace == "" {
-		namespace = "default"
-		log.Infof("No namespace specified, using default namespace: %s", namespace)
-	}
+	// Handle validation
+	if isHelmPlugin {
+		log.Debugf("Running in Helm plugin mode, handling plugin-specific validation")
+		// Get namespace and release from args or flags
+		releaseName, namespace, err := getValidateReleaseNamespace(cmd, args)
+		if err != nil {
+			return err
+		}
 
-	// Skip actual validation in test mode
-	if isValidateTestMode {
-		log.Infof("Validate test mode enabled, skipping actual validation for '%s'", releaseName)
-		return nil
-	}
-
-	// Handle plugin mode validation
-	if isHelmPlugin && releaseName != "" {
 		return handlePluginValidate(cmd, releaseName, namespace)
 	}
 
-	// Handle standalone mode validation
-	return handleStandaloneValidate(cmd)
+	// Handle standalone mode
+	return handleStandaloneValidate(cmd, chartPath, valuesFiles)
 }
 
 // getValidateFlags retrieves the basic flags for validate command
@@ -361,15 +369,18 @@ func handleValidateOutput(cmd *cobra.Command, templateOutput, outputFile string)
 	return nil
 }
 
-// handlePluginValidate handles validation when running as a Helm plugin with a release name
+// handlePluginValidate handles validation when running in Helm plugin mode
 func handlePluginValidate(cmd *cobra.Command, releaseName, namespace string) error {
+	// Skip actual validation in test mode
+	if isValidateTestMode {
+		log.Infof("Validate test mode enabled, skipping actual validation for '%s'", releaseName)
+		return nil
+	}
+
 	// Get values files
-	valuesFiles, err := cmd.Flags().GetStringSlice("values")
+	_, valuesFiles, err := getValidateFlags(cmd)
 	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get values flag: %w", err),
-		}
+		return err
 	}
 
 	// Get Kubernetes version flag
@@ -400,13 +411,7 @@ func handlePluginValidate(cmd *cobra.Command, releaseName, namespace string) err
 }
 
 // handleStandaloneValidate handles validation when running in standalone mode
-func handleStandaloneValidate(cmd *cobra.Command) error {
-	// Get flags
-	chartPath, valuesFiles, err := getValidateFlags(cmd)
-	if err != nil {
-		return err
-	}
-
+func handleStandaloneValidate(cmd *cobra.Command, chartPath string, valuesFiles []string) error {
 	// Get output flags
 	outputFile, strict, err := getValidateOutputFlags(cmd)
 	if err != nil {

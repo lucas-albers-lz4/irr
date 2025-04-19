@@ -200,17 +200,13 @@ func TestOverrideCommand(t *testing.T) {
 	chartPath, cleanup := createTempChart(t)
 	defer cleanup()
 
-	// Create a temp file for output
-	outputFile, err := os.CreateTemp("", "irr-output-*.yaml")
-	require.NoError(t, err, "Failed to create temp output file")
-	outputPath := outputFile.Name()
-	err = outputFile.Close()
-	require.NoError(t, err, "Failed to close temp output file")
+	// Generate a unique temp file path for output, but do NOT create the file
+	tempDir := os.TempDir()
+	outputPath := filepath.Join(tempDir, fmt.Sprintf("irr-output-%d.yaml", os.Getpid()))
+	// Ensure the file does not exist before the test
+	_ = os.Remove(outputPath)
 	defer func() {
-		err := os.Remove(outputPath)
-		if err != nil {
-			fmt.Printf("Warning: Failed to remove output file %s: %v\n", outputPath, err)
-		}
+		_ = os.Remove(outputPath)
 	}()
 
 	tests := []struct {
@@ -438,7 +434,7 @@ func TestHelpCommand(t *testing.T) {
 			name:     "validate help",
 			args:     []string{"help", "validate"},
 			wantExit: 0,
-			wantOut:  "Validate a Helm chart with override values",
+			wantOut:  "Validates that a Helm chart can be rendered correctly",
 		},
 		{
 			name:     "completion help",
@@ -586,7 +582,7 @@ sidecar:
 				"--chart-path", chartPath,
 				"--source-registries", "docker.io",
 				"--target-registry", "example.registry.io",
-				"--strategy", "prefix-source-registry",
+				"--path-strategy", "prefix-source-registry",
 			},
 			wantExit: 0,
 		},

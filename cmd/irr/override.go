@@ -1,9 +1,12 @@
-// Package main provides CLI commands for the irr tool.
+// Package main implements the command-line interface for the irr (Image Relocation and Rewrite) tool.
+// This file contains the override command implementation.
 //
 // IMPORTANT: This file imports Helm SDK packages that require additional dependencies.
 // To resolve the missing go.sum entries, run:
 //
 //	go get helm.sh/helm/v3@v3.14.2
+//
+//nolint:unused // These functions are used by tests but flagged as unused by the linter
 package main
 
 import (
@@ -108,8 +111,11 @@ func newOverrideCmd() *cobra.Command {
 			"Helm-compatible values file that overrides these references to point to a specified " +
 			"target registry, using a defined path strategy.\n\n" +
 			"Supports filtering images based on source registries and excluding specific registries. " +
-			"Can also utilize a registry mapping file for more complex source-to-target mappings." +
-			"Includes options for dry-run, strict validation, and success thresholds.",
+			"Can also utilize a registry mapping file for more complex source-to-target mappings.\n\n" +
+			"IMPORTANT NOTES:\n" +
+			"- This command can run without a config file, but image redirection correctness depends on your configuration.\n" +
+			"- Use 'irr inspect' to identify registries in your chart and 'irr config' to configure mappings.\n" +
+			"- When using Harbor as a pull-through cache, ensure your target paths match your Harbor project configuration.",
 		Args: cobra.MaximumNArgs(1),
 		PreRunE: func(cmd *cobra.Command, args []string) error {
 			// Check if we're in plugin mode with a release name
@@ -199,35 +205,37 @@ func setupOverrideFlags(cmd *cobra.Command) {
 		"Source container registry URLs to relocate (required, comma-separated or multiple flags)",
 	)
 
-	// Mark target-registry as required
-	err := cmd.MarkFlagRequired("target-registry")
-	if err != nil {
-		log.Errorf("Failed to mark target-registry flag as required: %v", err)
+	// Optional flags
+	cmd.Flags().StringP("output-file", "o", "", "Write output to file instead of stdout")
+	cmd.Flags().StringP("config", "f", "", "Path to registry mapping config file")
+	cmd.Flags().Bool("strict", false, "Enable strict mode (fails on unsupported structures)")
+	cmd.Flags().StringSlice("include-pattern", []string{}, "Glob patterns for values paths to include (comma-separated)")
+	cmd.Flags().StringSlice("exclude-pattern", []string{}, "Glob patterns for values paths to exclude (comma-separated)")
+	cmd.Flags().Bool("no-rules", false, "Disable chart parameter rules system")
+	cmd.Flags().Bool("dry-run", false, "Show what would be generated without writing to file")
+	cmd.Flags().StringSliceP("exclude-registries", "e", []string{}, "Registry URLs to exclude from relocation")
+	cmd.Flags().Bool("no-validate", false, "Skip validation of generated overrides")
+	cmd.Flags().String("kube-version", "", "Kubernetes version to use for validation (defaults to current client version)")
+	cmd.Flags().Bool("validate", true, "Validate generated overrides (use --validate=false to skip)")
+	cmd.Flags().String("registry-file", "", "Path to legacy registry mapping file (deprecated, use --config instead)")
+	cmd.Flags().StringP("namespace", "n", "default", "Namespace to use (default: default)")
+	cmd.Flags().StringP("release-name", "r", "", "Release name to use (only in Helm plugin mode)")
+
+	// Hide deprecated or advanced flags
+	cmd.Flags().String("path-strategy", "prefix-source-registry", "Path generation strategy (deprecated, only prefix-source-registry is supported)")
+	cmd.Flags().StringSlice("known-image-paths", []string{}, "Advanced: Custom glob patterns for known image paths")
+
+	if err := cmd.Flags().MarkHidden("path-strategy"); err != nil {
+		log.Debugf("Failed to mark path-strategy flag as hidden: %v", err)
+	}
+	if err := cmd.Flags().MarkHidden("known-image-paths"); err != nil {
+		log.Debugf("Failed to mark known-image-paths flag as hidden: %v", err)
 	}
 
-	// Optional flags with defaults
-	cmd.Flags().StringP("output-file", "o", "", "Output file path for the generated overrides YAML (default: stdout)")
-	cmd.Flags().Bool("dry-run", false, "Perform analysis and print overrides to stdout without writing to file")
-	cmd.Flags().Bool("strict", false, "Enable strict mode (fail on any image parsing/processing error)")
-	cmd.Flags().StringSlice(
-		"exclude-registries",
-		[]string{},
-		"Container registry URLs to exclude from relocation (comma-separated or multiple flags)",
-	)
-	cmd.Flags().String("registry-file", "", "Path to a YAML file containing registry mappings (source: target)")
-	cmd.Flags().String("config", "", "Path to a YAML configuration file for registry mappings (map[string]string format)")
-	cmd.Flags().Bool("validate", false, "Run 'helm template' with generated overrides to validate chart renderability")
-	cmd.Flags().StringP("release-name", "n", "", "Helm release name to get values from before generating overrides (optional)")
-	cmd.Flags().String("namespace", "", "Kubernetes namespace for the Helm release (only used with --release-name)")
-	cmd.Flags().Bool("disable-rules", false, "Disable the chart parameter rules system (default: enabled)")
-	cmd.Flags().String("strategy", "prefix-source-registry", "Path strategy for image redirects (default: prefix-source-registry)")
-
-	// For testing purposes
-	cmd.Flags().Bool("stdout", false, "Write output to stdout (used in tests)")
-
-	// Analysis pattern flags
-	cmd.Flags().StringSlice("include-pattern", nil, "Glob patterns for values paths to include during analysis")
-	cmd.Flags().StringSlice("exclude-pattern", nil, "Glob patterns for values paths to exclude during analysis")
+	// Remove deprecated flags that were already not used
+	// --output-format: Not used, always YAML
+	// --debug-template: Not implemented/used
+	// --threshold: No clear use case; binary success preferred
 }
 
 // getRequiredFlags retrieves and validates the required flags for the override command
@@ -322,203 +330,301 @@ func handleGenerateError(err error) error {
 	}
 }
 
-// outputOverrides handles the output of override data based on flags
-func outputOverrides(cmd *cobra.Command, yamlBytes []byte, outputFile string, dryRun bool) error {
+// getOutputFlags retrieves output file and dry run settings
+func getOutputFlags(cmd *cobra.Command, releaseName string) (outputFile string, dryRun bool, err error) {
+	outputFile, err = cmd.Flags().GetString("output-file")
+	if err != nil {
+		return "", false, &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get output-file flag: %w", err),
+		}
+	}
+
+	// Set default output file in plugin mode with release name
+	if outputFile == "" && isHelmPlugin && releaseName != "" {
+		outputFile = fmt.Sprintf("%s-overrides.yaml", releaseName)
+		debug.Printf("No output file specified in plugin mode, using default based on release name: %s", outputFile)
+	}
+
+	// Get dry run flag
+	dryRun, err = cmd.Flags().GetBool("dry-run")
+	if err != nil {
+		return "", false, &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get dry-run flag: %w", err),
+		}
+	}
+
+	debug.Printf("Output flags: outputFile=%s, dryRun=%v", outputFile, dryRun)
+	return outputFile, dryRun, nil
+}
+
+// outputOverrides outputs the generated overrides to a file or stdout
+func outputOverrides(_ *cobra.Command, yamlBytes []byte, outputFile string, dryRun bool) error {
 	if dryRun {
-		// Dry run mode - output to stdout with headers
-		if _, err := fmt.Fprintln(cmd.OutOrStdout(), "--- Dry Run: Generated Overrides ---"); err != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitGeneralRuntimeError,
-				Err:  fmt.Errorf("failed to write dry run header: %w", err),
-			}
-		}
-
-		if _, err := fmt.Fprintln(cmd.OutOrStdout(), string(yamlBytes)); err != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitGeneralRuntimeError,
-				Err:  fmt.Errorf("failed to write overrides in dry run mode: %w", err),
-			}
-		}
-
-		if _, err := fmt.Fprintln(cmd.OutOrStdout(), "--- End Dry Run ---"); err != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitGeneralRuntimeError,
-				Err:  fmt.Errorf("failed to write dry run footer: %w", err),
-			}
-		}
-
+		log.Infof("DRY RUN: Generated override values:\n%s", string(yamlBytes))
 		return nil
 	}
 
-	// Output mode - write to a file
-	if outputFile != "" {
-		// Create the directory if it doesn't exist
-		err := AppFs.MkdirAll(filepath.Dir(outputFile), DirPermissions)
-		if err != nil {
+	// If outputFile is empty, write to stdout
+	if outputFile == "" {
+		fmt.Println(string(yamlBytes))
+		log.Infof("Override values printed to stdout")
+		return nil
+	}
+
+	// Check if file exists
+	exists, err := afero.Exists(AppFs, outputFile)
+	if err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitIOError,
+			Err:  fmt.Errorf("failed to check if output file exists: %w", err),
+		}
+	}
+	if exists {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitIOError,
+			Err:  fmt.Errorf("output file '%s' already exists", outputFile),
+		}
+	}
+
+	// Create the directory if it doesn't exist
+	dir := filepath.Dir(outputFile)
+	if dir != "" && dir != "." {
+		if err := AppFs.MkdirAll(dir, DirPermissions); err != nil {
 			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitGeneralRuntimeError,
+				Code: exitcodes.ExitIOError,
 				Err:  fmt.Errorf("failed to create output directory: %w", err),
 			}
 		}
-
-		// Write the file
-		err = afero.WriteFile(AppFs, outputFile, yamlBytes, FilePermissions)
-		if err != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitGeneralRuntimeError,
-				Err:  fmt.Errorf("failed to write override file: %w", err),
-			}
-		}
-
-		// Check error from Fprintf to satisfy the linter
-		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Successfully wrote overrides to %s\n", outputFile); err != nil {
-			// We've already written the file successfully, so just log this error
-			debug.Printf("Warning: Error printing success message: %v", err)
-		}
-		return nil
 	}
 
-	// Just output to stdout
-	_, err := fmt.Fprintln(cmd.OutOrStdout(), string(yamlBytes))
-	if err != nil {
+	// Write the file
+	if err := afero.WriteFile(AppFs, outputFile, yamlBytes, FilePermissions); err != nil {
 		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitGeneralRuntimeError,
-			Err:  fmt.Errorf("failed to write overrides to stdout: %w", err),
+			Code: exitcodes.ExitIOError,
+			Err:  fmt.Errorf("failed to write output file '%s': %w", outputFile, err),
 		}
+	}
+
+	// Log success
+	absPath, err := filepath.Abs(outputFile)
+	if err == nil {
+		log.Infof("Override values written to %s", absPath)
+	} else {
+		log.Infof("Override values written to %s", outputFile)
 	}
 
 	return nil
 }
 
-// setupGeneratorConfig collects all the necessary configuration for the generator
-func setupGeneratorConfig(cmd *cobra.Command, releaseName string) (config GeneratorConfig, err error) {
-	// Check if we have a release name from positional args
-	releaseNameProvided := releaseName != "" && isHelmPlugin
-
-	// If running in plugin mode with a release name, don't require chart-path
-	if releaseNameProvided {
-		// Only get target registry and source registries, chart path is optional
-		config.TargetRegistry, err = cmd.Flags().GetString("target-registry")
-		if err != nil || config.TargetRegistry == "" {
-			err = &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitInputConfigurationError,
-				Err:  errors.New("required flag(s) \"target-registry\" not set"),
-			}
-			return
-		}
-
-		config.SourceRegistries, err = cmd.Flags().GetStringSlice("source-registries")
-		if err != nil || len(config.SourceRegistries) == 0 {
-			err = &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitInputConfigurationError,
-				Err:  errors.New("required flag(s) \"source-registries\" not set"),
-			}
-			return
-		}
-
-		// Get chart path if provided (optional in this case)
-		config.ChartPath, err = cmd.Flags().GetString("chart-path")
-		if err != nil {
-			err = &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitInputConfigurationError,
-				Err:  fmt.Errorf("failed to get chart-path flag: %w", err),
-			}
-			return
-		}
-	} else {
-		// Use existing getRequiredFlags for normal mode (requires chart-path)
-		config.ChartPath, config.TargetRegistry, config.SourceRegistries, err = getRequiredFlags(cmd)
-		if err != nil {
-			return
-		}
-	}
-
-	// Get registry file and mappings
-	registryFile, err := getStringFlag(cmd, "registry-file")
+// setupGeneratorConfig retrieves and configures all options for the generator
+func setupGeneratorConfig(cmd *cobra.Command, _ string) (config GeneratorConfig, err error) {
+	// Get the required flags first
+	chartPath, targetRegistry, sourceRegistries, err := getRequiredFlags(cmd)
 	if err != nil {
-		return
+		return config, err
 	}
 
-	// Load registry mappings
-	if registryFile != "" {
-		config.Mappings, err = registry.LoadMappings(AppFs, registryFile, integrationTestMode)
-		if err != nil {
-			debug.Printf("Failed to load mappings: %v", err)
-			err = fmt.Errorf("failed to load registry mappings from %s: %w", registryFile, err)
-			return
-		}
-		if config.Mappings != nil {
-			debug.Printf("Successfully loaded %d mappings from %s", len(config.Mappings.Entries), registryFile)
-		} else {
-			debug.Printf("Mappings were not loaded (nil) from %s", registryFile)
-		}
-	}
+	// Set the chart path and target registry
+	config.ChartPath = chartPath
+	config.TargetRegistry = targetRegistry
+	config.SourceRegistries = sourceRegistries
 
-	// Get config file path
-	configFile, err := getStringFlag(cmd, "config")
+	// Check for exclude registries
+	excludeRegistries, err := getStringSliceFlag(cmd, "exclude-registries")
 	if err != nil {
-		return
+		return config, err
+	}
+	config.ExcludeRegistries = excludeRegistries
+
+	// Get the path strategy
+	pathStrategy, err := cmd.Flags().GetString("path-strategy")
+	if err != nil {
+		return config, &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get path-strategy flag: %w", err),
+		}
 	}
 
-	// Load config mappings
-	if configFile != "" {
-		config.ConfigMappings, err = registry.LoadConfig(AppFs, configFile, integrationTestMode)
+	// Create the strategy
+	switch pathStrategy {
+	case "prefix-source-registry":
+		var err error
+		config.Strategy, err = strategy.GetStrategy(pathStrategy, nil)
 		if err != nil {
-			debug.Printf("Failed to load config: %v", err)
-			err = &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitInputConfigurationError,
-				Err:  fmt.Errorf("failed to load registry config from %s: %w", configFile, err),
+			return config, &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitCodeInvalidStrategy,
+				Err:  fmt.Errorf("failed to create path strategy: %w", err),
 			}
-			return
 		}
-
-		if config.ConfigMappings != nil {
-			debug.Printf("Successfully loaded %d config mappings from %s", len(config.ConfigMappings), configFile)
-		}
-	}
-
-	// Get and validate path strategy
-	pathStrategyString, err := getStringFlag(cmd, "strategy")
-	if err != nil {
-		return
-	}
-
-	// Validate strategy
-	config.Strategy, err = strategy.GetStrategy(pathStrategyString, config.Mappings)
-	if err != nil {
-		err = &exitcodes.ExitCodeError{
+	default:
+		return config, &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitCodeInvalidStrategy,
-			Err:  fmt.Errorf("invalid path strategy specified: %s: %w", pathStrategyString, err),
+			Err:  fmt.Errorf("unsupported path strategy: %s", pathStrategy),
 		}
-		return
 	}
 
-	// Get remaining flags
-	config.ExcludeRegistries, err = getStringSliceFlag(cmd, "exclude-registries")
+	// Enable strict mode
+	strictMode, err := getBoolFlag(cmd, "strict")
 	if err != nil {
-		return
+		return config, err
 	}
+	config.StrictMode = strictMode
 
-	// Get strict mode flag
-	config.StrictMode, err = getBoolFlag(cmd, "strict")
+	// Get value path include/exclude patterns
+	includePatterns, excludePatterns, err := getAnalysisControlFlags(cmd)
 	if err != nil {
-		return
+		return config, err
 	}
+	config.IncludePatterns = includePatterns
+	config.ExcludePatterns = excludePatterns
 
-	// Get rules enabled flag
-	disableRules, err := getBoolFlag(cmd, "disable-rules")
+	// Get whether to enable rules
+	disableRules, err := getBoolFlag(cmd, "no-rules")
 	if err != nil {
-		return
+		return config, err
 	}
 	config.RulesEnabled = !disableRules
 
-	// Get analysis control flags using helper function
-	config.IncludePatterns, config.ExcludePatterns, err = getAnalysisControlFlags(cmd)
+	// Handle registry mappings
+	// First check for config file
+	configFile, err := cmd.Flags().GetString("config")
 	if err != nil {
-		return
+		return config, &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get config flag: %w", err),
+		}
 	}
 
-	return
+	// If a config file is specified, load it
+	if configFile != "" {
+		debug.Printf("Loading registry mappings from config file: %s", configFile)
+		// Skip CWD restriction in test mode to support absolute paths
+		mappings, err := registry.LoadMappings(AppFs, configFile, isTestMode)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return config, &exitcodes.ExitCodeError{
+					Code: exitcodes.ExitInputConfigurationError,
+					Err:  fmt.Errorf("config file not found: %s", configFile),
+				}
+			}
+			return config, &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitInputConfigurationError,
+				Err:  fmt.Errorf("failed to load config file: %w", err),
+			}
+		}
+		config.Mappings = mappings
+	}
+
+	// Now check for registry-file (legacy)
+	registryFile, err := cmd.Flags().GetString("registry-file")
+	if err != nil {
+		return config, &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get registry-file flag: %w", err),
+		}
+	}
+
+	// If registry-file is specified, load it
+	if registryFile != "" {
+		debug.Printf("Loading registry mappings from registry file: %s", registryFile)
+		// Skip CWD restriction in test mode to support absolute paths
+		configMap, err := registry.LoadConfig(AppFs, registryFile, isTestMode)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return config, &exitcodes.ExitCodeError{
+					Code: exitcodes.ExitInputConfigurationError,
+					Err:  fmt.Errorf("registry file not found: %s", registryFile),
+				}
+			}
+			return config, &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitInputConfigurationError,
+				Err:  fmt.Errorf("failed to load registry file: %w", err),
+			}
+		}
+		config.ConfigMappings = configMap
+	}
+
+	// Log configuration
+	if config.StrictMode {
+		log.Infof("Running in strict mode - will fail on unrecognized registries or unsupported structures")
+	} else {
+		log.Infof("Running in normal mode - will skip unrecognized registries with warnings")
+	}
+
+	// Verify source registries are properly configured
+	if len(config.SourceRegistries) > 0 {
+		log.Infof("Using source registries: %s", strings.Join(config.SourceRegistries, ", "))
+
+		// If registry mappings are configured, verify source registries are mappable
+		if (config.Mappings != nil && len(config.Mappings.Entries) > 0) || len(config.ConfigMappings) > 0 {
+
+			// Track which source registries have mappings
+			unmappableRegistries := make([]string, 0)
+
+			for _, sourceReg := range config.SourceRegistries {
+				// Check if this registry can be mapped
+				found := false
+
+				// Check in Mappings
+				if config.Mappings != nil {
+					for _, mapping := range config.Mappings.Entries {
+						if mapping.Source == sourceReg {
+							found = true
+							break
+						}
+					}
+				}
+
+				// Check in ConfigMappings
+				if !found && config.ConfigMappings != nil {
+					if _, exists := config.ConfigMappings[sourceReg]; exists {
+						found = true
+					}
+				}
+
+				// If no mapping found and we're using the target registry directly, that's OK too
+				if !found {
+					if strings.HasPrefix(config.TargetRegistry, sourceReg) {
+						found = true
+					}
+				}
+
+				if !found {
+					unmappableRegistries = append(unmappableRegistries, sourceReg)
+				}
+			}
+
+			// Handle unmappable registries according to strict mode
+			if len(unmappableRegistries) > 0 {
+				if config.StrictMode {
+					// In strict mode, fail with error
+					return config, &exitcodes.ExitCodeError{
+						Code: exitcodes.ExitRegistryDetectionError,
+						Err: fmt.Errorf("strict mode enabled: no mapping found for registries: %s",
+							strings.Join(unmappableRegistries, ", ")),
+					}
+				}
+
+				// In normal mode, just warn
+				log.Warnf("No mapping found for registries: %s", strings.Join(unmappableRegistries, ", "))
+				log.Infof("These registries will be redirected using the target registry: %s", config.TargetRegistry)
+				log.Infof("To add mappings, use: irr config --source <registry> --target <path>")
+
+				for _, reg := range unmappableRegistries {
+					log.Infof("  irr config --source %s --target %s/%s",
+						reg, config.TargetRegistry, strings.ReplaceAll(reg, ".", "-"))
+				}
+			}
+		}
+	}
+
+	if len(config.ExcludeRegistries) > 0 {
+		log.Infof("Excluding registries: %s", strings.Join(config.ExcludeRegistries, ", "))
+	}
+
+	return config, nil
 }
 
 // getAnalysisControlFlags retrieves include/exclude patterns and known image paths
@@ -649,160 +755,101 @@ func loadChart(cs *ChartSource) (*helmchart.Chart, error) {
 
 // runOverride is the main entry point for the override command
 func runOverride(cmd *cobra.Command, args []string) error {
-	// Get release name and namespace from args or flags
-	releaseName, namespace, err := getReleaseNameAndNamespace(cmd, args)
-	if err != nil {
-		return err
+	// Special handling for test mode
+	if isTestMode && isHelmPlugin {
+		return handleTestModeOverride(cmd, "")
 	}
 
-	// Check if the --release-name flag was explicitly set by the user
-	releaseNameFlagSet := cmd.Flags().Changed("release-name")
-
-	// If releaseName flag was explicitly set but we're not in plugin mode, return an error
-	if releaseNameFlagSet && !isHelmPlugin {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("the --release-name flag is only available when running as a Helm plugin (helm irr...)"),
-		}
-	}
-
-	// Determine if a release name is provided and if we're in plugin mode
-	releaseNameProvided := releaseName != ""
-	canUseReleaseName := releaseNameProvided && isHelmPlugin
-
-	// If releaseName is provided through args, but we're not in plugin mode, return an error about plugin mode
-	if releaseNameProvided && !isHelmPlugin {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("release name '%s' can only be used when running in plugin mode (helm irr...)", releaseName),
-		}
-	}
-
-	// Skip most of the normal processing if we're in test mode
-	if isTestMode {
-		return handleTestModeOverride(cmd, releaseName)
-	}
-
-	// If in plugin mode with a release name, handle differently
-	if canUseReleaseName {
-		debug.Printf("Using release name: %s in namespace: %s", releaseName, namespace)
-
-		// Set up config for Helm plugin mode
-		config, err := setupGeneratorConfig(cmd, releaseName)
-		if err != nil {
-			return err
-		}
-
-		// Get output flags
-		outputFile, dryRun, err := getOutputFlags(cmd, releaseName)
-		if err != nil {
-			return err
-		}
-
-		// Get path strategy
-		pathStrategy, err := cmd.Flags().GetString("strategy")
-		if err != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitInputConfigurationError,
-				Err:  fmt.Errorf("failed to get strategy flag: %w", err),
-			}
-		}
-
-		// Handle Helm plugin override
-		return handleHelmPluginOverride(cmd, releaseName, namespace, &config, pathStrategy, outputFile, dryRun)
-	}
-
-	// Set up config for normal chart analysis mode
-	config, err := setupGeneratorConfig(cmd, "")
-	if err != nil {
-		return err
-	}
-
-	// Validate chart path in non-plugin mode
-	chartPath := config.ChartPath
-	if chartPath == "" {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitMissingRequiredFlag,
-			Err:  errors.New("required flag(s) \"chart-path\" not set"),
-		}
-	}
-
-	// Log the chart path being used
-	log.Infof("Using chart path: %s", chartPath)
-
-	// Get chart source using the common function from root.go
+	// Get basic flags first
 	chartSource, err := getChartSource(cmd, args)
 	if err != nil {
 		return err
 	}
 
-	// Create and execute generator
-	yamlBytes, err := createAndExecuteGenerator(chartSource, &config)
-	if err != nil {
-		return handleGenerateError(err)
-	}
-
-	// Get output flags
-	outputFile, dryRun, err := getOutputFlags(cmd, "")
+	// Get configuration for generator
+	config, err := setupGeneratorConfig(cmd, chartSource.ReleaseName)
 	if err != nil {
 		return err
 	}
 
-	// Validate chart with generated overrides if requested
-	shouldValidate, err := cmd.Flags().GetBool("validate")
+	// Set up the generator based on the chart source
+	generator, err := createGenerator(chartSource, &config)
+	if err != nil {
+		return handleGenerateError(err)
+	}
+
+	// Generate the override file
+	overrideFile, err := generator.Generate()
+	if err != nil {
+		return handleGenerateError(err)
+	}
+
+	// Marshal to YAML
+	yamlBytes, err := yaml.Marshal(overrideFile)
+	if err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitGeneralRuntimeError,
+			Err:  fmt.Errorf("failed to marshal override file to YAML: %w", err),
+		}
+	}
+
+	// Get output flags
+	outputFile, dryRun, err := getOutputFlags(cmd, chartSource.ReleaseName)
+	if err != nil {
+		return err
+	}
+
+	// Output the overrides
+	err = outputOverrides(cmd, yamlBytes, outputFile, dryRun)
+	if err != nil {
+		return err
+	}
+
+	// Check if validation should be skipped
+	skipValidation, err := cmd.Flags().GetBool("no-validate")
 	if err != nil {
 		return &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get validate flag: %w", err),
+			Err:  fmt.Errorf("failed to get no-validate flag: %w", err),
 		}
 	}
 
-	if shouldValidate {
-		// For standalone mode, we're loading from path not release
-		if err := validateChart(cmd, yamlBytes, &config, true, false, releaseName, namespace); err != nil {
-			return err
+	// If we're in dry-run mode or validation is explicitly skipped, stop here
+	if dryRun || skipValidation {
+		if skipValidation {
+			log.Infof("Validation skipped (--no-validate flag provided)")
 		}
-		log.Infof("Validation successful! Chart renders correctly with overrides.")
+		return nil
 	}
 
-	// Output the YAML
-	return outputOverrides(cmd, yamlBytes, outputFile, dryRun)
+	// If we have an output file, run validation
+	if outputFile != "" {
+		log.Infof("Validating generated overrides...")
+		err = validateChart(cmd, yamlBytes, &config,
+			chartSource.SourceType == chartSourceTypeChart,
+			chartSource.SourceType == chartSourceTypeRelease,
+			chartSource.ReleaseName, chartSource.Namespace)
+
+		if err != nil {
+			log.Errorf("Validation failed: %v", err)
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitHelmTemplateFailed,
+				Err:  fmt.Errorf("validation of generated overrides failed: %w", err),
+			}
+		}
+
+		log.Infof("Validation successful")
+	} else {
+		log.Infof("Skipping validation (no output file)")
+	}
+
+	return nil
 }
 
 // getReleaseNameAndNamespace gets the release name and namespace from the command
 func getReleaseNameAndNamespace(cmd *cobra.Command, args []string) (releaseName, namespace string, err error) {
 	// Use common function to get release name and namespace
 	return getReleaseNameAndNamespaceCommon(cmd, args)
-}
-
-// getOutputFlags retrieves output file path and dry-run flag
-func getOutputFlags(cmd *cobra.Command, releaseName string) (outputFile string, dryRun bool, err error) {
-	outputFile, err = cmd.Flags().GetString("output-file")
-	if err != nil {
-		return "", false, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get output-file flag: %w", err),
-		}
-	}
-
-	// If no output file specified and we have a release name, default to <release-name>-overrides.yaml
-	if outputFile == "" && releaseName != "" && !isStdOutRequested(cmd) {
-		// Sanitize release name for use as a filename
-		sanitizedName := strings.ReplaceAll(releaseName, "/", "-")
-		sanitizedName = strings.ReplaceAll(sanitizedName, ":", "-")
-		outputFile = sanitizedName + "-overrides.yaml"
-		log.Infof("No output file specified, defaulting to %s", outputFile)
-	}
-
-	dryRun, err = cmd.Flags().GetBool("dry-run")
-	if err != nil {
-		return "", false, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get dry-run flag: %w", err),
-		}
-	}
-
-	return outputFile, dryRun, nil
 }
 
 // handleHelmPluginOverride handles the override command when running as a Helm plugin

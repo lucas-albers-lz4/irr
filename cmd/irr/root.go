@@ -171,9 +171,9 @@ func getChartSource(cmd *cobra.Command, args []string) (*ChartSource, error) {
 		}
 	}
 
-	// Default namespace to constant if not provided
+	// Default namespace to "default" if not provided
 	if namespace == "" {
-		namespace = validateTestNamespace
+		namespace = "default"
 		debug.Printf("No namespace specified, using default: %s", namespace)
 	}
 	result.Namespace = namespace
@@ -227,16 +227,16 @@ func getChartSource(cmd *cobra.Command, args []string) (*ChartSource, error) {
 		if chartPathFlag && isHelmPlugin {
 			// Both explicitly provided in plugin mode - prioritize chart path
 			debug.Printf("Both chart path and release name provided, using chart path: %s", chartPath)
-			result.SourceType = ChartSourceTypeChart
+			result.SourceType = chartSourceTypeChart
 			result.Message = "Using chart path (release name ignored)"
 		} else {
 			// In plugin mode without explicit chart path, prefer release name
 			if isHelmPlugin && !chartPathFlag {
-				result.SourceType = ChartSourceTypeRelease
+				result.SourceType = chartSourceTypeRelease
 				result.Message = "Using release name in plugin mode"
 			} else {
 				// Default to chart path in other cases
-				result.SourceType = ChartSourceTypeChart
+				result.SourceType = chartSourceTypeChart
 				result.Message = "Using chart path"
 			}
 		}
@@ -244,12 +244,19 @@ func getChartSource(cmd *cobra.Command, args []string) (*ChartSource, error) {
 	}
 
 	// At this point, only one of chartPath or releaseName is provided
-	if chartPathProvided {
-		result.SourceType = ChartSourceTypeChart
+	switch {
+	case chartPathProvided:
+		result.SourceType = chartSourceTypeChart
 		result.Message = "Using chart path"
-	} else if releaseNameProvided && isHelmPlugin {
-		result.SourceType = ChartSourceTypeRelease
+	case releaseNameProvided && isHelmPlugin:
+		result.SourceType = chartSourceTypeRelease
 		result.Message = "Using release name in plugin mode"
+	default:
+		// This should be unreachable given the checks above
+		return nil, &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("internal error: unable to determine chart source"),
+		}
 	}
 
 	return result, nil

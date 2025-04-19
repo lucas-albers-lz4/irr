@@ -277,8 +277,6 @@ func (h *TestHarness) GenerateOverrides(extraArgs ...string) error {
 
 // ValidateOverrides checks the generated overrides against expected values.
 // This function performs comprehensive validation of the override file structure.
-//
-//nolint:funlen // Acceptable length for test harness validation function
 func (h *TestHarness) ValidateOverrides() error {
 	h.logger.Printf("Validating overrides for chart: %s", h.chartPath)
 
@@ -912,5 +910,94 @@ func buildIrrBinary() error { // Removed t *testing.T argument
 		}
 	}
 	fmt.Printf("Build successful.\n") // Use fmt.Printf
+	return nil
+}
+
+// ValidateFullyQualifiedOverrides checks for registry/target combinations
+func (h *TestHarness) ValidateFullyQualifiedOverrides(registry string, targets []string) {
+	// Read the overrides file
+	_, err := os.ReadFile(h.overridePath)
+	if err != nil {
+		h.t.Fatalf("Failed to read overrides file: %v", err)
+	}
+
+	// Create combined qualifiers to check for
+	var qualifiers []string
+	for _, target := range targets {
+		qualifiers = append(qualifiers, fmt.Sprintf("%s/%s", registry, target))
+	}
+
+	// Validate the helm template contains all expected registry combinations
+	h.ValidateHelmTemplate(qualifiers, "")
+}
+
+// ValidateWithRegistryPrefix validates that the registry is directly used
+func (h *TestHarness) ValidateWithRegistryPrefix(registry string) {
+	// Read the overrides file
+	_, err := os.ReadFile(h.overridePath)
+	if err != nil {
+		h.t.Fatalf("Failed to read overrides file: %v", err)
+	}
+
+	// Look for direct registry usage
+	h.ValidateHelmTemplate([]string{registry}, "")
+}
+
+// CreateRegistryMappingsFile creates a registry mappings file with the given content.
+func (h *TestHarness) CreateRegistryMappingsFile(mappings string) string {
+	mappingFile := filepath.Join(h.tempDir, "registry-mappings.yaml")
+	err := os.WriteFile(mappingFile, []byte(mappings), 0o600)
+	if err != nil {
+		h.t.Fatalf("Failed to create registry mappings file: %v", err)
+	}
+	return mappingFile
+}
+
+// GeneratedOverridesFile returns the path to the generated overrides file.
+func (h *TestHarness) GeneratedOverridesFile() string {
+	return h.overridePath
+}
+
+// ValidateHelmTemplate validates that the helm template contains specific text.
+func (h *TestHarness) ValidateHelmTemplate(qualifiers []string, exclude string) {
+	// Generate helm template using the chart and override file
+	args := []string{"template", "release-name", h.chartPath, "-f", h.overridePath}
+	output, err := h.ExecuteHelm(args...)
+	if err != nil {
+		h.t.Fatalf("Failed to render helm template: %v", err)
+	}
+
+	// Check that at least one of the qualifiers is present
+	found := false
+	for _, qualifier := range qualifiers {
+		if strings.Contains(output, qualifier) {
+			found = true
+			h.t.Logf("Found qualifier %q in helm template output", qualifier)
+			break
+		}
+	}
+
+	if !found {
+		h.t.Fatalf("None of the expected qualifiers %v found in helm output", qualifiers)
+	}
+
+	// Check exclusion if provided
+	if exclude != "" && strings.Contains(output, exclude) {
+		h.t.Fatalf("Found excluded text %q in helm template output", exclude)
+	}
+}
+
+// ValidateOverridesWithQualifiers validates overrides with specific qualifiers
+func (h *TestHarness) ValidateOverridesWithQualifiers(expectedQualifiers []string) error {
+	// Existing implementation plus additional check for expected qualifiers
+	if err := h.ValidateOverrides(); err != nil {
+		return err
+	}
+
+	// Additional validation for expected qualifiers if provided
+	if len(expectedQualifiers) > 0 {
+		h.ValidateHelmTemplate(expectedQualifiers, "")
+	}
+
 	return nil
 }

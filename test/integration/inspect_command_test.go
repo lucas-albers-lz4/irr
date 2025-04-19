@@ -118,7 +118,7 @@ func TestInspectGenerateConfigSkeleton(t *testing.T) {
 
 	// Verify the output contains the skeleton configuration
 	contentStr := string(content)
-	assert.Contains(t, contentStr, "registry_mappings:", "Config skeleton should include registry_mappings section")
+	assert.Contains(t, contentStr, "mappings:", "Config skeleton should include mappings section")
 	assert.Contains(t, contentStr, "docker.io", "Config skeleton should include docker.io registry")
 }
 

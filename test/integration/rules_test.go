@@ -3,6 +3,7 @@ package integration
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/lalbers/irr/pkg/chart"
@@ -11,11 +12,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// In test/integration/integration_test.go or rules_integration_test.go
-
+// TestRulesSystemIntegration tests the rules-based override generation system
 func TestRulesSystemIntegration(t *testing.T) {
-	bitnamiChartPath := testutil.GetChartPath("clickhouse-operator") // Or minimal-git-image
+	// First check if the required charts are available
+	bitnamiChartPath := testutil.GetChartPath("clickhouse-operator")
+	if bitnamiChartPath == "" {
+		t.Skip("clickhouse-operator chart not found, skipping bitnami rules tests")
+		return
+	}
+
 	nonBitnamiChartPath := testutil.GetChartPath("minimal-test")
+	if nonBitnamiChartPath == "" {
+		t.Skip("minimal-test chart not found, skipping non-bitnami rules tests")
+		return
+	}
 
 	// --- Test Case 1: Bitnami Chart, Rules Enabled (Default) ---
 	t.Run("Bitnami_RulesEnabled", func(t *testing.T) {
@@ -23,18 +33,29 @@ func TestRulesSystemIntegration(t *testing.T) {
 		defer h.Cleanup()
 
 		h.SetupChart(bitnamiChartPath)
-		h.SetRegistries("harbor.test.local", []string{"docker.io"}) // Adjust source as needed
+		h.SetRegistries("harbor.test.local", []string{"docker.io"})
 
-		err := h.GenerateOverrides() // Rules are enabled by default
-		require.NoError(t, err, "GenerateOverrides failed")
+		// Create output file path
+		outputFile := filepath.Join(h.tempDir, "bitnami-rules-enabled-overrides.yaml")
 
-		overrides, err := h.getOverrides()
-		require.NoError(t, err, "Failed to get overrides")
+		// Run the override command with rules enabled (default)
+		output, stderr, err := h.ExecuteIRRWithStderr(
+			"override",
+			"--chart-path", h.chartPath,
+			"--target-registry", h.targetReg,
+			"--source-registries", strings.Join(h.sourceRegs, ","),
+			"--output-file", outputFile,
+		)
+		require.NoError(t, err, "override command with rules enabled should succeed")
+		t.Logf("Override output: %s", output)
+		t.Logf("Stderr: %s", stderr)
 
-		// Assert that the rule was applied
-		value, pathExists := h.GetValueFromOverrides(overrides, "global", "security", "allowInsecureImages")
-		assert.True(t, pathExists, "Expected path global.security.allowInsecureImages to exist")
-		assert.Equal(t, true, value, "allowInsecureImages should be true when rules are enabled")
+		// Read the generated override file
+		content, err := os.ReadFile(outputFile)
+		require.NoError(t, err, "Should be able to read override file")
+
+		// Verify the bitnami security rule was applied
+		assert.Contains(t, string(content), "allowInsecureImages: true", "Override should include security bypass for Bitnami chart")
 	})
 
 	// --- Test Case 2: Bitnami Chart, Rules Disabled ---
@@ -45,19 +66,29 @@ func TestRulesSystemIntegration(t *testing.T) {
 		h.SetupChart(bitnamiChartPath)
 		h.SetRegistries("harbor.test.local", []string{"docker.io"})
 
-		// Generate overrides with rules disabled
-		err := h.GenerateOverrides("--disable-rules") // Add the flag
-		require.NoError(t, err, "GenerateOverrides with --disable-rules failed")
+		// Create output file path
+		outputFile := filepath.Join(h.tempDir, "bitnami-rules-disabled-overrides.yaml")
 
-		overrides, err := h.getOverrides()
-		require.NoError(t, err, "Failed to get overrides")
+		// Run the override command with rules disabled
+		output, stderr, err := h.ExecuteIRRWithStderr(
+			"override",
+			"--chart-path", h.chartPath,
+			"--target-registry", h.targetReg,
+			"--source-registries", strings.Join(h.sourceRegs, ","),
+			"--no-rules",
+			"--output-file", outputFile,
+		)
+		require.NoError(t, err, "override command with rules disabled should succeed")
+		t.Logf("Override output: %s", output)
+		t.Logf("Stderr: %s", stderr)
 
-		// Assert that the rule was NOT applied
-		_, pathExists := h.GetValueFromOverrides(overrides, "global", "security", "allowInsecureImages")
-		assert.False(t, pathExists, "Path global.security.allowInsecureImages should NOT exist when rules are disabled")
-		// Optional: If the original chart HAD this value, assert it wasn't added/modified *by the rule*.
-		// This might require comparing against original chart values or a more complex check.
-		// For now, checking absence is simpler if the original doesn't have it.
+		// Read the generated override file
+		content, err := os.ReadFile(outputFile)
+		require.NoError(t, err, "Should be able to read override file")
+
+		// Verify the bitnami security rule was NOT applied
+		assert.NotContains(t, string(content), "allowInsecureImages",
+			"Override should not include security bypass when rules are disabled")
 	})
 
 	// --- Test Case 3: Non-Bitnami Chart, Rules Enabled ---
@@ -66,80 +97,95 @@ func TestRulesSystemIntegration(t *testing.T) {
 		defer h.Cleanup()
 
 		h.SetupChart(nonBitnamiChartPath)
-		h.SetRegistries("harbor.test.local", []string{"docker.io"}) // Adjust source as needed
+		h.SetRegistries("harbor.test.local", []string{"docker.io"})
 
-		err := h.GenerateOverrides() // Rules enabled by default
-		require.NoError(t, err, "GenerateOverrides failed for non-Bitnami chart")
+		// Create output file path
+		outputFile := filepath.Join(h.tempDir, "non-bitnami-rules-overrides.yaml")
 
-		overrides, err := h.getOverrides()
-		require.NoError(t, err, "Failed to get overrides")
+		// Run the override command with rules enabled (default)
+		output, stderr, err := h.ExecuteIRRWithStderr(
+			"override",
+			"--chart-path", h.chartPath,
+			"--target-registry", h.targetReg,
+			"--source-registries", strings.Join(h.sourceRegs, ","),
+			"--output-file", outputFile,
+		)
+		require.NoError(t, err, "override command should succeed for non-Bitnami chart")
+		t.Logf("Override output: %s", output)
+		t.Logf("Stderr: %s", stderr)
 
-		// Assert that the rule was NOT applied
-		_, pathExists := h.GetValueFromOverrides(overrides, "global", "security", "allowInsecureImages")
-		assert.False(t, pathExists, "Path global.security.allowInsecureImages should NOT exist for non-Bitnami chart")
+		// Read the generated override file
+		content, err := os.ReadFile(outputFile)
+		require.NoError(t, err, "Should be able to read override file")
+
+		// Verify the bitnami security rule was NOT applied to non-Bitnami chart
+		assert.NotContains(t, string(content), "allowInsecureImages",
+			"Override should not include security bypass for non-Bitnami chart")
 	})
 
 	// --- Test Case 4: Bitnami Charts Validation Success ---
 	t.Run("Bitnami_ValidationSucceeds", func(t *testing.T) {
-		// Test with multiple Bitnami charts to verify deployment success
+		// Test with specific Bitnami charts
 		bitnamiCharts := []struct {
-			ChartPath    string
-			ExpectBypass bool
-			SkipValidate bool // Add this field to skip validation for charts without templates
+			chartName    string
+			expectBypass bool
+			skipValidate bool
 		}{
-			{testutil.GetChartPath("clickhouse-operator"), true, true}, // Skip validation due to K8s API capabilities issues
-			{testutil.GetChartPath("minimal-git-image"), false, true},  // Skip validation for this one
+			{"clickhouse-operator", true, true}, // Skip validation due to API issues
+			{"minimal-git-image", false, true},  // Skip validation - not complex enough for template testing
 		}
 
 		for _, chartInfo := range bitnamiCharts {
-			chartName := filepath.Base(chartInfo.ChartPath)
-			t.Run(chartName, func(t *testing.T) {
+			chartPath := testutil.GetChartPath(chartInfo.chartName)
+			if chartPath == "" {
+				t.Logf("Chart %s not found, skipping this subtest", chartInfo.chartName)
+				continue
+			}
+
+			t.Run(chartInfo.chartName, func(t *testing.T) {
 				h := NewTestHarness(t)
 				defer h.Cleanup()
 
-				h.SetupChart(chartInfo.ChartPath)
+				h.SetupChart(chartPath)
 				h.SetRegistries("harbor.test.local", []string{"docker.io"})
 
-				// Generate overrides with rules enabled
-				err := h.GenerateOverrides()
-				require.NoError(t, err, "GenerateOverrides failed")
+				// Create output file path
+				outputFile := filepath.Join(h.tempDir, chartInfo.chartName+"-validation-overrides.yaml")
 
-				// Verify parameter exists only if expected
-				overrides, err := h.getOverrides()
-				require.NoError(t, err, "Failed to get overrides")
-				value, pathExists := h.GetValueFromOverrides(overrides, "global", "security", "allowInsecureImages")
-				if chartInfo.ExpectBypass {
-					assert.True(t, pathExists, "Security bypass parameter should exist")
-					assert.Equal(t, true, value, "Security bypass should be true")
+				// Run the override command with rules enabled
+				output, stderr, err := h.ExecuteIRRWithStderr(
+					"override",
+					"--chart-path", h.chartPath,
+					"--target-registry", h.targetReg,
+					"--source-registries", strings.Join(h.sourceRegs, ","),
+					"--output-file", outputFile,
+				)
+				require.NoError(t, err, "override command should succeed")
+				t.Logf("Override output: %s", output)
+				t.Logf("Stderr: %s", stderr)
+
+				// Read the generated override file
+				content, err := os.ReadFile(outputFile)
+				require.NoError(t, err, "Should be able to read override file")
+
+				// Verify security bypass exists if expected
+				if chartInfo.expectBypass {
+					assert.Contains(t, string(content), "allowInsecureImages: true",
+						"Override should include security bypass for expected charts")
 				} else {
-					assert.False(t, pathExists, "Security bypass parameter should NOT exist")
+					assert.NotContains(t, string(content), "allowInsecureImages",
+						"Override should not include security bypass for this chart")
 				}
 
-				// Skip validation for charts without templates
-				if chartInfo.SkipValidate {
-					t.Logf("Skipping validation for chart %s which doesn't have templates", chartName)
+				// Skip validation if requested
+				if chartInfo.skipValidate {
+					t.Logf("Skipping validation for chart %s", chartInfo.chartName)
 					return
 				}
 
-				// Create a temporary file for the overrides instead of using stdout
-				tempOverridesFile := filepath.Join(h.tempDir, "temp-overrides.yaml")
-				_, err = h.ExecuteIRR(
-					"override",
-					"--chart-path", chartInfo.ChartPath,
-					"--target-registry", "harbor.test.local",
-					"--source-registries", "docker.io",
-					"--output-file", tempOverridesFile,
-					"--registry-file", h.mappingsPath,
-				)
-				require.NoError(t, err, "Failed to generate override file")
-
-				// #nosec G304 -- tempOverridesFile is controlled by the test harness and safe in this context
-				overrideBytes, err := os.ReadFile(tempOverridesFile)
-				require.NoError(t, err, "Failed to read override file")
-
-				// This validates the chart can be successfully deployed with these overrides
-				err = chart.ValidateHelmTemplate(chartInfo.ChartPath, overrideBytes)
-				assert.NoError(t, err, "Chart should validate successfully with security bypass parameter")
+				// Validate the chart renders successfully with these overrides
+				err = chart.ValidateHelmTemplate(chartPath, content)
+				assert.NoError(t, err, "Chart should validate successfully with overrides")
 			})
 		}
 	})
