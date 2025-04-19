@@ -274,3 +274,66 @@ Fully standardize on the structured registry format throughout the codebase, dep
 - Verify backward compatibility works for existing configs
 - Check CLI output and help text for clarity
 
+## Phase 6: Test Output Improvement (P2: Developer Experience)
+
+### Overview
+Improve test output readability by reducing verbose YAML output in test failures, particularly for complex charts with large override files.
+
+### Motivation
+- Test failures for complex charts (like kube-prometheus-stack) produce overwhelming YAML output
+- Large YAML dumps make it difficult to identify the actual failure cause
+- More focused and readable output speeds up debugging and development
+- Consistent logging approach improves overall test maintenance
+
+### Current Approach in TestKubePrometheusStack
+The current implementation in `test/integration/kube_prometheus_stack_test.go` provides a good starting point:
+- Uses component-group testing to focus on specific chart sections
+- Implements multiple search methods (string search, YAML structure search)
+- Limits output size (first 500 chars, first 10 lines)
+- Provides targeted searching for specific components
+- Uses specialized search functions for complex components (e.g., kube-state-metrics)
+
+### Implementation Steps
+
+#### Phase 6.1: Create Test Output Helper Functions
+- [ ] **[P2]** Develop standardized helper functions in the test harness
+  - [ ] Create `LimitedOutput(output string, maxLength int)` helper
+  - [ ] Create `LogLimitedYAML(t *testing.T, yamlContent string)` helper
+  - [ ] Implement `SearchOverridesForComponent(overrides map[string]interface{}, component string)` helper
+  - [ ] Add `GetTopLevelKeys(overrides map[string]interface{})` for structure debugging
+  - [ ] Create specialized component search helpers for common patterns
+
+#### Phase 6.2: Update Existing Tests
+- [ ] **[P2]** Apply output limiting pattern to other integration tests
+  - [ ] Identify tests with large YAML output (TestComplexChartFeatures, etc.)
+  - [ ] Update those tests to use the new helper functions
+  - [ ] Ensure tests report meaningful summaries instead of full YAML
+  - [ ] Add component-specific validation where appropriate
+
+#### Phase 6.3: Enhance TestHarness
+- [ ] **[P2]** Add output management capabilities to TestHarness
+  - [ ] Add `h.LogLimitedOutput(output string, reason string)` method
+  - [ ] Add `h.ValidateComponent(component string, overrides map[string]interface{})` method
+  - [ ] Implement `h.CompareOverrideKeys(expected []string, actual map[string]interface{})` method
+  - [ ] Create collection of reusable component validation patterns
+
+#### Phase 6.4: Documentation
+- [ ] **[P2]** Update developer documentation
+  - [ ] Document best practices for test output management
+  - [ ] Add examples of proper test output limiting
+  - [ ] Update testing guide with section on debugging failed tests
+  - [ ] Include code examples of helper function usage
+
+### Acceptance Criteria
+- Failed tests produce concise, focused output that highlights the actual failure
+- Complex chart tests validate components without dumping full YAML content
+- Common validation patterns are extracted into reusable helper functions
+- Full content is still available through debug logging when needed
+- All existing tests maintain the same validation quality with improved output
+
+### Testing Strategy
+- Apply helpers to one test at a time and verify test results remain consistent
+- Compare test output before and after changes to verify improvement
+- Test with intentional failures to ensure appropriate information is still shown
+- Validate that output is meaningful enough to diagnose problems without excessive verbosity
+
