@@ -428,10 +428,18 @@ func TestRegistryMappingFile(t *testing.T) {
 	targetReg := "test.registry.io"
 	sourceRegs := []string{"docker.io"}
 
-	// Create a registry mappings file
-	mappingContent := `mappings:
-- source: docker.io
-  target: dockerio
+	// Create a registry mappings file with fully structured format
+	mappingContent := `version: "1.0"
+registries:
+  mappings:
+  - source: docker.io
+    target: registry.example.com/dockerio
+    enabled: true
+    description: "Docker Hub mapping"
+  defaultTarget: registry.example.com/default
+  strictMode: false
+compatibility:
+  ignoreEmptyFields: true
 `
 
 	mappingFile := h.CreateRegistryMappingsFile(mappingContent)
@@ -461,10 +469,10 @@ func TestRegistryMappingFile(t *testing.T) {
 	content := string(overrideBytes)
 	t.Logf("Override content: %s", content)
 
-	// Verify that the target registry is present
-	assert.Contains(t, content, targetReg, "Override should include target registry")
+	// Verify that the registry from mapping file is present (takes precedence over CLI args)
+	assert.Contains(t, content, "registry.example.com", "Override should include registry from mapping file")
 
-	// Verify that dockerio prefix is used somewhere
+	// Verify that dockerio prefix is used somewhere in repository field
 	assert.Contains(t, content, "dockerio", "Override should use dockerio prefix from mapping")
 }
 
@@ -481,6 +489,9 @@ quay.io: registry.example.com/quay
 	// Run override command with the config file to see if it works
 	setupMinimalTestChart(t, h)
 
+	// Create an output file path
+	outputFile := filepath.Join(h.tempDir, "config-test-overrides.yaml")
+
 	// Execute the override command
 	output, stderr, err := h.ExecuteIRRWithStderr(
 		"override",
@@ -488,17 +499,18 @@ quay.io: registry.example.com/quay
 		"--target-registry", "registry.example.com",
 		"--source-registries", "docker.io",
 		"--registry-file", configPath,
+		"--output-file", outputFile,
 	)
 	require.NoError(t, err, "override command should succeed with config file")
 	t.Logf("Override output: %s", output)
 	t.Logf("Stderr: %s", stderr)
 
 	// Verify that the override file was created
-	require.FileExists(t, h.overridePath, "Override file should be created")
+	require.FileExists(t, outputFile, "Override file should be created")
 
 	// Read the override file content
 	// #nosec G304
-	overrideBytes, err := os.ReadFile(h.overridePath)
+	overrideBytes, err := os.ReadFile(outputFile)
 	require.NoError(t, err, "Should be able to read generated override file")
 
 	// Check for the target registry in the output

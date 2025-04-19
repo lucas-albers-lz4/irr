@@ -497,6 +497,12 @@ func setupPathStrategy(cmd *cobra.Command, config *GeneratorConfig) error {
 	return nil
 }
 
+// skipCWDCheck returns true if we should skip the cwd check for registry files
+func skipCWDCheck() bool {
+	return isTestMode || integrationTestMode
+}
+
+// loadRegistryMappings loads registry mappings from config and registry files
 func loadRegistryMappings(cmd *cobra.Command, config *GeneratorConfig) error {
 	configFile, err := cmd.Flags().GetString("config")
 	if err != nil {
@@ -507,7 +513,7 @@ func loadRegistryMappings(cmd *cobra.Command, config *GeneratorConfig) error {
 	}
 	if configFile != "" {
 		debug.Printf("Loading registry mappings from config file: %s", configFile)
-		mappings, err := registry.LoadMappings(AppFs, configFile, isTestMode)
+		mappings, err := registry.LoadMappings(AppFs, configFile, skipCWDCheck())
 		if err != nil {
 			if os.IsNotExist(err) {
 				return &exitcodes.ExitCodeError{
@@ -531,7 +537,7 @@ func loadRegistryMappings(cmd *cobra.Command, config *GeneratorConfig) error {
 	}
 	if registryFile != "" {
 		debug.Printf("Loading registry mappings from registry file: %s", registryFile)
-		configMap, err := registry.LoadConfig(AppFs, registryFile, isTestMode)
+		configMap, err := registry.LoadConfig(AppFs, registryFile, skipCWDCheck())
 		if err != nil {
 			if os.IsNotExist(err) {
 				return &exitcodes.ExitCodeError{

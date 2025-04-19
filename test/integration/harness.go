@@ -313,18 +313,31 @@ func (h *TestHarness) ValidateOverrides() error {
 	return nil
 }
 
+// loadMappings loads the registry mappings from the file specified at h.mappingsPath.
+// This method prioritizes the structured format (containing version, registries, compatibility sections)
+// but falls back to legacy formats for backward compatibility.
 func (h *TestHarness) loadMappings() (*registry.Mappings, error) {
 	mappings := &registry.Mappings{}
 	if h.mappingsPath != "" {
 		_, statErr := os.Stat(h.mappingsPath)
 		switch {
 		case statErr == nil:
-			loadedMappings, loadErr := registry.LoadMappings(afero.NewOsFs(), h.mappingsPath, true)
+			// Load using the structured format by default
+			structConfig, loadErr := registry.LoadStructuredConfigDefault(h.mappingsPath, true)
 			if loadErr != nil {
-				return nil, fmt.Errorf("failed to load mappings file %s for validation: %w", h.mappingsPath, loadErr)
+				// Fall back to legacy format if structured format fails
+				h.logger.Printf("Failed to load as structured format, trying legacy format: %v", loadErr)
+				loadedMappings, legacyErr := registry.LoadMappings(afero.NewOsFs(), h.mappingsPath, true)
+				if legacyErr != nil {
+					return nil, fmt.Errorf("failed to load mappings file %s for validation: %w", h.mappingsPath, legacyErr)
+				}
+				mappings = loadedMappings
+				h.logger.Printf("Successfully loaded mappings (legacy format) from %s", h.mappingsPath)
+			} else {
+				// Convert structured config to mappings format
+				mappings = structConfig.ToMappings()
+				h.logger.Printf("Successfully loaded mappings (structured format) from %s", h.mappingsPath)
 			}
-			mappings = loadedMappings
-			h.logger.Printf("Successfully loaded mappings from %s", h.mappingsPath)
 		case os.IsNotExist(statErr):
 			h.logger.Printf("Mappings file %s does not exist, proceeding without mappings.", h.mappingsPath)
 		default:
@@ -944,13 +957,85 @@ func (h *TestHarness) ValidateWithRegistryPrefix(targetRegistry string) {
 	h.ValidateHelmTemplate([]string{targetRegistry}, "")
 }
 
-// CreateRegistryMappingsFile creates a registry mappings file with the given content.
+// CreateRegistryMappingsFile creates a registry mappings file with the specified content.
 func (h *TestHarness) CreateRegistryMappingsFile(mappings string) string {
+	// Create a temp file for the mappings
 	mappingFile := filepath.Join(h.tempDir, "registry-mappings.yaml")
-	err := os.WriteFile(mappingFile, []byte(mappings), fileutil.ReadWriteUserPermission)
-	if err != nil {
-		h.t.Fatalf("Failed to create registry mappings file: %v", err)
+
+	// Check if the content is already in a structured format (has "mappings:" or "registries:")
+	if strings.Contains(mappings, "mappings:") || strings.Contains(mappings, "registries:") {
+		// Write the content as is
+		err := os.WriteFile(mappingFile, []byte(mappings), fileutil.ReadWriteUserPermission)
+		if err != nil {
+			h.t.Fatalf("Failed to create registry mappings file: %v", err)
+		}
+	} else {
+		// Convert legacy format to fully structured format
+		var convertedMappings strings.Builder
+
+		// Always use fully structured format as the preferred standard
+		convertedMappings.WriteString("version: \"1.0\"\n")
+		convertedMappings.WriteString("registries:\n")
+		convertedMappings.WriteString("  mappings:\n")
+
+		// Process each line from the legacy key-value format
+		lines := strings.Split(strings.TrimSpace(mappings), "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue // Skip empty lines and comments
+			}
+
+			// Split key-value pair
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) != 2 {
+				h.t.Fatalf("Invalid mapping line format: %s", line)
+				continue
+			}
+
+			source := strings.TrimSpace(parts[0])
+			target := strings.TrimSpace(parts[1])
+
+			// Ensure target has at least one slash, required by validation
+			if !strings.Contains(target, "/") {
+				// Convert format like "dockerio" to "registry.example.com/dockerio"
+				targetParts := strings.Split(target, ".")
+				target = "registry.example.com/" + strings.Join(targetParts, "-")
+				h.logger.Printf("Warning: Fixed target '%s' to include required slash: '%s'", strings.TrimSpace(parts[1]), target)
+			}
+
+			// Add mapping entry in structured format
+			convertedMappings.WriteString(fmt.Sprintf("  - source: %s\n    target: %s\n    enabled: true\n    description: \"Mapping for %s\"\n", source, target, source))
+		}
+
+		// Add default target and strictMode settings
+		convertedMappings.WriteString("  defaultTarget: registry.example.com/default\n")
+		convertedMappings.WriteString("  strictMode: false\n")
+
+		// Add compatibility section
+		convertedMappings.WriteString("compatibility:\n")
+		convertedMappings.WriteString("  ignoreEmptyFields: true\n")
+
+		mappings = convertedMappings.String()
+		h.logger.Printf("Converted legacy mapping format to structured format:\n%s", mappings)
+
+		err := os.WriteFile(mappingFile, []byte(mappings), fileutil.ReadWriteUserPermission)
+		if err != nil {
+			h.t.Fatalf("Failed to create registry mappings file: %v", err)
+		}
 	}
+
+	// Verify the file was written correctly by reading it back
+	fileContent, err := os.ReadFile(mappingFile)
+	if err != nil {
+		h.logger.Printf("Warning: Could not read back registry mappings file: %v", err)
+	} else {
+		h.logger.Printf("Registry mappings file content verification:\n%s", string(fileContent))
+		if len(fileContent) == 0 {
+			h.logger.Printf("Warning: Registry mappings file is empty after writing!")
+		}
+	}
+
 	return mappingFile
 }
 

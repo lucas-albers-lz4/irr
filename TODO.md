@@ -190,3 +190,87 @@
 
 ##END REMINDER On the Implementation Process: 
 
+## Phase 5: Registry Format Standardization (P1: Technical Debt Reduction)
+
+### Overview
+Fully standardize on the structured registry format throughout the codebase, deprecating the legacy key-value format while maintaining backward compatibility for existing users.
+
+### Motivation
+- Structured format provides better metadata with description and enabled flags
+- Improved organization with dedicated sections for mappings, default targets, and strict mode
+- Future extensibility through the version field
+- Simplified code maintenance with a single canonical format
+- Clearer documentation and user guidance
+
+### Implementation Steps
+
+#### Phase 5.1: Registry Package Updates
+- [/] **[P1]** Update registry package core functionality
+  - [ ] Remove or deprecate legacy-specific functions in `pkg/registry/mappings.go`
+  - [x] Update documentation to clarify the structured format is preferred
+  - [x] Ensure `ConvertToLegacyFormat()` is maintained for backward compatibility
+  - [ ] Add clear deprecation notices to legacy-format functions
+  - [ ] Update function signatures that take map[string]string to prefer *Config parameter
+  - [ ] Consider adding helpers to detect format from raw file content
+
+#### Phase 5.2: CLI Command Updates
+- [ ] **[P1]** Update CLI commands for structured format
+  - [x] Review and update the `inspect` command skeleton generation
+  - [ ] Update the `config` command to only write structured format
+  - [ ] Update the `override` command to expect structured format
+  - [/] Update help text and examples to show structured format
+  - [/] Ensure `--registry-file` flag documentation mentions structured format
+
+#### Phase 5.3: Test Updates
+- [ ] **[P1]** Update test suite for structured format
+  - [x] Modify `TestRegistryMappingFile` in `test/integration/integration_test.go`
+  - [ ] Update `TestConfigFileMappings` and similar tests
+  - [x] Update `CreateRegistryMappingsFile()` in `test/integration/harness.go` to default to structured format
+  - [x] Add tests for handling of legacy format files (conversion path)
+  - [ ] Verify all existing tests pass with the updated format
+
+#### Phase 5.4: Documentation Updates
+- [ ] **[P1]** Update user-facing documentation
+  - [ ] Update CLI reference documentation with structured format examples
+  - [ ] Add migration guide for users with existing config files
+  - [ ] Update any tutorials or examples to use structured format
+  - [ ] Document the backward compatibility mechanism
+
+### Files Requiring Changes
+
+1. **Registry Package Files**:
+   - `pkg/registry/mappings.go`: Update legacy format handling
+   - `pkg/registry/config.go`: Make structured format the primary interface
+
+2. **Command Files**:
+   - `cmd/irr/inspect.go`: Review createConfigSkeleton() implementation
+   - `cmd/irr/config.go`: Update to prefer structured format
+   - `cmd/irr/override.go`: Update to handle structured format
+   - `cmd/irr/validate.go`: Update to expect structured format
+
+3. **Test Files**:
+   - `test/integration/harness.go`: Update CreateRegistryMappingsFile()
+   - `test/integration/integration_test.go`: Update tests using registry files
+   - `pkg/registry/config_test.go`: Ensure tests cover structured format
+   - `pkg/registry/mappings_test.go`: Update to test legacy conversion
+
+4. **Documentation**:
+   - `docs/CLI-REFERENCE.md`: Update with structured format examples
+   - `docs/CONFIGURATION.md`: Update registry configuration documentation
+   - Add a migration guide if not already present
+
+### Acceptance Criteria
+- All commands generate and expect structured format by default
+- Legacy format files can still be read and converted
+- All tests pass with structured format
+- Documentation clearly explains the structured format
+- CLI help text and error messages reference structured format
+- Deprecation notices are clear but not disruptive to users
+
+### Testing Strategy
+- Test reading legacy format files and proper conversion
+- Test writing only structured format files
+- Test handling of corrupted or invalid files
+- Verify backward compatibility works for existing configs
+- Check CLI output and help text for clarity
+

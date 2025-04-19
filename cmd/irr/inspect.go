@@ -698,6 +698,7 @@ func detectChartInCurrentDirectory() (string, error) {
 }
 
 // createConfigSkeleton generates a configuration skeleton based on the image analysis
+// The configuration is generated in the fully structured format, which is the preferred standard.
 func createConfigSkeleton(images []ImageInfo, outputFile string) error {
 	// Use default filename if none specified
 	if outputFile == "" {
@@ -749,6 +750,9 @@ func createConfigSkeleton(images []ImageInfo, outputFile string) error {
 			DefaultTarget: "registry.local/default",
 			StrictMode:    false,
 		},
+		Compatibility: registry.CompatibilityConfig{
+			IgnoreEmptyFields: true,
+		},
 	}
 
 	// Marshal to YAML
@@ -770,6 +774,8 @@ func createConfigSkeleton(images []ImageInfo, outputFile string) error {
 # 3. Validate generated overrides with 'irr validate'
 #
 # IMPORTANT NOTES:
+# - This file uses the standard structured format which includes version, registries, 
+#   and compatibility sections for enhanced functionality
 # - The 'override' and 'validate' commands can run without this config, 
 #   but image redirection correctness depends on your configuration
 # - When using Harbor as a pull-through cache, ensure your target paths
