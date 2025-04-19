@@ -419,61 +419,15 @@ sidecars:
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := NewTestHarness(t)
+			overrides, h := setupAndRunOverride(t, tt.values, "edge-container-"+tt.name+"-overrides.yaml")
 			defer h.Cleanup()
-
-			// Create a test chart with the specified values
-			chartDir := createTestChartWithValues(t, h, tt.values)
-			h.SetupChart(chartDir)
-			h.SetRegistries("test.registry.io", []string{"docker.io", "quay.io"})
-
-			// Create output file path
-			outputFile := filepath.Join(h.tempDir, "edge-container-"+tt.name+"-overrides.yaml")
-
-			// Execute the override command with debug output
-			output, stderr, err := h.ExecuteIRRWithStderr(
-				"override",
-				"--chart-path", h.chartPath,
-				"--target-registry", h.targetReg,
-				"--source-registries", strings.Join(h.sourceRegs, ","),
-				"--output-file", outputFile,
-				"--debug",
-			)
-
-			if err != nil {
-				t.Logf("Override command failed with error: %v\nOutput: %s\nStderr: %s", err, output, stderr)
-				return
-			}
-
-			// Verify that the override file was created
-			require.FileExists(t, outputFile, "Override file should be created")
-
-			// Read the generated override file
-			overrideBytes, err := os.ReadFile(outputFile)
-			require.NoError(t, err, "Should be able to read generated override file")
-
-			// Log the content for debugging
-			t.Logf("Override content for %s: %s", tt.name, string(overrideBytes))
-
-			// Parse the YAML
-			var overrides map[string]interface{}
-			err = yaml.Unmarshal(overrideBytes, &overrides)
-			require.NoError(t, err, "Should be able to parse the override YAML")
-
-			// Special handling for template test case
 			if tt.name == "template_in_container_array" {
-				// For template tests, we need to verify that the template paths were detected
-				// even if they can't be converted to valid image references
-
-				// Check for template values in the Unsupported section
 				unsupported, hasUnsupported := overrides["Unsupported"].([]interface{})
 				if hasUnsupported {
 					foundPaths := []string{}
 					for _, item := range unsupported {
 						if itemMap, ok := item.(map[string]interface{}); ok {
-							// Check if this is a template type
 							if itemType, hasType := itemMap["Type"].(string); hasType && itemType == "template" {
-								// Get the path
 								if paths, hasPaths := itemMap["Path"].([]interface{}); hasPaths {
 									pathStr := ""
 									for _, p := range paths {
@@ -487,95 +441,18 @@ sidecars:
 							}
 						}
 					}
-
-					// For containers array test, we just want to confirm some container paths were detected
 					if len(foundPaths) > 0 {
 						for _, path := range foundPaths {
 							t.Logf("Found unsupported template path: %s", path)
 						}
-
-						// If we found any paths, consider the test passed
 						return
 					}
 				}
 			}
-
-			// Extract the image repositories
-			foundImages := make(map[string]bool)
-			h.WalkImageFields(overrides, func(_ []string, imageValue interface{}) {
-				t.Logf("Found image value: %v", imageValue)
-
-				switch v := imageValue.(type) {
-				case map[string]interface{}:
-					if repo, ok := v["repository"].(string); ok {
-						foundImages[repo] = true
-
-						// Also add the path without the registry prefix for easier matching
-						parts := strings.Split(repo, "/")
-						if len(parts) > 1 {
-							nonPrefixedRepo := strings.Join(parts[1:], "/")
-							foundImages[nonPrefixedRepo] = true
-						}
-					}
-				case string:
-					foundImages[v] = true
-				}
-			})
-
-			// Check if images from the expectedImages list were found
-			// Only validate if there are expected images to check
+			foundImages := extractFoundImages(h, overrides)
 			if len(tt.expectedImages) > 0 {
-				for _, expectedImage := range tt.expectedImages {
-					found := false
-					expectedRepo := strings.Split(expectedImage, ":")[0] // Strip any tag
-
-					// Try different variations of the repository name for matching
-					variations := []string{
-						expectedRepo,                                                    // Full path: docker.io/nginx
-						strings.ToLower(expectedRepo),                                   // Lowercase version
-						strings.TrimPrefix(expectedRepo, "docker.io/"),                  // Without registry: nginx
-						strings.TrimPrefix(strings.ToLower(expectedRepo), "docker.io/"), // Lowercase without registry
-					}
-
-					// For template string case, special handling for Go template values
-					if tt.name == "template_in_container_array" {
-						isTemplateValue := strings.Contains(expectedRepo, "{{") && strings.Contains(expectedRepo, "}}")
-						if isTemplateValue {
-							// For templated values, just check if any output contains template structure
-							for foundImage := range foundImages {
-								if strings.Contains(foundImage, "{{") && strings.Contains(foundImage, "}}") {
-									found = true
-									t.Logf("Found templated image reference: %s", foundImage)
-									break
-								}
-							}
-
-							// Skip the normal variation matching for template values
-							if found {
-								break
-							}
-						}
-					}
-
-					for _, variation := range variations {
-						for foundImage := range foundImages {
-							if strings.Contains(strings.ToLower(foundImage), strings.ToLower(variation)) {
-								found = true
-								t.Logf("Found expected repository %s as %s", expectedRepo, foundImage)
-								break
-							}
-						}
-						if found {
-							break
-						}
-					}
-
-					if !found && expectedRepo != "" {
-						t.Logf("Expected image %s not found. Found images: %v", expectedImage, foundImages)
-					}
-				}
+				assertExpectedImages(t, h, tt.name, tt.expectedImages, foundImages)
 			} else {
-				// For the template case, just log what was found
 				t.Logf("No specific images expected for %s. Found: %v", tt.name, foundImages)
 			}
 		})
