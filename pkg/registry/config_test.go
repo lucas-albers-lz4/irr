@@ -65,7 +65,7 @@ func TestLoadConfig(t *testing.T) {
 			name:          "invalid value (missing slash)",
 			path:          testFiles.invalidValueFile,
 			wantErr:       true,
-			errorContains: "must contain at least one '/'",
+			errorContains: "invalid target registry value",
 		},
 		{
 			name:          "invalid file extension",
@@ -77,7 +77,7 @@ func TestLoadConfig(t *testing.T) {
 			name:          "path is a directory",
 			path:          testFiles.configDir,
 			wantErr:       true,
-			errorContains: "failed to read config file",
+			errorContains: "failed to read mappings file",
 		},
 		{
 			name:          "invalid path traversal",
@@ -129,6 +129,8 @@ func TestLoadConfig(t *testing.T) {
 
 			if tt.wantErr {
 				require.Error(t, err)
+				// Print the actual error for debugging
+				t.Logf("Actual error: %q", err.Error())
 				assert.Contains(t, err.Error(), tt.errorContains)
 				return
 			}

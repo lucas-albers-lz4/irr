@@ -105,8 +105,10 @@ func TestLoadMappings(t *testing.T) {
 			errorContains: "mappings file path '../../../etc/passwd.yaml' must be within the current working directory tree",
 		},
 		{
-			name: "empty path",
-			path: "",
+			name:          "empty path",
+			path:          "",
+			wantErr:       true,
+			errorContains: "mappings file path is empty",
 		},
 	}
 
