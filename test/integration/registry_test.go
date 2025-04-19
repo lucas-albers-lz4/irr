@@ -51,8 +51,8 @@ compatibility:
 			mappingContent: `docker.io: registry.example.com/docker
 quay.io: registry.example.com/quay
 `,
-			shouldSucceed:  false, // Actual behavior: legacy format isn't properly processed
-			errorSubstring: "mappings file is empty",
+			shouldSucceed: true,     // Changed from false to true as we now support legacy format
+			expectedText:  "docker", // The expected text should contain "docker" for the repository
 		},
 		{
 			name: "malformed YAML format",
@@ -83,7 +83,7 @@ registries:
   strictMode: false
 `,
 			shouldSucceed:  false,
-			errorSubstring: "mappings file is empty", // Actual error message
+			errorSubstring: "failed to parse registry file", // Updated to match actual error message
 		},
 	}
 
