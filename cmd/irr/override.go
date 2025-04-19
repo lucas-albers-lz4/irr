@@ -21,6 +21,7 @@ import (
 	"github.com/lalbers/irr/pkg/chart"
 	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/exitcodes"
+	"github.com/lalbers/irr/pkg/fileutil"
 	log "github.com/lalbers/irr/pkg/log"
 	"github.com/lalbers/irr/pkg/registry"
 	"github.com/lalbers/irr/pkg/strategy"
@@ -32,10 +33,6 @@ import (
 )
 
 const (
-	// DirPermissions represents directory permissions (rwxr-xr-x)
-	DirPermissions = 0o755
-	// FilePermissions represents file permissions (rw-r--r--)
-	FilePermissions = 0o644
 	// ExitHelmInteractionError is returned when there's an error during Helm SDK interaction
 	ExitHelmInteractionError = 17
 	// ExitInternalError is returned when there's an internal error in command execution
@@ -391,7 +388,7 @@ func outputOverrides(_ *cobra.Command, yamlBytes []byte, outputFile string, dryR
 	// Create the directory if it doesn't exist
 	dir := filepath.Dir(outputFile)
 	if dir != "" && dir != "." {
-		if err := AppFs.MkdirAll(dir, DirPermissions); err != nil {
+		if err := AppFs.MkdirAll(dir, fileutil.ReadWriteExecuteUserReadExecuteOthers); err != nil {
 			return &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitIOError,
 				Err:  fmt.Errorf("failed to create output directory: %w", err),
@@ -400,7 +397,7 @@ func outputOverrides(_ *cobra.Command, yamlBytes []byte, outputFile string, dryR
 	}
 
 	// Write the file
-	if err := afero.WriteFile(AppFs, outputFile, yamlBytes, FilePermissions); err != nil {
+	if err := afero.WriteFile(AppFs, outputFile, yamlBytes, fileutil.ReadWriteUserReadOthers); err != nil {
 		return &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitIOError,
 			Err:  fmt.Errorf("failed to write output file '%s': %w", outputFile, err),
@@ -1089,7 +1086,7 @@ func handleTestModeOverride(cmd *cobra.Command, releaseName string) error {
 	// Create the output file if specified
 	switch {
 	case outputFile != "" && !dryRun:
-		if err := AppFs.MkdirAll(filepath.Dir(outputFile), DirPermissions); err != nil {
+		if err := AppFs.MkdirAll(filepath.Dir(outputFile), fileutil.ReadWriteExecuteUserReadExecuteOthers); err != nil {
 			return &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitGeneralRuntimeError,
 				Err:  fmt.Errorf("failed to create output directory: %w", err),
@@ -1108,7 +1105,7 @@ func handleTestModeOverride(cmd *cobra.Command, releaseName string) error {
 				Err:  fmt.Errorf("output file '%s' already exists", outputFile),
 			}
 		}
-		if err := afero.WriteFile(AppFs, outputFile, []byte(yamlContent), FilePermissions); err != nil {
+		if err := afero.WriteFile(AppFs, outputFile, []byte(yamlContent), fileutil.ReadWriteUserReadOthers); err != nil {
 			return &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitGeneralRuntimeError,
 				Err:  fmt.Errorf("failed to write override file: %w", err),

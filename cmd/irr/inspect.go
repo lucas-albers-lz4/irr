@@ -25,17 +25,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const (
-	// SecureFilePerms is the permission set used for files created by the inspect command
-	SecureFilePerms = 0o600
-
-	// SecureDirPerms is the permission set used for directories created by the inspect command
-	SecureDirPerms = 0o700
-
-	// DefaultConfigSkeletonFilename is the default filename for the generated config skeleton
-	DefaultConfigSkeletonFilename = "irr-config.yaml"
-)
-
 // ChartInfo represents basic chart information
 type ChartInfo struct {
 	Name         string `json:"name" yaml:"name"`
@@ -71,6 +60,11 @@ type InspectFlags struct {
 	AnalyzerConfig         *analyzer.Config
 	SourceRegistries       []string
 }
+
+const (
+	// DefaultConfigSkeletonFilename is the default filename for the generated config skeleton
+	DefaultConfigSkeletonFilename = "irr-config.yaml"
+)
 
 // newInspectCmd creates a new inspect command
 func newInspectCmd() *cobra.Command {
@@ -712,7 +706,7 @@ func createConfigSkeleton(images []ImageInfo, outputFile string) error {
 	// Ensure the directory exists before trying to write the file
 	dir := filepath.Dir(outputFile)
 	if dir != "" && dir != "." {
-		if err := AppFs.MkdirAll(dir, SecureDirPerms); err != nil {
+		if err := AppFs.MkdirAll(dir, fileutil.ReadWriteExecuteUserReadExecuteOthers); err != nil {
 			return fmt.Errorf("failed to create directory for config skeleton: %w", err)
 		}
 	}
@@ -784,7 +778,7 @@ func createConfigSkeleton(images []ImageInfo, outputFile string) error {
 %s`, string(configYAML))
 
 	// Write the skeleton file
-	err = afero.WriteFile(AppFs, outputFile, []byte(yamlWithComments), SecureFilePerms)
+	err = afero.WriteFile(AppFs, outputFile, []byte(yamlWithComments), fileutil.ReadWriteUserPermission)
 	if err != nil {
 		return fmt.Errorf("failed to write config skeleton: %w", err)
 	}

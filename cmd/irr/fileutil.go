@@ -7,6 +7,7 @@ import (
 
 	"github.com/lalbers/irr/internal/helm"
 	"github.com/lalbers/irr/pkg/exitcodes"
+	"github.com/lalbers/irr/pkg/fileutil"
 	log "github.com/lalbers/irr/pkg/log"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
@@ -79,7 +80,7 @@ func writeOutputFile(outputFile string, content []byte, successMessage string) e
 	}
 
 	// Create the directory if it doesn't exist
-	err = AppFs.MkdirAll(filepath.Dir(outputFile), DirPermissions)
+	err = AppFs.MkdirAll(filepath.Dir(outputFile), fileutil.ReadWriteExecuteUserReadExecuteOthers)
 	if err != nil {
 		return &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitGeneralRuntimeError,
@@ -88,7 +89,7 @@ func writeOutputFile(outputFile string, content []byte, successMessage string) e
 	}
 
 	// Write the file
-	err = afero.WriteFile(AppFs, outputFile, content, FilePermissions)
+	err = afero.WriteFile(AppFs, outputFile, content, fileutil.ReadWriteUserReadOthers)
 	if err != nil {
 		return &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitGeneralRuntimeError,
