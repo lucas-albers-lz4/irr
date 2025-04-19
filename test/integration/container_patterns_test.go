@@ -214,57 +214,15 @@ controller:
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := NewTestHarness(t)
+			overrides, h := setupAndRunOverride(t, tt.values, "container-"+tt.name+"-overrides.yaml")
 			defer h.Cleanup()
-
-			// Create a test chart with the specified values
-			chartDir := createTestChartWithValues(t, h, tt.values)
-			h.SetupChart(chartDir)
-			h.SetRegistries("test.registry.io", []string{"docker.io", "quay.io"})
-
-			// Create output file path
-			outputFile := filepath.Join(h.tempDir, "container-"+tt.name+"-overrides.yaml")
-
-			// Execute the override command with debug output
-			output, stderr, err := h.ExecuteIRRWithStderr(
-				"override",
-				"--chart-path", h.chartPath,
-				"--target-registry", h.targetReg,
-				"--source-registries", strings.Join(h.sourceRegs, ","),
-				"--output-file", outputFile,
-				"--debug",
-			)
-			require.NoError(t, err, "override command should succeed. Output: %s\nStderr: %s", output, stderr)
-
-			// Verify that the override file was created
-			require.FileExists(t, outputFile, "Override file should be created")
-
-			// Read the generated override file
-			overrideBytes, err := os.ReadFile(outputFile)
-			require.NoError(t, err, "Should be able to read generated override file")
-
-			// Log the content for debugging
-			t.Logf("Override content for %s: %s", tt.name, string(overrideBytes))
-
-			// Parse the YAML
-			var overrides map[string]interface{}
-			err = yaml.Unmarshal(overrideBytes, &overrides)
-			require.NoError(t, err, "Should be able to parse the override YAML")
-
-			// Special handling for template test case
 			if tt.name == "template_string_image_references" {
-				// For template tests, we just need to verify that the template paths were detected,
-				// even if they can't be converted to valid image references
-
-				// Check for template values in the Unsupported section
 				unsupported, hasUnsupported := overrides["Unsupported"].([]interface{})
 				if hasUnsupported {
 					foundPaths := []string{}
 					for _, item := range unsupported {
 						if itemMap, ok := item.(map[string]interface{}); ok {
-							// Check if this is a template type
 							if itemType, hasType := itemMap["Type"].(string); hasType && itemType == "template" {
-								// Get the path
 								if paths, hasPaths := itemMap["Path"].([]interface{}); hasPaths {
 									pathStr := ""
 									for _, p := range paths {
@@ -278,13 +236,8 @@ controller:
 							}
 						}
 					}
-
 					// Check if we found at least the controller.image and controller.initContainers paths
-					expectedPaths := []string{
-						"controller.image",
-						"controller.initContainers",
-					}
-
+					expectedPaths := []string{"controller.image", "controller.initContainers"}
 					for _, expected := range expectedPaths {
 						found := false
 						for _, actual := range foundPaths {
@@ -294,138 +247,17 @@ controller:
 								break
 							}
 						}
-
 						if !found {
 							t.Errorf("Expected template path containing '%s' not found in unsupported section", expected)
 						}
 					}
-
-					// Consider the test passed if we found unsupported template entries
 					if len(foundPaths) > 0 {
 						return
 					}
 				}
 			}
-
-			// Extract the image repositories
-			foundImages := make(map[string]bool)
-			h.WalkImageFields(overrides, func(path []string, imageValue interface{}) {
-				t.Logf("Found image value: %v", imageValue)
-
-				switch v := imageValue.(type) {
-				case map[string]interface{}:
-					if repo, ok := v["repository"].(string); ok {
-						foundImages[repo] = true
-
-						// Also add the path without the registry prefix for easier matching
-						parts := strings.Split(repo, "/")
-						if len(parts) > 1 {
-							nonPrefixedRepo := strings.Join(parts[1:], "/")
-							foundImages[nonPrefixedRepo] = true
-						}
-					}
-				case string:
-					foundImages[v] = true
-
-					// For string values, also extract just the image name part
-					parts := strings.Split(v, "/")
-					if len(parts) > 1 {
-						// Get the last part which should be the image name
-						lastPart := parts[len(parts)-1]
-						// Strip any tag
-						if tagIndex := strings.LastIndex(lastPart, ":"); tagIndex > 0 {
-							lastPart = lastPart[:tagIndex]
-						}
-						foundImages[lastPart] = true
-					}
-				}
-			})
-
-			// Verify that all expected images were found
-			for _, expectedImage := range tt.expectedImages {
-				found := false
-				expectedRepo := strings.Split(expectedImage, ":")[0] // Strip any tag
-
-				// Try different variations of the repository name for matching
-				variations := []string{
-					expectedRepo, // Full path: docker.io/nginx
-					strings.TrimPrefix(expectedRepo, "docker.io/"), // Without registry: nginx
-					strings.TrimPrefix(expectedRepo, "quay.io/"),   // Without registry: prometheus/prometheus
-				}
-
-				// For docker.io images, also check with library/ prefix
-				if strings.HasPrefix(expectedRepo, "docker.io/") && !strings.Contains(strings.TrimPrefix(expectedRepo, "docker.io/"), "/") {
-					variations = append(variations, "library/"+strings.TrimPrefix(expectedRepo, "docker.io/"))
-				}
-
-				// Get just the last part of the path (the image name without registry/org)
-				parts := strings.Split(expectedRepo, "/")
-				if len(parts) > 0 {
-					variations = append(variations, parts[len(parts)-1])
-				}
-
-				// Add variations for target registry prefixed format
-				if strings.Contains(expectedRepo, "/") {
-					registryPart := strings.Split(expectedRepo, "/")[0]
-					repoPart := strings.TrimPrefix(expectedRepo, registryPart+"/")
-
-					// Create sanitized registry prefix (dockerio, quayio)
-					sanitizedPrefix := strings.ReplaceAll(registryPart, ".", "")
-					sanitizedPrefix = strings.ReplaceAll(sanitizedPrefix, "-", "")
-
-					// Add variation with target+source prefix
-					targetVariation := h.targetReg + "/" + sanitizedPrefix + "/" + repoPart
-					variations = append(variations, targetVariation)
-
-					// Also just the repoPart
-					variations = append(variations, repoPart)
-				}
-
-				// For template string case, special handling to match more generously
-				if tt.name == "template_string_image_references" {
-					// For expected values with Go templates in them, be more lenient in matching
-					isTemplateValue := strings.Contains(expectedRepo, "{{") && strings.Contains(expectedRepo, "}}")
-					if isTemplateValue {
-						// We just need to find the core image name somewhere in the output
-						for foundImage := range foundImages {
-							// Extract any image names from inside the template string
-							if strings.Contains(expectedRepo, "bitnami/nginx") && strings.Contains(foundImage, "nginx") {
-								found = true
-								t.Logf("Found templated nginx reference as %s", foundImage)
-								break
-							}
-							if strings.Contains(expectedRepo, "bitnami/minideb") && strings.Contains(foundImage, "minideb") {
-								found = true
-								t.Logf("Found templated minideb reference as %s", foundImage)
-								break
-							}
-						}
-
-						// Skip the normal variation matching for template values
-						if found {
-							break
-						}
-					}
-				}
-
-				for _, variation := range variations {
-					for foundImage := range foundImages {
-						if strings.HasSuffix(foundImage, variation) || strings.Contains(foundImage, variation) {
-							found = true
-							t.Logf("Found expected repository %s as %s", expectedRepo, foundImage)
-							break
-						}
-					}
-					if found {
-						break
-					}
-				}
-
-				assert.True(t, found, "Expected image %s should be found in overrides", expectedImage)
-				if !found {
-					t.Logf("Expected image %s not found. Found images: %v", expectedImage, foundImages)
-				}
-			}
+			foundImages := extractFoundImages(h, overrides)
+			assertExpectedImages(t, h, tt.name, tt.expectedImages, foundImages)
 		})
 	}
 }
@@ -747,5 +579,124 @@ sidecars:
 				t.Logf("No specific images expected for %s. Found: %v", tt.name, foundImages)
 			}
 		})
+	}
+}
+
+// Helper: setupAndRunOverride runs the override command and returns parsed YAML overrides and the test harness
+func setupAndRunOverride(t *testing.T, values string, outputFileName string) (map[string]interface{}, *TestHarness) {
+	h := NewTestHarness(t)
+	chartDir := createTestChartWithValues(t, h, values)
+	h.SetupChart(chartDir)
+	h.SetRegistries("test.registry.io", []string{"docker.io", "quay.io"})
+	outputFile := filepath.Join(h.tempDir, outputFileName)
+	output, stderr, err := h.ExecuteIRRWithStderr(
+		"override",
+		"--chart-path", h.chartPath,
+		"--target-registry", h.targetReg,
+		"--source-registries", strings.Join(h.sourceRegs, ","),
+		"--output-file", outputFile,
+		"--debug",
+	)
+	require.NoError(t, err, "override command should succeed. Output: %s\nStderr: %s", output, stderr)
+	require.FileExists(t, outputFile, "Override file should be created")
+	overrideBytes, err := os.ReadFile(outputFile)
+	require.NoError(t, err, "Should be able to read generated override file")
+	var overrides map[string]interface{}
+	err = yaml.Unmarshal(overrideBytes, &overrides)
+	require.NoError(t, err, "Should be able to parse the override YAML")
+	return overrides, h
+}
+
+// Helper: extractFoundImages walks the override YAML and returns a set of found image names
+func extractFoundImages(h *TestHarness, overrides map[string]interface{}) map[string]bool {
+	foundImages := make(map[string]bool)
+	h.WalkImageFields(overrides, func(_ []string, imageValue interface{}) {
+		switch v := imageValue.(type) {
+		case map[string]interface{}:
+			if repo, ok := v["repository"].(string); ok {
+				foundImages[repo] = true
+				parts := strings.Split(repo, "/")
+				if len(parts) > 1 {
+					nonPrefixedRepo := strings.Join(parts[1:], "/")
+					foundImages[nonPrefixedRepo] = true
+				}
+			}
+		case string:
+			foundImages[v] = true
+			parts := strings.Split(v, "/")
+			if len(parts) > 1 {
+				lastPart := parts[len(parts)-1]
+				if tagIndex := strings.LastIndex(lastPart, ":"); tagIndex > 0 {
+					lastPart = lastPart[:tagIndex]
+				}
+				foundImages[lastPart] = true
+			}
+		}
+	})
+	return foundImages
+}
+
+// Helper: assertExpectedImages checks that all expected images are found in the set
+func assertExpectedImages(t *testing.T, h *TestHarness, testName string, expectedImages []string, foundImages map[string]bool) {
+	for _, expectedImage := range expectedImages {
+		found := false
+		expectedRepo := strings.Split(expectedImage, ":")[0]
+		variations := []string{
+			expectedRepo,
+			strings.TrimPrefix(expectedRepo, "docker.io/"),
+			strings.TrimPrefix(expectedRepo, "quay.io/"),
+		}
+		if strings.HasPrefix(expectedRepo, "docker.io/") && !strings.Contains(strings.TrimPrefix(expectedRepo, "docker.io/"), "/") {
+			variations = append(variations, "library/"+strings.TrimPrefix(expectedRepo, "docker.io/"))
+		}
+		parts := strings.Split(expectedRepo, "/")
+		if len(parts) > 0 {
+			variations = append(variations, parts[len(parts)-1])
+		}
+		if strings.Contains(expectedRepo, "/") {
+			registryPart := strings.Split(expectedRepo, "/")[0]
+			repoPart := strings.TrimPrefix(expectedRepo, registryPart+"/")
+			sanitizedPrefix := strings.ReplaceAll(registryPart, ".", "")
+			sanitizedPrefix = strings.ReplaceAll(sanitizedPrefix, "-", "")
+			targetVariation := h.targetReg + "/" + sanitizedPrefix + "/" + repoPart
+			variations = append(variations, targetVariation)
+			variations = append(variations, repoPart)
+		}
+		if testName == "template_string_image_references" {
+			isTemplateValue := strings.Contains(expectedRepo, "{{") && strings.Contains(expectedRepo, "}}")
+			if isTemplateValue {
+				for foundImage := range foundImages {
+					if strings.Contains(expectedRepo, "bitnami/nginx") && strings.Contains(foundImage, "nginx") {
+						found = true
+						t.Logf("Found templated nginx reference as %s", foundImage)
+						break
+					}
+					if strings.Contains(expectedRepo, "bitnami/minideb") && strings.Contains(foundImage, "minideb") {
+						found = true
+						t.Logf("Found templated minideb reference as %s", foundImage)
+						break
+					}
+				}
+				if found {
+					continue
+				}
+			}
+		}
+		for _, variation := range variations {
+			for foundImage := range foundImages {
+				if strings.HasSuffix(foundImage, variation) || strings.Contains(foundImage, variation) {
+					found = true
+					t.Logf("Found expected repository %s as %s", expectedRepo, foundImage)
+					break
+				}
+			}
+			if found {
+				break
+			}
+		}
+		assert.True(t, found, "Expected image %s should be found in overrides", expectedImage)
+		if !found {
+			t.Logf("Expected image %s not found. Found images: %v", expectedImage, foundImages)
+		}
 	}
 }
