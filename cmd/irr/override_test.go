@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/lalbers/irr/pkg/exitcodes"
+	"github.com/lalbers/irr/pkg/fileutil"
 	"github.com/lalbers/irr/pkg/helm"
 	log "github.com/lalbers/irr/pkg/log"
 	"github.com/spf13/afero"
@@ -397,7 +398,7 @@ func TestOverrideCommand_OutputFileHandling(t *testing.T) {
 		if outputFile != "" {
 			// Ensure the directory exists
 			dir := filepath.Dir(outputFile)
-			err := AppFs.MkdirAll(dir, 0o755)
+			err := AppFs.MkdirAll(dir, fileutil.ReadWriteExecuteUserReadExecuteOthers)
 			if err != nil {
 				return fmt.Errorf("failed to create directory: %w", err)
 			}
@@ -413,7 +414,7 @@ func TestOverrideCommand_OutputFileHandling(t *testing.T) {
 			}
 
 			// Write the file
-			err = afero.WriteFile(AppFs, outputFile, []byte(mockOverride), 0o644)
+			err = afero.WriteFile(AppFs, outputFile, []byte(mockOverride), fileutil.ReadWriteUserReadOthers)
 			if err != nil {
 				return fmt.Errorf("failed to write file: %w", err)
 			}
