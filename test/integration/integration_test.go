@@ -13,6 +13,7 @@ import (
 	"github.com/lalbers/irr/pkg/testutil"
 
 	"github.com/lalbers/irr/pkg/exitcodes"
+	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
@@ -617,8 +618,8 @@ func TestMinimalGitImageOverride(t *testing.T) {
 	})
 
 	if !found {
-		// #nosec G304
-		overrideBytes, readErr := os.ReadFile(harness.overridePath)
+		// Use afero to read the file for debugging
+		overrideBytes, readErr := afero.ReadFile(harness.fs, harness.overridePath)
 		t.Errorf("Expected image repository '%s' not found in overrides", expectedRepo)
 		if readErr != nil {
 			t.Logf("Additionally, failed to read overrides file %s for debugging: %v", harness.overridePath, readErr)
@@ -630,19 +631,19 @@ func TestMinimalGitImageOverride(t *testing.T) {
 
 func setupMinimalTestChart(t *testing.T, h *TestHarness) {
 	chartDir := filepath.Join(h.tempDir, "minimal-chart")
-	require.NoError(t, os.MkdirAll(chartDir, 0o750))
+	require.NoError(t, h.fs.MkdirAll(chartDir, 0o750))
 
 	chartYaml := `apiVersion: v2
 name: minimal-chart
 version: 0.1.0`
-	require.NoError(t, os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), []byte(chartYaml), defaultFilePerm))
+	require.NoError(t, afero.WriteFile(h.fs, filepath.Join(chartDir, "Chart.yaml"), []byte(chartYaml), defaultFilePerm))
 
 	valuesYaml := `image:
   repository: nginx
   tag: "1.23"`
-	require.NoError(t, os.WriteFile(filepath.Join(chartDir, "values.yaml"), []byte(valuesYaml), defaultFilePerm))
+	require.NoError(t, afero.WriteFile(h.fs, filepath.Join(chartDir, "values.yaml"), []byte(valuesYaml), defaultFilePerm))
 
-	require.NoError(t, os.MkdirAll(filepath.Join(chartDir, "templates"), 0o750))
+	require.NoError(t, h.fs.MkdirAll(filepath.Join(chartDir, "templates"), 0o750))
 
 	deploymentYaml := `apiVersion: apps/v1
 kind: Deployment
@@ -654,7 +655,7 @@ spec:
       containers:
       - name: nginx
         image: {{ .Values.image.repository }}:{{ .Values.image.tag }}`
-	require.NoError(t, os.WriteFile(filepath.Join(chartDir, "templates", "deployment.yaml"), []byte(deploymentYaml), defaultFilePerm))
+	require.NoError(t, afero.WriteFile(h.fs, filepath.Join(chartDir, "templates", "deployment.yaml"), []byte(deploymentYaml), defaultFilePerm))
 
 	h.chartPath = chartDir
 }
@@ -680,11 +681,12 @@ func TestReadOverridesFromStdout(t *testing.T) {
 	t.Logf("IRR command stderr: %s", stderr)
 
 	// Verify that the override file was created
-	require.FileExists(t, tempOutputFile, "Override file should be created")
+	exists, err := afero.Exists(h.fs, tempOutputFile)
+	require.NoError(t, err, "Failed to check if file exists")
+	require.True(t, exists, "Override file should be created")
 
-	// Read the generated override file
-	// #nosec G304
-	overrideBytes, err := os.ReadFile(tempOutputFile)
+	// Read the generated override file using afero
+	overrideBytes, err := afero.ReadFile(h.fs, tempOutputFile)
 	require.NoError(t, err, "Failed to read generated override file: %s", tempOutputFile)
 
 	// Unmarshal the generated YAML

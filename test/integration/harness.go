@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/fileutil"
@@ -38,6 +39,7 @@ const (
 // TestHarness provides a structure for setting up and running integration tests.
 type TestHarness struct {
 	t            *testing.T
+	fs           afero.Fs // Filesystem interface for isolation
 	tempDir      string
 	chartPath    string
 	targetReg    string
@@ -56,16 +58,14 @@ func NewTestHarness(t *testing.T) *TestHarness {
 	t.Helper()
 
 	// Build is handled centrally in TestMain now.
-	// // Ensure the binary is built only once
-	// buildOnce.Do(func() {
-	// 	buildErr = buildIrrBinary(t)
-	// })
-	// // Fail early if build failed
-	// require.NoError(t, buildErr, "Failed to build irr binary")
 
-	// Create temp directory for test artifacts
-	tempDir, err := os.MkdirTemp("", "irr-integration-test-")
-	require.NoError(t, err)
+	// Initialize in-memory filesystem for isolation
+	fs := afero.NewMemMapFs()
+
+	// Create temp directory for test artifacts in the in-memory filesystem
+	tempDir := fmt.Sprintf("/tmp/irr-integration-test-%d", time.Now().UnixNano())
+	err := fs.MkdirAll(tempDir, TestDirPermissions)
+	require.NoError(t, err, "Failed to create temp directory in memory filesystem")
 
 	// Determine project root directory
 	rootDir, err := getProjectRoot()
@@ -78,6 +78,7 @@ func NewTestHarness(t *testing.T) *TestHarness {
 
 	h := &TestHarness{
 		t:            t,
+		fs:           fs,
 		tempDir:      tempDir,
 		rootDir:      rootDir, // Initialize rootDir field
 		overridePath: filepath.Join(tempDir, "generated-overrides.yaml"),
@@ -101,11 +102,9 @@ func NewTestHarness(t *testing.T) *TestHarness {
 
 // Cleanup removes the temporary directory and resets environment variables.
 func (h *TestHarness) Cleanup() {
-	// errcheck fix: Check error from RemoveAll
-	err := os.RemoveAll(h.tempDir)
-	if err != nil {
-		h.t.Logf("Warning: Failed to remove temp directory %s: %v", h.tempDir, err)
-	}
+	// We don't need to clean up the temp directory in the in-memory filesystem,
+	// but we can still log that we're "cleaning up" for diagnostic purposes
+	h.logger.Printf("Cleaning up in-memory filesystem (no disk cleanup needed)")
 
 	// Clean up environment variables
 	if err := os.Unsetenv("IRR_TESTING"); err != nil {
@@ -141,9 +140,10 @@ func (h *TestHarness) createDefaultRegistryMappingFile() (mappingsPath string, e
 
 	mappingsPath = filepath.Join(h.tempDir, "default-registry-mappings.yaml")
 	// #nosec G306 -- Using secure file permissions (0600) for test-generated file
-	if err := os.WriteFile(mappingsPath, mappingsData, defaultFilePerm); err != nil {
+	if err := afero.WriteFile(h.fs, mappingsPath, mappingsData, defaultFilePerm); err != nil {
 		return "", fmt.Errorf("failed to write default registry mappings file: %w", err)
 	}
+	h.logger.Printf("Registry mappings file created at: %s", mappingsPath)
 	return mappingsPath, nil
 }
 
@@ -237,19 +237,15 @@ func (h *TestHarness) SetRegistries(target string, sources []string) {
 	}
 
 	// #nosec G306 -- Using secure file permissions (0600) for test-generated file
-	if err := os.WriteFile(mappingsPath, mappingsData, defaultFilePerm); err != nil {
+	if err := afero.WriteFile(h.fs, mappingsPath, mappingsData, defaultFilePerm); err != nil {
 		h.t.Fatalf("Failed to write registry mappings to %s: %v", mappingsPath, err)
 	}
 
-	// Store the absolute path
-	absMappingsPath, err := filepath.Abs(mappingsPath)
-	if err != nil {
-		h.t.Fatalf("Failed to get absolute path for mappings file %s: %v", mappingsPath, err)
-	}
-	h.mappingsPath = absMappingsPath // Assign the absolute path to the harness field
+	// Use the path within the in-memory filesystem
+	h.mappingsPath = mappingsPath
 	h.t.Logf("Registry mappings file created at: %s", h.mappingsPath)
 
-	// Ensure the main override file path also uses the OS temp dir (already done in NewTestHarness)
+	// Ensure the main override file path also uses the temp dir (already done in NewTestHarness)
 	// h.overridePath = filepath.Join(h.tempDir, "generated-overrides.yaml")
 }
 
@@ -319,15 +315,15 @@ func (h *TestHarness) ValidateOverrides() error {
 func (h *TestHarness) loadMappings() (*registry.Mappings, error) {
 	mappings := &registry.Mappings{}
 	if h.mappingsPath != "" {
-		_, statErr := os.Stat(h.mappingsPath)
+		exists, statErr := afero.Exists(h.fs, h.mappingsPath)
 		switch {
-		case statErr == nil:
+		case statErr == nil && exists:
 			// Load using the structured format by default
 			structConfig, loadErr := registry.LoadStructuredConfigDefault(h.mappingsPath, true)
 			if loadErr != nil {
 				// Fall back to legacy format if structured format fails
 				h.logger.Printf("Failed to load as structured format, trying legacy format: %v", loadErr)
-				loadedMappings, legacyErr := registry.LoadMappings(afero.NewOsFs(), h.mappingsPath, true)
+				loadedMappings, legacyErr := registry.LoadMappings(h.fs, h.mappingsPath, true)
 				if legacyErr != nil {
 					return nil, fmt.Errorf("failed to load mappings file %s for validation: %w", h.mappingsPath, legacyErr)
 				}
@@ -338,10 +334,10 @@ func (h *TestHarness) loadMappings() (*registry.Mappings, error) {
 				mappings = structConfig.ToMappings()
 				h.logger.Printf("Successfully loaded mappings (structured format) from %s", h.mappingsPath)
 			}
-		case os.IsNotExist(statErr):
+		case !exists:
 			h.logger.Printf("Mappings file %s does not exist, proceeding without mappings.", h.mappingsPath)
 		default:
-			h.logger.Printf("Warning: Error stating mappings file %s: %v", h.mappingsPath, statErr)
+			h.logger.Printf("Warning: Error checking mappings file %s: %v", h.mappingsPath, statErr)
 		}
 	} else {
 		h.logger.Printf("No mappings file path specified for harness.")
@@ -382,19 +378,23 @@ func (h *TestHarness) determineExpectedTargets(mappings *registry.Mappings) []st
 }
 
 func (h *TestHarness) readAndWriteOverrides() (string, error) {
-	currentOverridesBytes, err := os.ReadFile(h.overridePath)
+	// Use afero to read the file from the in-memory filesystem
+	currentOverridesBytes, err := afero.ReadFile(h.fs, h.overridePath)
 	if err != nil {
-		h.t.Logf("Warning: failed to read overrides file %s locally for modification: %v", h.overridePath, err)
+		h.t.Logf("Warning: failed to read overrides file %s from in-memory filesystem for modification: %v", h.overridePath, err)
 		currentOverridesBytes = []byte{}
 	} else {
 		h.t.Logf("Read %d bytes from overrides file: %s", len(currentOverridesBytes), h.overridePath)
 	}
 	h.t.Logf("Generated Overrides Content:\n%s", string(currentOverridesBytes))
+
+	// Create the validation file in the in-memory filesystem
 	tempValidationOverridesPath := filepath.Join(h.tempDir, "validation-overrides.yaml")
-	if err := os.WriteFile(tempValidationOverridesPath, currentOverridesBytes, defaultFilePerm); err != nil {
+	if err := afero.WriteFile(h.fs, tempValidationOverridesPath, currentOverridesBytes, defaultFilePerm); err != nil {
 		return "", fmt.Errorf("failed to write temporary validation overrides file %s: %w", tempValidationOverridesPath, err)
 	}
 	h.t.Logf("Wrote %d bytes to temporary validation file: %s", len(currentOverridesBytes), tempValidationOverridesPath)
+
 	return tempValidationOverridesPath, nil
 }
 
@@ -478,8 +478,8 @@ func (h *TestHarness) fallbackCheck(mappings *registry.Mappings, output string) 
 
 // getOverrides reads and unmarshals the generated overrides file.
 func (h *TestHarness) getOverrides() (overrides map[string]interface{}, err error) {
-	// #nosec G304 -- Reading a test-generated file from the test's temp directory is safe.
-	overridesBytes, err := os.ReadFile(h.overridePath)
+	// Use afero to read the file from the in-memory filesystem
+	overridesBytes, err := afero.ReadFile(h.fs, h.overridePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read overrides file %s: %w", h.overridePath, err)
 	}
@@ -755,9 +755,12 @@ func (h *TestHarness) AssertExitCode(expected int, args ...string) {
 	}
 	h.logger.Printf("[ASSERT_EXIT_CODE DEBUG] binPath: %s, CWD: %s", binPath, cwd)
 
+	// Always include the integration-test flag to allow loading from temp directories
+	integrationArgs := append([]string{"--integration-test"}, args...)
+
 	// G204: Subprocess launched with variable - Acceptable in test code.
-	cmd := exec.Command(binPath, args...) // #nosec G204
-	cmd.Dir = h.tempDir                   // Run from the temp directory
+	cmd := exec.Command(binPath, integrationArgs...) // #nosec G204
+	cmd.Dir = h.rootDir                              // Run from the project root directory, not the temp directory
 	outputBytes, runErr := cmd.CombinedOutput()
 	outputStr := string(outputBytes)
 
@@ -820,9 +823,12 @@ func (h *TestHarness) AssertErrorContains(substring string, args ...string) {
 	}
 	h.logger.Printf("[ASSERT_ERROR_CONTAINS DEBUG] binPath: %s, CWD: %s", binPath, cwd)
 
+	// Always include the integration-test flag to allow loading from temp directories
+	integrationArgs := append([]string{"--integration-test"}, args...)
+
 	// G204: Subprocess launched with variable - Acceptable in test code.
-	cmd := exec.Command(binPath, args...) // #nosec G204
-	cmd.Dir = h.tempDir                   // Run from the temp directory
+	cmd := exec.Command(binPath, integrationArgs...) // #nosec G204
+	cmd.Dir = h.rootDir                              // Run from the project root directory, not the temp directory
 	var stderr bytes.Buffer
 	var stdout bytes.Buffer // Keep capturing stdout for context if needed, but don't check it
 	cmd.Stderr = &stderr
@@ -933,7 +939,7 @@ func buildIrrBinary() error { // Removed t *testing.T argument
 // ValidateFullyQualifiedOverrides validates that all images are fully qualified with the specified target registry
 func (h *TestHarness) ValidateFullyQualifiedOverrides(targetRegistry string, targets []string) {
 	// Read the overrides file
-	_, err := os.ReadFile(h.overridePath)
+	_, err := afero.ReadFile(h.fs, h.overridePath)
 	if err != nil {
 		h.t.Fatalf("Failed to read overrides file: %v", err)
 	}
@@ -951,7 +957,7 @@ func (h *TestHarness) ValidateFullyQualifiedOverrides(targetRegistry string, tar
 // ValidateWithRegistryPrefix validates the generated overrides contain the expected target registry prefix
 func (h *TestHarness) ValidateWithRegistryPrefix(targetRegistry string) {
 	// Read the overrides file
-	_, err := os.ReadFile(h.overridePath)
+	_, err := afero.ReadFile(h.fs, h.overridePath)
 	if err != nil {
 		h.t.Fatalf("Failed to read overrides file: %v", err)
 	}
@@ -968,7 +974,7 @@ func (h *TestHarness) CreateRegistryMappingsFile(mappings string) string {
 	// Handle empty content case
 	if strings.TrimSpace(mappings) == "" {
 		h.logger.Printf("Creating empty registry mappings file")
-		err := os.WriteFile(mappingFile, []byte(""), fileutil.ReadWriteUserPermission)
+		err := afero.WriteFile(h.fs, mappingFile, []byte(""), fileutil.ReadWriteUserPermission)
 		if err != nil {
 			h.t.Fatalf("Failed to create empty registry mappings file: %v", err)
 		}
@@ -986,28 +992,28 @@ func (h *TestHarness) CreateRegistryMappingsFile(mappings string) string {
 	case isStructured:
 		// Write structured content as is
 		h.logger.Printf("Writing structured format registry mappings file")
-		err := os.WriteFile(mappingFile, []byte(mappings), fileutil.ReadWriteUserPermission)
+		err := afero.WriteFile(h.fs, mappingFile, []byte(mappings), fileutil.ReadWriteUserPermission)
 		if err != nil {
 			h.t.Fatalf("Failed to create registry mappings file: %v", err)
 		}
 	case isLegacyFormat:
 		// Handle legacy key-value format - write as is without conversion
 		h.logger.Printf("Writing legacy format registry mappings file")
-		err := os.WriteFile(mappingFile, []byte(mappings), fileutil.ReadWriteUserPermission)
+		err := afero.WriteFile(h.fs, mappingFile, []byte(mappings), fileutil.ReadWriteUserPermission)
 		if err != nil {
 			h.t.Fatalf("Failed to create registry mappings file: %v", err)
 		}
 	default:
 		// Not recognized as structured or legacy format
 		h.logger.Printf("Writing unrecognized format registry mappings file")
-		err := os.WriteFile(mappingFile, []byte(mappings), fileutil.ReadWriteUserPermission)
+		err := afero.WriteFile(h.fs, mappingFile, []byte(mappings), fileutil.ReadWriteUserPermission)
 		if err != nil {
 			h.t.Fatalf("Failed to create registry mappings file: %v", err)
 		}
 	}
 
 	// Verify the file was written correctly by reading it back
-	fileContent, err := os.ReadFile(mappingFile) // #nosec G304 - test file created in this method
+	fileContent, err := afero.ReadFile(h.fs, mappingFile)
 	if err != nil {
 		h.logger.Printf("Warning: Could not read back registry mappings file: %v", err)
 	} else {
