@@ -158,7 +158,7 @@ func TestOverrideCommand_LoadChart(t *testing.T) {
 				// Just get the config and load the chart
 				config, err := setupGeneratorConfig(cmd, "")
 				if err != nil {
-					return err
+					return fmt.Errorf("failed to setup generator config: %w", err)
 				}
 
 				// Log the chart path being used
@@ -629,7 +629,7 @@ spec:
 
 		// Modify the command to use a mock generator for validation
 		originalRunE := cmd.RunE
-		cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 			// Create a mock override file for testing
 			content := `image:
 registry: registry.example.com
@@ -696,7 +696,7 @@ namespace: default
 
 		// Modify the command to use a mock generator for validation
 		originalRunE := cmd.RunE
-		cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 			// Pretend validation succeeded
 			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Validation successful\n"); err != nil {
 				t.Fatalf("Failed to write validation message: %v", err)
@@ -800,7 +800,7 @@ func TestOverrideCommand_NamespaceHandling(t *testing.T) {
 
 		// Modify the command to use a mock generator
 		originalRunE := cmd.RunE
-		cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		cmd.RunE = func(_ *cobra.Command, _ []string) error {
 			// Create a mock override file for testing
 			content := `namespace: explicit-namespace
 image:
@@ -872,7 +872,7 @@ image:
 
 		// Modify the command to use a mock generator
 		originalRunE := cmd.RunE
-		cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		cmd.RunE = func(_ *cobra.Command, _ []string) error {
 			// Create a mock override file for testing with default namespace
 			content := `namespace: default
 image:

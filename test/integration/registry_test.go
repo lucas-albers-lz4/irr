@@ -120,7 +120,7 @@ registries:
 				require.FileExists(t, outputFile, "Override file should be created")
 
 				// Read the override file content directly
-				fileBytes, readErr := os.ReadFile(outputFile)
+				fileBytes, readErr := os.ReadFile(outputFile) // #nosec G304 - test file created by this test
 				if !assert.NoError(t, readErr, "Should be able to read override file") {
 					return
 				}
@@ -209,8 +209,8 @@ quay.io: registry.example.com/quay
 			require.FileExists(t, mappingFile, "Registry mapping file should exist")
 
 			// Read the file content
-			data, err := os.ReadFile(mappingFile)
-			require.NoError(t, err, "Should be able to read the mapping file")
+			data, err := os.ReadFile(mappingFile) // #nosec G304 - test file created by this test
+			require.NoError(t, err, "Failed to read mapping file")
 			content := string(data)
 
 			if tc.expectedToBeEmpty {
@@ -241,15 +241,15 @@ quay.io: registry.example.com/quay
 
 // Helper function to create a test chart with a specific image
 func createTestChartWithImage(chartDir, registry, repository string) error {
-	if err := os.MkdirAll(chartDir, 0750); err != nil {
-		return err
+	if err := os.MkdirAll(chartDir, 0o750); err != nil {
+		return fmt.Errorf("failed to create chart directory: %w", err)
 	}
 
 	chartYaml := `apiVersion: v2
 name: prefix-test-chart
 version: 0.1.0`
-	if err := os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), []byte(chartYaml), 0600); err != nil {
-		return err
+	if err := os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), []byte(chartYaml), 0o600); err != nil {
+		return fmt.Errorf("failed to write Chart.yaml: %w", err)
 	}
 
 	// Format image properly with separate registry and repository fields
@@ -257,12 +257,12 @@ version: 0.1.0`
   registry: ` + registry + `
   repository: ` + repository + `
   tag: "latest"`
-	if err := os.WriteFile(filepath.Join(chartDir, "values.yaml"), []byte(valuesYaml), 0600); err != nil {
-		return err
+	if err := os.WriteFile(filepath.Join(chartDir, "values.yaml"), []byte(valuesYaml), 0o600); err != nil {
+		return fmt.Errorf("failed to write values.yaml: %w", err)
 	}
 
-	if err := os.MkdirAll(filepath.Join(chartDir, "templates"), 0750); err != nil {
-		return err
+	if err := os.MkdirAll(filepath.Join(chartDir, "templates"), 0o750); err != nil {
+		return fmt.Errorf("failed to create templates directory: %w", err)
 	}
 
 	deploymentYaml := `apiVersion: apps/v1
@@ -275,8 +275,8 @@ spec:
       containers:
       - name: test-container
         image: {{ .Values.image.registry }}/{{ .Values.image.repository }}:{{ .Values.image.tag }}`
-	if err := os.WriteFile(filepath.Join(chartDir, "templates", "deployment.yaml"), []byte(deploymentYaml), 0600); err != nil {
-		return err
+	if err := os.WriteFile(filepath.Join(chartDir, "templates", "deployment.yaml"), []byte(deploymentYaml), 0o600); err != nil {
+		return fmt.Errorf("failed to write deployment.yaml: %w", err)
 	}
 
 	return nil
@@ -345,7 +345,7 @@ func TestRegistryPrefixTransformation(t *testing.T) {
 			t.Logf("Stderr: %s", stderr)
 
 			// Read the raw override file to verify content
-			fileBytes, err := os.ReadFile(outputFile)
+			fileBytes, err := os.ReadFile(outputFile) // #nosec G304 - test file created by this test
 			require.NoError(t, err, "Should be able to read override file")
 
 			fileContent := string(fileBytes)

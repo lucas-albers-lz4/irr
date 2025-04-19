@@ -979,21 +979,22 @@ func (h *TestHarness) CreateRegistryMappingsFile(mappings string) string {
 	// Check if content is in legacy key-value format (contains colon but not structured format markers)
 	isLegacyFormat := !isStructured && strings.Contains(mappings, ":")
 
-	if isStructured {
+	switch {
+	case isStructured:
 		// Write structured content as is
 		h.logger.Printf("Writing structured format registry mappings file")
 		err := os.WriteFile(mappingFile, []byte(mappings), fileutil.ReadWriteUserPermission)
 		if err != nil {
 			h.t.Fatalf("Failed to create registry mappings file: %v", err)
 		}
-	} else if isLegacyFormat {
+	case isLegacyFormat:
 		// Handle legacy key-value format - write as is without conversion
 		h.logger.Printf("Writing legacy format registry mappings file")
 		err := os.WriteFile(mappingFile, []byte(mappings), fileutil.ReadWriteUserPermission)
 		if err != nil {
 			h.t.Fatalf("Failed to create registry mappings file: %v", err)
 		}
-	} else {
+	default:
 		// Not recognized as structured or legacy format
 		h.logger.Printf("Writing unrecognized format registry mappings file")
 		err := os.WriteFile(mappingFile, []byte(mappings), fileutil.ReadWriteUserPermission)
@@ -1003,7 +1004,7 @@ func (h *TestHarness) CreateRegistryMappingsFile(mappings string) string {
 	}
 
 	// Verify the file was written correctly by reading it back
-	fileContent, err := os.ReadFile(mappingFile)
+	fileContent, err := os.ReadFile(mappingFile) // #nosec G304 - test file created in this method
 	if err != nil {
 		h.logger.Printf("Warning: Could not read back registry mappings file: %v", err)
 	} else {

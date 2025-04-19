@@ -327,7 +327,7 @@ func setupAnalyzerAndLoadChart(cmd *cobra.Command, flags *InspectFlags) (string,
 	return chartPath, analysis, nil
 }
 
-func filterImagesBySourceRegistries(cmd *cobra.Command, flags *InspectFlags, analysis *ImageAnalysis) {
+func filterImagesBySourceRegistries(_ *cobra.Command, flags *InspectFlags, analysis *ImageAnalysis) {
 	if len(flags.SourceRegistries) > 0 {
 		log.Infof("Filtering results to only include registries: %s", strings.Join(flags.SourceRegistries, ", "))
 		var filteredImages []ImageInfo
