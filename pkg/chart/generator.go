@@ -857,7 +857,7 @@ func validateHelmTemplateInternal(chartPath string, overrides []byte) error {
 	output := outputBuffer.String()
 	debug.Printf("Helm template rendering successful. Output length: %d", len(output))
 
-	if len(output) == 0 {
+	if output == "" {
 		return errors.New("helm template output is empty")
 	}
 
@@ -886,7 +886,10 @@ func validateHelmTemplateInternal(chartPath string, overrides []byte) error {
 			for k, v := range inputOverridesMap {
 				pathKey := k // The dot-notation path string
 				if isLikelyImageMap(v) {
-					imageMap := v.(map[string]interface{})
+					imageMap, ok := v.(map[string]interface{})
+					if !ok {
+						return fmt.Errorf("input override at path '%s' is not a valid image map", pathKey)
+					}
 					// Check if the rendered output has the corresponding image path and values
 					renderedVal, found := findValueByPath(renderedDocMap, strings.Split(pathKey, "."))
 					if found {

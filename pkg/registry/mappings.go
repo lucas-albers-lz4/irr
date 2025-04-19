@@ -261,50 +261,74 @@ func LoadConfig(fs afero.Fs, path string, skipCWDRestriction bool) (map[string]s
 		return EmptyPathResult, ErrNoConfigSpecified
 	}
 
-	// Try loading as structured format
-	structuredConfig, err := LoadStructuredConfig(fs, path, skipCWDRestriction)
+	structuredConfig, err := tryLoadStructuredConfig(fs, path, skipCWDRestriction)
 	if err == nil {
-		// Explicit validation for structured config
-		mappings := structuredConfig.Registries.Mappings
-		seen := make(map[string]struct{})
-		for _, mapping := range mappings {
-			source := mapping.Source
-			target := mapping.Target
-			if len(source) > MaxKeyLength {
-				return nil, fmt.Errorf("registry key '%s' exceeds maximum length of %d characters in mappings file '%s'", source, MaxKeyLength, path)
-			}
-			if len(target) > MaxValueLength {
-				return nil, fmt.Errorf("registry value '%s' for key '%s' exceeds maximum length of %d characters in mappings file '%s'", target, source, MaxValueLength, path)
-			}
-			if !isValidDomain(source) {
-				return nil, fmt.Errorf("invalid source registry domain '%s' in config file '%s'", source, path)
-			}
-			if !strings.Contains(target, "/") {
-				return nil, fmt.Errorf("invalid target registry value '%s' for source '%s' in config file '%s': must contain at least one '/'", target, source, path)
-			}
-			// Validate port number if present
-			hostPart := strings.Split(target, "/")[0]
-			if strings.Contains(hostPart, ":") {
-				hostAndPort := strings.Split(hostPart, ":")
-				if len(hostAndPort) > 1 {
-					portStr := hostAndPort[1]
-					port, err := strconv.Atoi(portStr)
-					if err != nil || port < 1 || port > 65535 {
-						return nil, fmt.Errorf("invalid port number '%s' in target registry value '%s' for source '%s' in mappings file '%s'", portStr, target, source, path)
-					}
-				}
-			}
-			if _, exists := seen[source]; exists {
-				return nil, fmt.Errorf("duplicate registry key '%s' found in mappings file '%s'", source, path)
-			}
-			seen[source] = struct{}{}
+		if err := validateStructuredMappings(structuredConfig, path); err != nil {
+			return nil, err
 		}
 		debug.Printf("LoadConfig: Successfully loaded structured config with %d mappings", len(structuredConfig.Registries.Mappings))
 		return ConvertToLegacyFormat(structuredConfig), nil
 	}
 
-	// Only fall back to legacy if structured parsing itself failed (YAML/JSON unmarshal or file errors)
-	// If the error is a validation error (contains our known validation substrings), return it directly
+	if isValidationError(err) {
+		return nil, err
+	}
+
+	debug.Printf("LoadConfig: Failed to load structured config: %v", err)
+
+	debug.Printf("LoadConfig: Attempting to load as legacy format")
+	legacyFormat, err := tryLoadLegacyConfig(fs, path, skipCWDRestriction)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateLegacyMappings(legacyFormat, path); err != nil {
+		return nil, err
+	}
+	debug.Printf("LoadConfig: Successfully loaded legacy format with %d mappings", len(legacyFormat))
+	return legacyFormat, nil
+}
+
+func tryLoadStructuredConfig(fs afero.Fs, path string, skipCWDRestriction bool) (*Config, error) {
+	return LoadStructuredConfig(fs, path, skipCWDRestriction)
+}
+
+func validateStructuredMappings(cfg *Config, path string) error {
+	seen := make(map[string]struct{})
+	for _, mapping := range cfg.Registries.Mappings {
+		source := mapping.Source
+		target := mapping.Target
+		if len(source) > MaxKeyLength {
+			return fmt.Errorf("registry key '%s' exceeds maximum length of %d characters in mappings file '%s'", source, MaxKeyLength, path)
+		}
+		if len(target) > MaxValueLength {
+			return fmt.Errorf("registry value '%s' for key '%s' exceeds maximum length of %d characters in mappings file '%s'", target, source, MaxValueLength, path)
+		}
+		if !isValidDomain(source) {
+			return fmt.Errorf("invalid source registry domain '%s' in config file '%s'", source, path)
+		}
+		if !strings.Contains(target, "/") {
+			return fmt.Errorf("invalid target registry value '%s' for source '%s' in config file '%s': must contain at least one '/'", target, source, path)
+		}
+		hostPart := strings.Split(target, "/")[0]
+		if strings.Contains(hostPart, ":") {
+			hostAndPort := strings.Split(hostPart, ":")
+			if len(hostAndPort) > 1 {
+				portStr := hostAndPort[1]
+				port, err := strconv.Atoi(portStr)
+				if err != nil || port < 1 || port > 65535 {
+					return fmt.Errorf("invalid port number '%s' in target registry value '%s' for source '%s' in mappings file '%s'", portStr, target, source, path)
+				}
+			}
+		}
+		if _, exists := seen[source]; exists {
+			return fmt.Errorf("duplicate registry key '%s' found in mappings file '%s'", source, path)
+		}
+		seen[source] = struct{}{}
+	}
+	return nil
+}
+
+func isValidationError(err error) bool {
 	validationErrs := []string{
 		"invalid source registry domain",
 		"invalid target registry value",
@@ -315,53 +339,45 @@ func LoadConfig(fs afero.Fs, path string, skipCWDRestriction bool) (map[string]s
 	}
 	for _, substr := range validationErrs {
 		if strings.Contains(err.Error(), substr) {
-			return nil, err
+			return true
 		}
 	}
+	return false
+}
 
-	debug.Printf("LoadConfig: Failed to load structured config: %v", err)
-
-	// Try loading as legacy key-value format
-	debug.Printf("LoadConfig: Attempting to load as legacy format")
-
-	// Validate the file path
+func tryLoadLegacyConfig(fs afero.Fs, path string, skipCWDRestriction bool) (map[string]string, error) {
 	if err := validateConfigFilePath(fs, path, skipCWDRestriction); err != nil {
 		return nil, err
 	}
-
-	// Read the file content
 	data, err := readConfigFileContent(fs, path)
 	if err != nil {
 		return nil, err
 	}
-
-	// Try to parse as key-value pairs
 	var legacyFormat map[string]string
 	if err := yaml.Unmarshal(data, &legacyFormat); err != nil {
 		return nil, fmt.Errorf("failed to parse config file '%s': %w", path, err)
 	}
-
-	// Check if any mappings were found
 	if len(legacyFormat) == 0 {
 		debug.Printf("LoadConfig: No mappings found in legacy format")
 		return nil, WrapMappingFileEmpty(path)
 	}
+	return legacyFormat, nil
+}
 
-	// Validate the legacy format entries
+func validateLegacyMappings(legacyFormat map[string]string, path string) error {
 	for source, target := range legacyFormat {
 		if len(source) > MaxKeyLength {
-			return nil, fmt.Errorf("registry key too long in config file '%s'", path)
+			return fmt.Errorf("registry key too long in config file '%s'", path)
 		}
 		if len(target) > MaxValueLength {
-			return nil, fmt.Errorf("registry value too long in config file '%s'", path)
+			return fmt.Errorf("registry value too long in config file '%s'", path)
 		}
 		if !isValidDomain(source) {
-			return nil, fmt.Errorf("invalid source registry domain '%s' in config file '%s'", source, path)
+			return fmt.Errorf("invalid source registry domain '%s' in config file '%s'", source, path)
 		}
 		if !strings.Contains(target, "/") {
-			return nil, fmt.Errorf("invalid target registry value '%s' for source '%s' in config file '%s': must contain at least one '/'", target, source, path)
+			return fmt.Errorf("invalid target registry value '%s' for source '%s' in config file '%s': must contain at least one '/'", target, source, path)
 		}
-		// Validate port number if present
 		hostPart := strings.Split(target, "/")[0]
 		if strings.Contains(hostPart, ":") {
 			hostAndPort := strings.Split(hostPart, ":")
@@ -369,14 +385,12 @@ func LoadConfig(fs afero.Fs, path string, skipCWDRestriction bool) (map[string]s
 				portStr := hostAndPort[1]
 				port, err := strconv.Atoi(portStr)
 				if err != nil || port < 1 || port > 65535 {
-					return nil, fmt.Errorf("invalid port number '%s' in target registry value '%s' for source '%s' in config file '%s'", portStr, target, source, path)
+					return fmt.Errorf("invalid port number '%s' in target registry value '%s' for source '%s' in config file '%s'", portStr, target, source, path)
 				}
 			}
 		}
 	}
-
-	debug.Printf("LoadConfig: Successfully loaded legacy format with %d mappings", len(legacyFormat))
-	return legacyFormat, nil
+	return nil
 }
 
 // isValidDomain performs a simple validation on a domain string
