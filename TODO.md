@@ -337,3 +337,37 @@ The current implementation in `test/integration/kube_prometheus_stack_test.go` p
 - Test with intentional failures to ensure appropriate information is still shown
 - Validate that output is meaningful enough to diagnose problems without excessive verbosity
 
+## Phase 6: Image Pattern Detection Improvements
+
+### Overview
+Improve the analyzer's ability to detect and process image references in complex Helm charts, particularly focusing on init containers, admission webhooks, and other specialized configurations.
+
+### Motivation
+- Some complex charts with admission webhooks or multi-container deployments have image references that aren't being detected
+- Debug tooling helps identify paths that are missed during analysis
+- Consistent detection across all image variations improves reliability of the override process
+
+### Implementation Steps
+
+#### Phase 6.1: Debugging and Analysis
+- [x] **[P0]** Add debugging output to trace image detection
+  - [x] Add debug logging to analyzeMapValue, analyzeStringValue, and analyzeArray functions
+  - [x] Log detailed path information for all analyzed values
+  - [x] Log detection results to identify missed patterns
+  - [x] Run failing test cases with debug output to identify issues
+
+#### Phase 6.2: Image Pattern Detection Improvements
+- [x] **[P0]** Fix ingress-nginx admission webhook image detection
+  - [x] Add debug output to identify missed patterns
+  - [x] Run focused test for ingress-nginx chart with admission webhook
+  - [x] Verify all expected images are detected properly
+  
+#### Phase 6.3: Additional Chart Coverage
+- [x] **[P1]** Expand test coverage to more complex charts
+  - [ ] Review and enable previously skipped test cases
+  - [x] Add tests for charts with init containers
+  - [x] Add tests for charts with sidecars and admission webhooks
+  - [x] Add tests for edge cases including unusual nesting levels and camel-cased fields
+  - [x] Add proper handling for template-string image references
+  - [ ] Fix simplified-prometheus-stack test case
+
