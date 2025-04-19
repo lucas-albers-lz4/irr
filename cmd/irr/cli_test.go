@@ -204,9 +204,15 @@ func TestOverrideCommand(t *testing.T) {
 	tempDir := os.TempDir()
 	outputPath := filepath.Join(tempDir, fmt.Sprintf("irr-output-%d.yaml", os.Getpid()))
 	// Ensure the file does not exist before the test
-	_ = os.Remove(outputPath)
+	err := os.Remove(outputPath)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("Failed to remove output file %s: %v", outputPath, err)
+	}
 	defer func() {
-		_ = os.Remove(outputPath)
+		err := os.Remove(outputPath)
+		if err != nil && !os.IsNotExist(err) {
+			t.Logf("Warning: Failed to remove output file %s: %v", outputPath, err)
+		}
 	}()
 
 	tests := []struct {

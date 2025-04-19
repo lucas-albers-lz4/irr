@@ -634,7 +634,9 @@ tag: 1.21.0`
 			require.NoError(t, afero.WriteFile(AppFs, "test-override.yaml", []byte(content), 0o644))
 
 			// Skip actual validation but pretend it succeeded
-			fmt.Fprintf(cmd.OutOrStdout(), "Validation successful\n")
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Validation successful\n"); err != nil {
+				t.Fatalf("Failed to write validation message: %v", err)
+			}
 			return nil
 		}
 		defer func() { cmd.RunE = originalRunE }()
@@ -692,7 +694,9 @@ namespace: default
 		originalRunE := cmd.RunE
 		cmd.RunE = func(cmd *cobra.Command, args []string) error {
 			// Pretend validation succeeded
-			fmt.Fprintf(cmd.OutOrStdout(), "Validation successful\n")
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Validation successful\n"); err != nil {
+				t.Fatalf("Failed to write validation message: %v", err)
+			}
 			return nil
 		}
 		defer func() { cmd.RunE = originalRunE }()
