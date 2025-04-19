@@ -381,3 +381,8 @@ Phase 7.4: Kube-State-Metrics Detection Fix
 [ ] Consider making the special case more robust by verifying correct file reading
 [ ] Ensure kube-state-metrics is properly nested at the right hierarchy level
 [ ] Compare with other subchart components to ensure consistent handling
+
+Phase 7.5: Confirm that tests pass when run IRR_DEBUG=1 and when run normally
+[ ] Compare pass rate on tests when run with and without IRR_DEBUG=1
+[ ] Review and fix tests that only fail when run with IRR_DEBUG=1
+ 
