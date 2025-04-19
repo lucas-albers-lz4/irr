@@ -50,43 +50,8 @@ var ErrNoConfigSpecified = errors.New("no configuration file specified")
 // LoadMappings loads registry mappings from a YAML file using the provided filesystem.
 // skipCWDRestriction allows bypassing the check that the path must be within the CWD tree.
 func LoadMappings(fs afero.Fs, path string, skipCWDRestriction bool) (*Mappings, error) {
-	if path == "" {
-		return nil, nil //nolint:nilnil // Intentional: Empty path means no mappings loaded, not an error.
-	}
-
-	// Basic validation to prevent path traversal
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get absolute path for mappings file '%s': %w", path, err)
-	}
-	wd, err := os.Getwd()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get working directory: %w", err)
-	}
-
-	// Only skip path traversal check if explicitly allowed in test or via parameter
-	if !skipCWDRestriction {
-		if !strings.HasPrefix(absPath, wd) {
-			debug.Printf("Path traversal detected. Path: %s, WorkDir: %s", absPath, wd)
-			return nil, WrapMappingPathNotInWD(path)
-		}
-	}
-
-	// Check if path is a directory using the provided filesystem
-	fileInfo, err := fs.Stat(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, WrapMappingFileNotExist(path, err)
-		}
-		return nil, WrapMappingFileRead(path, err)
-	}
-	if fileInfo.IsDir() {
-		return nil, fmt.Errorf("failed to read mappings file '%s': is a directory", path)
-	}
-
-	// Check file extension
-	if !strings.HasSuffix(absPath, ".yaml") && !strings.HasSuffix(absPath, ".yml") {
-		return nil, WrapMappingExtension(path)
+	if err := validateConfigFilePath(fs, path, skipCWDRestriction); err != nil {
+		return nil, err
 	}
 
 	// Read the file content using the provided filesystem
@@ -112,7 +77,32 @@ func LoadMappings(fs afero.Fs, path string, skipCWDRestriction bool) (*Mappings,
 	}
 	if err := yaml.Unmarshal(data, &newFormat); err != nil {
 		debug.Printf("LoadMappings: Failed to parse as structured format: %v", err)
-		return nil, WrapMappingFileParse(path, err)
+
+		// Try parsing legacy format (simple key-value pairs)
+		var legacyFormat map[string]string
+		if err := yaml.Unmarshal(data, &legacyFormat); err != nil {
+			debug.Printf("LoadMappings: Also failed to parse as legacy format: %v", err)
+			return nil, WrapMappingFileParse(path, err)
+		}
+
+		// Check if legacy format contains any entries
+		if len(legacyFormat) == 0 {
+			debug.Printf("LoadMappings: Legacy format was parsed but contains no entries")
+			return nil, WrapMappingFileEmpty(path)
+		}
+
+		// Convert legacy format to mappings structure
+		debug.Printf("LoadMappings: Successfully parsed legacy key-value format, found %d entries", len(legacyFormat))
+		mappings.Entries = make([]Mapping, 0, len(legacyFormat))
+		for source, target := range legacyFormat {
+			mappings.Entries = append(mappings.Entries, Mapping{
+				Source: strings.TrimSpace(source),
+				Target: strings.TrimSpace(target),
+			})
+		}
+
+		debug.Printf("LoadMappings: Successfully loaded %d mappings from legacy format in %s", len(mappings.Entries), path)
+		return &mappings, nil
 	}
 
 	if len(newFormat.Mappings) == 0 {
@@ -271,7 +261,43 @@ func LoadConfig(fs afero.Fs, path string, skipCWDRestriction bool) (map[string]s
 	structuredConfig, err := LoadStructuredConfig(fs, path, skipCWDRestriction)
 	if err != nil {
 		debug.Printf("LoadConfig: Failed to load structured config: %v", err)
-		return nil, err
+
+		// Try loading as legacy key-value format
+		debug.Printf("LoadConfig: Attempting to load as legacy format")
+
+		// Validate the file path
+		if err := validateConfigFilePath(fs, path, skipCWDRestriction); err != nil {
+			return nil, err
+		}
+
+		// Read the file content
+		data, err := readConfigFileContent(fs, path)
+		if err != nil {
+			return nil, err
+		}
+
+		// Try to parse as key-value pairs
+		var legacyFormat map[string]string
+		if err := yaml.Unmarshal(data, &legacyFormat); err != nil {
+			debug.Printf("LoadConfig: Failed to parse as legacy format: %v", err)
+			return nil, fmt.Errorf("failed to parse registry file '%s': %w", path, err)
+		}
+
+		// Check if any mappings were found
+		if len(legacyFormat) == 0 {
+			debug.Printf("LoadConfig: No mappings found in legacy format")
+			return nil, WrapMappingFileEmpty(path)
+		}
+
+		// Validate the legacy format entries
+		for source, target := range legacyFormat {
+			if err := validateMappingValue(source, target, path); err != nil {
+				return nil, err
+			}
+		}
+
+		debug.Printf("LoadConfig: Successfully loaded legacy format with %d mappings", len(legacyFormat))
+		return legacyFormat, nil
 	}
 
 	// Convert structured format to map[string]string for backward compatibility
