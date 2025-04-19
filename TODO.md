@@ -386,3 +386,74 @@ Phase 7.5: Confirm that tests pass when run IRR_DEBUG=1 and when run normally
 [ ] Compare pass rate on tests when run with and without IRR_DEBUG=1
 [ ] Review and fix tests that only fail when run with IRR_DEBUG=1
  
+###Phase 8: Implement Filesystem Abstraction for Testing
+Phase 8.1: Core Architecture Design
+[ ] Implement a filesystem abstraction layer
+[ ] Create a pkg/fsutil package with filesystem interfaces
+[ ] Define a clean FileSystem interface that wraps necessary afero functionality
+[ ] Implement concrete providers for both real OS and in-memory testing
+[ ] Add context-aware filesystem accessor that detects test environment
+Phase 8.2: Centralized Implementation
+[ ] Create a filesystem service with dependency injection
+[ ] Define FileService interface for all file operations
+[ ] Implement OsFileService for production use
+[ ] Implement TestFileService for testing
+[ ] Ensure all methods return appropriate error types with context
+[ ] Add environment detection without CLI flags
+[ ] Use environment variable IRR_TEST_MODE to trigger test filesystem
+[ ] Implement auto-detection based on test package execution context
+[ ] Create helper for test setup/teardown that configures environment
+Phase 8.3: Test Harness Implementation
+[ ] Build a robust TestHarness structure
+[ ] Create constructor that initializes in-memory filesystem
+[ ] Add methods for common file operations with error checking built-in
+[ ] Implement helpers for standard test file creation patterns
+[ ] Add consistent cleanup mechanisms
+[ ] Develop standardized test file patterns
+[ ] Create helpers for chart/values creation
+[ ] Add fixtures for common test scenarios
+[ ] Implement verification utilities for output validation
+Phase 8.4: Command Component Migration
+[ ] Update commands to use filesystem service
+[ ] Migrate validate command to filesystem abstraction
+[ ] Update override command to use filesystem service
+[ ] Convert inspect command to abstract filesystem
+[ ] Refactor config command for filesystem abstraction
+[ ] Ensure all file operations use the abstraction
+[ ] Audit all direct filesystem calls
+[ ] Replace os.* calls with filesystem service methods
+[ ] Update error handling for filesystem operations
+[ ] Add logging for important filesystem operations
+Phase 8.5: Test Migration Strategy
+[ ] Migrate tests progressively by type
+[ ] Start with simple file read/write tests
+[ ] Move to multi-file validation tests
+[ ] Update complex operations (chart loading, override generation)
+[ ] Finally migrate edge case tests (permissions, errors)
+[ ] Define test patterns for filesystem operations
+[ ] Standard pattern for file existence checks
+[ ] Consistent approach for content validation
+[ ] Uniform error checking methodology
+[ ] Common setup/teardown patterns
+Phase 8.6: Risk Mitigation
+[ ] Implement verification safeguards
+[ ] Add contract tests comparing real vs. in-memory filesystem behavior
+[ ] Create critical path tests that run against both implementations
+[ ] Implement filesystem behavior validation tests
+[ ] Add specific tests for filesystem edge cases (permissions, symbolic links)
+[ ] Include monitoring and diagnostics
+[ ] Add debug logging for filesystem operations in test mode
+[ ] Create helpers to dump filesystem state for debugging
+[ ] Implement test failure analyzers for filesystem issues
+[ ] Add verbose mode to trace all filesystem operations
+Phase 8.7: Documentation and Best Practices
+[ ] Create developer documentation
+[ ] Document filesystem abstraction usage patterns
+[ ] Create examples for common test scenarios
+[ ] Add troubleshooting guide for filesystem-related issues
+[ ] Document limitations of in-memory filesystem vs. real OS
+[ ] Establish ongoing maintenance practices
+[ ] Define process for adding new filesystem operations
+[ ] Create checklist for filesystem-related changes
+[ ] Add linting rules to prevent direct OS calls
+[ ] Implement review guidelines for filesystem changes
