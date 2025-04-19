@@ -1,11 +1,13 @@
 package chart
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -802,20 +804,20 @@ func validateHelmTemplateInternal(chartPath string, overrides []byte) error {
 	}
 
 	// Load values from override file
-	values, err := chartutil.ReadValuesFile(overrideFilePath)
+	inputValues, err := chartutil.ReadValuesFile(overrideFilePath)
 	if err != nil {
 		return fmt.Errorf("failed to read values file: %w", err)
 	}
 
 	// Add nil check for values
-	if values == nil {
+	if inputValues == nil {
 		return fmt.Errorf("values loaded from %s are nil", overrideFilePath)
 	}
 
 	// Create a release object
 	rel := &release.Release{
 		Chart:  loadedChart,
-		Config: values,
+		Config: inputValues.AsMap(), // Use AsMap() for rendering
 		Name:   "release-name",
 	}
 
@@ -843,30 +845,122 @@ func validateHelmTemplateInternal(chartPath string, overrides []byte) error {
 	}
 
 	// Combine all rendered templates
-	var output strings.Builder
-	for _, v := range rendered {
-		output.WriteString(v)
-		output.WriteString("\n---\n")
-	}
-
-	debug.Printf("Helm template rendering successful. Output length: %d", output.Len())
-
-	if output.Len() == 0 {
-		return errors.New("helm template output is empty")
-	}
-
-	dec := yaml.NewDecoder(strings.NewReader(output.String()))
-	var node interface{}
-	for {
-		if err := dec.Decode(&node); err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			return fmt.Errorf("failed to decode YAML output: %w", err)
+	var outputBuffer bytes.Buffer
+	for name, content := range rendered {
+		if content != "" && !strings.HasSuffix(name, "NOTES.txt") {
+			outputBuffer.WriteString("---\n# Source: " + name + "\n")
+			outputBuffer.WriteString(content)
+			outputBuffer.WriteString("\n")
 		}
 	}
 
+	output := outputBuffer.String()
+	debug.Printf("Helm template rendering successful. Output length: %d", len(output))
+
+	if len(output) == 0 {
+		return errors.New("helm template output is empty")
+	}
+
+	// Decode the input overrides for comparison
+	inputOverridesMap := make(map[string]interface{})
+	if err := yaml.Unmarshal(overrides, &inputOverridesMap); err != nil {
+		debug.Printf("Failed to unmarshal input overrides for validation check: %v", err)
+		// Don't fail validation just because we can't parse input, but log it.
+	} else if len(inputOverridesMap) > 0 {
+		// Decode the rendered output YAML
+		dec := yaml.NewDecoder(strings.NewReader(output))
+		validatedPaths := make(map[string]bool) // Track which input overrides are found and match
+		validationErrors := []string{}
+
+		for {
+			var renderedDocMap map[string]interface{}
+			if err := dec.Decode(&renderedDocMap); err != nil {
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				// If YAML parsing fails, it's a Helm template error, return that.
+				return fmt.Errorf("failed to decode rendered YAML output: %w", err)
+			}
+
+			// Compare image fields found in inputOverridesMap against renderedDocMap
+			for k, v := range inputOverridesMap {
+				pathKey := k // The dot-notation path string
+				if isLikelyImageMap(v) {
+					imageMap := v.(map[string]interface{})
+					// Check if the rendered output has the corresponding image path and values
+					renderedVal, found := findValueByPath(renderedDocMap, strings.Split(pathKey, "."))
+					if found {
+						if reflect.DeepEqual(imageMap, renderedVal) {
+							validatedPaths[pathKey] = true // Mark as validated if found and matches
+						} else {
+							// Found the path, but the value mismatches - this is a definite error
+							errMsg := fmt.Sprintf("mismatch at path '%s': expected %v, got %v", pathKey, imageMap, renderedVal)
+							validationErrors = append(validationErrors, errMsg)
+						}
+					}
+				}
+			}
+		}
+
+		// After checking all documents, verify all input overrides were validated somewhere
+		for pathKey, inputVal := range inputOverridesMap {
+			if isLikelyImageMap(inputVal) && !validatedPaths[pathKey] {
+				// If an expected image override was not found and validated in any document where its path exists,
+				// check if we recorded a mismatch error for it earlier.
+				foundMismatchError := false
+				for _, errMsg := range validationErrors {
+					if strings.Contains(errMsg, fmt.Sprintf("mismatch at path '%s'", pathKey)) {
+						foundMismatchError = true
+						break
+					}
+				}
+				// If no mismatch was recorded, it means the path wasn't found at all where expected.
+				if !foundMismatchError {
+					validationErrors = append(validationErrors, fmt.Sprintf("override for path '%s' not found or applied in rendered output", pathKey))
+				}
+			}
+		}
+
+		if len(validationErrors) > 0 {
+			debug.Printf("Validation failed: Rendered output does not match overrides. Errors: %s", strings.Join(validationErrors, "; "))
+			return fmt.Errorf("validation failed: rendered output does not match overrides: %s", strings.Join(validationErrors, "; "))
+		}
+		debug.Printf("Override values successfully verified in rendered output.")
+	}
+
 	return nil
+}
+
+// findValueByPath searches for a value in a nested map structure using a dot-separated path.
+// TODO: Enhance this to handle array indices if needed.
+func findValueByPath(data map[string]interface{}, path []string) (interface{}, bool) {
+	var current interface{} = data
+	for i, key := range path {
+		mapData, ok := current.(map[string]interface{})
+		if !ok {
+			return nil, false // Path segment does not lead to a map
+		}
+		value, exists := mapData[key]
+		if !exists {
+			return nil, false // Key not found at this level
+		}
+		if i == len(path)-1 {
+			return value, true // Reached the end of the path
+		}
+		current = value
+	}
+	return nil, false // Should not happen if path is valid
+}
+
+// isLikelyImageMap checks if a value is a map likely representing an image override.
+func isLikelyImageMap(v interface{}) bool {
+	if mapVal, ok := v.(map[string]interface{}); ok {
+		_, repoOk := mapVal["repository"].(string)
+		_, regOk := mapVal["registry"].(string)
+		// Check for repository and registry as strong indicators
+		return repoOk && regOk
+	}
+	return false
 }
 
 // OverridesToYAML converts a map of overrides to YAML format

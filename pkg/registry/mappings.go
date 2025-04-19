@@ -341,11 +341,6 @@ func LoadConfig(fs afero.Fs, path string, skipCWDRestriction bool) (map[string]s
 		return nil, fmt.Errorf("failed to parse config file '%s': %w", path, err)
 	}
 
-	// Check for duplicate keys (YAML parser will not error, but we can check length)
-	if len(legacyFormat) != len(data) {
-		return nil, fmt.Errorf("duplicate registry key in config file '%s'", path)
-	}
-
 	// Check if any mappings were found
 	if len(legacyFormat) == 0 {
 		debug.Printf("LoadConfig: No mappings found in legacy format")

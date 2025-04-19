@@ -389,6 +389,7 @@ func (h *TestHarness) readAndWriteOverrides() (string, error) {
 	} else {
 		h.t.Logf("Read %d bytes from overrides file: %s", len(currentOverridesBytes), h.overridePath)
 	}
+	h.t.Logf("Generated Overrides Content:\n%s", string(currentOverridesBytes))
 	tempValidationOverridesPath := filepath.Join(h.tempDir, "validation-overrides.yaml")
 	if err := os.WriteFile(tempValidationOverridesPath, currentOverridesBytes, defaultFilePerm); err != nil {
 		return "", fmt.Errorf("failed to write temporary validation overrides file %s: %w", tempValidationOverridesPath, err)
@@ -482,6 +483,8 @@ func (h *TestHarness) getOverrides() (overrides map[string]interface{}, err erro
 	if err != nil {
 		return nil, fmt.Errorf("failed to read overrides file %s: %w", h.overridePath, err)
 	}
+
+	h.t.Logf("Raw content of overrides file %s:\n%s", h.overridePath, string(overridesBytes))
 
 	overrides = make(map[string]interface{})
 	if err := yaml.Unmarshal(overridesBytes, &overrides); err != nil {

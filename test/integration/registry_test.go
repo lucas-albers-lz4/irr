@@ -83,7 +83,7 @@ registries:
   strictMode: false
 `,
 			shouldSucceed:  false,
-			errorSubstring: "failed to parse registry file", // Updated to match actual error message
+			errorSubstring: "failed to parse config file", // Updated to match actual error message
 		},
 	}
 
