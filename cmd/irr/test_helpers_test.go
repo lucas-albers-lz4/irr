@@ -4,6 +4,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/lalbers/irr/pkg/fileutil"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/require"
 )
@@ -59,7 +60,7 @@ func setupMemoryFSContext(t *testing.T) (fs afero.Fs, tempDir string, cleanup fu
 
 	fs = afero.NewMemMapFs()
 	tempDir = "/test/chart"
-	err = fs.MkdirAll(tempDir, 0o755)
+	err = fs.MkdirAll(tempDir, fileutil.ReadWriteExecuteUserReadExecuteOthers)
 	require.NoError(t, err, "Failed to create test chart directory")
 
 	// Replace global AppFs
