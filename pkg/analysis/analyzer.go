@@ -544,7 +544,7 @@ func (a *Analyzer) isImageString(val string) bool {
 	if len(parts) == 1 && strings.Contains(val, ":") {
 		// Split by colon to see if the right side looks like a version
 		colonParts := strings.Split(val, ":")
-		if len(colonParts) == 2 {
+		if len(colonParts) == colonSplitParts {
 			// Check if the part after colon looks like a version or tag (simple heuristic)
 			tag := colonParts[1]
 			// Simple patterns like "nginx:latest" should be recognized as images
@@ -672,4 +672,5 @@ const (
 	DefaultRegistry = "docker.io"
 	// minimumSplitParts defines the minimum number of parts expected when checking if a string looks like repo/name:tag
 	minimumSplitParts = 2
+	colonSplitParts   = 2 // Used for splitting image strings by colon
 )

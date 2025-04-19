@@ -262,6 +262,7 @@ image:
 
 			// If the override completed successfully, check the output
 			if _, err := os.Stat(outputFile); err == nil {
+				// #nosec G304 -- outputFile is generated in a secure test temp directory, not user-controlled
 				overrideBytes, err := os.ReadFile(outputFile)
 				if err != nil {
 					t.Logf("Failed to read override file: %v", err)
@@ -280,7 +281,7 @@ image:
 
 				// Extract the image repositories from the override file
 				foundImages := make(map[string]bool)
-				h.WalkImageFields(overrides, func(path []string, imageValue interface{}) {
+				h.WalkImageFields(overrides, func(_ []string, imageValue interface{}) {
 					switch v := imageValue.(type) {
 					case map[string]interface{}:
 						if repo, ok := v["repository"].(string); ok {
@@ -377,6 +378,7 @@ admissionWebhooks:
 			require.FileExists(t, outputFile, "Override file should be created")
 
 			// Read the generated override file
+			// #nosec G304 -- outputFile is generated in a secure test temp directory, not user-controlled
 			overrideBytes, err := os.ReadFile(outputFile)
 			require.NoError(t, err, "Should be able to read generated override file")
 
@@ -390,8 +392,8 @@ admissionWebhooks:
 
 			// Extract the image repositories
 			foundImages := make(map[string]bool)
-			h.WalkImageFields(overrides, func(path []string, imageValue interface{}) {
-				t.Logf("Found image at path: %v, value: %v", path, imageValue)
+			h.WalkImageFields(overrides, func(_ []string, imageValue interface{}) {
+				t.Logf("Found image value: %v", imageValue)
 
 				switch v := imageValue.(type) {
 				case map[string]interface{}:

@@ -15,203 +15,7 @@ import (
 // TestAdvancedContainerPatterns tests more complex container patterns
 // with a focus on init containers, sidecars, and their combinations
 func TestAdvancedContainerPatterns(t *testing.T) {
-	tests := []struct {
-		name           string
-		values         string
-		expectedImages []string
-	}{
-		{
-			name: "multiple_init_containers",
-			values: `
-initContainers:
-  - name: init-db
-    image: docker.io/bitnami/postgresql:14.5.0
-  - name: init-config
-    image: 
-      registry: docker.io
-      repository: bitnami/kubectl
-      tag: 1.25.0
-  - name: init-permissions
-    image: quay.io/bitnami/os-shell:11-debian-11
-`,
-			expectedImages: []string{
-				"docker.io/bitnami/postgresql",
-				"docker.io/bitnami/kubectl",
-				"quay.io/bitnami/os-shell",
-			},
-		},
-		{
-			name: "deeply_nested_init_containers",
-			values: `
-deployment:
-  primary:
-    podTemplate:
-      spec:
-        initContainers:
-          - name: init-volume
-            image: docker.io/bitnami/minideb:bullseye
-          - name: init-user
-            image:
-              registry: docker.io
-              repository: bitnami/shell
-              tag: 11-debian-11
-`,
-			expectedImages: []string{
-				"docker.io/bitnami/minideb",
-				"docker.io/bitnami/shell",
-			},
-		},
-		{
-			name: "mixed_container_types",
-			values: `
-deployment:
-  initContainers:
-    - name: init-data
-      image: docker.io/bitnami/minideb:bullseye
-  containers:
-    - name: main-app
-      image: docker.io/bitnami/nginx:1.23.0
-  sidecars:
-    - name: metrics
-      image:
-        registry: quay.io
-        repository: prometheus/prometheus
-        tag: v2.40.0
-`,
-			expectedImages: []string{
-				"docker.io/bitnami/minideb",
-				"docker.io/bitnami/nginx",
-				"quay.io/prometheus/prometheus",
-			},
-		},
-		{
-			name: "admission_webhooks_with_init_containers",
-			values: `
-admissionWebhooks:
-  image:
-    registry: docker.io
-    repository: bitnami/kube-webhook-certgen
-    tag: 1.19.0
-  patch:
-    image:
-      registry: docker.io
-      repository: bitnami/kubectl
-      tag: 1.25.0
-    podAnnotations:
-      sidecar.istio.io/inject: "false"
-    initContainers:
-      - name: init-cert
-        image: docker.io/bitnami/openssl:1.1.1
-`,
-			expectedImages: []string{
-				"docker.io/bitnami/kube-webhook-certgen",
-				"docker.io/bitnami/kubectl",
-				"docker.io/bitnami/openssl",
-			},
-		},
-		{
-			name: "explicit_list_with_map_format",
-			values: `
-controller:
-  image:
-    registry: docker.io
-    repository: bitnami/nginx-ingress-controller
-    tag: 1.5.1
-  extraInitContainers:
-    - name: init-settings
-      image:
-        registry: docker.io
-        repository: bitnami/nginx
-        tag: 1.23.0
-    - name: init-plugins
-      image:
-        registry: docker.io
-        repository: bitnami/minideb
-        tag: bullseye
-`,
-			expectedImages: []string{
-				"docker.io/bitnami/nginx-ingress-controller",
-				"docker.io/bitnami/nginx",
-				"docker.io/bitnami/minideb",
-			},
-		},
-		{
-			name: "extra_containers_and_volumes",
-			values: `
-controller:
-  image: docker.io/bitnami/nginx:1.23.0
-  extraVolumes:
-    - name: plugins
-      emptyDir: {}
-  extraVolumeMounts:
-    - name: plugins
-      mountPath: /plugins
-  extraContainers:
-    - name: plugin-loader
-      image: docker.io/bitnami/minideb:bullseye
-      volumeMounts:
-        - name: plugins
-          mountPath: /target
-    - name: metrics
-      image: quay.io/prometheus/prometheus:v2.40.0
-`,
-			expectedImages: []string{
-				"docker.io/bitnami/nginx",
-				"docker.io/bitnami/minideb",
-				"quay.io/prometheus/prometheus",
-			},
-		},
-		{
-			name: "keycloak_sidecars_pattern",
-			values: `
-keycloak:
-  image:
-    repository: bitnami/keycloak
-    tag: 20.0.3
-    registry: docker.io
-  extraInitContainers:
-    - name: theme-provider
-      image: docker.io/bitnami/minideb:bullseye
-  postgresql:
-    image:
-      registry: docker.io
-      repository: bitnami/postgresql
-      tag: 15.2.0
-    metrics:
-      image:
-        registry: docker.io
-        repository: bitnami/postgres-exporter
-        tag: 0.12.0
-`,
-			expectedImages: []string{
-				"docker.io/bitnami/keycloak",
-				"docker.io/bitnami/minideb",
-				"docker.io/bitnami/postgresql",
-				"docker.io/bitnami/postgres-exporter",
-			},
-		},
-		{
-			name: "template_string_image_references",
-			values: `
-controller:
-  image: "{{ .Values.imageRegistry | default \"docker.io\" }}/bitnami/nginx:{{ .Values.imageTag | default \"1.23.0\" }}"
-  initContainers:
-  - name: init-config
-    image: "{{ .Values.imageRegistry | default \"docker.io\" }}/bitnami/minideb:{{ .Values.minidebTag | default \"bullseye\" }}"
-`,
-			expectedImages: []string{
-				"{{ .Values.imageRegistry | default \"docker.io\" }}/bitnami/nginx",
-				"{{ .Values.imageRegistry | default \"docker.io\" }}/bitnami/minideb",
-				// Also include just the image names as fallbacks
-				"bitnami/nginx",
-				"bitnami/minideb",
-				// And bare image names
-				"nginx",
-				"minideb",
-			},
-		},
-	}
-
+	tests := getAdvancedContainerPatternTests()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			overrides, h := setupAndRunOverride(t, tt.values, "container-"+tt.name+"-overrides.yaml")
@@ -460,7 +264,7 @@ sidecars:
 }
 
 // Helper: setupAndRunOverride runs the override command and returns parsed YAML overrides and the test harness
-func setupAndRunOverride(t *testing.T, values string, outputFileName string) (map[string]interface{}, *TestHarness) {
+func setupAndRunOverride(t *testing.T, values, outputFileName string) (map[string]interface{}, *TestHarness) {
 	h := NewTestHarness(t)
 	chartDir := createTestChartWithValues(t, h, values)
 	h.SetupChart(chartDir)
@@ -476,6 +280,7 @@ func setupAndRunOverride(t *testing.T, values string, outputFileName string) (ma
 	)
 	require.NoError(t, err, "override command should succeed. Output: %s\nStderr: %s", output, stderr)
 	require.FileExists(t, outputFile, "Override file should be created")
+	// #nosec G304 -- outputFile is generated in a secure test temp directory, not user-controlled
 	overrideBytes, err := os.ReadFile(outputFile)
 	require.NoError(t, err, "Should be able to read generated override file")
 	var overrides map[string]interface{}
@@ -536,8 +341,7 @@ func assertExpectedImages(t *testing.T, h *TestHarness, testName string, expecte
 			sanitizedPrefix := strings.ReplaceAll(registryPart, ".", "")
 			sanitizedPrefix = strings.ReplaceAll(sanitizedPrefix, "-", "")
 			targetVariation := h.targetReg + "/" + sanitizedPrefix + "/" + repoPart
-			variations = append(variations, targetVariation)
-			variations = append(variations, repoPart)
+			variations = append(variations, targetVariation, repoPart)
 		}
 		if testName == "template_string_image_references" {
 			isTemplateValue := strings.Contains(expectedRepo, "{{") && strings.Contains(expectedRepo, "}}")
@@ -575,5 +379,208 @@ func assertExpectedImages(t *testing.T, h *TestHarness, testName string, expecte
 		if !found {
 			t.Logf("Expected image %s not found. Found images: %v", expectedImage, foundImages)
 		}
+	}
+}
+
+func getAdvancedContainerPatternTests() []struct {
+	name           string
+	values         string
+	expectedImages []string
+} {
+	return []struct {
+		name           string
+		values         string
+		expectedImages []string
+	}{
+		{
+			name: "multiple_init_containers",
+			values: `
+initContainers:
+  - name: init-db
+    image: docker.io/bitnami/postgresql:14.5.0
+  - name: init-config
+    image: 
+      registry: docker.io
+      repository: bitnami/kubectl
+      tag: 1.25.0
+  - name: init-permissions
+    image: quay.io/bitnami/os-shell:11-debian-11
+`,
+			expectedImages: []string{
+				"docker.io/bitnami/postgresql",
+				"docker.io/bitnami/kubectl",
+				"quay.io/bitnami/os-shell",
+			},
+		},
+		{
+			name: "deeply_nested_init_containers",
+			values: `
+deployment:
+  primary:
+    podTemplate:
+      spec:
+        initContainers:
+          - name: init-volume
+            image: docker.io/bitnami/minideb:bullseye
+          - name: init-user
+            image:
+              registry: docker.io
+              repository: bitnami/shell
+              tag: 11-debian-11
+`,
+			expectedImages: []string{
+				"docker.io/bitnami/minideb",
+				"docker.io/bitnami/shell",
+			},
+		},
+		{
+			name: "mixed_container_types",
+			values: `
+deployment:
+  initContainers:
+    - name: init-data
+      image: docker.io/bitnami/minideb:bullseye
+  containers:
+    - name: main-app
+      image: docker.io/bitnami/nginx:1.23.0
+  sidecars:
+    - name: metrics
+      image:
+        registry: quay.io
+        repository: prometheus/prometheus
+        tag: v2.40.0
+`,
+			expectedImages: []string{
+				"docker.io/bitnami/minideb",
+				"docker.io/bitnami/nginx",
+				"quay.io/prometheus/prometheus",
+			},
+		},
+		{
+			name: "admission_webhooks_with_init_containers",
+			values: `
+admissionWebhooks:
+  image:
+    registry: docker.io
+    repository: bitnami/kube-webhook-certgen
+    tag: 1.19.0
+  patch:
+    image:
+      registry: docker.io
+      repository: bitnami/kubectl
+      tag: 1.25.0
+    podAnnotations:
+      sidecar.istio.io/inject: "false"
+    initContainers:
+      - name: init-cert
+        image: docker.io/bitnami/openssl:1.1.1
+`,
+			expectedImages: []string{
+				"docker.io/bitnami/kube-webhook-certgen",
+				"docker.io/bitnami/kubectl",
+				"docker.io/bitnami/openssl",
+			},
+		},
+		{
+			name: "explicit_list_with_map_format",
+			values: `
+controller:
+  image:
+    registry: docker.io
+    repository: bitnami/nginx-ingress-controller
+    tag: 1.5.1
+  extraInitContainers:
+    - name: init-settings
+      image:
+        registry: docker.io
+        repository: bitnami/nginx
+        tag: 1.23.0
+    - name: init-plugins
+      image:
+        registry: docker.io
+        repository: bitnami/minideb
+        tag: bullseye
+`,
+			expectedImages: []string{
+				"docker.io/bitnami/nginx-ingress-controller",
+				"docker.io/bitnami/nginx",
+				"docker.io/bitnami/minideb",
+			},
+		},
+		{
+			name: "extra_containers_and_volumes",
+			values: `
+controller:
+  image: docker.io/bitnami/nginx:1.23.0
+  extraVolumes:
+    - name: plugins
+      emptyDir: {}
+  extraVolumeMounts:
+    - name: plugins
+      mountPath: /plugins
+  extraContainers:
+    - name: plugin-loader
+      image: docker.io/bitnami/minideb:bullseye
+      volumeMounts:
+        - name: plugins
+          mountPath: /target
+    - name: metrics
+      image: quay.io/prometheus/prometheus:v2.40.0
+`,
+			expectedImages: []string{
+				"docker.io/bitnami/nginx",
+				"docker.io/bitnami/minideb",
+				"quay.io/prometheus/prometheus",
+			},
+		},
+		{
+			name: "keycloak_sidecars_pattern",
+			values: `
+keycloak:
+  image:
+    repository: bitnami/keycloak
+    tag: 20.0.3
+    registry: docker.io
+  extraInitContainers:
+    - name: theme-provider
+      image: docker.io/bitnami/minideb:bullseye
+  postgresql:
+    image:
+      registry: docker.io
+      repository: bitnami/postgresql
+      tag: 15.2.0
+    metrics:
+      image:
+        registry: docker.io
+        repository: bitnami/postgres-exporter
+        tag: 0.12.0
+`,
+			expectedImages: []string{
+				"docker.io/bitnami/keycloak",
+				"docker.io/bitnami/minideb",
+				"docker.io/bitnami/postgresql",
+				"docker.io/bitnami/postgres-exporter",
+			},
+		},
+		{
+			name: "template_string_image_references",
+			values: `
+controller:
+  image: "{{ .Values.imageRegistry | default \"docker.io\" }}/bitnami/nginx:{{ .Values.imageTag | default \"1.23.0\" }}"
+  initContainers:
+  - name: init-config
+    image: "{{ .Values.imageRegistry | default \"docker.io\" }}/bitnami/minideb:{{ .Values.minidebTag | default \"bullseye\" }}"
+`,
+			expectedImages: []string{
+				"{{ .Values.imageRegistry | default \"docker.io\" }}/bitnami/nginx",
+				"{{ .Values.imageRegistry | default \"docker.io\" }}/bitnami/minideb",
+				// Also include just the image names as fallbacks
+				"bitnami/nginx",
+				"bitnami/minideb",
+				// And bare image names
+				"nginx",
+				"minideb",
+			},
+		},
 	}
 }
