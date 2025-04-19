@@ -286,7 +286,7 @@ func TestComplexChartFeatures(t *testing.T) {
 				"--output-file", harness.overridePath,
 			}
 
-			if tc.name == "ingress-nginx" {
+			if strings.Contains(tc.name, "ingress-nginx") {
 				explicitOutputFile := filepath.Join(harness.tempDir, "explicit-ingress-nginx-overrides.yaml")
 				explicitArgs := make([]string, len(args), len(args)+2)
 				copy(explicitArgs, args)
@@ -316,6 +316,12 @@ func TestComplexChartFeatures(t *testing.T) {
 					case strings.HasPrefix(expectedImage, "registry.k8s.io/"):
 						imgPart := strings.TrimPrefix(expectedImage, "registry.k8s.io/")
 						expectedRepo = "registryk8sio/" + imgPart
+					case strings.HasPrefix(expectedImage, "dockerio/"):
+						// Already in the expected format
+						expectedRepo = expectedImage
+					case strings.HasPrefix(expectedImage, "registryk8sio/"):
+						// Already in the expected format
+						expectedRepo = expectedImage
 					default:
 						t.Fatalf("Unhandled source registry prefix in expected image: %s", expectedImage)
 					}

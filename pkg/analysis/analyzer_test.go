@@ -1111,22 +1111,22 @@ func TestIsImageString(t *testing.T) {
 		{
 			name:     "Valid Docker Hub image",
 			input:    "nginx:latest",
-			expected: false, // Current implementation requires "image" in the string and at least one slash
+			expected: true, // Changed: We want to detect simple Docker Hub images
 		},
 		{
 			name:     "Valid qualified image",
 			input:    "docker.io/library/nginx:1.21.0",
-			expected: false, // Does not contain "image" in the string so returns false
+			expected: true, // Changed: We want to detect fully qualified images
 		},
 		{
 			name:     "Valid with digest",
 			input:    "docker.io/library/nginx@sha256:abcdef123456",
-			expected: false, // Does not contain "image" in the string so returns false
+			expected: true, // Changed: We want to detect digest references
 		},
 		{
 			name:     "String with image term and format",
 			input:    "myimage:1.0",
-			expected: false, // Has "image" but no slash (needs 2+ parts after split)
+			expected: true, // Changed: Contains "image" and has version format
 		},
 		{
 			name:     "String with image term and proper structure",
@@ -1146,7 +1146,7 @@ func TestIsImageString(t *testing.T) {
 		{
 			name:     "Unrelated string with colon",
 			input:    "key:value",
-			expected: false, // No "image" substring
+			expected: false, // No "image" substring and not a known image pattern
 		},
 		{
 			name:     "Empty string",
