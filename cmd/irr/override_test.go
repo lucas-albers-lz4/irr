@@ -154,7 +154,7 @@ func TestOverrideCommand_LoadChart(t *testing.T) {
 
 			// Override RunE to just load the chart and return
 			originalRunE := cmd.RunE
-			cmd.RunE = func(cmd *cobra.Command, _ /*args*/ []string) error {
+			cmd.RunE = func(cmd *cobra.Command, args []string) error {
 				// Just get the config and load the chart
 				config, err := setupGeneratorConfig(cmd, "")
 				if err != nil {
@@ -165,7 +165,7 @@ func TestOverrideCommand_LoadChart(t *testing.T) {
 				log.Infof("Using chart path: %s", config.ChartPath)
 
 				// Get chart source
-				chartSource, err := getChartSource(cmd, []string{})
+				chartSource, err := getChartSource(cmd, args)
 				if err != nil {
 					return err
 				}
@@ -629,7 +629,7 @@ spec:
 
 		// Modify the command to use a mock generator for validation
 		originalRunE := cmd.RunE
-		cmd.RunE = func(cmd *cobra.Command, _ []string) error {
+		cmd.RunE = func(cmd *cobra.Command, args []string) error {
 			// Create a mock override file for testing
 			content := `image:
 registry: registry.example.com

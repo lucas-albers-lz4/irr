@@ -417,59 +417,30 @@ func outputOverrides(_ *cobra.Command, yamlBytes []byte, outputFile string, dryR
 
 // setupGeneratorConfig retrieves and configures all options for the generator
 func setupGeneratorConfig(cmd *cobra.Command, _ string) (config GeneratorConfig, err error) {
-	// Get the required flags first
 	chartPath, targetRegistry, sourceRegistries, err := getRequiredFlags(cmd)
 	if err != nil {
 		return config, err
 	}
-
-	// Set the chart path and target registry
 	config.ChartPath = chartPath
 	config.TargetRegistry = targetRegistry
 	config.SourceRegistries = sourceRegistries
 
-	// Check for exclude registries
 	excludeRegistries, err := getStringSliceFlag(cmd, "exclude-registries")
 	if err != nil {
 		return config, err
 	}
 	config.ExcludeRegistries = excludeRegistries
 
-	// Get the path strategy
-	pathStrategy, err := cmd.Flags().GetString("path-strategy")
-	if err != nil {
-		return config, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get path-strategy flag: %w", err),
-		}
+	if err := setupPathStrategy(cmd, &config); err != nil {
+		return config, err
 	}
 
-	// Create the strategy
-	switch pathStrategy {
-	case "prefix-source-registry":
-		var err error
-		config.Strategy, err = strategy.GetStrategy(pathStrategy, nil)
-		if err != nil {
-			return config, &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitCodeInvalidStrategy,
-				Err:  fmt.Errorf("failed to create path strategy: %w", err),
-			}
-		}
-	default:
-		return config, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitCodeInvalidStrategy,
-			Err:  fmt.Errorf("unsupported path strategy: %s", pathStrategy),
-		}
-	}
-
-	// Enable strict mode
 	strictMode, err := getBoolFlag(cmd, "strict")
 	if err != nil {
 		return config, err
 	}
 	config.StrictMode = strictMode
 
-	// Get value path include/exclude patterns
 	includePatterns, excludePatterns, err := getAnalysisControlFlags(cmd)
 	if err != nil {
 		return config, err
@@ -477,143 +448,20 @@ func setupGeneratorConfig(cmd *cobra.Command, _ string) (config GeneratorConfig,
 	config.IncludePatterns = includePatterns
 	config.ExcludePatterns = excludePatterns
 
-	// Get whether to enable rules
 	disableRules, err := getBoolFlag(cmd, "no-rules")
 	if err != nil {
 		return config, err
 	}
 	config.RulesEnabled = !disableRules
 
-	// Handle registry mappings
-	// First check for config file
-	configFile, err := cmd.Flags().GetString("config")
-	if err != nil {
-		return config, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get config flag: %w", err),
-		}
+	if err := loadRegistryMappings(cmd, &config); err != nil {
+		return config, err
 	}
 
-	// If a config file is specified, load it
-	if configFile != "" {
-		debug.Printf("Loading registry mappings from config file: %s", configFile)
-		// Skip CWD restriction in test mode to support absolute paths
-		mappings, err := registry.LoadMappings(AppFs, configFile, isTestMode)
-		if err != nil {
-			if os.IsNotExist(err) {
-				return config, &exitcodes.ExitCodeError{
-					Code: exitcodes.ExitInputConfigurationError,
-					Err:  fmt.Errorf("config file not found: %s", configFile),
-				}
-			}
-			return config, &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitInputConfigurationError,
-				Err:  fmt.Errorf("failed to load config file: %w", err),
-			}
-		}
-		config.Mappings = mappings
-	}
+	logConfigMode(&config)
 
-	// Now check for registry-file (legacy)
-	registryFile, err := cmd.Flags().GetString("registry-file")
-	if err != nil {
-		return config, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get registry-file flag: %w", err),
-		}
-	}
-
-	// If registry-file is specified, load it
-	if registryFile != "" {
-		debug.Printf("Loading registry mappings from registry file: %s", registryFile)
-		// Skip CWD restriction in test mode to support absolute paths
-		configMap, err := registry.LoadConfig(AppFs, registryFile, isTestMode)
-		if err != nil {
-			if os.IsNotExist(err) {
-				return config, &exitcodes.ExitCodeError{
-					Code: exitcodes.ExitInputConfigurationError,
-					Err:  fmt.Errorf("registry file not found: %s", registryFile),
-				}
-			}
-			return config, &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitInputConfigurationError,
-				Err:  fmt.Errorf("failed to load registry file: %w", err),
-			}
-		}
-		config.ConfigMappings = configMap
-	}
-
-	// Log configuration
-	if config.StrictMode {
-		log.Infof("Running in strict mode - will fail on unrecognized registries or unsupported structures")
-	} else {
-		log.Infof("Running in normal mode - will skip unrecognized registries with warnings")
-	}
-
-	// Verify source registries are properly configured
-	if len(config.SourceRegistries) > 0 {
-		log.Infof("Using source registries: %s", strings.Join(config.SourceRegistries, ", "))
-
-		// If registry mappings are configured, verify source registries are mappable
-		if (config.Mappings != nil && len(config.Mappings.Entries) > 0) || len(config.ConfigMappings) > 0 {
-			// Track which source registries have mappings
-			unmappableRegistries := make([]string, 0)
-
-			for _, sourceReg := range config.SourceRegistries {
-				// Check if this registry can be mapped
-				found := false
-
-				// Check in Mappings
-				if config.Mappings != nil {
-					for _, mapping := range config.Mappings.Entries {
-						if mapping.Source == sourceReg {
-							found = true
-							break
-						}
-					}
-				}
-
-				// Check in ConfigMappings
-				if !found && config.ConfigMappings != nil {
-					if _, exists := config.ConfigMappings[sourceReg]; exists {
-						found = true
-					}
-				}
-
-				// If no mapping found and we're using the target registry directly, that's OK too
-				if !found {
-					if strings.HasPrefix(config.TargetRegistry, sourceReg) {
-						found = true
-					}
-				}
-
-				if !found {
-					unmappableRegistries = append(unmappableRegistries, sourceReg)
-				}
-			}
-
-			// Handle unmappable registries according to strict mode
-			if len(unmappableRegistries) > 0 {
-				if config.StrictMode {
-					// In strict mode, fail with error
-					return config, &exitcodes.ExitCodeError{
-						Code: exitcodes.ExitRegistryDetectionError,
-						Err: fmt.Errorf("strict mode enabled: no mapping found for registries: %s",
-							strings.Join(unmappableRegistries, ", ")),
-					}
-				}
-
-				// In normal mode, just warn
-				log.Warnf("No mapping found for registries: %s", strings.Join(unmappableRegistries, ", "))
-				log.Infof("These registries will be redirected using the target registry: %s", config.TargetRegistry)
-				log.Infof("To add mappings, use: irr config --source <registry> --target <path>")
-
-				for _, reg := range unmappableRegistries {
-					log.Infof("  irr config --source %s --target %s/%s",
-						reg, config.TargetRegistry, strings.ReplaceAll(reg, ".", "-"))
-				}
-			}
-		}
+	if err := validateUnmappableRegistries(&config); err != nil {
+		return config, err
 	}
 
 	if len(config.ExcludeRegistries) > 0 {
@@ -621,6 +469,143 @@ func setupGeneratorConfig(cmd *cobra.Command, _ string) (config GeneratorConfig,
 	}
 
 	return config, nil
+}
+
+func setupPathStrategy(cmd *cobra.Command, config *GeneratorConfig) error {
+	pathStrategy, err := cmd.Flags().GetString("path-strategy")
+	if err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get path-strategy flag: %w", err),
+		}
+	}
+	switch pathStrategy {
+	case "prefix-source-registry":
+		config.Strategy, err = strategy.GetStrategy(pathStrategy, nil)
+		if err != nil {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitCodeInvalidStrategy,
+				Err:  fmt.Errorf("failed to create path strategy: %w", err),
+			}
+		}
+	default:
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitCodeInvalidStrategy,
+			Err:  fmt.Errorf("unsupported path strategy: %s", pathStrategy),
+		}
+	}
+	return nil
+}
+
+func loadRegistryMappings(cmd *cobra.Command, config *GeneratorConfig) error {
+	configFile, err := cmd.Flags().GetString("config")
+	if err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get config flag: %w", err),
+		}
+	}
+	if configFile != "" {
+		debug.Printf("Loading registry mappings from config file: %s", configFile)
+		mappings, err := registry.LoadMappings(AppFs, configFile, isTestMode)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return &exitcodes.ExitCodeError{
+					Code: exitcodes.ExitInputConfigurationError,
+					Err:  fmt.Errorf("config file not found: %s", configFile),
+				}
+			}
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitInputConfigurationError,
+				Err:  fmt.Errorf("failed to load config file: %w", err),
+			}
+		}
+		config.Mappings = mappings
+	}
+	registryFile, err := cmd.Flags().GetString("registry-file")
+	if err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get registry-file flag: %w", err),
+		}
+	}
+	if registryFile != "" {
+		debug.Printf("Loading registry mappings from registry file: %s", registryFile)
+		configMap, err := registry.LoadConfig(AppFs, registryFile, isTestMode)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return &exitcodes.ExitCodeError{
+					Code: exitcodes.ExitInputConfigurationError,
+					Err:  fmt.Errorf("registry file not found: %s", registryFile),
+				}
+			}
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitInputConfigurationError,
+				Err:  fmt.Errorf("failed to load registry file: %w", err),
+			}
+		}
+		config.ConfigMappings = configMap
+	}
+	return nil
+}
+
+func logConfigMode(config *GeneratorConfig) {
+	if config.StrictMode {
+		log.Infof("Running in strict mode - will fail on unrecognized registries or unsupported structures")
+	} else {
+		log.Infof("Running in normal mode - will skip unrecognized registries with warnings")
+	}
+	if len(config.SourceRegistries) > 0 {
+		log.Infof("Using source registries: %s", strings.Join(config.SourceRegistries, ", "))
+	}
+}
+
+func validateUnmappableRegistries(config *GeneratorConfig) error {
+	if len(config.SourceRegistries) == 0 {
+		return nil
+	}
+	if (config.Mappings != nil && len(config.Mappings.Entries) > 0) || len(config.ConfigMappings) > 0 {
+		unmappableRegistries := make([]string, 0)
+		for _, sourceReg := range config.SourceRegistries {
+			found := false
+			if config.Mappings != nil {
+				for _, mapping := range config.Mappings.Entries {
+					if mapping.Source == sourceReg {
+						found = true
+						break
+					}
+				}
+			}
+			if !found && config.ConfigMappings != nil {
+				if _, exists := config.ConfigMappings[sourceReg]; exists {
+					found = true
+				}
+			}
+			if !found {
+				if strings.HasPrefix(config.TargetRegistry, sourceReg) {
+					found = true
+				}
+			}
+			if !found {
+				unmappableRegistries = append(unmappableRegistries, sourceReg)
+			}
+		}
+		if len(unmappableRegistries) > 0 {
+			if config.StrictMode {
+				return &exitcodes.ExitCodeError{
+					Code: exitcodes.ExitRegistryDetectionError,
+					Err:  fmt.Errorf("strict mode enabled: no mapping found for registries: %s", strings.Join(unmappableRegistries, ", ")),
+				}
+			}
+			log.Warnf("No mapping found for registries: %s", strings.Join(unmappableRegistries, ", "))
+			log.Infof("These registries will be redirected using the target registry: %s", config.TargetRegistry)
+			log.Infof("To add mappings, use: irr config --source <registry> --target <path>")
+			for _, reg := range unmappableRegistries {
+				log.Infof("  irr config --source %s --target %s/%s", reg, config.TargetRegistry, strings.ReplaceAll(reg, ".", "-"))
+			}
+		}
+	}
+	return nil
 }
 
 // getAnalysisControlFlags retrieves include/exclude patterns and known image paths

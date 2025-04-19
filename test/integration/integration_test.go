@@ -48,6 +48,7 @@ func TestMinimalChart(t *testing.T) {
 	require.FileExists(t, outputFile, "Override file should be created")
 
 	// Read the generated override file
+	// #nosec G304
 	overrideBytes, err := os.ReadFile(outputFile)
 	require.NoError(t, err, "Should be able to read generated override file")
 
@@ -94,6 +95,7 @@ func TestParentChart(t *testing.T) {
 	require.FileExists(t, outputFile, "Override file should be created")
 
 	// Read the generated override file
+	// #nosec G304
 	overrideBytes, err := os.ReadFile(outputFile)
 	require.NoError(t, err, "Should be able to read generated override file")
 
@@ -141,6 +143,7 @@ func TestKubePrometheusStack(t *testing.T) {
 	require.FileExists(t, outputFile, "Override file should be created")
 
 	// Read the generated override file
+	// #nosec G304
 	overrideBytes, err := os.ReadFile(outputFile)
 	require.NoError(t, err, "Should be able to read generated override file")
 
@@ -292,7 +295,7 @@ func TestComplexChartFeatures(t *testing.T) {
 				explicitOutput, err := harness.ExecuteIRR(explicitArgs...)
 				require.NoError(t, err, "Explicit ExecuteIRR failed for ingress-nginx. Output:\n%s", explicitOutput)
 
-				// #nosec G304 -- Reading a test-generated file from the test's temp directory is safe.
+				// #nosec G304
 				overridesBytes, err := os.ReadFile(explicitOutputFile)
 				require.NoError(t, err, "Failed to read explicit output file")
 				require.NotEmpty(t, overridesBytes, "Explicit output file should not be empty")
@@ -450,6 +453,7 @@ func TestRegistryMappingFile(t *testing.T) {
 	require.FileExists(t, h.overridePath, "Override file should be created")
 
 	// Read the generated override file
+	// #nosec G304
 	overrideBytes, err := os.ReadFile(h.overridePath)
 	require.NoError(t, err, "Should be able to read generated override file")
 
@@ -493,6 +497,7 @@ quay.io: registry.example.com/quay
 	require.FileExists(t, h.overridePath, "Override file should be created")
 
 	// Read the override file content
+	// #nosec G304
 	overrideBytes, err := os.ReadFile(h.overridePath)
 	require.NoError(t, err, "Should be able to read generated override file")
 
@@ -536,6 +541,7 @@ func TestClickhouseOperator(t *testing.T) {
 	require.FileExists(t, outputFile, "Override file should be created")
 
 	// Read the generated override file
+	// #nosec G304
 	overrideBytes, err := os.ReadFile(outputFile)
 	require.NoError(t, err, "Should be able to read generated override file")
 
@@ -585,6 +591,7 @@ func TestMinimalGitImageOverride(t *testing.T) {
 	})
 
 	if !found {
+		// #nosec G304
 		overrideBytes, readErr := os.ReadFile(harness.overridePath)
 		t.Errorf("Expected image repository '%s' not found in overrides", expectedRepo)
 		if readErr != nil {
@@ -650,6 +657,7 @@ func TestReadOverridesFromStdout(t *testing.T) {
 	require.FileExists(t, tempOutputFile, "Override file should be created")
 
 	// Read the generated override file
+	// #nosec G304
 	overrideBytes, err := os.ReadFile(tempOutputFile)
 	require.NoError(t, err, "Failed to read generated override file: %s", tempOutputFile)
 

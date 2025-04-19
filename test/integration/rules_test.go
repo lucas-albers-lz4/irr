@@ -29,33 +29,10 @@ func TestRulesSystemIntegration(t *testing.T) {
 
 	// --- Test Case 1: Bitnami Chart, Rules Enabled (Default) ---
 	t.Run("Bitnami_RulesEnabled", func(t *testing.T) {
-		h := NewTestHarness(t)
-		defer h.Cleanup()
-
-		h.SetupChart(bitnamiChartPath)
-		h.SetRegistries("harbor.test.local", []string{"docker.io"})
-
-		// Create output file path
-		outputFile := filepath.Join(h.tempDir, "bitnami-rules-enabled-overrides.yaml")
-
-		// Run the override command with rules enabled (default)
-		output, stderr, err := h.ExecuteIRRWithStderr(
-			"override",
-			"--chart-path", h.chartPath,
-			"--target-registry", h.targetReg,
-			"--source-registries", strings.Join(h.sourceRegs, ","),
-			"--output-file", outputFile,
-		)
-		require.NoError(t, err, "override command with rules enabled should succeed")
-		t.Logf("Override output: %s", output)
-		t.Logf("Stderr: %s", stderr)
-
-		// Read the generated override file
-		content, err := os.ReadFile(outputFile)
-		require.NoError(t, err, "Should be able to read override file")
-
-		// Verify the bitnami security rule was applied
-		assert.Contains(t, string(content), "allowInsecureImages: true", "Override should include security bypass for Bitnami chart")
+		tempHarness := NewTestHarness(t)
+		outputFile := filepath.Join(tempHarness.tempDir, "bitnami-rules-enabled-overrides.yaml")
+		tempHarness.Cleanup() // Clean up temp harness
+		runRulesTest(t, bitnamiChartPath, outputFile, true)
 	})
 
 	// --- Test Case 2: Bitnami Chart, Rules Disabled ---
@@ -83,6 +60,7 @@ func TestRulesSystemIntegration(t *testing.T) {
 		t.Logf("Stderr: %s", stderr)
 
 		// Read the generated override file
+		// #nosec G304
 		content, err := os.ReadFile(outputFile)
 		require.NoError(t, err, "Should be able to read override file")
 
@@ -93,34 +71,10 @@ func TestRulesSystemIntegration(t *testing.T) {
 
 	// --- Test Case 3: Non-Bitnami Chart, Rules Enabled ---
 	t.Run("NonBitnami_RulesEnabled", func(t *testing.T) {
-		h := NewTestHarness(t)
-		defer h.Cleanup()
-
-		h.SetupChart(nonBitnamiChartPath)
-		h.SetRegistries("harbor.test.local", []string{"docker.io"})
-
-		// Create output file path
-		outputFile := filepath.Join(h.tempDir, "non-bitnami-rules-overrides.yaml")
-
-		// Run the override command with rules enabled (default)
-		output, stderr, err := h.ExecuteIRRWithStderr(
-			"override",
-			"--chart-path", h.chartPath,
-			"--target-registry", h.targetReg,
-			"--source-registries", strings.Join(h.sourceRegs, ","),
-			"--output-file", outputFile,
-		)
-		require.NoError(t, err, "override command should succeed for non-Bitnami chart")
-		t.Logf("Override output: %s", output)
-		t.Logf("Stderr: %s", stderr)
-
-		// Read the generated override file
-		content, err := os.ReadFile(outputFile)
-		require.NoError(t, err, "Should be able to read override file")
-
-		// Verify the bitnami security rule was NOT applied to non-Bitnami chart
-		assert.NotContains(t, string(content), "allowInsecureImages",
-			"Override should not include security bypass for non-Bitnami chart")
+		tempHarness := NewTestHarness(t)
+		outputFile := filepath.Join(tempHarness.tempDir, "non-bitnami-rules-overrides.yaml")
+		tempHarness.Cleanup()
+		runRulesTest(t, nonBitnamiChartPath, outputFile, false)
 	})
 
 	// --- Test Case 4: Bitnami Charts Validation Success ---
@@ -165,6 +119,7 @@ func TestRulesSystemIntegration(t *testing.T) {
 				t.Logf("Stderr: %s", stderr)
 
 				// Read the generated override file
+				// #nosec G304
 				content, err := os.ReadFile(outputFile)
 				require.NoError(t, err, "Should be able to read override file")
 
@@ -189,4 +144,33 @@ func TestRulesSystemIntegration(t *testing.T) {
 			})
 		}
 	})
+}
+
+func runRulesTest(t *testing.T, chartPath, outputFile string, expectBypass bool) {
+	h := NewTestHarness(t)
+	defer h.Cleanup()
+
+	h.SetupChart(chartPath)
+	h.SetRegistries("harbor.test.local", []string{"docker.io"})
+
+	output, stderr, err := h.ExecuteIRRWithStderr(
+		"override",
+		"--chart-path", h.chartPath,
+		"--target-registry", h.targetReg,
+		"--source-registries", strings.Join(h.sourceRegs, ","),
+		"--output-file", outputFile,
+	)
+	require.NoError(t, err, "override command should succeed")
+	t.Logf("Override output: %s", output)
+	t.Logf("Stderr: %s", stderr)
+
+	// #nosec G304
+	content, err := os.ReadFile(outputFile)
+	require.NoError(t, err, "Should be able to read override file")
+
+	if expectBypass {
+		assert.Contains(t, string(content), "allowInsecureImages: true", "Override should include security bypass for Bitnami chart")
+	} else {
+		assert.NotContains(t, string(content), "allowInsecureImages", "Override should not include security bypass for non-Bitnami chart")
+	}
 }
