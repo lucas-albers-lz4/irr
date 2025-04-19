@@ -7,6 +7,7 @@ package analysis
 import (
 	"fmt"
 	"reflect"
+	"regexp"
 	"strings"
 
 	"github.com/lalbers/irr/pkg/debug"
@@ -249,7 +250,7 @@ func (a *Analyzer) analyzeSingleValue(key string, value interface{}, path string
 // Returns:
 //   - Error if analysis fails
 func (a *Analyzer) analyzeMapValue(val map[string]interface{}, path string, analysis *ChartAnalysis) error {
-	debug.Printf("[analyzeMapValue ENTER] Path: '%s'", path)
+	debug.Printf("[analyzeMapValue ENTER] Path: '%s', Value: %#v", path, val)
 	defer debug.Printf("[analyzeMapValue EXIT] Path: '%s', ImagePatterns Count: %d", path, len(analysis.ImagePatterns))
 
 	// Check if this is an image map pattern
@@ -257,7 +258,7 @@ func (a *Analyzer) analyzeMapValue(val map[string]interface{}, path string, anal
 	debug.Printf("[analyzeMapValue] Path: '%s', isImageMap result: %v", path, isMap)
 	if isMap {
 		registry, repository, tag := a.normalizeImageValues(val)
-		if repository != "" { // Only repository is required for a valid image pattern
+		if repository != "" {
 			pattern := ImagePattern{
 				Path: path,
 				Type: PatternTypeMap,
@@ -270,9 +271,8 @@ func (a *Analyzer) analyzeMapValue(val map[string]interface{}, path string, anal
 				Count: 1,
 			}
 			analysis.ImagePatterns = append(analysis.ImagePatterns, pattern)
-			debug.Printf("[analyzeMapValue IMAGE APPEND] Path: '%s', Value: '%s'", pattern.Path, pattern.Value)
+			debug.Printf("[analyzeMapValue IMAGE APPEND] Path: '%s', Value: '%s' STRUCT: %#v", pattern.Path, pattern.Value, pattern.Structure)
 		}
-		// Important: If it IS an image map, we *don't* recurse further into it.
 		return nil
 	}
 
@@ -292,7 +292,7 @@ func (a *Analyzer) analyzeMapValue(val map[string]interface{}, path string, anal
 // Returns:
 //   - Error if analysis fails
 func (a *Analyzer) analyzeStringValue(key, val, path string, analysis *ChartAnalysis) error {
-	debug.Printf("[analyzeStringValue ENTER] Path: '%s', Value: '%s'", path, val)
+	debug.Printf("[analyzeStringValue ENTER] Path: '%s', Key: '%s', Value: '%s'", path, key, val)
 	defer debug.Printf("[analyzeStringValue EXIT] Path: '%s', ImagePatterns Count: %d", path, len(analysis.ImagePatterns))
 
 	// Check if the value is a Go template first
@@ -347,11 +347,27 @@ func (a *Analyzer) analyzeStringValue(key, val, path string, analysis *ChartAnal
 // Returns:
 //   - Error if analysis fails
 func (a *Analyzer) analyzeArray(val []interface{}, path string, analysis *ChartAnalysis) error {
+	debug.Printf("[analyzeArray ENTER] Path: '%s', ArrayLen: %d", path, len(val))
+	// Check if this looks like a container array (common path names)
+	isContainerArray := strings.Contains(strings.ToLower(path), "container") ||
+		path == "initContainers" || path == "containers" || strings.HasSuffix(path, ".initContainers") ||
+		strings.HasSuffix(path, ".containers") || strings.HasSuffix(path, ".sidecars")
+
+	if isContainerArray {
+		debug.Printf("[analyzeArray] Path '%s' identified as potential container array", path)
+	}
+
 	for i, item := range val {
 		itemPath := fmt.Sprintf("%s[%d]", path, i)
+		debug.Printf("[analyzeArray ITEM] Path: '%s', Type: %T", itemPath, item)
 
 		switch v := item.(type) {
 		case map[string]interface{}:
+			// Check if this might be a container definition with an image field
+			if _, hasImage := v["image"]; hasImage && isContainerArray {
+				debug.Printf("[analyzeArray ITEM] Path: '%s' contains 'image' field and is in a container array", itemPath)
+			}
+
 			if err := a.analyzeMapItemInArray(v, itemPath, analysis); err != nil {
 				return fmt.Errorf("error analyzing map item in array at path '%s': %w", itemPath, err)
 			}
@@ -377,6 +393,8 @@ func (a *Analyzer) analyzeArray(val []interface{}, path string, analysis *ChartA
 			}
 		}
 	}
+
+	debug.Printf("[analyzeArray EXIT] Path: '%s', Found %d image patterns", path, len(analysis.ImagePatterns))
 	return nil
 }
 
@@ -391,6 +409,7 @@ func (a *Analyzer) analyzeArray(val []interface{}, path string, analysis *ChartA
 // Returns:
 //   - Error if analysis fails
 func (a *Analyzer) analyzeMapItemInArray(v map[string]interface{}, itemPath string, analysis *ChartAnalysis) error {
+	debug.Printf("[analyzeMapItemInArray ENTER] Path: '%s', Value: %#v", itemPath, v)
 	foundPatternInMapItem := false // Flag to prevent duplicate processing
 
 	// 1. Check if this map IS an image map itself
@@ -405,13 +424,18 @@ func (a *Analyzer) analyzeMapItemInArray(v map[string]interface{}, itemPath stri
 				Count:     1,
 			}
 			analysis.ImagePatterns = append(analysis.ImagePatterns, pattern)
+			debug.Printf("[analyzeMapItemInArray IMAGE APPEND] Path: '%s', Value: '%s' STRUCT: %#v", pattern.Path, pattern.Value, pattern.Structure)
 			foundPatternInMapItem = true
 		}
 	}
 
 	// 2. If it's NOT an image map itself, check if it CONTAINS an 'image:' string key
 	if !foundPatternInMapItem {
-		if img, ok := v["image"].(string); ok && a.isImageString(img) {
+		// Detect if this map has an 'image' field, which is common in container-like structures
+		// including initContainers, containers, sidecars, etc.
+		if img, ok := v["image"].(string); ok {
+			// Always consider string values in 'image' fields as potential images
+			// This is more permissive than the previous check which used isImageString
 			pattern := ImagePattern{
 				Path:  itemPath + ".image", // Path includes the field within the array element
 				Type:  PatternTypeString,
@@ -419,6 +443,7 @@ func (a *Analyzer) analyzeMapItemInArray(v map[string]interface{}, itemPath stri
 				Count: 1,
 			}
 			analysis.ImagePatterns = append(analysis.ImagePatterns, pattern)
+			debug.Printf("[analyzeMapItemInArray IMAGE APPEND] Path: '%s', Value: '%s' (container image field)", pattern.Path, pattern.Value)
 			foundPatternInMapItem = true // Mark as found to avoid redundant recursion
 		}
 	}
@@ -479,15 +504,92 @@ func (a *Analyzer) IsGlobalRegistry(_ map[string]interface{}, keyPath string) bo
 // Returns:
 //   - true if the string appears to be an image reference
 func (a *Analyzer) isImageString(val string) bool {
-	// Check if key suggests this is an image
-	if strings.Contains(strings.ToLower(val), "image") {
-		// Basic check for image reference format: repo/name[:tag][@digest]
-		parts := strings.Split(val, "/")
-		if len(parts) >= minimumSplitParts {
-			lastPart := parts[len(parts)-1]
-			return strings.Contains(lastPart, ":") || strings.Contains(lastPart, "@")
+	// Simple heuristic to catch most image references
+
+	// Common registry prefixes that are likely to be image references
+	commonRegistries := []string{
+		"docker.io/",
+		"registry.k8s.io/",
+		"gcr.io/",
+		"quay.io/",
+		"ghcr.io/",
+		"k8s.gcr.io/",
+		"mcr.microsoft.com/",
+	}
+
+	// Check against common registry prefixes
+	for _, registry := range commonRegistries {
+		if strings.HasPrefix(val, registry) {
+			return true
 		}
 	}
+
+	// Check for strings that explicitly contain "image" keywords - this is a stronger signal
+	if strings.Contains(strings.ToLower(val), "image") &&
+		(strings.Contains(val, "/") || strings.Contains(val, ":")) {
+		return true
+	}
+
+	// Basic check for image reference format: repo/name[:tag][@digest]
+	parts := strings.Split(val, "/")
+
+	// If it has at least one slash and the last part contains either a colon or digest marker
+	// This catches both "docker.io/bitnami/nginx:latest" and "bitnami/nginx:latest"
+	if len(parts) >= minimumSplitParts {
+		lastPart := parts[len(parts)-1]
+		return strings.Contains(lastPart, ":") || strings.Contains(lastPart, "@")
+	}
+
+	// If the string could be a short-form Docker Hub reference like "nginx:latest"
+	if len(parts) == 1 && strings.Contains(val, ":") {
+		// Split by colon to see if the right side looks like a version
+		colonParts := strings.Split(val, ":")
+		if len(colonParts) == 2 {
+			// Check if the part after colon looks like a version or tag (simple heuristic)
+			tag := colonParts[1]
+			// Simple patterns like "nginx:latest" should be recognized as images
+			if len(tag) > 0 && len(tag) <= 128 {
+				// Check if the repository part looks like an image name
+				repo := colonParts[0]
+				// Common simple image names
+				commonRepos := []string{"nginx", "busybox", "alpine", "ubuntu", "debian", "centos", "fedora", "redis", "mysql", "postgres", "mongo"}
+				for _, commonRepo := range commonRepos {
+					if strings.EqualFold(repo, commonRepo) {
+						return true
+					}
+				}
+
+				// If the pattern looks like a semantic version
+				if isVersionLike(tag) {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+// isVersionLike checks if a string looks like a version number
+func isVersionLike(s string) bool {
+	// Check for semver-like patterns (1.2.3, v1.2, etc.)
+	if matched, _ := regexp.MatchString(`^v?\d+(\.\d+)*(-[a-zA-Z0-9.]+)?$`, s); matched {
+		return true
+	}
+
+	// Check for simple numeric versions
+	if matched, _ := regexp.MatchString(`^\d+$`, s); matched {
+		return true
+	}
+
+	// Check for common tag patterns like "latest", "stable", etc.
+	commonTags := []string{"latest", "stable", "main", "master", "release", "alpha", "beta", "dev"}
+	for _, tag := range commonTags {
+		if strings.EqualFold(s, tag) {
+			return true
+		}
+	}
+
 	return false
 }
 
