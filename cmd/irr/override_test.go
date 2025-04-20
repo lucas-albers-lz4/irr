@@ -2,16 +2,18 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
-	"testing"
+	"testing" // Added import for testing
 
 	"github.com/lalbers/irr/pkg/exitcodes"
 	"github.com/lalbers/irr/pkg/fileutil"
 	"github.com/lalbers/irr/pkg/helm"
-	log "github.com/lalbers/irr/pkg/log"
+	"github.com/lalbers/irr/pkg/log"
+	"github.com/lalbers/irr/pkg/registry" // Added import for registry
+	"github.com/lalbers/irr/pkg/testutil"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -23,6 +25,8 @@ import (
 const (
 	testChartDir  = "./test-chart"
 	testChartYaml = "apiVersion: v2\nname: test-chart\nversion: 0.1.0\n"
+	// Define a constant for the default namespace
+	defaultTestNamespace = "default"
 )
 
 // Define the common test YAML string
@@ -292,27 +296,6 @@ func TestOverrideCommand_ReleaseFlag_StandaloneMode(t *testing.T) {
 
 	// Check for "plugin mode" in the error
 	assert.Contains(t, err.Error(), "plugin mode", "Error should mention plugin mode")
-}
-
-// setupLocalRegistry creates a local registry for testing and returns a cleanup function
-//
-//nolint:unused // This function is available for future test scenarios requiring a local registry
-func setupLocalRegistry(t *testing.T) (registry, regPath string, cleanup func()) {
-	t.Helper()
-	originalDir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("cannot get current dir: %v", err)
-	}
-	// Make sure we check the error from os.Chdir
-	defer func() {
-		if err := os.Chdir(originalDir); err != nil {
-			t.Logf("failed to change back to original directory: %v", err)
-		}
-	}()
-
-	// ... existing code ...
-
-	return "registry.example.com", testChartDir, func() {}
 }
 
 // setupOverrideCommand creates a mock Helm adapter for testing and returns a cleanup function
@@ -1499,3 +1482,278 @@ func TestOverrideCommandFlags(t *testing.T) {
 }
 
 // TestOverrideCommand_EdgeCases tests edge cases for the override command
+
+func TestIsStdOutRequested(t *testing.T) {
+	tests := []struct {
+		name           string
+		outputFileArg  string // Value to set for --output-file flag
+		expectIsStdOut bool
+	}{
+		{
+			name:           "Output file is stdout",
+			outputFileArg:  "-",
+			expectIsStdOut: true,
+		},
+		{
+			name:           "Output file is a specific file",
+			outputFileArg:  "overrides.yaml",
+			expectIsStdOut: false,
+		},
+		{
+			name:           "Output file flag not provided (empty string simulates default)",
+			outputFileArg:  "", // Cobra treats unset string flags often as empty string
+			expectIsStdOut: false,
+		},
+		{
+			name:           "Output file is empty string explicitly",
+			outputFileArg:  "",
+			expectIsStdOut: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := &cobra.Command{}
+			// Define the flags used by the function being tested
+			cmd.Flags().String("output-file", "", "Output file path")
+			cmd.Flags().Bool("dry-run", false, "Dry run flag") // Define dry-run flag
+
+			if tt.outputFileArg != "" {
+				// Setting it explicitly covers the case where the user *provides* the value.
+				err := cmd.Flags().Set("output-file", tt.outputFileArg)
+				require.NoError(t, err, "Failed to set output-file flag for test")
+			}
+
+			// Add diagnostic print
+			actualFlagValue, err := cmd.Flags().GetString("output-file")                 // Check error
+			require.NoError(t, err, "Failed to get output-file flag for diagnostic log") // Added error check
+			t.Logf("Test '%s': --output-file flag value before calling isStdOutRequested: '%s'", tt.name, actualFlagValue)
+
+			result := isStdOutRequested(cmd)
+			assert.Equal(t, tt.expectIsStdOut, result)
+		})
+	}
+}
+
+func TestGetStringFlag(t *testing.T) {
+	flagName := "myflag"
+
+	// --- Test case 1: Flag exists and is set ---
+	t.Run("Flag is set", func(t *testing.T) {
+		cmd := &cobra.Command{}
+		cmd.Flags().String(flagName, defaultTestNamespace, "Usage")
+		err := cmd.Flags().Set(flagName, "testValue")
+		require.NoError(t, err, "Setting flag should not produce an error")
+
+		val, err := getStringFlag(cmd, flagName)
+		require.NoError(t, err)
+		assert.Equal(t, "testValue", val, "Expected set value")
+	})
+
+	// --- Test case 2: Flag exists but is not set ---
+	t.Run("Flag is not set", func(t *testing.T) {
+		cmd := &cobra.Command{}
+		cmd.Flags().String(flagName, defaultTestNamespace, "Usage") // Define flag with default
+
+		val, err := getStringFlag(cmd, flagName)
+		require.NoError(t, err)
+		// When not explicitly set, Cobra's GetString returns the default value
+		assert.Equal(t, defaultTestNamespace, val, "Expected default value")
+	})
+
+	// --- Test case 3: Flag does not exist ---
+	t.Run("Flag does not exist", func(t *testing.T) {
+		cmd := &cobra.Command{}
+		// Flag is NOT defined on this cmd instance
+
+		val, err := getStringFlag(cmd, flagName)
+		require.Error(t, err, "Expected error when flag does not exist")
+		assert.Contains(t, err.Error(), "flag accessed but not defined", "Error message should indicate undefined flag")
+		assert.Equal(t, "", val, "Expected empty string return value on error")
+	})
+}
+
+func TestSkipCWDCheck(t *testing.T) {
+	// Test when IRR_TESTING environment variable is set
+	// We need to set the global variable isTestMode instead
+	originalIsTestMode := isTestMode
+	isTestMode = true
+	defer func() { isTestMode = originalIsTestMode }() // Restore original value
+	assert.True(t, skipCWDCheck(), "Expected skipCWDCheck to return true when isTestMode=true")
+
+	// Test when IRR_TESTING environment variable is not set
+	// Set the global variable to false
+	isTestMode = false
+	assert.False(t, skipCWDCheck(), "Expected skipCWDCheck to return false when isTestMode=false")
+}
+
+func TestValidateUnmappableRegistries(t *testing.T) {
+	tests := []struct {
+		name               string
+		detectedRegistries map[string]struct{}
+		sourceRegistries   []string
+		registryMappings   map[string]string
+		strictMode         bool
+		expectError        bool
+		expectedErrMsg     string
+	}{
+		{
+			name:               "All detected registries are mapped",
+			detectedRegistries: map[string]struct{}{"docker.io": {}, "quay.io": {}},
+			sourceRegistries:   []string{"docker.io", "quay.io"},
+			registryMappings:   map[string]string{"docker.io": "d", "quay.io": "q"},
+			strictMode:         true,
+			expectError:        false,
+		},
+		{
+			name:               "Unmapped registry in strict mode",
+			detectedRegistries: map[string]struct{}{"docker.io": {}, "quay.io": {}, "gcr.io": {}},
+			sourceRegistries:   []string{"docker.io", "quay.io", "gcr.io"},          // Include gcr.io as source
+			registryMappings:   map[string]string{"docker.io": "d", "quay.io": "q"}, // gcr.io is unmapped
+			strictMode:         true,
+			expectError:        true,
+			expectedErrMsg:     "strict mode enabled: no mapping found for registries: gcr.io", // Corrected expected message format
+		},
+		{
+			name:               "Unmapped registry not in source list (non-strict)",
+			detectedRegistries: map[string]struct{}{"docker.io": {}, "quay.io": {}, "private.repo": {}},
+			sourceRegistries:   []string{"docker.io", "quay.io"}, // private.repo not a source
+			registryMappings:   map[string]string{"docker.io": "d", "quay.io": "q"},
+			strictMode:         false,
+			expectError:        false, // Should not error as it's not a targeted source
+		},
+		{
+			name:               "Unmapped registry not in source list (strict)",
+			detectedRegistries: map[string]struct{}{"docker.io": {}, "quay.io": {}, "private.repo": {}},
+			sourceRegistries:   []string{"docker.io", "quay.io"}, // private.repo not a source
+			registryMappings:   map[string]string{"docker.io": "d", "quay.io": "q"},
+			strictMode:         true,
+			expectError:        false, // Should still not error as it wasn't requested to be mapped
+		},
+		{
+			name:               "Unmapped source registry in non-strict mode",
+			detectedRegistries: map[string]struct{}{"docker.io": {}, "quay.io": {}, "gcr.io": {}},
+			sourceRegistries:   []string{"docker.io", "quay.io", "gcr.io"},          // gcr.io is a source
+			registryMappings:   map[string]string{"docker.io": "d", "quay.io": "q"}, // gcr.io unmapped
+			strictMode:         false,
+			expectError:        false, // Should warn but not error
+		},
+		{
+			name:               "Empty detected registries",
+			detectedRegistries: map[string]struct{}{},
+			sourceRegistries:   []string{"docker.io"},
+			registryMappings:   map[string]string{"docker.io": "d"},
+			strictMode:         true,
+			expectError:        false,
+		},
+		{
+			name:               "Empty source registries",
+			detectedRegistries: map[string]struct{}{"docker.io": {}},
+			sourceRegistries:   []string{},
+			registryMappings:   map[string]string{"docker.io": "d"},
+			strictMode:         true,
+			expectError:        false, // No source registries means nothing needs mapping
+		},
+		{
+			name:               "Empty registry mappings in strict mode",
+			detectedRegistries: map[string]struct{}{"docker.io": {}},
+			sourceRegistries:   []string{"docker.io"},
+			registryMappings:   map[string]string{},
+			strictMode:         true,
+			expectError:        true,
+			expectedErrMsg:     "strict mode enabled: no mapping found for registries: docker.io", // Corrected expected message format
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Start capturing log output using the application's standard logger
+			restoreLogs := testutil.CaptureLogging()
+
+			// Create a mock GeneratorConfig (using the struct defined in override.go)
+			cfg := &GeneratorConfig{ // No package prefix needed
+				SourceRegistries: tt.sourceRegistries,
+				Mappings:         createTestMappings(t, tt.registryMappings),
+				ConfigMappings:   convertMappingsToStringMap(tt.registryMappings),
+				StrictMode:       tt.strictMode,
+				TargetRegistry:   "mock-target", // Added mock target registry as it's used in the function
+			}
+
+			err := validateUnmappableRegistries(cfg)
+
+			// Stop capturing logs and get the output
+			// Note: pkg/log writes warnings/errors to Stderr
+			_, capturedStdErr := restoreLogs()
+
+			if tt.expectError {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.expectedErrMsg)
+				// Check if it's the correct error type and code using errors.As
+				var ecErr *exitcodes.ExitCodeError
+				require.True(t, errors.As(err, &ecErr), "Expected error to be an ExitCodeError")
+				assert.Equal(t, exitcodes.ExitRegistryDetectionError, ecErr.Code, "Expected ExitRegistryDetectionError code")
+			} else {
+				require.NoError(t, err)
+			}
+
+			// Check log output *after* capturing from Stderr
+			if !tt.expectError && !tt.strictMode {
+				unmappedSourcesFound := false
+				// Need to recalculate which sources are unmapped based on test data
+				for _, sourceReg := range tt.sourceRegistries {
+					_, mappedFromFile := tt.registryMappings[sourceReg]
+					// Simplification: Assume ConfigMappings reflects tt.registryMappings for test check
+					// A more robust check might combine both mapping sources if test data varied.
+					_, mappedFromConfig := tt.registryMappings[sourceReg]
+					if !mappedFromFile && !mappedFromConfig {
+						unmappedSourcesFound = true
+						// Check for the primary warning message (goes to Stderr)
+						assert.Contains(t, capturedStdErr, fmt.Sprintf("No mapping found for registries: %s", sourceReg), "Expected warning for unmapped registry: %s", sourceReg)
+						// Check for the follow-up informational messages (go to Stdout usually, check Stderr just in case)
+						// These might not be captured correctly if they go to Stdout via log.Infof
+						// Let's focus on the main Warnf message for now.
+						// assert.Contains(t, logOutput, "These registries will be redirected using the target registry: mock-target")
+						// assert.Contains(t, logOutput, "To add mappings, use: irr config --source <registry> --target <path>")
+						// assert.Contains(t, logOutput, fmt.Sprintf("irr config --source %s --target mock-target/%s", sourceReg, strings.ReplaceAll(sourceReg, ".", "-")))
+					}
+				}
+
+				if !unmappedSourcesFound {
+					assert.NotContains(t, capturedStdErr, "No mapping found for registries:")
+				}
+			} else {
+				// No warnings expected in strict mode (it errors instead) or if all fine
+				assert.NotContains(t, capturedStdErr, "No mapping found for registries:")
+			}
+		})
+	}
+}
+
+// Helper function to create *registry.Mappings for the test
+func createTestMappings(t *testing.T, mappingData map[string]string) *registry.Mappings {
+	t.Helper()
+	if mappingData == nil {
+		return nil
+	}
+	// Use registry.Mapping instead of registry.MappingEntry
+	entries := make([]registry.Mapping, 0, len(mappingData))
+	for source, target := range mappingData {
+		// Use registry.Mapping struct
+		entries = append(entries, registry.Mapping{Source: source, Target: target})
+	}
+	return &registry.Mappings{Entries: entries}
+}
+
+// Helper function to convert map[string]string to map[string]string (identity for this case)
+// but needed if the input tt.registryMappings type changes later.
+func convertMappingsToStringMap(mappingData map[string]string) map[string]string {
+	if mappingData == nil {
+		return nil
+	}
+	// Create a copy to avoid modifying the original test data if necessary
+	newMap := make(map[string]string, len(mappingData))
+	for k, v := range mappingData {
+		newMap[k] = v
+	}
+	return newMap
+}

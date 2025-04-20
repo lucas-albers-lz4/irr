@@ -568,47 +568,69 @@ func logConfigMode(config *GeneratorConfig) {
 
 func validateUnmappableRegistries(config *GeneratorConfig) error {
 	if len(config.SourceRegistries) == 0 {
-		return nil
+		return nil // No source registries to check, so nothing to map
 	}
-	if (config.Mappings != nil && len(config.Mappings.Entries) > 0) || len(config.ConfigMappings) > 0 {
-		unmappableRegistries := make([]string, 0)
-		for _, sourceReg := range config.SourceRegistries {
-			found := false
-			if config.Mappings != nil {
-				for _, mapping := range config.Mappings.Entries {
-					if mapping.Source == sourceReg {
-						found = true
-						break
-					}
-				}
-			}
-			if !found && config.ConfigMappings != nil {
-				if _, exists := config.ConfigMappings[sourceReg]; exists {
-					found = true
-				}
-			}
-			if !found {
-				if strings.HasPrefix(config.TargetRegistry, sourceReg) {
-					found = true
-				}
-			}
-			if !found {
-				unmappableRegistries = append(unmappableRegistries, sourceReg)
+
+	// Check if *any* mappings exist (either from file or configMap)
+	hasMappings := (config.Mappings != nil && len(config.Mappings.Entries) > 0) || len(config.ConfigMappings) > 0
+
+	// If NO mappings exist at all, check all source registries.
+	if !hasMappings {
+		if config.StrictMode {
+			// Strict mode requires mappings if source registries are specified
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitRegistryDetectionError,
+				Err:  fmt.Errorf("strict mode enabled: no mapping found for registries: %s", strings.Join(config.SourceRegistries, ", ")),
 			}
 		}
-		if len(unmappableRegistries) > 0 {
-			if config.StrictMode {
-				return &exitcodes.ExitCodeError{
-					Code: exitcodes.ExitRegistryDetectionError,
-					Err:  fmt.Errorf("strict mode enabled: no mapping found for registries: %s", strings.Join(unmappableRegistries, ", ")),
+		// Non-strict mode: Log warning about all source registries needing mapping
+		log.Warnf("No mapping found for registries: %s", strings.Join(config.SourceRegistries, ", "))
+		log.Infof("These registries will be redirected using the target registry: %s", config.TargetRegistry)
+		log.Infof("To add mappings, use: irr config --source <registry> --target <path>")
+		for _, reg := range config.SourceRegistries {
+			log.Infof("  irr config --source %s --target %s/%s", reg, config.TargetRegistry, strings.ReplaceAll(reg, ".", "-"))
+		}
+		return nil // Don't error in non-strict mode
+	}
+
+	// If mappings *do* exist, check each source registry individually
+	unmappableRegistries := make([]string, 0)
+	for _, sourceReg := range config.SourceRegistries {
+		found := false
+		if config.Mappings != nil {
+			for _, mapping := range config.Mappings.Entries {
+				if mapping.Source == sourceReg {
+					found = true
+					break
 				}
 			}
-			log.Warnf("No mapping found for registries: %s", strings.Join(unmappableRegistries, ", "))
-			log.Infof("These registries will be redirected using the target registry: %s", config.TargetRegistry)
-			log.Infof("To add mappings, use: irr config --source <registry> --target <path>")
-			for _, reg := range unmappableRegistries {
-				log.Infof("  irr config --source %s --target %s/%s", reg, config.TargetRegistry, strings.ReplaceAll(reg, ".", "-"))
+		}
+		if !found && config.ConfigMappings != nil {
+			if _, exists := config.ConfigMappings[sourceReg]; exists {
+				found = true
 			}
+		}
+		if !found {
+			if strings.HasPrefix(config.TargetRegistry, sourceReg) {
+				found = true
+			}
+		}
+		if !found {
+			unmappableRegistries = append(unmappableRegistries, sourceReg)
+		}
+	}
+	if len(unmappableRegistries) > 0 {
+		if config.StrictMode {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitRegistryDetectionError,
+				Err:  fmt.Errorf("strict mode enabled: no mapping found for registries: %s", strings.Join(unmappableRegistries, ", ")),
+			}
+		}
+		log.Warnf("No mapping found for registries: %s", strings.Join(unmappableRegistries, ", "))
+		log.Infof("These registries will be redirected using the target registry: %s", config.TargetRegistry)
+		log.Infof("To add mappings, use: irr config --source <registry> --target <path>")
+		for _, reg := range unmappableRegistries {
+			log.Infof("  irr config --source %s --target %s/%s", reg, config.TargetRegistry, strings.ReplaceAll(reg, ".", "-"))
 		}
 	}
 	return nil
@@ -1236,17 +1258,17 @@ func isStdOutRequested(cmd *cobra.Command) bool {
 	dryRun, err := cmd.Flags().GetBool("dry-run")
 	if err != nil {
 		log.Warnf("Failed to get dry-run flag: %v", err)
-		return false
+		// Continue checking other conditions
 	}
 	if dryRun {
-		return true
+		return true // Dry run always implies stdout-like behavior (no file write)
 	}
 
-	// Check for stdout flag
-	stdout, err := cmd.Flags().GetBool("stdout")
+	// Check if output-file is explicitly set to "-"
+	outputFile, err := cmd.Flags().GetString("output-file")
 	if err != nil {
-		log.Warnf("Failed to get stdout flag: %v", err)
-		return false
+		log.Warnf("Failed to get output-file flag: %v", err)
+		return false // Cannot determine if stdout requested if flag access fails
 	}
-	return stdout
+	return outputFile == "-"
 }
