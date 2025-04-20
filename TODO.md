@@ -337,7 +337,7 @@ The current implementation in `test/integration/kube_prometheus_stack_test.go` p
 - Test with intentional failures to ensure appropriate information is still shown
 - Validate that output is meaningful enough to diagnose problems without excessive verbosity
 
-## Phase 7: Image Pattern Detection Improvements
+## Phase 7: Image Pattern Detection Improvements (Revised Focus)
 
 ### Overview
 Improve the analyzer's ability to detect and process image references in complex Helm charts, particularly focusing on init containers, admission webhooks, and other specialized configurations.
@@ -371,22 +371,26 @@ Improve the analyzer's ability to detect and process image references in complex
   - [x] Add proper handling for template-string image references
   - [ ] Fix simplified-prometheus-stack test case
 
-Phase 7.4: Kube-State-Metrics Detection Fix
-[ ] [P1] Improve detection of kube-state-metrics component
-[ ] Examine how the chart structures kube-state-metrics (appears at kube-state-metrics.image path)
-[ ] Update the analyzer to properly identify and transform this component as a top-level element
-[ ] Add debug logging to trace exactly what paths are being examined
-[ ] Log which patterns are being detected but not properly transformed
-[ ] Update the test to be more resilient than the current file-overwriting approach
-[ ] Consider making the special case more robust by verifying correct file reading
-[ ] Ensure kube-state-metrics is properly nested at the right hierarchy level
-[ ] Compare with other subchart components to ensure consistent handling
+## Phase 7.4: Kube-State-Metrics Handling Fix (Generator-Level)
+- [ ] **[P0]** Fix linter errors in `pkg/generator/generator.go`:
+    - [ ] Correct the call signature for `detector.DetectImages` (pass initial path, handle 3 return values).
+    - [ ] Resolve `image.SetVerboseDetection` usage (likely remove, rely on `debug.Enabled` and `log` level).
+- [ ] **[P0]** Validate `normalizeKubeStateMetricsOverrides` function in `pkg/generator/kube_state_metrics.go`:
+    - [ ] Use debug logs (`IRR_DEBUG=1`) to trace the function's input (`overrides`, `detectedImages`) and output (`normalizedOverrides`).
+    - [ ] Confirm it correctly identifies KSM images from `detectedImages` regardless of their original detected path.
+    - [ ] Verify it constructs the expected top-level `kube-state-metrics` map structure in the `normalizedOverrides`.
+    - [ ] Ensure it handles cases where `kube-state-metrics` might already exist at the top level correctly (avoids duplicates/overwrites if necessary).
+- [ ] **[P0]** Refine `TestKubePrometheusStack` for `kube-state-metrics`:
+    - [ ] Remove special-case workarounds or forced passes for the `exporters` group related to KSM.
+    - [ ] Update assertions to specifically validate the *final*, normalized structure for `kube-state-metrics` in the generated overrides file (check for `overrides["kube-state-metrics"]`).
+    - [ ] Ensure the test uses realistic values/setup reflecting the actual chart structure for KSM.
 
-Phase 7.5: Confirm that tests pass when run IRR_DEBUG=1 and when run normally
-[ ] Compare pass rate on tests when run with and without IRR_DEBUG=1
-[ ] Review and fix tests that only fail when run with IRR_DEBUG=1
- 
-###Phase 8: Implement Filesystem Abstraction for Testing
+## Phase 7.5: Debug Environment Test Validation
+- [ ] **[P1]** Run the full test suite with `IRR_DEBUG=1` enabled *after* Phase 7.4 is complete and verified.
+- [ ] **[P1]** Compare pass rates with normal test runs.
+- [ ] **[P1]** Investigate and fix any tests that fail *only* when `IRR_DEBUG=1` is active.
+
+## Phase 8: Implement Filesystem Abstraction for Testing
 Phase 8.1: Core Architecture Design
 [ ] Implement a filesystem abstraction layer
 [ ] Create a pkg/fsutil package with filesystem interfaces
@@ -457,3 +461,93 @@ Phase 8.7: Documentation and Best Practices
 [ ] Create checklist for filesystem-related changes
 [ ] Add linting rules to prevent direct OS calls
 [ ] Implement review guidelines for filesystem changes
+
+## Phase 9: Handle Subcharts (Analyzer Enhancement)
+
+### Overview
+Enhance the analyzer to correctly process Helm charts with subcharts, ensuring that image definitions from subchart default values are detected and processed correctly. This addresses limitations found with complex umbrella charts like kube-prometheus-stack.
+
+### Motivation
+- The current analyzer only processes the top-level `values.yaml` file provided via `--values` or the chart's default `values.yaml`.
+- Images defined only in subchart `values.yaml` files (or other sources merged by Helm) are missed, leading to incomplete `inspect` results and `override` files.
+- Users need accurate analysis for complex charts to generate reliable overrides.
+
+### Implementation Steps
+
+#### Phase 9.1: Implement Discrepancy Warning (User Feedback Stop-Gap)
+- [ ] **[P1]** **Integrate Helm SDK Template Execution:**
+    - Modify `cmd/irr/inspect.go`.
+    - Import necessary Helm SDK packages (`helm.sh/helm/v3/pkg/action`, `helm.sh/helm/v3/pkg/chart/loader`, `helm.sh/helm/v3/pkg/cli`, `helm.sh/helm/v3/pkg/cli/values`).
+    - Use `action.NewInstall` configured for template rendering (e.g., `inst.DryRun = true`, `inst.ClientOnly = true`).
+    - Load chart values using `vals.MergeValues` similar to how Helm does internally, considering provided value files (`--values`).
+    - Execute the template action using `inst.Run(chart, vals)`.
+    - Capture the resulting multi-document YAML string from the release manifest.
+    - Handle potential Helm SDK errors gracefully.
+- [ ] **[P1]** **Parse Rendered Manifests (Limited Scope):**
+    - Use a YAML parsing library (e.g., `gopkg.in/yaml.v3`) to split and parse the multi-document YAML string from the previous step.
+    - Iterate through each document.
+    - Check the `kind` field. If `Deployment` or `StatefulSet`:
+        - Traverse standard image paths: `spec.template.spec.containers[*].image`, `spec.template.spec.initContainers[*].image`.
+        - Extract unique image reference strings found.
+    - Store unique image strings in a map or set for counting.
+    - *Note: This warning mechanism intentionally limits parsing to Deployments/StatefulSets as a stop-gap to balance utility and implementation complexity. Full analysis in Phase 9.2 must eventually cover other resource types (e.g., DaemonSets, Jobs, CronJobs, CRDs).*
+- [ ] **[P1]** **Compare Image Counts:**
+    - Retrieve the list of `ImagePattern` from the existing `analyzer.AnalyzeHelmValues` call.
+    - Get the count of unique patterns found by the current analyzer.
+    - Compare this count with the number of unique image strings extracted from the rendered Deployments/StatefulSets in the previous step.
+- [ ] **[P1]** **Issue Warning on Mismatch:**
+    - If counts differ, use `log.Warnf` to output a clear message.
+    - Message should state the different counts (analyzer vs. template), explain the likely cause (subchart default values not analyzed by `irr inspect`), mention the limited scope of the template check (Deployments/StatefulSets only), and reference the controlling flag.
+- [ ] **[P1]** **Add Control Flag:**
+    - Add a new boolean flag (e.g., `warn-subchart-discrepancy`) to the `inspect` command definition in `cmd/irr/inspect.go` using `cobra`.
+    - Set its default value (e.g., `true`).
+    - Wrap the logic for steps 1-4 within an `if` block conditional on this flag being enabled.
+- [ ] **[P1]** **Add Tests:**
+    - Create new integration tests in `test/integration/inspect_test.go` (or similar).
+    - Use `kube-prometheus-stack` or another suitable umbrella chart.
+    - Test cases:
+        - Flag enabled, counts differ -> Warning is logged.
+        - Flag enabled, counts match -> No warning is logged.
+        - Flag disabled -> No warning is logged, regardless of counts.
+- [ ] **[P1]** **Update Documentation:**
+    - Update `docs/CLI-REFERENCE.md` to include the new `--warn-subchart-discrepancy` flag for the `inspect` command.
+    - Add a section to `docs/TROUBLESHOOTING.md` or a relevant guide explaining the warning, its cause (current analyzer limitations), and the implications for override generation.
+
+#### Phase 9.2: Refactor Analyzer for Full Subchart Support (The Correct Fix)
+- [ ] **[P2]** **Research & Design Helm Value Computation:**
+    - Deeply investigate Helm Go SDK functions for loading charts (`chart/loader.Load`), handling dependencies, and merging values (`pkg/cli/values.Options`, `pkg/chartutil.CoalesceValues`).
+    - Prototype code to programmatically replicate Helm's value computation process for a given chart and user-provided value files, resulting in a final, merged values map representing what Helm uses for templating.
+    - *Crucial Design Point:* Determine how to track the origin of each value within the merged map (e.g., did it come from the parent `values.yaml`, a specific subchart's `values.yaml`, or a user file?). This origin information is essential for generating correctly structured overrides later.
+- [ ] **[P2]** **Refactor Analyzer Input:**
+    - Modify the analyzer's primary entry function (e.g., `AnalyzeHelmValues` or potentially a new function like `AnalyzeChartContext`).
+    - Instead of just `map[string]interface{}` representing a single values file, the input should represent the fully computed/merged values for the chart context (from step 1).
+    - The function signature might also need to accept information about value origins (design from step 1) if that's how source path tracking is implemented.
+- [ ] **[P2]** **Adapt Analyzer Traversal & Source Path Logic:**
+    - The core recursive analysis functions (`analyzeMapValue`, `analyzeStringValue`) might largely remain the same if they operate correctly on the merged values map.
+    - **Critical Enhancement:** Modify the logic that records `ImagePattern` (or equivalent). When an image is detected, it must now correctly determine and store its *effective source path* suitable for override generation. This involves using the value origin tracking (from step 1) to construct the correct path (e.g., an image from the `grafana` subchart needs a path starting with `grafana.`).
+- [ ] **[P2]** **Update Command Usage:**
+    - Modify `cmd/irr/inspect.go` and `cmd/irr/override.go`.
+    - Remove the simple loading of a single values file.
+    - Implement the Helm chart loading and value computation logic designed in step 1.
+    - Call the refactored analyzer (step 2) with the computed values and necessary context.
+    - Ensure `override` correctly uses the enhanced source path information (step 3) to structure the generated YAML override file (e.g., placing Grafana image overrides under a top-level `grafana:` key).
+- [ ] **[P2]** **Add Comprehensive Tests:**
+    - Create/enhance integration tests in `test/integration/` specifically for umbrella charts.
+    - Use `kube-prometheus-stack` and potentially other charts with multiple nesting levels.
+    - Verify `inspect` output now includes images defined only in subchart defaults.
+    - Verify `override` generates correctly structured files, applying overrides to the appropriate subchart keys (e.g., `grafana: { image: ... }`, `kube-state-metrics: { image: ... }`).
+- [ ] **[P2]** **Update Documentation:**
+    - Remove documented limitations regarding subchart analysis.
+    - Ensure examples demonstrate usage with complex umbrella charts.
+
+#### Phase 9.3: Review/Remove Warning Mechanism
+- [ ] **[P3]** **Evaluate Necessity:**
+    - Once Phase 9.2 is complete and validated through extensive testing, determine if the warning mechanism from Phase 9.1 still provides value or is now redundant.
+- [ ] **[P3]** **Conditional Removal:**
+    - If the refactored analyzer (Phase 9.2) is proven reliable for subchart value analysis, remove the Helm template comparison code, the `--warn-subchart-discrepancy` flag, associated tests, and documentation related to the warning mechanism.
+
+### Acceptance Criteria (Phase 9.2)
+- `irr inspect` correctly identifies images defined in both parent and subchart values, reporting accurate source paths reflecting subchart context (e.g., `grafana.image`).
+- `irr override` correctly generates overrides for images originating from both parent and subchart values, placing them under the correct top-level keys in the output file (e.g., `grafana: { image: ... }`).
+- Tests confirm accurate behavior for multiple levels of subchart nesting and various value override scenarios.
+- Documented limitations regarding subcharts are removed.
