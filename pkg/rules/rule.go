@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/lalbers/irr/pkg/debug"
+	"github.com/lalbers/irr/pkg/log"
 	"helm.sh/helm/v3/pkg/chart"
 )
 
@@ -94,7 +95,9 @@ func ApplyRulesToMap(rules []Rule, ch *chart.Chart, overrideMap map[string]inter
 
 		// Apply all Type 1 (Deployment-Critical) parameters to the override map
 		for _, param := range rule.Parameters() {
+			log.Debugf("Chart [%s]: Rule [%s]: Checking parameter [%s] with Type [%d]", ch.Name(), rule.Name(), param.Path, param.Type)
 			if param.Type == TypeDeploymentCritical {
+				log.Debugf("Chart [%s]: Rule [%s]: Attempting to set CRITICAL parameter [%s] = %v", ch.Name(), rule.Name(), param.Path, param.Value)
 				// Split the path by dots and set the value in the nested map
 				if err := setValueAtPath(overrideMap, param.Path, param.Value); err != nil {
 					return appliedAny, fmt.Errorf("failed to set parameter %s: %w", param.Path, err)
