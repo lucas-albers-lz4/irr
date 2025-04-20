@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/lalbers/irr/internal/helm"
 	"github.com/lalbers/irr/pkg/exitcodes"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
@@ -243,3 +246,73 @@ func TestGetReleaseNameAndNamespaceCommon(t *testing.T) {
 		assert.Equal(t, exitcodes.ExitInputConfigurationError, exitErr.Code)
 	})
 }
+
+func TestGetCommandContext(t *testing.T) {
+	t.Run("command has context", func(t *testing.T) {
+		// Create a command and set a context with a specific value
+		cmd := &cobra.Command{}
+		type contextKey string
+		key := contextKey("testKey")
+		expectedValue := "testValue"
+		ctx := context.WithValue(context.Background(), key, expectedValue)
+		cmd.SetContext(ctx)
+
+		// Get the context using the function
+		retrievedCtx := getCommandContext(cmd)
+
+		// Verify the retrieved context contains the expected value
+		assert.Equal(t, expectedValue, retrievedCtx.Value(key), "Retrieved context should contain the value set on the command")
+	})
+
+	t.Run("command has no context", func(t *testing.T) {
+		// Create a command without setting a context
+		cmd := &cobra.Command{}
+
+		// Get the context using the function
+		retrievedCtx := getCommandContext(cmd)
+
+		// Verify it returns a background context (cannot directly compare background contexts,
+		// but we can check it's non-nil and perhaps that it doesn't contain our test value)
+		assert.NotNil(t, retrievedCtx, "Should return a non-nil context")
+		// Check that it doesn't contain a specific value, implying it's likely background
+		type contextKey string
+		key := contextKey("testKey")
+		assert.Nil(t, retrievedCtx.Value(key), "Returned context should not contain arbitrary values when command context was nil")
+	})
+}
+
+func TestCreateHelmAdapter(t *testing.T) {
+	// Save original factory and restore after test
+	originalFactory := helmAdapterFactory
+	defer func() { helmAdapterFactory = originalFactory }()
+
+	t.Run("factory returns adapter successfully", func(t *testing.T) {
+		// Mock the factory to return a dummy adapter
+		mockAdapterInstance := &helm.Adapter{} // Use real type, even if empty
+		helmAdapterFactory = func() (*helm.Adapter, error) {
+			return mockAdapterInstance, nil
+		}
+
+		adapter, err := createHelmAdapter()
+
+		require.NoError(t, err)
+		assert.Same(t, mockAdapterInstance, adapter, "Should return the adapter instance from the factory")
+	})
+
+	t.Run("factory returns an error", func(t *testing.T) {
+		// Mock the factory to return an error
+		expectedErr := errors.New("mock factory error")
+		helmAdapterFactory = func() (*helm.Adapter, error) {
+			return nil, expectedErr
+		}
+
+		adapter, err := createHelmAdapter()
+
+		require.Error(t, err)
+		assert.Nil(t, adapter)
+		assert.Equal(t, expectedErr, err, "Should return the error from the factory")
+	})
+}
+
+// NOTE: Testing defaultHelmAdapterFactory directly is hard due to helm.NewHelmClient()
+// We test the createHelmAdapter which USES the factory variable, covering the indirection.
