@@ -526,3 +526,15 @@ Enhance the analyzer to correctly process Helm charts with subcharts by replicat
 - Tests confirm accurate behavior for multiple levels of subchart nesting and various value override scenarios.
 - Documented limitations regarding subcharts are removed.
 - The warning mechanism from Phase 9 may be removed if deemed obsolete.
+
+### Recommendations for Future Approach (Learnings from `feature/sub-charts`)
+
+1.  **Incremental Implementation (Agile-First):** Break down the subchart support feature into smaller, manageable, and independently testable parts. For example:
+    *   **Subchart Discovery:** Focus *only* on identifying and listing subcharts within a given chart.
+    *   **Value Propagation:** Implement how top-level values override subchart values.
+    *   **Analysis Extension:** Adapt the `analyzer` to correctly process resources defined within subcharts.
+    *   **Generator Extension:** Ensure the `generator` can handle templating and output for subcharts.
+    *   **CLI Integration:** Update commands like `inspect` and `override` to utilize the new subchart capabilities *after* the core logic is implemented and tested.
+2.  **Focused Commits (SRP):** Each commit should ideally address a single concern or piece of functionality related to subcharts. This improves clarity, makes reviews easier, and simplifies potential rollbacks.
+3.  **Test-Driven Development (TDD):** Write tests *before* or *alongside* implementing each piece of subchart functionality. Start with unit tests for core logic (analyzer, generator) and then add integration tests as components are connected. This ensures each part works correctly before moving to the next.
+4.  **Feature Flag (Optional but Recommended):** Consider introducing subchart support behind a feature flag initially. This allows merging incremental progress into `main` without exposing potentially unstable functionality to users until it's complete and well-tested.
