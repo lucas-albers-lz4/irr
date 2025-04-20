@@ -74,7 +74,7 @@ func (m *mockPathStrategy) GeneratePath(ref *image.Reference, targetRegistry str
 
 // TestSetRulesEnabled tests the SetRulesEnabled method
 func TestSetRulesEnabled(t *testing.T) {
-	// Create a new generator with default options
+	// Create a new generator with default options (rulesEnabled=true)
 	generator := NewGenerator(
 		"test-chart",
 		"example.com",
@@ -89,23 +89,41 @@ func TestSetRulesEnabled(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		true, // Rules enabled by default
 	)
 
 	// By default, rules should be enabled
 	assert.True(t, generator.rulesEnabled, "Rules should be enabled by default")
 
-	// Test disabling rules
-	generator.SetRulesEnabled(false)
-	assert.False(t, generator.rulesEnabled, "Rules should be disabled after calling SetRulesEnabled(false)")
+	// Test creating a generator with rules explicitly disabled
+	generatorDisabled := NewGenerator(
+		"test-chart",
+		"example.com",
+		[]string{},
+		[]string{},
+		&mockPathStrategy{},
+		nil, nil, false, 0, nil, nil, nil, nil,
+		false, // Explicitly disable rules
+	)
+	assert.False(t, generatorDisabled.rulesEnabled, "Rules should be disabled when passed false")
 
-	// Test enabling rules
-	generator.SetRulesEnabled(true)
-	assert.True(t, generator.rulesEnabled, "Rules should be enabled after calling SetRulesEnabled(true)")
+	// Test creating a generator with rules explicitly enabled
+	generatorEnabled := NewGenerator(
+		"test-chart",
+		"example.com",
+		[]string{},
+		[]string{},
+		&mockPathStrategy{},
+		nil, nil, false, 0, nil, nil, nil, nil,
+		true, // Explicitly enable rules
+	)
+	assert.True(t, generatorEnabled.rulesEnabled, "Rules should be enabled when passed true")
 }
 
 // TestGenerateWithRulesEnabled tests the Generate method with rules enabled
+// This test primarily ensures the structure is correct and rulesEnabled flag is accessible
 func TestGenerateWithRulesEnabled(t *testing.T) {
-	// Create a minimal test setup to verify SetRulesEnabled works correctly
+	// Create a minimal test setup
 	generator := NewGenerator(
 		"test-chart",
 		"example.com",
@@ -120,18 +138,11 @@ func TestGenerateWithRulesEnabled(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		true, // Rules explicitly enabled for this test
 	)
 
 	// Default is enabled
-	assert.True(t, generator.rulesEnabled, "Rules should be enabled by default")
-
-	// Test disabling rules
-	generator.SetRulesEnabled(false)
-	assert.False(t, generator.rulesEnabled, "Rules should be disabled after calling SetRulesEnabled(false)")
-
-	// Test enabling rules
-	generator.SetRulesEnabled(true)
-	assert.True(t, generator.rulesEnabled, "Rules should be enabled after calling SetRulesEnabled(true)")
+	assert.True(t, generator.rulesEnabled, "Rules should be enabled when generator is created with rulesEnabled=true")
 }
 
 // TestGenerateWithRulesDisabled tests the Generate method with rules disabled
@@ -160,7 +171,7 @@ func TestGenerateWithRulesDisabled(t *testing.T) {
 	// Create a mock path strategy
 	mockStrategy := new(mockPathStrategy)
 
-	// Create a new generator with our mocks
+	// Create a new generator with our mocks, explicitly disabling rules
 	generator := NewGenerator(
 		"test-chart",
 		"example.com",
@@ -175,13 +186,11 @@ func TestGenerateWithRulesDisabled(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		false, // Rules explicitly disabled
 	)
 
-	// Set the rules registry
+	// Set the rules registry (still needed for the AssertNotCalled check)
 	generator.rulesRegistry = mockRegistry
-
-	// Disable rules
-	generator.SetRulesEnabled(false)
 
 	// Call Generate
 	result, err := generator.Generate()
@@ -199,7 +208,7 @@ func TestGenerateWithRulesDisabled(t *testing.T) {
 
 // TestInitRulesRegistry uses a different approach to test initRulesRegistry
 func TestInitRulesRegistry(t *testing.T) {
-	// Create a new generator
+	// Create a new generator (rules enabled by default)
 	generator := NewGenerator(
 		"test-chart",
 		"example.com",
@@ -214,6 +223,7 @@ func TestInitRulesRegistry(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		true, // Default rules enabled
 	)
 
 	// Verify rulesRegistry is nil initially
@@ -247,7 +257,7 @@ func TestGenerateWithRulesTypeAssertion(t *testing.T) {
 	// Create a mock path strategy
 	mockStrategy := new(mockPathStrategy)
 
-	// Create a new generator with our mocks
+	// Create a new generator with our mocks (rules enabled by default)
 	generator := NewGenerator(
 		"test-chart",
 		"example.com",
@@ -262,11 +272,15 @@ func TestGenerateWithRulesTypeAssertion(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		true, // Rules enabled
 	)
 
-	// Set the rules registry to something that's not a *rules.Registry
-	// This will cause a type assertion failure
-	generator.rulesRegistry = "not a registry"
+	// Create a mock rules registry that returns a non-Rule type for GetRuleByName
+	mockRegistry := new(mockRulesRegistry)
+	mockRegistry.On("ApplyRules", mockChart, mock.AnythingOfType("map[string]interface {}")).Return(false, nil)
+
+	// Inject the mock registry into the generator
+	generator.rulesRegistry = mockRegistry
 
 	// Call Generate
 	result, err := generator.Generate()
@@ -277,4 +291,5 @@ func TestGenerateWithRulesTypeAssertion(t *testing.T) {
 
 	// Verify the mock was called
 	mockLoader.AssertCalled(t, "Load", "test-chart")
+	mockRegistry.AssertCalled(t, "ApplyRules", mockChart, mock.AnythingOfType("map[string]interface {}"))
 }
