@@ -185,3 +185,15 @@ func (r *BaseRule) SetChart(_ *chart.Chart) {
 
 // SimpleRule is a basic implementation of the Rule interface using BaseRule.
 // ... existing code ...
+
+// RegistryInterface defines the method set for applying rules.
+// This allows for mocking in tests.
+type RegistryInterface interface {
+	ApplyRules(chart *chart.Chart, overrides map[string]interface{}) (bool, error)
+}
+
+// Ensure Registry implements RegistryInterface
+var _ RegistryInterface = (*Registry)(nil)
+
+// AddRule adds a new rule to the registry.
+// ... existing code ...

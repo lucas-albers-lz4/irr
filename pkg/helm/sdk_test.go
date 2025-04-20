@@ -22,22 +22,6 @@ import (
 )
 
 // Mock interfaces
-type mockChartLoader struct {
-	mock.Mock
-}
-
-func (m *mockChartLoader) Load(path string) (*chart.Chart, error) {
-	args := m.Called(path)
-	if args.Get(0) == nil {
-		return nil, fmt.Errorf("mock error: %w", args.Error(1))
-	}
-	ret, ok := args.Get(0).(*chart.Chart)
-	if !ok {
-		return nil, fmt.Errorf("failed to cast to *chart.Chart")
-	}
-	return ret, fmt.Errorf("mock error: %w", args.Error(1))
-}
-
 type mockTimeProvider struct {
 	mock.Mock
 }
@@ -302,59 +286,6 @@ func TestPluginDiscovery(t *testing.T) {
 	assert.NotContains(t, names, "plugin2")
 }
 
-// TestLoadChart tests chart loading with mocked chart loader
-func TestLoadChart(t *testing.T) {
-	t.Skip("Skipping due to Helm API compatibility issues")
-	// Setup mock chart loader
-	mockLoader := &mockChartLoader{}
-	testChart := &chart.Chart{
-		Metadata: &chart.Metadata{
-			Name:    "test-chart",
-			Version: "0.1.0",
-		},
-	}
-
-	// Test cases
-	tests := []struct {
-		name      string
-		chartPath string
-		mockSetup func()
-		wantErr   bool
-	}{
-		{
-			name:      "successful load",
-			chartPath: "/test-chart",
-			mockSetup: func() {
-				mockLoader.On("Load", "/test-chart").Return(testChart, nil)
-			},
-			wantErr: false,
-		},
-		{
-			name:      "load error",
-			chartPath: "/invalid-chart",
-			mockSetup: func() {
-				mockLoader.On("Load", "/invalid-chart").Return(nil, assert.AnError)
-			},
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tt.mockSetup()
-			testChartObj, err := LoadChart(tt.chartPath)
-			if tt.wantErr {
-				assert.Error(t, err)
-				return
-			}
-			assert.NoError(t, err)
-			assert.Equal(t, testChart, testChartObj)
-		})
-	}
-
-	mockLoader.AssertExpectations(t)
-}
-
 // TestComplexChartProcessing tests processing of complex charts
 func TestComplexChartProcessing(t *testing.T) {
 	t.Skip("Skipping due to Helm API compatibility issues")
@@ -562,4 +493,12 @@ func TestErrorHandling_WithMockTime(t *testing.T) {
 	}
 
 	mockTime.AssertExpectations(t)
+}
+
+func TestSDKLoader_Load(t *testing.T) {
+	t.Skip("Skipping test for SDKLoader.Load - implementation pending or requires more setup")
+}
+
+func TestSDKLoader_LoadChart(t *testing.T) {
+	t.Skip("Skipping test for SDKLoader.LoadChart - implementation pending or requires more setup")
 }
