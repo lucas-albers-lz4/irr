@@ -70,9 +70,17 @@ func detectBitnamiChart(ch *chart.Chart) Detection {
 	}
 
 	// 4. Check for common Bitnami dependencies
-	for _, dep := range ch.Dependencies() {
-		if dep != nil && dep.Metadata != nil {
-			if strings.Contains(strings.ToLower(dep.Metadata.Name), "bitnami-common") {
+	for _, dep := range metadata.Dependencies {
+		if dep != nil {
+			nameMatches := strings.Contains(strings.ToLower(dep.Name), "bitnami-common")
+			tagMatches := false
+			for _, tag := range dep.Tags {
+				if strings.EqualFold(tag, "bitnami-common") {
+					tagMatches = true
+					break
+				}
+			}
+			if nameMatches || tagMatches {
 				indicators = append(indicators, "dependency references bitnami-common")
 			}
 		}
