@@ -35,6 +35,12 @@ func defaultHelmAdapterFactory() (*helm.Adapter, error) {
 	return adapter, nil
 }
 
+// initializeHelmAdapterFactory sets the package-level factory variable.
+// This ensures the adapter factory is ready for use.
+func initializeHelmAdapterFactory() {
+	helmAdapterFactory = defaultHelmAdapterFactory
+}
+
 // getReleaseNameAndNamespaceCommon extracts and validates release name and namespace
 func getReleaseNameAndNamespaceCommon(cmd *cobra.Command, args []string) (releaseName, namespace string, err error) {
 	releaseName, err = cmd.Flags().GetString("release-name")

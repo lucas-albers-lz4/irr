@@ -42,10 +42,12 @@ const (
 	autoDetectedChartSource = "auto-detected"
 )
 
-// Variables for testing
+// Variables for testing - isTestMode declaration REMOVED, it's defined in root.go
+/*
 var (
 	isTestMode = false
 )
+*/
 
 // GeneratorConfig struct with strategy field but no threshold field
 type GeneratorConfig struct {
@@ -416,62 +418,61 @@ func outputOverrides(_ *cobra.Command, yamlBytes []byte, outputFile string, dryR
 }
 
 // setupGeneratorConfig retrieves and configures all options for the generator
+// It ONLY gathers flags and populates the struct. Further processing happens in runOverride.
 func setupGeneratorConfig(cmd *cobra.Command, _ string) (config GeneratorConfig, err error) {
+	// Get required flags first
 	chartPath, targetRegistry, sourceRegistries, err := getRequiredFlags(cmd)
 	if err != nil {
-		return config, err
+		return config, err // Return zero config on error
 	}
 	config.ChartPath = chartPath
 	config.TargetRegistry = targetRegistry
 	config.SourceRegistries = sourceRegistries
 
+	// Get optional flags
 	excludeRegistries, err := getStringSliceFlag(cmd, "exclude-registries")
 	if err != nil {
-		return config, err
+		return config, err // Return zero config on error
 	}
 	config.ExcludeRegistries = excludeRegistries
 
-	if err := setupPathStrategy(cmd, &config); err != nil {
-		return config, err
-	}
-
 	strictMode, err := getBoolFlag(cmd, "strict")
 	if err != nil {
-		return config, err
+		return config, err // Return zero config on error
 	}
 	config.StrictMode = strictMode
 
 	includePatterns, excludePatterns, err := getAnalysisControlFlags(cmd)
 	if err != nil {
-		return config, err
+		return config, err // Return zero config on error
 	}
 	config.IncludePatterns = includePatterns
 	config.ExcludePatterns = excludePatterns
 
 	disableRules, err := getBoolFlag(cmd, "no-rules")
 	if err != nil {
-		return config, err
+		return config, err // Return zero config on error
 	}
 	config.RulesEnabled = !disableRules
 
-	if err := loadRegistryMappings(cmd, &config); err != nil {
-		return config, err
-	}
+	// NOTE: We do NOT call setupPathStrategy, loadRegistryMappings, logConfigMode,
+	// or validateUnmappableRegistries here. They are called in runOverride
+	// after this function returns successfully.
 
-	logConfigMode(&config)
-
-	if err := validateUnmappableRegistries(&config); err != nil {
-		return config, err
-	}
-
+	// Log excluded registries if any were provided
 	if len(config.ExcludeRegistries) > 0 {
 		log.Infof("Excluding registries: %s", strings.Join(config.ExcludeRegistries, ", "))
 	}
 
+	// Successfully gathered all flags
 	return config, nil
 }
 
 func setupPathStrategy(cmd *cobra.Command, config *GeneratorConfig) error {
+	// Add nil check for safety, although runOverride should prevent this call with nil config
+	if config == nil {
+		return errors.New("internal error: setupPathStrategy called with nil config")
+	}
 	pathStrategy, err := cmd.Flags().GetString("path-strategy")
 	if err != nil {
 		return &exitcodes.ExitCodeError{
@@ -504,6 +505,10 @@ func skipCWDCheck() bool {
 
 // loadRegistryMappings loads registry mappings from config and registry files
 func loadRegistryMappings(cmd *cobra.Command, config *GeneratorConfig) error {
+	// Add nil check for safety
+	if config == nil {
+		return errors.New("internal error: loadRegistryMappings called with nil config")
+	}
 	configFile, err := cmd.Flags().GetString("config")
 	if err != nil {
 		return &exitcodes.ExitCodeError{
@@ -556,6 +561,11 @@ func loadRegistryMappings(cmd *cobra.Command, config *GeneratorConfig) error {
 }
 
 func logConfigMode(config *GeneratorConfig) {
+	// Add nil check for safety
+	if config == nil {
+		log.Warnf("logConfigMode called with nil config")
+		return
+	}
 	if config.StrictMode {
 		log.Infof("Running in strict mode - will fail on unrecognized registries or unsupported structures")
 	} else {
@@ -567,6 +577,10 @@ func logConfigMode(config *GeneratorConfig) {
 }
 
 func validateUnmappableRegistries(config *GeneratorConfig) error {
+	// Add nil check for safety
+	if config == nil {
+		return errors.New("internal error: validateUnmappableRegistries called with nil config")
+	}
 	if len(config.SourceRegistries) == 0 {
 		return nil // No source registries to check, so nothing to map
 	}
@@ -703,10 +717,10 @@ func createGenerator(_ *ChartSource, config *GeneratorConfig) (GeneratorInterfac
 	}
 
 	// Create chart loader instance
-	loader := chart.NewLoader()
+	loader := chart.NewGeneratorLoader(nil) // Use chart.NewGeneratorLoader
 
 	// --- Create Override Generator ---
-	generator := chart.NewGenerator(
+	generator := chart.NewGenerator( // Use chart.NewGenerator
 		config.ChartPath,
 		config.TargetRegistry,
 		config.SourceRegistries,
@@ -719,14 +733,12 @@ func createGenerator(_ *ChartSource, config *GeneratorConfig) (GeneratorInterfac
 		loader, // Use the loader we created
 		config.IncludePatterns,
 		config.ExcludePatterns,
-		nil, // KnownImagePaths parameter is not used anymore
+		nil,                 // KnownImagePaths parameter is not used anymore
+		config.RulesEnabled, // Pass rules enabled status here
 	)
 
-	// Configure rules system
-	if config.RulesEnabled {
-		generator.SetRulesEnabled(true)
-	} else {
-		generator.SetRulesEnabled(false)
+	// Log message if rules are disabled
+	if !config.RulesEnabled {
 		log.Infof("Chart parameter rules system is disabled")
 	}
 
@@ -762,97 +774,110 @@ func loadChart(cs *ChartSource) (*helmchart.Chart, error) {
 	return c, nil
 }
 
-// runOverride is the main entry point for the override command
+// runOverride is the main execution function for the override command
 func runOverride(cmd *cobra.Command, args []string) error {
-	// Special handling for test mode
-	if isTestMode && isHelmPlugin {
-		return handleTestModeOverride(cmd, "")
-	}
+	// Determine if running in test mode
+	isTestMode, _ := getBoolFlag(cmd, "test-mode")
 
-	// Get basic flags first
-	chartSource, err := getChartSource(cmd, args)
+	// Get release name and namespace
+	releaseName, namespace, err := getReleaseNameAndNamespace(cmd, args)
 	if err != nil {
 		return err
 	}
 
-	// Get configuration for generator
-	config, err := setupGeneratorConfig(cmd, chartSource.ReleaseName)
+	// Handle test mode early if enabled
+	if isTestMode {
+		return handleTestModeOverride(cmd, releaseName)
+	}
+
+	// Get configuration
+	config, err := setupGeneratorConfig(cmd, releaseName)
 	if err != nil {
+		// Config setup failed, return the error directly
+		return err
+	}
+	// --- The following operations depend on a valid config object ---
+
+	// Handle path strategy setup (currently fixed)
+	if err := setupPathStrategy(cmd, &config); err != nil {
 		return err
 	}
 
-	// Set up the generator based on the chart source
-	generator, err := createGenerator(chartSource, &config)
-	if err != nil {
-		return handleGenerateError(err)
+	// Load registry mappings if applicable
+	if err := loadRegistryMappings(cmd, &config); err != nil {
+		return err
 	}
 
-	// Generate the override file
-	overrideFile, err := generator.Generate()
-	if err != nil {
-		return handleGenerateError(err)
+	// Log config mode (standalone vs. config file)
+	logConfigMode(&config)
+
+	// Validate unmappable registries in strict mode
+	if err := validateUnmappableRegistries(&config); err != nil {
+		return err
 	}
 
-	// Marshal to YAML
-	yamlBytes, err := yaml.Marshal(overrideFile)
-	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitGeneralRuntimeError,
-			Err:  fmt.Errorf("failed to marshal override file to YAML: %w", err),
-		}
-	}
+	// --- End of config-dependent operations ---
 
 	// Get output flags
-	outputFile, dryRun, err := getOutputFlags(cmd, chartSource.ReleaseName)
+	outputFile, dryRun, err := getOutputFlags(cmd, releaseName)
 	if err != nil {
 		return err
 	}
 
-	// Output the overrides
-	err = outputOverrides(cmd, yamlBytes, outputFile, dryRun)
-	if err != nil {
-		return err
+	// Handle Helm plugin mode
+	if releaseName != "" {
+		return handleHelmPluginOverride(cmd, releaseName, namespace, &config, "", outputFile, dryRun)
 	}
 
-	// Check if validation should be skipped
-	skipValidation, err := cmd.Flags().GetBool("no-validate")
-	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get no-validate flag: %w", err),
-		}
+	// Standalone mode (no release name)
+	chartSource := &ChartSource{
+		SourceType: ChartSourceTypeChart,
+		ChartPath:  config.ChartPath,
 	}
 
-	// If we're in dry-run mode or validation is explicitly skipped, stop here
-	if dryRun || skipValidation {
-		if skipValidation {
-			log.Infof("Validation skipped (--no-validate flag provided)")
-		}
-		return nil
-	}
-
-	// If we have an output file, run validation
-	if outputFile != "" {
-		log.Infof("Validating generated overrides...")
-		err = validateChart(cmd, yamlBytes, &config,
-			chartSource.SourceType == chartSourceTypeChart,
-			chartSource.SourceType == chartSourceTypeRelease,
-			chartSource.ReleaseName, chartSource.Namespace)
-
-		if err != nil {
-			log.Errorf("Validation failed: %v", err)
+	// Auto-detect chart path if not provided
+	// Only attempt auto-detect if chartPath is empty AND releaseName is also empty
+	if chartSource.ChartPath == "" && releaseName == "" {
+		log.Infof("No chart path provided, attempting to detect chart...")
+		// Pass "." as the starting directory for detection
+		detectedPath, detectErr := detectChartInCurrentDirectory(AppFs, ".") // Use AppFs and start from current dir
+		if detectErr != nil {
 			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitHelmTemplateFailed,
-				Err:  fmt.Errorf("validation of generated overrides failed: %w", err),
+				Code: exitcodes.ExitChartLoadFailed,
+				Err:  fmt.Errorf("chart path not provided and could not auto-detect chart: %w", detectErr),
 			}
 		}
-
-		log.Infof("Validation successful")
-	} else {
-		log.Infof("Skipping validation (no output file)")
+		chartSource.ChartPath = detectedPath
+		config.ChartPath = detectedPath                      // Update config as well
+		chartSource.SourceType = ChartSourceTypeAutoDetected // Use correct field name and constant
+		log.Infof("Using detected chart path: %s", detectedPath)
 	}
 
-	return nil
+	// Get analysis patterns
+	includePatterns, excludePatterns, err := getAnalysisControlFlags(cmd)
+	if err != nil {
+		return err
+	}
+	config.IncludePatterns = includePatterns
+	config.ExcludePatterns = excludePatterns
+
+	// Execute the generator
+	yamlBytes, err := createAndExecuteGenerator(chartSource, &config)
+	if err != nil {
+		return handleGenerateError(err) // Handles exit codes
+	}
+
+	// Validate the generated overrides
+	validateOverrides, _ := getBoolFlag(cmd, "validate")
+	noValidate, _ := getBoolFlag(cmd, "no-validate")
+	if validateOverrides && !noValidate {
+		if err := validateChart(cmd, yamlBytes, &config, true, false, "", ""); err != nil {
+			return err // validateChart returns ExitCodeError
+		}
+	}
+
+	// Output the results
+	return outputOverrides(cmd, yamlBytes, outputFile, dryRun)
 }
 
 // getReleaseNameAndNamespace gets the release name and namespace from the command
