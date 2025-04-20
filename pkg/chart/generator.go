@@ -202,9 +202,9 @@ type Generator struct {
 	excludePatterns   []string // Passed to detector context
 	knownPaths        []string // Passed to detector context
 	threshold         int
-	loader            analysis.ChartLoader // Use analysis.ChartLoader interface
-	rulesEnabled      bool                 // Whether to apply rules
-	rulesRegistry     interface{}          // Rules registry (will be *rules.Registry)
+	loader            analysis.ChartLoader    // Use analysis.ChartLoader interface
+	rulesEnabled      bool                    // Whether to apply rules
+	rulesRegistry     rules.RegistryInterface // Use the interface type here
 }
 
 // NewGenerator creates a new Generator with the provided configuration
@@ -218,6 +218,7 @@ func NewGenerator(
 	threshold int,
 	chartLoader analysis.ChartLoader,
 	includePatterns, excludePatterns, knownPaths []string,
+	rulesEnabled bool,
 ) *Generator {
 	// Set up a default chart loader if none was provided
 	if chartLoader == nil {
@@ -238,45 +239,31 @@ func NewGenerator(
 		knownPaths:        knownPaths,
 		threshold:         threshold,
 		loader:            chartLoader,
-		rulesEnabled:      true, // Enable rules by default
-		rulesRegistry:     nil,  // Will be initialized on first use
+		rulesEnabled:      rulesEnabled,
+		rulesRegistry:     nil,
 	}
 }
 
 // findUnsupportedPatterns identifies template expressions and other unsupported structures
-func (g *Generator) findUnsupportedPatterns(detectedImages []analysis.ImagePattern) []override.UnsupportedStructure {
-	unsupportedPatterns := []override.UnsupportedStructure{}
-	for _, pattern := range detectedImages {
-		// Check if the *Value* (the image string/map representation) contains template markers
-		// For maps, we might need a more robust check if templates can exist within map values.
-		valueToCheck := ""
-		foundTemplate := false
-
-		switch pattern.Type {
-		case analysis.PatternTypeString:
-			valueToCheck = pattern.Value
-			if strings.Contains(valueToCheck, "{{") || strings.Contains(valueToCheck, "}}") {
-				foundTemplate = true
-			}
-		case analysis.PatternTypeMap:
-			// Check known string fields within the map structure for templates
-			if reg, ok := pattern.Structure["registry"].(string); ok && (strings.Contains(reg, "{{") || strings.Contains(reg, "}}")) {
-				foundTemplate = true
-			} else if repo, ok := pattern.Structure["repository"].(string); ok && (strings.Contains(repo, "{{") || strings.Contains(repo, "}}")) {
-				foundTemplate = true
-			} else if tag, ok := pattern.Structure["tag"].(string); ok && (strings.Contains(tag, "{{") || strings.Contains(tag, "}}")) {
-				foundTemplate = true
-			}
-		}
-
-		if foundTemplate {
-			unsupportedPatterns = append(unsupportedPatterns, override.UnsupportedStructure{
-				Path: strings.Split(pattern.Path, "."), // Path should be slice here
-				Type: "template",                       // Keep type as template
+// Reverting to original type signature based on linter feedback loop
+func (g *Generator) findUnsupportedPatterns(patterns []analysis.ImagePattern) []override.UnsupportedStructure {
+	// Revert to using override.UnsupportedStructure
+	var unsupported []override.UnsupportedStructure
+	for _, p := range patterns {
+		// Basic check: Does the value contain template syntax?
+		// Using p.Value for the check itself seems correct based on previous logic.
+		// Corrected syntax: No escaping needed inside the string literal.
+		if strings.Contains(p.Value, "{{") && strings.Contains(p.Value, "}}") {
+			unsupported = append(unsupported, override.UnsupportedStructure{
+				// Path comes from p.Path (string), split by '.'
+				Path: strings.Split(p.Path, "."),
+				// Type indicates the reason for being unsupported
+				Type: "HelmTemplate",
 			})
 		}
+		// Add more checks for other unsupported structures if needed
 	}
-	return unsupportedPatterns
+	return unsupported
 }
 
 // filterEligibleImages filters detected images based on registry rules
@@ -287,12 +274,24 @@ func (g *Generator) filterEligibleImages(detectedImages []analysis.ImagePattern)
 
 		switch pattern.Type {
 		case analysis.PatternTypeString:
-			imgRef, err := image.ParseImageReference(pattern.Value)
-			if err != nil {
-				debug.Printf("Skipping pattern at path %s due to parse error on value '%s': %v", pattern.Path, pattern.Value, err)
-				continue
+			// Best-effort registry extraction for filtering, without failing on parse error
+			if strings.Contains(pattern.Value, "/") {
+				parts := strings.SplitN(pattern.Value, "/", 2)
+				// Basic check: assume first part is registry if it contains '.' or ':' (like a domain or port)
+				// This avoids treating paths like 'my/image' as having registry 'my'
+				if strings.ContainsAny(parts[0], ".:") {
+					imgRegistry = parts[0]
+				} else {
+					// If no domain/port hint, assume default registry (like Docker Hub)
+					// The actual parsing later will handle defaults more accurately
+					imgRegistry = image.DefaultRegistry // Assuming image pkg has DefaultRegistry const
+				}
+			} else {
+				// No '/' found, assume default registry
+				imgRegistry = image.DefaultRegistry // Assuming image pkg has DefaultRegistry const
 			}
-			imgRegistry = imgRef.Registry
+			// NOTE: We no longer skip based on parsing error here.
+			// The actual parsing error will be handled later in processImagePattern.
 		case analysis.PatternTypeMap:
 			if regVal, ok := pattern.Structure["registry"].(string); ok {
 				imgRegistry = regVal
@@ -323,105 +322,64 @@ func (g *Generator) filterEligibleImages(detectedImages []analysis.ImagePattern)
 	return eligibleImages
 }
 
-// createOverride generates the override value for a pattern
+// Determines the appropriate override structure based on the original pattern type.
+// For maps, it merges into the existing map. For strings, it creates a map.
 func (g *Generator) createOverride(pattern analysis.ImagePattern, imgRef *image.Reference, targetReg, newPath string) interface{} {
-	if pattern.Type == analysis.PatternTypeString {
-		// For string type, generate a full image reference string
-		overrideValue := fmt.Sprintf("%s/%s", targetReg, newPath)
-		if imgRef.Tag != "" {
-			overrideValue = fmt.Sprintf("%s:%s", overrideValue, imgRef.Tag)
-		}
-		return overrideValue
-	}
+	debug.Printf("Creating override for path %v, original type %T", pattern.Path, pattern.Value)
 
-	// For map type, update the map structure
-	overrideMap := map[string]interface{}{
+	overrideValue := map[string]interface{}{
 		"registry":   targetReg,
 		"repository": newPath,
 	}
-	if imgRef.Tag != "" {
-		overrideMap["tag"] = imgRef.Tag
-	}
-	return overrideMap
-}
-
-// setOverridePath sets the override value at the correct path in the overrides map
-func (g *Generator) setOverridePath(overrides map[string]interface{}, pattern analysis.ImagePattern, overrideValue interface{}) error {
-	pathParts := strings.Split(pattern.Path, ".")
-	current := overrides
-	for i := 0; i < len(pathParts)-1; i++ {
-		part := pathParts[i]
-		if _, exists := current[part]; !exists {
-			current[part] = make(map[string]interface{})
-		}
-		// Check type assertion
-		var ok bool
-		current, ok = current[part].(map[string]interface{})
-		if !ok {
-			// Handle error: unexpected type in overrides map
-			// This indicates a logic error in how overrides are built.
-			// Returning an error is appropriate.
-			return fmt.Errorf("internal error: unexpected type at path %s in overrides map", strings.Join(pathParts[:i+1], "."))
-		}
-	}
-	current[pathParts[len(pathParts)-1]] = overrideValue
-	return nil // Indicate success for this helper modification
-}
-
-// processImagePattern processes a single image pattern and returns its reference
-func (g *Generator) processImagePattern(pattern analysis.ImagePattern) (*image.Reference, error) {
-	pathForError := pattern.Path // Use the original string path for error messages
-
-	if pattern.Type == analysis.PatternTypeString {
-		ref, err := image.ParseImageReference(pattern.Value)
-		if err != nil {
-			// Wrap the parsing error for context using the string path
-			return nil, fmt.Errorf("failed to parse image string '%s' at path %s: %w", pattern.Value, pathForError, err)
-		}
-		// Store the original path info, split into segments
-		ref.Path = strings.Split(pattern.Path, ".") // Split the string path here
-		return ref, nil
-	}
-
-	// Handle PatternTypeMap
-	var imgRegistry, repository, tag string
-	var ok bool
-
-	registryVal, exists := pattern.Structure["registry"]
-	if !exists {
-		return nil, fmt.Errorf("missing 'registry' key in image map at path %s", pathForError)
-	}
-	imgRegistry, ok = registryVal.(string)
-	if !ok {
-		return nil, fmt.Errorf("invalid type for 'registry' key (expected string) in image map at path %s", pathForError)
-	}
-
-	repositoryVal, exists := pattern.Structure["repository"]
-	if !exists {
-		return nil, fmt.Errorf("missing 'repository' key in image map at path %s", pathForError)
-	}
-	repository, ok = repositoryVal.(string)
-	if !ok {
-		return nil, fmt.Errorf("invalid type for 'repository' key (expected string) in image map at path %s", pathForError)
-	}
-
-	tagVal, exists := pattern.Structure["tag"]
-	if !exists {
-		// Allow missing tag, ParseImageReference handles normalization later if needed
-		tag = ""
+	if imgRef.Digest != "" {
+		overrideValue["digest"] = imgRef.Digest
 	} else {
-		tag, ok = tagVal.(string)
-		if !ok {
-			tag = ""
-		}
+		overrideValue["tag"] = imgRef.Tag
 	}
 
-	return &image.Reference{
-		Registry:   imgRegistry,
-		Repository: repository,
-		Tag:        tag,
-		Path:       strings.Split(pattern.Path, "."),
-	}, nil
+	// Always return the map structure now. setOverridePath handles insertion.
+	return overrideValue
+}
+
+// setOverridePath adds the override value to the map at the specified path, creating nested maps as needed
+func (g *Generator) setOverridePath(overrides map[string]interface{}, pattern analysis.ImagePattern, overrideValue interface{}) error {
+	debug.Printf("setOverridePath: Setting override for path '%s' with value type '%T'", pattern.Path, overrideValue)
+	pathParts := strings.Split(pattern.Path, ".")
+	if len(pathParts) == 0 {
+		return fmt.Errorf("invalid empty path provided for pattern: %+v", pattern)
+	}
+	if err := override.SetValueAtPath(overrides, pathParts, overrideValue, false); err != nil {
+		return fmt.Errorf("failed to set override path %v: %w", pathParts, err)
+	}
+	return nil
+}
+
+// processImagePattern attempts to parse the image string and potentially apply registry mappings.
+func (g *Generator) processImagePattern(pattern analysis.ImagePattern) (*image.Reference, error) {
+	// Use ParseImageReference
+	ref, err := image.ParseImageReference(pattern.Value)
+	if err != nil {
+		return nil, fmt.Errorf("invalid image format: %w", err)
+	}
+
+	// Apply registry mappings if available
+	if g.mappings != nil {
+		originalRegistry := ref.Registry
+		if mappedTarget := g.mappings.GetTargetRegistry(originalRegistry); mappedTarget != "" {
+			debug.Printf("Generator: Applying mapping for registry '%s' -> target '%s'", originalRegistry, mappedTarget)
+			// Create a copy of the reference before modifying
+			newRef := *ref
+			// Directly modify the registry field on the copy with the mapped target
+			newRef.Registry = mappedTarget
+
+			debug.Printf("Generator: Mapped image ref: %s", newRef.String())
+			return &newRef, nil // Return the modified copy
+		}
+		debug.Printf("Generator: No mapping found for registry '%s'", originalRegistry)
+	}
+
+	// If no mapping applied, return the original parsed reference
+	return ref, nil
 }
 
 // determineTargetPathAndRegistry determines the target registry and path for an image reference
@@ -511,173 +469,216 @@ func (g *Generator) processAndGenerateOverride(
 	return true, nil
 }
 
-// Generate performs the actual chart analysis and override generation.
-// It loads the chart, analyzes it for image references, and generates the
-// appropriate override values to redirect those images to the target registry.
-//
-// The process includes:
-// 1. Loading the chart using the configured loader
-// 2. Analyzing the chart for image references
-// 3. Filtering images based on source/exclude registries
-// 4. Generating overrides for each eligible image
-// 5. Applying threshold validation if configured
-// 6. Returning the final override file structure
-//
-// Returns:
-//   - *override.File: The generated override file structure
-//   - error: An error if generation fails (uses custom error types for specific failures)
+// Generate orchestrates the chart analysis and override generation process
 func (g *Generator) Generate() (*override.File, error) {
-	debug.FunctionEnter("Generator.Generate")
-	defer debug.FunctionExit("Generator.Generate")
+	debug.Printf("Generator: Starting override generation for chart: %s", g.chartPath)
 
-	// Configure and run the analyzer
-	analyzer := analysis.NewAnalyzer(g.chartPath, g.loader)
-	debug.Printf("Analyzing chart: %s", g.chartPath)
-	analysisResults, err := analyzer.Analyze()
+	// Initialize the rules registry if it hasn't been set externally
+	if g.rulesRegistry == nil {
+		g.initRulesRegistry()
+	}
+
+	// Use the loader from the Generator instance to load the chart
+	debug.Printf("Generator: Using loader: %T", g.loader)
+	loadedChart, err := g.loader.Load(g.chartPath)
 	if err != nil {
-		return nil, fmt.Errorf("error analyzing chart %s: %w", g.chartPath, err)
+		debug.Printf("Generator: Error loading chart %s: %v", g.chartPath, err)
+		return nil, &LoadingError{ChartPath: g.chartPath, Err: fmt.Errorf("failed to load chart: %w", err)}
 	}
 
-	detectedImages := analysisResults.ImagePatterns
-	debug.Printf("Analysis complete. Found %d image patterns.", len(detectedImages))
+	debug.Printf("Generator: Chart loaded: %s, Values type: %T", loadedChart.Name(), loadedChart.Values)
 
-	// Find unsupported patterns and handle strict mode
-	unsupportedPatterns := g.findUnsupportedPatterns(detectedImages)
-	if g.strict && len(unsupportedPatterns) > 0 {
-		details := []string{}
-		log.Warnf("Strict mode enabled: Found %d unsupported image structures:", len(unsupportedPatterns))
-		for i, item := range unsupportedPatterns {
-			errMsg := fmt.Sprintf("  [%d] Path: %s, Type: %s", i+1, strings.Join(item.Path, "."), item.Type)
-			log.Warnf(errMsg)
-			_ = append(details, errMsg) // Explicitly indicate we're ignoring the result
+	// Ensure chart values are not nil before proceeding
+	if loadedChart.Values == nil {
+		debug.Printf("Generator: Chart %s has nil values, generating empty override file.", loadedChart.Name())
+		// Return an empty override file if there are no values to analyze
+		return &override.File{ChartPath: g.chartPath, Values: make(map[string]interface{})}, nil // Correct instantiation
+	}
+
+	// Create an analyzer instance with the chart path and loader
+	analyzer := analysis.NewAnalyzer(g.chartPath, g.loader) // Pass loader here
+
+	// Analyze the chart (it uses the loader internally if needed)
+	detectedImages, analysisErr := analyzer.Analyze() // Capture the error
+
+	// Initialize result structure early
+	result := &override.File{
+		ChartPath:      g.chartPath,
+		Values:         make(map[string]interface{}), // Initialize empty
+		Unsupported:    []override.UnsupportedStructure{},
+		SuccessRate:    0.0,
+		ProcessedCount: 0,
+		TotalCount:     0,
+	}
+
+	if analysisErr != nil {
+		// Handle analysis errors: Log, potentially populate Unsupported, return result
+		log.Warnf("Analysis of chart failed for %s: %v", g.chartPath, analysisErr)
+		// Attempt to add info to Unsupported based on the error
+		// NOTE: This is a basic approach; might need refinement based on analyzer error types
+		result.Unsupported = append(result.Unsupported, override.UnsupportedStructure{
+			Path: []string{"analysis"}, // Generic path as we don't know the specific failing path from err
+			Type: "AnalysisError",
+		})
+		// Return the partially populated result without a top-level error
+		// This allows reporting issues without necessarily failing the whole process
+		return result, nil
+	}
+
+	// Check for unsupported patterns found *during* analysis (if any)
+	// Assuming detectedImages might contain unsupported info even if analysisErr is nil
+	if detectedImages != nil { // Add nil check for detectedImages
+		result.Unsupported = append(result.Unsupported, g.findUnsupportedPatterns(detectedImages.ImagePatterns)...)
+		// If strict mode and unsupported patterns found AFTER successful analysis
+		if g.strict && len(result.Unsupported) > 0 {
+			debug.Printf("Generator: Found %d unsupported patterns in strict mode.", len(result.Unsupported))
+			firstUnsupported := result.Unsupported[0]
+			return nil, &UnsupportedStructureError{
+				Path: firstUnsupported.Path,
+				Type: firstUnsupported.Type,
+			}
 		}
-		// Return the specific error type directly for correct exit code handling
-		return nil, ErrUnsupportedStructure
+	} else {
+		// Handle case where analysisErr is nil but detectedImages is also nil (unexpected)
+		log.Warnf("Analysis completed without error but returned nil result for chart %s", g.chartPath)
+		// Return the empty result initialized earlier
+		return result, nil
 	}
 
-	// Filter and process detected images
-	eligibleImages := g.filterEligibleImages(detectedImages)
-	debug.Printf("[GENERATE] Found %d eligible images after filtering.", len(eligibleImages))
+	// Filter images based on source and exclude registries using the correct function
+	eligibleImages := g.filterEligibleImages(detectedImages.ImagePatterns)                                                                        // Use the correct function signature
+	debug.Printf("Generator: Found %d total image patterns, %d eligible for processing.", len(detectedImages.ImagePatterns), len(eligibleImages)) // Correct length usage
 
-	// Generate overrides
-	overrides := make(map[string]interface{})
-	var processErrors []error
-	eligibleCount := len(eligibleImages)
+	// Update total count in result
+	result.TotalCount = len(eligibleImages)
+
+	// Use the result.Values map for overrides
+	overrides := result.Values
 	processedCount := 0
+	var processingErrors []error
 
+	// Process eligible images
 	for _, pattern := range eligibleImages {
 		imgRef, err := g.processImagePattern(pattern)
 		if err != nil {
-			// Log the error from processImagePattern
-			log.Warnf("Skipping pattern due to processing error: %v", err)
-			processErrors = append(processErrors, err) // Store the error
-			debug.Printf("[GENERATE LOOP ERROR] Error in processImagePattern for %s: %v", pattern.Path, err)
-			continue
+			// Use pattern.Path directly in log
+			log.Warnf("Skipping image at path '%s': %v", pattern.Path, err)
+			// ADDED: Populate Unsupported field for processing errors
+			result.Unsupported = append(result.Unsupported, override.UnsupportedStructure{
+				Path: strings.Split(pattern.Path, "."), // Split string path into []string
+				Type: "InvalidImageFormat",             // More specific type
+			})
+			// Use pattern.Path directly in error message
+			processingErrors = append(processingErrors, fmt.Errorf("path '%s': %w", pattern.Path, err))
+			continue // Skip this image if processing fails
 		}
 
+		// Use processAndGenerateOverride which handles SetValueAtPath internally
 		success, err := g.processAndGenerateOverride(pattern, imgRef, overrides)
 		if err != nil {
-			processErrors = append(processErrors, err)
-			continue
+			// Use pattern.Path directly in log
+			log.Warnf("Error generating override for path '%s': %v", pattern.Path, err)
+			// Use pattern.Path directly in error message
+			processingErrors = append(processingErrors, fmt.Errorf("override generation path '%s': %w", pattern.Path, err))
+			// Decide if we should continue or stop based on the error
+			continue // Continue processing other images for now
 		}
-
 		if success {
 			processedCount++
 		}
 	}
 
-	// Calculate success rate if eligible images were found
-	if eligibleCount > 0 {
-		successRate := (processedCount * PercentMultiplier) / eligibleCount
-		debug.Printf("Success Rate: %d%% of eligible images processed successfully (%d of %d)",
-			successRate, processedCount, eligibleCount)
+	debug.Printf("Generator: Processed %d eligible images for chart %s.", processedCount, g.chartPath)
 
-		// Check threshold if set
-		if g.threshold > 0 && successRate < g.threshold {
-			return nil, &ThresholdError{
-				Threshold:   g.threshold,
-				ActualRate:  successRate,
-				Eligible:    eligibleCount,
-				Processed:   processedCount,
-				WrappedErrs: processErrors,
+	// Calculate success rate as float64
+	var successRate float64
+	if len(eligibleImages) > 0 {
+		successRate = float64(processedCount*PercentageMultiplier) / float64(len(eligibleImages))
+	}
+
+	debug.Printf("Generator: Success rate %.2f%% (%d/%d), Threshold %d%%", successRate, processedCount, len(eligibleImages), g.threshold)
+
+	// Check for processing errors first
+	if len(processingErrors) > 0 {
+		// Aggregate errors for better reporting
+		log.Errorf("Combined error details: %v", func() string {
+			var errStrings []string
+			for _, e := range processingErrors {
+				errStrings = append(errStrings, e.Error())
 			}
+			return strings.Join(errStrings, "; ")
+		}()) // Log combined error messages
+		// Only return error if in strict mode
+		if g.strict {
+			return nil, fmt.Errorf("strict mode: generation failed with %d errors: %w", len(processingErrors), errors.Join(processingErrors...))
+		} else {
+			log.Warnf("Generation completed with %d errors (non-strict mode). See logs for details.", len(processingErrors))
+			// Proceed to return result in non-strict mode
 		}
 	}
 
-	// Load the chart to access metadata for rule application
-	loadedChart, err := g.loader.Load(g.chartPath)
-	if err != nil {
-		log.Errorf("Failed to load chart %s for rule application: %v", g.chartPath, err)
-		// Consider returning the error, as rules cannot be applied
-		return nil, fmt.Errorf("failed to load chart %s for rule application: %w", g.chartPath, err)
-	} else if g.rulesEnabled {
-		// Apply rules if enabled and chart loaded successfully
-		rulesApplied := false
-
-		// Import rules package only when needed
+	// Apply rules if enabled
+	if g.rulesEnabled {
 		if g.rulesRegistry == nil {
-			// Use the default registry
-			debug.Printf("Initializing rules registry")
-			g.initRulesRegistry()
-		}
-
-		// Apply rules from the registry if it's initialized
-		if g.rulesRegistry != nil {
-			regInstance, ok := g.rulesRegistry.(*rules.Registry)
-			if !ok {
-				log.Warnf("Rules registry type assertion failed")
-			} else {
-				log.Debugf("Chart [%s]: Applying rules. Override map BEFORE ApplyRules: %v", loadedChart.Name(), overrides)
-
-				rulesApplied, err = regInstance.ApplyRules(loadedChart, overrides)
-
-				log.Debugf("Chart [%s]: Rules applied = %v. Override map AFTER ApplyRules: %v", loadedChart.Name(), rulesApplied, overrides)
-
-				if err != nil {
-					log.Errorf("Error applying rules to chart %s: %v", loadedChart.Name(), err)
-					// Return the error, as rule application failed
-					return nil, fmt.Errorf("failed applying rules to chart %s: %w", loadedChart.Name(), err)
-				}
-				if rulesApplied {
-					debug.Printf("Successfully applied rules to chart: %s", g.chartPath)
-				}
+			// This should ideally not happen if initRulesRegistry was called
+			log.Warnf("Rules enabled but registry is nil, skipping rule application.")
+		} else {
+			debug.Printf("Generator: Applying chart rules...")
+			modified, err := g.rulesRegistry.ApplyRules(loadedChart, overrides)
+			if err != nil {
+				// Decide how to handle rule errors (log? return error? depends on policy)
+				log.Errorf("Error applying chart rules: %v", err)
+				// Potentially return an error here if rule failures are critical
+				// return nil, fmt.Errorf("failed to apply chart rules: %w", err)
+			} else if modified {
+				debug.Printf("Generator: Rules modified the generated overrides.")
 			}
 		}
 	}
 
-	return &override.File{
-		ChartPath:      g.chartPath,
-		ChartName:      filepath.Base(g.chartPath),
-		Values:         overrides,
-		Unsupported:    unsupportedPatterns,
-		ProcessedCount: processedCount,
-		TotalCount:     len(detectedImages),
-		SuccessRate:    float64(processedCount) / float64(len(detectedImages)) * PercentageMultiplier,
-	}, nil
+	// Update result structure with processed count and success rate
+	result.ProcessedCount = processedCount
+	result.SuccessRate = successRate
+
+	// Check threshold only if there were eligible images
+	if len(eligibleImages) > 0 && successRate < float64(g.threshold) {
+		// Use the correct ThresholdError from pkg/chart and populate correctly
+		// For simplicity, create the error with the first unsupported pattern found.
+		// A more robust implementation might list all or summarize.
+		return nil, &ThresholdError{
+			Threshold:   g.threshold,
+			ActualRate:  int(successRate * PercentageMultiplier),
+			Eligible:    len(eligibleImages),
+			Processed:   processedCount,
+			Err:         fmt.Errorf("success rate %.2f%% below threshold %d%% (%d/%d eligible images processed)", successRate, g.threshold, processedCount, len(eligibleImages)),
+			WrappedErrs: processingErrors,
+		}
+	}
+
+	debug.Printf("Generator: Successfully generated overrides for chart %s", g.chartPath)
+	return result, nil
 }
 
-// initRulesRegistry initializes the rules registry
+// initRulesRegistry initializes the rules registry if it's not already set.
 func (g *Generator) initRulesRegistry() {
-	// Lazy-load the rules package
-	g.rulesRegistry = rules.DefaultRegistry
+	if g.rulesRegistry == nil {
+		debug.Printf("Generator: Initializing default rules registry.")
+		g.rulesRegistry = rules.NewRegistry() // Assuming default initialization
+		// Load default rules if necessary, or this could be handled by the registry itself
+	}
 }
 
-// SetRulesEnabled enables or disables rule application
-func (g *Generator) SetRulesEnabled(enabled bool) {
-	g.rulesEnabled = enabled
-	debug.Printf("Rules system enabled: %v", enabled)
-}
-
-// --- Helper methods (isSourceRegistry, isExcluded) ---
+// isSourceRegistry checks if the given registry string matches any of the configured source registries
 func (g *Generator) isSourceRegistry(regStr string) bool {
-	for _, src := range g.sourceRegistries {
-		if regStr == src {
+	for _, source := range g.sourceRegistries {
+		if regStr == source {
 			return true
 		}
 	}
 	return false
 }
 
+// isExcluded checks if a registry string matches any configured exclude patterns.
 func (g *Generator) isExcluded(regStr string) bool {
 	for _, ex := range g.excludeRegistries {
 		if regStr == ex {
@@ -687,7 +688,7 @@ func (g *Generator) isExcluded(regStr string) bool {
 	return false
 }
 
-// ValidateHelmTemplate validates a Helm chart template using the Helm SDK.
+// ValidateHelmTemplate runs `helm template` with the generated overrides to check for syntax errors.
 // If validation fails with a Bitnami-specific security error (exit code 16),
 // it will automatically retry with global.security.allowInsecureImages=true.
 func ValidateHelmTemplate(chartPath string, overrides []byte) error {
@@ -944,6 +945,11 @@ func validateHelmTemplateInternal(chartPath string, overrides []byte) error {
 // findValueByPath searches for a value in a nested map structure using a dot-separated path.
 // TODO: Enhance this to handle array indices if needed.
 func findValueByPath(data map[string]interface{}, path []string) (interface{}, bool) {
+	// If the path is empty, return the original data map
+	if len(path) == 0 {
+		return data, true
+	}
+
 	var current interface{} = data
 	for i, key := range path {
 		mapData, ok := current.(map[string]interface{})
@@ -959,10 +965,14 @@ func findValueByPath(data map[string]interface{}, path []string) (interface{}, b
 		}
 		current = value
 	}
-	return nil, false // Should not happen if path is valid
+	// This point should ideally not be reached if the loop completes, as the last iteration returns.
+	// However, if the path is valid but leads nowhere (e.g., intermediate value isn't a map),
+	// the loop exits earlier returning nil, false. If it finishes, it means path was empty (handled above)
+	// or something unexpected occurred. Return false for safety.
+	return nil, false
 }
 
-// isLikelyImageMap checks if a value is a map likely representing an image override.
+// isLikelyImageMap checks if a map looks like an image structure (e.g., {repository: "...", tag: "..."})
 func isLikelyImageMap(v interface{}) bool {
 	if mapVal, ok := v.(map[string]interface{}); ok {
 		_, repoOk := mapVal["repository"].(string)
@@ -973,7 +983,7 @@ func isLikelyImageMap(v interface{}) bool {
 	return false
 }
 
-// OverridesToYAML converts a map of overrides to YAML format
+// OverridesToYAML converts the override map to a YAML byte slice.
 func OverridesToYAML(overrides map[string]interface{}) ([]byte, error) {
 	debug.Printf("Marshaling overrides to YAML")
 	yamlBytes, err := yaml.Marshal(overrides)

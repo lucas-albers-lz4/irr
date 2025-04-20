@@ -631,3 +631,15 @@ func (a *Adapter) resolveChartPath(meta *ChartMetadata) (string, error) {
 	debug.Printf("Could not find chart in any cache, using temporary path: %s", tempChartPath)
 	return tempChartPath, nil
 }
+
+// Add wrapper methods to expose client functionality
+
+// GetReleaseValues retrieves the computed values for a deployed release.
+func (a *Adapter) GetReleaseValues(ctx context.Context, releaseName, namespace string) (map[string]interface{}, error) {
+	return a.helmClient.GetReleaseValues(ctx, releaseName, namespace)
+}
+
+// GetChartFromRelease retrieves the chart metadata associated with a deployed release.
+func (a *Adapter) GetChartFromRelease(ctx context.Context, releaseName, namespace string) (*ChartMetadata, error) {
+	return a.helmClient.GetReleaseChart(ctx, releaseName, namespace)
+}
