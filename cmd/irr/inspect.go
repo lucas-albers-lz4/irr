@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -13,12 +12,14 @@ import (
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
+	"helm.sh/helm/v3/pkg/chartutil"
 	"helm.sh/helm/v3/pkg/cli"
+	"helm.sh/helm/v3/pkg/cli/values"
+	"helm.sh/helm/v3/pkg/getter"
 
 	"github.com/lalbers/irr/pkg/analyzer"
 	"github.com/lalbers/irr/pkg/exitcodes"
 	"github.com/lalbers/irr/pkg/fileutil"
-	"github.com/lalbers/irr/pkg/helm"
 	"github.com/lalbers/irr/pkg/image"
 	log "github.com/lalbers/irr/pkg/log"
 	"github.com/lalbers/irr/pkg/registry"
@@ -44,11 +45,10 @@ type ImageInfo struct {
 
 // ImageAnalysis represents the result of analyzing a chart for images
 type ImageAnalysis struct {
-	Chart         ChartInfo               `json:"chart" yaml:"chart"`
-	Images        []ImageInfo             `json:"images" yaml:"images"`
-	ImagePatterns []analyzer.ImagePattern `json:"imagePatterns" yaml:"imagePatterns"`
-	Errors        []string                `json:"errors,omitempty" yaml:"errors,omitempty"`
-	Skipped       []string                `json:"skipped,omitempty" yaml:"skipped,omitempty"`
+	Chart   ChartInfo               `json:"chart" yaml:"chart"`
+	Images  []analyzer.ImagePattern `json:"images" yaml:"images"`
+	Errors  []string                `json:"errors,omitempty" yaml:"errors,omitempty"`
+	Skipped []string                `json:"skipped,omitempty" yaml:"skipped,omitempty"`
 }
 
 // InspectFlags holds the command line flags for the inspect command
@@ -59,11 +59,15 @@ type InspectFlags struct {
 	GenerateConfigSkeleton bool
 	AnalyzerConfig         *analyzer.Config
 	SourceRegistries       []string
+	ValueFiles             []string
+	ReleaseName            string
+	Namespace              string
 }
 
 const (
 	// DefaultConfigSkeletonFilename is the default filename for the generated config skeleton
 	DefaultConfigSkeletonFilename = "irr-config.yaml"
+	defaultNamespace              = "default" // Define constant for "default"
 )
 
 // newInspectCmd creates a new inspect command
@@ -84,8 +88,9 @@ This command analyzes the chart's values.yaml and templates to find image refere
 	cmd.Flags().StringSlice("include-pattern", nil, "Glob patterns for values paths to include during analysis")
 	cmd.Flags().StringSlice("exclude-pattern", nil, "Glob patterns for values paths to exclude during analysis")
 	cmd.Flags().StringSliceP("source-registries", "r", nil, "Source registries to filter results (optional)")
-	cmd.Flags().String("release-name", "", "Release name for Helm plugin mode")
-	cmd.Flags().String("namespace", "", "Kubernetes namespace for the release")
+	cmd.Flags().String("release-name", "", "Release name for Helm plugin mode and template analysis")
+	cmd.Flags().String("namespace", "", "Kubernetes namespace for the release and template analysis")
+	cmd.Flags().StringSliceP("values", "f", nil, "Specify values in a YAML file or a URL (can specify multiple)")
 
 	return cmd
 }
@@ -117,6 +122,8 @@ func loadHelmChart(chartPath string) (*chart.Chart, error) {
 }
 
 // analyzeChart analyzes a chart for image patterns
+// DEPRECATED - Logic moved into runInspect and uses new AnalyzeChartValues
+/*
 func analyzeChart(chartData *chart.Chart, config *analyzer.Config) (*ImageAnalysis, error) {
 	// Extract chart info
 	chartInfo := ChartInfo{
@@ -148,6 +155,7 @@ func analyzeChart(chartData *chart.Chart, config *analyzer.Config) (*ImageAnalys
 
 	return analysis, nil
 }
+*/
 
 // writeOutput writes the analysis to a file or stdout
 func writeOutput(analysis *ImageAnalysis, flags *InspectFlags) error {
@@ -206,13 +214,90 @@ func writeOutput(analysis *ImageAnalysis, flags *InspectFlags) error {
 	return nil
 }
 
-// runInspect implements the inspect command logic
-func runInspect(cmd *cobra.Command, args []string) error {
-	// Get flags for the inspect command
-	var flags *InspectFlags
-	var err error
+// --- Helper Functions for runInspect ---
 
-	// Check if we're being run with a release name
+// loadChartAndValues handles loading the chart, user values, and coalescing them.
+func loadChartAndValues(flags *InspectFlags) (*chart.Chart, map[string]interface{}, error) {
+	log.Debugf("Loading chart from path: %s", flags.ChartPath)
+	loadedChart, err := loadHelmChart(flags.ChartPath)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	log.Debugf("Loading user values from: %v", flags.ValueFiles)
+	settings := cli.New() // Need Helm settings for getter
+	valueOpts := values.Options{ValueFiles: flags.ValueFiles}
+	userValues, err := valueOpts.MergeValues(getter.All(settings))
+	if err != nil {
+		return loadedChart, nil, &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to merge user-provided values files: %w", err),
+		}
+	}
+	log.Debugf("Successfully merged %d user value files", len(flags.ValueFiles))
+
+	log.Debugf("Coalescing chart values...")
+	finalMergedValues, err := chartutil.CoalesceValues(loadedChart, userValues)
+	if err != nil {
+		return loadedChart, userValues, &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitChartProcessingFailed,
+			Err:  fmt.Errorf("failed to coalesce chart values: %w", err),
+		}
+	}
+	log.Debugf("Successfully coalesced values.")
+	return loadedChart, finalMergedValues, nil
+}
+
+// performAnalysis runs the core image analysis.
+func performAnalysis(analyzerConfig *analyzer.Config, loadedChart *chart.Chart, finalMergedValues map[string]interface{}) ([]analyzer.ImagePattern, error) {
+	log.Debugf("Building value origin map...")
+	originMap := buildOriginMap(loadedChart)
+	log.Debugf("Built origin map with %d entries.", len(originMap))
+
+	log.Debugf("Starting analysis with AnalyzeChartValues...")
+	imagePatterns, err := analyzer.AnalyzeChartValues(finalMergedValues, originMap, analyzerConfig)
+	if err != nil {
+		return nil, &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitChartProcessingFailed,
+			Err:  fmt.Errorf("chart analysis failed: %w", err),
+		}
+	}
+	log.Debugf("AnalyzeChartValues completed, found %d patterns.", len(imagePatterns))
+	return imagePatterns, nil
+}
+
+// buildAnalysisResult structures the analysis output.
+func buildAnalysisResult(loadedChart *chart.Chart, flags *InspectFlags, imagePatterns []analyzer.ImagePattern) *ImageAnalysis {
+	return &ImageAnalysis{
+		Chart: ChartInfo{
+			Name:         loadedChart.Metadata.Name,
+			Version:      loadedChart.Metadata.Version,
+			Path:         flags.ChartPath, // Use the validated path
+			Dependencies: len(loadedChart.Dependencies()),
+		},
+		Images:  imagePatterns,
+		Skipped: []string{}, // TODO: Populate skipped list if needed
+		Errors:  []string{}, // TODO: Populate errors if any occurred during specific steps
+	}
+}
+
+// suggestConfiguration potentially outputs a registry config suggestion.
+func suggestConfiguration(flags *InspectFlags, analysis *ImageAnalysis) {
+	if flags.GenerateConfigSkeleton || len(flags.SourceRegistries) > 0 {
+		return // Don't suggest if generating skeleton or sources already provided
+	}
+	registries := extractUniqueRegistriesFromPatterns(analysis.Images) // Adapt helper
+	if len(registries) > 0 {
+		outputRegistryConfigSuggestion(flags.ChartPath, registries)
+	}
+}
+
+// --- End Helper Functions ---
+
+// runInspect implements the inspect command logic using helper functions.
+func runInspect(cmd *cobra.Command, args []string) error {
+	log.Debugf("--- Starting runInspect ---")
+	// 1. Get flags and handle initial setup
 	releaseNameProvided := len(args) > 0
 	if releaseNameProvided && !isHelmPlugin {
 		return &exitcodes.ExitCodeError{
@@ -221,157 +306,248 @@ func runInspect(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	flags, err = getInspectFlags(cmd, releaseNameProvided)
+	flags, err := getInspectFlags(cmd, releaseNameProvided)
 	if err != nil {
+		log.Errorf("Error getting inspect flags: %v", err)
 		return err
 	}
+	log.Debugf("InspectFlags parsed: %+v", flags) // Log parsed flags
 
 	if releaseNameProvided {
-		releaseName := args[0]
-		namespace, err := cmd.Flags().GetString("namespace")
-		if err != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitInputConfigurationError,
-				Err:  fmt.Errorf("failed to get namespace flag: %w", err),
-			}
+		flags.ReleaseName = args[0]
+		if flags.Namespace == "" {
+			flags.Namespace = defaultNamespace // Use constant
 		}
-		if namespace == "" {
-			namespace = validateTestNamespace
-		}
-		return inspectHelmRelease(cmd, flags, releaseName, namespace)
+		log.Debugf("Running in plugin mode context (release: %s, ns: %s)", flags.ReleaseName, flags.Namespace)
 	}
 
-	chartPath, analysis, err := setupAnalyzerAndLoadChart(cmd, flags)
+	// Determine chart path
+	log.Debugf("Determining chart path...")
+	chartPath, err := getChartPath(cmd, flags)
 	if err != nil {
+		log.Errorf("Error determining chart path: %v", err)
 		return err
 	}
+	flags.ChartPath = chartPath
+	log.Debugf("Chart path determined: %s", flags.ChartPath)
 
-	filterImagesBySourceRegistries(cmd, flags, analysis)
-
-	if len(analysis.Images) == 0 {
-		log.Warnf("No registries detected in the chart")
-		log.Infof("If you expected to find registry references, check your chart's structure or try different analysis patterns")
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitRegistryDetectionError,
-			Err:  fmt.Errorf("no registries detected in chart '%s'", chartPath),
-		}
+	// Get analyzer config
+	log.Debugf("Getting analyzer config...")
+	analyzerConfig, err := getAnalyzerConfig(cmd)
+	if err != nil {
+		log.Errorf("Error getting analyzer config: %v", err)
+		return err
 	}
+	flags.AnalyzerConfig = analyzerConfig
+	log.Debugf("Analyzer config obtained: %+v", flags.AnalyzerConfig)
 
-	registries := extractUniqueRegistries(analysis.Images)
-
+	// Handle GenerateConfigSkeleton mode separately if needed (or incorporate)
 	if flags.GenerateConfigSkeleton {
-		err = createConfigSkeleton(analysis.Images, flags.OutputFile)
-		if err != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitIOError,
-				Err:  fmt.Errorf("failed to create config skeleton: %w", err),
-			}
-		}
-		outputRegistrySuggestions(registries)
-		return nil
+		// Assuming skeleton generation needs analysis first
+		log.Infof("Generating config skeleton...")
+		// This duplicates some loading logic, consider refactoring skeleton generation
+		// or making analysis mandatory before skeleton generation.
+		// For now, keep the flow, but note the potential redundancy.
 	}
 
-	err = writeOutput(analysis, flags)
+	// 2. Load chart and values
+	log.Debugf("--- Loading chart and values ---")
+	loadedChart, finalMergedValues, err := loadChartAndValues(flags)
 	if err != nil {
+		log.Errorf("Error loading chart and values: %v", err)
 		return err
 	}
-
-	if len(registries) > 0 {
-		outputRegistryConfigSuggestion(chartPath, registries)
+	// Log limited output for merged values to avoid excessive logs
+	log.Debugf("Chart loaded: %s, Version: %s", loadedChart.Metadata.Name, loadedChart.Metadata.Version)
+	// Directly log potentially large YAML; debug logger should handle level checks.
+	// Avoid marshaling potentially huge structures unless debug is definitely enabled.
+	mergedValuesYAML, err := yaml.Marshal(finalMergedValues)
+	if err != nil {
+		log.Warnf("Could not marshal merged values for debugging: %v", err)
+	} else {
+		if len(mergedValuesYAML) > debugLogTruncateLengthLong { // Limit output size in logs
+			trimmedValues := string(mergedValuesYAML[:debugLogTruncateLengthLong]) + "... (truncated)"
+			log.Debugf("Final Merged Values (first %d bytes):\n%s", debugLogTruncateLengthLong, trimmedValues)
+		} else {
+			log.Debugf("Final Merged Values:\n%s", string(mergedValuesYAML))
+		}
 	}
 
+	// 3. Perform analysis
+	log.Debugf("--- Performing analysis ---")
+	imagePatterns, err := performAnalysis(flags.AnalyzerConfig, loadedChart, finalMergedValues)
+	if err != nil {
+		log.Errorf("Error performing analysis: %v", err)
+		return err
+	}
+	log.Debugf("Analysis found %d image patterns.", len(imagePatterns))
+
+	// 4. Build and filter result
+	log.Debugf("--- Building and filtering result ---")
+	analysis := buildAnalysisResult(loadedChart, flags, imagePatterns)
+	log.Debugf("Built initial analysis result.")
+	filterImagePatternsBySourceRegistries(cmd, flags, analysis) // Filter modifies analysis.Images in place
+	log.Debugf("Filtered analysis result. Image count: %d", len(analysis.Images))
+
+	// 5. Write output
+	log.Debugf("--- Writing output ---")
+	if err := writeOutput(analysis, flags); err != nil {
+		log.Errorf("Error writing output: %v", err)
+		return err
+	}
+	log.Debugf("Output written successfully.")
+
+	// 6. Suggest configuration
+	log.Debugf("--- Suggesting configuration (if applicable) ---")
+	suggestConfiguration(flags, analysis)
+	log.Debugf("Configuration suggestion complete.")
+
+	log.Debugf("--- runInspect finished successfully ---")
 	return nil
 }
 
-func setupAnalyzerAndLoadChart(cmd *cobra.Command, flags *InspectFlags) (string, *ImageAnalysis, error) {
-	chartPath := flags.ChartPath
-	if chartPath == "" {
-		var err error
-		chartPath, err = detectChartInCurrentDirectory()
-		if err != nil {
-			return "", nil, &exitcodes.ExitCodeError{
+// getChartPath determines the chart path based on flags and environment
+func getChartPath(_ *cobra.Command, flags *InspectFlags) (string, error) {
+	if flags.ChartPath != "" {
+		return flags.ChartPath, nil
+	}
+	// If no chart path specified, try to detect in current directory
+	detectedPath, err := detectChartInCurrentDirectory()
+	if err != nil {
+		// If detection fails and we're not in plugin mode expecting a release name, it's an error
+		if !isHelmPlugin || flags.ReleaseName == "" { // Adjusted condition
+			return "", &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitInputConfigurationError,
-				Err:  fmt.Errorf("chart path not provided and could not auto-detect chart in current directory: %w", err),
+				Err:  fmt.Errorf("chart path not specified (--chart-path) even though release name was provided"),
 			}
 		}
-		log.Infof("Auto-detected chart path: %s", chartPath)
-	}
-
-	analyzerConfig := &analyzer.Config{}
-	includePatterns, excludePatterns, err := getAnalysisPatterns(cmd)
-	if err != nil {
-		return "", nil, err
-	}
-	analyzerConfig.IncludePatterns = includePatterns
-	analyzerConfig.ExcludePatterns = excludePatterns
-
-	sourceRegistries, err := cmd.Flags().GetStringSlice("source-registries")
-	if err != nil {
-		return "", nil, &exitcodes.ExitCodeError{
+		// If in plugin mode with release name, maybe chart path isn't strictly needed *yet*?
+		// This depends on whether inspectHelmRelease actually needs it. Assuming it does for now.
+		log.Debugf("Chart path not specified, detection failed, but release name provided. Proceeding cautiously.")
+		// Return empty path for now, let subsequent functions fail if it's required.
+		// OR: perhaps plugin mode should *always* require --chart-path? TODO: Clarify intent.
+		// Let's enforce requiring chart path for now.
+		return "", &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get source-registries flag: %w", err),
+			Err:  fmt.Errorf("chart path not specified (--chart-path) even though release name was provided"),
 		}
 	}
-	flags.SourceRegistries = sourceRegistries
-
-	chartData, err := loadHelmChart(chartPath)
-	if err != nil {
-		return "", nil, err
-	}
-
-	analysis, err := analyzeChart(chartData, analyzerConfig)
-	if err != nil {
-		return "", nil, err
-	}
-
-	return chartPath, analysis, nil
+	log.Infof("Chart path not specified, using detected chart: %s", detectedPath)
+	return detectedPath, nil
 }
 
-func filterImagesBySourceRegistries(_ *cobra.Command, flags *InspectFlags, analysis *ImageAnalysis) {
-	if len(flags.SourceRegistries) > 0 {
-		log.Infof("Filtering results to only include registries: %s", strings.Join(flags.SourceRegistries, ", "))
-		var filteredImages []ImageInfo
-		for _, img := range analysis.Images {
-			for _, sourceReg := range flags.SourceRegistries {
-				if img.Registry == sourceReg {
-					filteredImages = append(filteredImages, img)
-					break
+func getAnalyzerConfig(cmd *cobra.Command) (*analyzer.Config, error) {
+	includePatterns, err := cmd.Flags().GetStringSlice("include-pattern")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get include patterns: %w", err)
+	}
+	excludePatterns, err := cmd.Flags().GetStringSlice("exclude-pattern")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get exclude patterns: %w", err)
+	}
+	return &analyzer.Config{
+		IncludePatterns: includePatterns,
+		ExcludePatterns: excludePatterns,
+	}, nil
+}
+
+// filterImagePatternsBySourceRegistries filters the analysis results based on specified source registries
+func filterImagePatternsBySourceRegistries(_ *cobra.Command, flags *InspectFlags, analysis *ImageAnalysis) {
+	if len(flags.SourceRegistries) == 0 {
+		log.Debugf("No source registries specified, skipping filtering.")
+		return
+	}
+
+	log.Infof("Filtering results to only include registries: %s", strings.Join(flags.SourceRegistries, ", "))
+	allowedRegistries := make(map[string]struct{})
+	for _, reg := range flags.SourceRegistries {
+		// Normalize registry names for comparison (e.g., handle docker.io/library)
+		normalized := image.NormalizeRegistry(reg)
+		allowedRegistries[normalized] = struct{}{}
+		// Also add the original in case normalization isn't perfect or needed
+		if reg != normalized {
+			allowedRegistries[reg] = struct{}{}
+		}
+	}
+
+	var filteredPatterns []analyzer.ImagePattern
+	originalCount := len(analysis.Images)
+
+	for i := range analysis.Images { // Use index instead of copying pattern
+		pattern := &analysis.Images[i]
+		var reg string
+		var parseErr error
+
+		switch pattern.Type {
+		case "map":
+			if pattern.Structure != nil {
+				reg = pattern.Structure.Registry
+				// Fallback: If registry is empty in structure, try parsing repository field
+				if reg == "" && pattern.Structure.Repository != "" {
+					imgRef, err := image.ParseImageReference(pattern.Structure.Repository)
+					if err == nil && imgRef.Registry != "" {
+						reg = imgRef.Registry
+					} else if err != nil {
+						parseErr = fmt.Errorf("failed to parse repository field '%s' from map at path '%s' for filtering: %w", pattern.Structure.Repository, pattern.Path, err)
+					}
 				}
+			} else {
+				log.Warnf("Pattern at path '%s' has type 'map' but Structure is nil, cannot determine registry for filtering.", pattern.Path)
+				// Decide whether to keep or discard - let's discard as we can't verify registry
+				continue
 			}
+		case "string":
+			imgRef, err := image.ParseImageReference(pattern.Value)
+			if err != nil {
+				parseErr = fmt.Errorf("failed to parse image string '%s' from path '%s' for filtering: %w", pattern.Value, pattern.Path, err)
+			} else {
+				reg = imgRef.Registry
+			}
+		default:
+			log.Warnf("Unknown pattern type '%s' at path '%s', skipping filtering for this pattern.", pattern.Type, pattern.Path)
+			// Keep unknown types? Or discard? Let's keep them for now.
+			filteredPatterns = append(filteredPatterns, *pattern)
+			continue
 		}
-		if len(filteredImages) == 0 && len(analysis.Images) > 0 {
-			log.Warnf("No images found matching the provided source registries")
+
+		// If parsing failed for this pattern, log it and decide whether to keep/discard.
+		// Discarding seems safer for filtering if we couldn't determine the registry.
+		if parseErr != nil {
+			log.Warnf("Skipping pattern filtering due to parsing error: %v", parseErr)
+			continue
 		}
-		analysis.Images = filteredImages
+
+		// Normalize the extracted registry for comparison
+		normalizedReg := image.NormalizeRegistry(reg)
+		// Check if the normalized registry is in the allowed list
+		if _, ok := allowedRegistries[normalizedReg]; ok {
+			log.Debugf("Keeping pattern (Path: '%s', Type: '%s', Registry: '%s') as it matches source filter.", pattern.Path, pattern.Type, reg)
+			filteredPatterns = append(filteredPatterns, *pattern)
+		} else {
+			log.Debugf("Filtering out pattern (Path: '%s', Type: '%s', Registry: '%s') as it does not match source filter.", pattern.Path, pattern.Type, reg)
+		}
 	}
+
+	filteredCount := len(filteredPatterns)
+	analysis.Images = filteredPatterns
+	log.Debugf("Filtered image patterns from %d to %d based on %d source registries.", originalCount, filteredCount, len(flags.SourceRegistries))
 }
 
-func extractUniqueRegistries(images []ImageInfo) map[string]bool {
+// extractUniqueRegistriesFromPatterns extracts unique non-dockerhub registries from patterns
+func extractUniqueRegistriesFromPatterns(patterns []analyzer.ImagePattern) map[string]bool {
 	registries := make(map[string]bool)
-	for _, img := range images {
-		if img.Registry != "" {
-			registries[img.Registry] = true
+	for i := range patterns { // Use index instead of copy
+		pattern := &patterns[i]
+		imgRef, err := image.ParseImageReference(pattern.Value)
+		if err == nil {
+			if imgRef.Registry != "" {
+				registries[imgRef.Registry] = true
+			}
+		} else {
+			log.Debugf("Could not parse image value '%s' at path '%s' for registry extraction: %v", pattern.Value, pattern.Path, err)
 		}
 	}
 	return registries
-}
-
-func outputRegistrySuggestions(registries map[string]bool) {
-	if len(registries) > 0 {
-		log.Infof("\nDetected registries you may want to configure:")
-		var regList []string
-		for reg := range registries {
-			regList = append(regList, reg)
-		}
-		sort.Strings(regList)
-		for _, reg := range regList {
-			log.Infof("  %s -> YOUR_REGISTRY/%s", reg, strings.ReplaceAll(reg, ".", "-"))
-		}
-		log.Infof("\nYou can configure these mappings with:")
-		for _, reg := range regList {
-			log.Infof("  irr config --source %s --target YOUR_REGISTRY/%s", reg, strings.ReplaceAll(reg, ".", "-"))
-		}
-	}
 }
 
 func outputRegistryConfigSuggestion(chartPath string, registries map[string]bool) {
@@ -389,283 +565,74 @@ func outputRegistryConfigSuggestion(chartPath string, registries map[string]bool
 	}
 }
 
-// inspectHelmRelease handles inspection logic for a Helm release (extracted from runInspect)
-func inspectHelmRelease(cmd *cobra.Command, flags *InspectFlags, releaseName, namespace string) error {
-	if !isHelmPlugin {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("the release name flag is only available when running as a Helm plugin (helm irr ...)"),
-		}
-	}
-
-	// Use the global Helm client initialized in root.go
-	if helmClient == nil {
-		// Create a new Helm client if not already initialized
-		settings := helm.GetHelmSettings()
-		helmClient = helm.NewRealHelmClient(settings)
-	}
-
-	// Use the Helm client to get chart metadata and values
-	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	// If namespace is not provided, use the default or environment namespace
-	if namespace == "" {
-		namespace = GetReleaseNamespace(cmd)
-	}
-
-	log.Infof("Inspecting release '%s' in namespace '%s'", releaseName, namespace)
-
-	// Get chart metadata
-	metadata, err := helmClient.GetReleaseMetadata(ctx, releaseName, namespace)
-	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitHelmCommandFailed,
-			Err:  fmt.Errorf("failed to get chart metadata for release %s: %w", releaseName, err),
-		}
-	}
-
-	// Get release values
-	values, err := helmClient.GetReleaseValues(ctx, releaseName, namespace)
-	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitHelmCommandFailed,
-			Err:  fmt.Errorf("failed to get values for release %s: %w", releaseName, err),
-		}
-	}
-
-	// Create chart info
-	chartInfo := ChartInfo{
-		Name:    metadata.Name,
-		Version: metadata.Version,
-		Path:    fmt.Sprintf("release:%s", releaseName),
-	}
-
-	// Analyze values
-	patterns, err := analyzer.AnalyzeHelmValues(values, flags.AnalyzerConfig)
-	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitChartProcessingFailed,
-			Err:  fmt.Errorf("release analysis failed: %w", err),
-		}
-	}
-
-	// Process image patterns
-	images, skipped := processImagePatterns(patterns)
-
-	// Create analysis result
-	analysis := &ImageAnalysis{
-		Chart:         chartInfo,
-		Images:        images,
-		ImagePatterns: patterns,
-		Skipped:       skipped,
-	}
-
-	// Apply source registry filtering if needed
-	if len(flags.SourceRegistries) > 0 {
-		var filteredImages []ImageInfo
-
-		// Create a map for O(1) lookups
-		registryMap := make(map[string]bool)
-		for _, reg := range flags.SourceRegistries {
-			registryMap[reg] = true
-		}
-
-		// Filter images
-		for _, img := range analysis.Images {
-			if registryMap[img.Registry] {
-				filteredImages = append(filteredImages, img)
-			}
-		}
-
-		// Update the analysis with filtered images
-		analysis.Images = filteredImages
-		log.Infof("Filtered images to %d registries", len(flags.SourceRegistries))
-	}
-
-	// Write output
-	return writeOutput(analysis, flags)
-}
-
-// getInspectFlags retrieves flags from the command
+// getInspectFlags populates the InspectFlags struct from cobra command flags
 func getInspectFlags(cmd *cobra.Command, releaseNameProvided bool) (*InspectFlags, error) {
-	// Get chart path
-	chartPath, err := cmd.Flags().GetString("chart-path")
+	flags := &InspectFlags{}
+	var err error
+
+	// Get flag values
+	flags.ChartPath, err = cmd.Flags().GetString("chart-path")
 	if err != nil {
-		return nil, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get chart-path flag: %w", err),
-		}
+		return nil, fmt.Errorf("failed to get chart-path flag: %w", err)
 	}
-
-	// Only require chart-path if we're not using a release name in plugin mode
-	if chartPath == "" && !releaseNameProvided {
-		return nil, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitMissingRequiredFlag,
-			Err:  fmt.Errorf("required flag \"chart-path\" not set"),
-		}
-	}
-
-	// If we have a chart path, validate it
-	if chartPath != "" {
-		// Normalize chart path
-		chartPath, err = filepath.Abs(chartPath)
-		if err != nil {
-			return nil, &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitInputConfigurationError,
-				Err:  fmt.Errorf("failed to get absolute path for chart: %w", err),
-			}
-		}
-
-		// Check if chart exists
-		_, err = AppFs.Stat(chartPath)
-		if err != nil {
-			return nil, &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitChartNotFound,
-				Err:  fmt.Errorf("chart path not found or inaccessible: %s", chartPath),
-			}
-		}
-	}
-
-	// Get output file
-	outputFile, err := cmd.Flags().GetString("output-file")
+	flags.OutputFile, err = cmd.Flags().GetString("output-file")
 	if err != nil {
-		return nil, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get output-file flag: %w", err),
-		}
+		return nil, fmt.Errorf("failed to get output-file flag: %w", err)
 	}
-
-	// Get output format
-	outputFormat, err := cmd.Flags().GetString("output-format")
+	flags.GenerateConfigSkeleton, err = cmd.Flags().GetBool("generate-config-skeleton")
 	if err != nil {
-		return nil, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get output-format flag: %w", err),
-		}
+		return nil, fmt.Errorf("failed to get generate-config-skeleton flag: %w", err)
 	}
-
-	// Get generate-config-skeleton flag
-	generateConfigSkeleton, err := cmd.Flags().GetBool("generate-config-skeleton")
+	flags.SourceRegistries, err = cmd.Flags().GetStringSlice("source-registries")
 	if err != nil {
-		return nil, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get generate-config-skeleton flag: %w", err),
-		}
+		return nil, fmt.Errorf("failed to get source-registries flag: %w", err)
+	}
+	flags.ValueFiles, err = cmd.Flags().GetStringSlice("values")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get values flag: %w", err)
+	}
+	flags.Namespace, err = cmd.Flags().GetString("namespace")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get namespace flag: %w", err)
 	}
 
-	// Get analysis patterns
-	includePatterns, excludePatterns, err := getAnalysisPatterns(cmd)
+	// Set namespace default if not provided and not in plugin mode expecting release name context
+	if flags.Namespace == "" && !releaseNameProvided { // Check if release name is NOT provided
+		flags.Namespace = defaultNamespace // Use constant
+	}
+
+	// Analyzer config requires its own retrieval potentially based on other flags
+	flags.AnalyzerConfig, err = getAnalyzerConfig(cmd)
 	if err != nil {
 		return nil, err
 	}
 
-	// Create analyzer config
-	analyzerConfig := &analyzer.Config{}
-	analyzerConfig.IncludePatterns = includePatterns
-	analyzerConfig.ExcludePatterns = excludePatterns
+	// Mode-specific logic (mostly handled in runInspect now)
+	// Determine required flags based on mode
+	// if isHelmPlugin {
+	// 	if !releaseNameProvided && flags.ReleaseName == "" {
+	// 		// Maybe get release name from env? Or error?
+	// 		// return nil, fmt.Errorf("release name is required in Helm plugin mode")
+	// 	}
+	// } else { // Standalone mode
+	// 	// Chart path check happens in runInspect using getChartPath
+	// }
 
-	// Get source registries
-	sourceRegistries, err := cmd.Flags().GetStringSlice("source-registries")
-	if err != nil {
-		return nil, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get source-registries flag: %w", err),
-		}
+	// Validate flag combinations
+	if flags.GenerateConfigSkeleton && flags.OutputFile != "" {
+		log.Warnf("--output-file is ignored when --generate-config-skeleton is used. Skeleton will be written to %s.", DefaultConfigSkeletonFilename)
+		flags.OutputFile = "" // Reset OutputFile to avoid confusion in writeOutput
+	}
+	if flags.GenerateConfigSkeleton && flags.OutputFormat != "" {
+		log.Warnf("--output-format is ignored when --generate-config-skeleton is used.")
+		flags.OutputFormat = ""
 	}
 
-	return &InspectFlags{
-		ChartPath:              chartPath,
-		OutputFile:             outputFile,
-		OutputFormat:           outputFormat,
-		GenerateConfigSkeleton: generateConfigSkeleton,
-		AnalyzerConfig:         analyzerConfig,
-		SourceRegistries:       sourceRegistries,
-	}, nil
-}
-
-// getAnalysisPatterns retrieves the analysis pattern flags
-func getAnalysisPatterns(cmd *cobra.Command) (includePatterns, excludePatterns []string, err error) {
-	// Get include patterns
-	includePatterns, err = cmd.Flags().GetStringSlice("include-pattern")
-	if err != nil {
-		return nil, nil, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get include-pattern flag: %w", err),
-		}
-	}
-
-	// Get exclude patterns
-	excludePatterns, err = cmd.Flags().GetStringSlice("exclude-pattern")
-	if err != nil {
-		return nil, nil, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get exclude-pattern flag: %w", err),
-		}
-	}
-
-	return includePatterns, excludePatterns, nil
-}
-
-// processImagePatterns extracts image information from detected patterns
-func processImagePatterns(patterns []analyzer.ImagePattern) (images []ImageInfo, skipped []string) {
-	// Extract images from patterns
-	for _, pattern := range patterns {
-		// Skip non-string patterns for direct image extraction
-		if pattern.Type != "string" {
-			// For map-based patterns, construct the image reference
-			if pattern.Structure != nil {
-				var imageRef string
-				if pattern.Structure.Registry != "" {
-					imageRef += pattern.Structure.Registry + "/"
-				}
-				imageRef += pattern.Structure.Repository
-				if pattern.Structure.Tag != "" {
-					imageRef += ":" + pattern.Structure.Tag
-				}
-
-				// Parse the constructed image reference
-				imgRef, err := image.ParseImageReference(imageRef)
-				if err != nil {
-					skipped = append(skipped, fmt.Sprintf("%s (%s): %v", pattern.Path, imageRef, err))
-					continue
-				}
-
-				// Convert to our ImageInfo type
-				images = append(images, ImageInfo{
-					Registry:   imgRef.Registry,
-					Repository: imgRef.Repository,
-					Tag:        imgRef.Tag,
-					Digest:     imgRef.Digest,
-					Source:     pattern.Path,
-				})
-			}
-			continue
-		}
-
-		// For string patterns, parse directly
-		imgRef, err := image.ParseImageReference(pattern.Value)
-		if err != nil {
-			skipped = append(skipped, fmt.Sprintf("%s (%s): %v", pattern.Path, pattern.Value, err))
-			continue
-		}
-
-		// Convert to our ImageInfo type
-		images = append(images, ImageInfo{
-			Registry:   imgRef.Registry,
-			Repository: imgRef.Repository,
-			Tag:        imgRef.Tag,
-			Digest:     imgRef.Digest,
-			Source:     pattern.Path,
-		})
-	}
-
-	return images, skipped
+	return flags, nil
 }
 
 // detectChartInCurrentDirectory attempts to find a Helm chart in the current directory
+// Returns the path ("." or subdirectory name) or an error if not found.
 func detectChartInCurrentDirectory() (string, error) {
 	// Check if Chart.yaml exists in the current directory
 	if _, err := AppFs.Stat("Chart.yaml"); err == nil {
@@ -673,7 +640,7 @@ func detectChartInCurrentDirectory() (string, error) {
 		return ".", nil
 	}
 
-	// Check if there's a chart directory
+	// Check if there's a chart directory in the current directory
 	entries, err := afero.ReadDir(AppFs, ".")
 	if err != nil {
 		return "", fmt.Errorf("failed to read current directory: %w", err)
@@ -685,119 +652,265 @@ func detectChartInCurrentDirectory() (string, error) {
 			chartFile := filepath.Join(entry.Name(), "Chart.yaml")
 			if _, err := AppFs.Stat(chartFile); err == nil {
 				// Found a chart directory
-				chartPath, err := filepath.Abs(entry.Name())
-				if err != nil {
-					return "", fmt.Errorf("failed to get absolute path for chart: %w", err)
-				}
-				return chartPath, nil
+				// Return the relative path to the directory
+				return entry.Name(), nil
 			}
 		}
 	}
 
-	return "", fmt.Errorf("no Helm chart found in current directory")
+	return "", fmt.Errorf("no Helm chart found in current directory or direct subdirectories")
 }
 
-// createConfigSkeleton generates a configuration skeleton based on the image analysis
-// The configuration is generated in the fully structured format, which is the preferred standard.
-func createConfigSkeleton(images []ImageInfo, outputFile string) error {
-	// Use default filename if none specified
-	if outputFile == "" {
-		outputFile = DefaultConfigSkeletonFilename
-		log.Infof("No output file specified, using default: %s", outputFile)
+// createConfigSkeleton generates a registry configuration skeleton based on detected images.
+func createConfigSkeleton(patterns []analyzer.ImagePattern, outputFile string) error {
+	// If outputFile was initially empty (because --output-file is ignored with --generate-config-skeleton),
+	// construct the full path within the current working directory using the default name.
+	// If outputFile was provided (e.g., by internal logic, though currently unlikely for skeleton),
+	// use it directly.
+	effectiveOutputFile := outputFile
+	if effectiveOutputFile == "" {
+		// Default filename is relative to the current working directory where the command runs
+		effectiveOutputFile = DefaultConfigSkeletonFilename
+		log.Infof("No output file specified for skeleton, using default relative to CWD: %s", effectiveOutputFile)
+	} else {
+		// If outputFile was somehow provided, use its absolute path
+		// Although currently, the flag parsing logic should make outputFile empty here.
+		absPath, err := filepath.Abs(effectiveOutputFile)
+		if err != nil {
+			log.Warnf("Could not determine absolute path for skeleton output file '%s': %v", effectiveOutputFile, err)
+		} else {
+			effectiveOutputFile = absPath
+		}
+		log.Infof("Using specified path for skeleton output: %s", effectiveOutputFile)
 	}
 
+	log.Debugf("Effective path for config skeleton: %s", effectiveOutputFile)
+
 	// Ensure the directory exists before trying to write the file
-	dir := filepath.Dir(outputFile)
+	dir := filepath.Dir(effectiveOutputFile)
 	if dir != "" && dir != "." {
 		if err := AppFs.MkdirAll(dir, fileutil.ReadWriteExecuteUserReadExecuteOthers); err != nil {
-			return fmt.Errorf("failed to create directory for config skeleton: %w", err)
+			return fmt.Errorf("failed to create directory '%s' for config skeleton: %w", dir, err)
 		}
 	}
 
-	// Extract unique registries from images
-	registries := make(map[string]bool)
-	for _, img := range images {
-		if img.Registry != "" {
-			registries[img.Registry] = true
+	// Extract unique registries
+	detectedRegistries := make(map[string]bool) // Use map[string]bool just to track unique regs
+	for i := range patterns {                   // Use index instead of copying pattern
+		pattern := &patterns[i]
+		var reg string
+		var parseErr error // Variable to hold potential parsing errors
+
+		switch pattern.Type { // Use string comparison for Type
+		case "map":
+			// Access the Structure field for map types
+			if pattern.Structure != nil {
+				reg = pattern.Structure.Registry
+				// Fallback: If registry is empty in structure, try parsing repository field
+				if reg == "" && pattern.Structure.Repository != "" {
+					log.Debugf("Registry field empty in map structure at path '%s', attempting to parse repository '%s' as full reference.", pattern.Path, pattern.Structure.Repository)
+					imgRef, err := image.ParseImageReference(pattern.Structure.Repository)
+					if err == nil && imgRef.Registry != "" {
+						reg = imgRef.Registry
+					} else if err != nil {
+						// Log parsing error but don't stop processing other patterns
+						parseErr = fmt.Errorf("failed to parse repository field '%s' from map at path '%s': %w", pattern.Structure.Repository, pattern.Path, err)
+					}
+				}
+			} else {
+				log.Warnf("Pattern at path '%s' has type 'map' but Structure is nil, skipping for skeleton.", pattern.Path)
+				continue
+			}
+		case "string":
+			// Use parser for string types (Value is guaranteed to be string)
+			imgRef, err := image.ParseImageReference(pattern.Value)
+			if err != nil {
+				// Log parsing error but don't stop processing other patterns
+				parseErr = fmt.Errorf("failed to parse image string '%s' from path '%s': %w", pattern.Value, pattern.Path, err)
+			} else {
+				reg = imgRef.Registry
+			}
+		default:
+			log.Warnf("Unknown pattern type '%s' at path '%s', skipping for skeleton.", pattern.Type, pattern.Path)
+			continue
+		}
+
+		// Log any parsing error encountered for this pattern
+		if parseErr != nil {
+			log.Warnf("Skipping pattern for skeleton generation due to parsing error: %v", parseErr)
+			continue
+		}
+
+		// Logic to skip implicit/default Docker Hub registry for the skeleton
+		normalizedReg := image.NormalizeRegistry(reg) // Normalize before comparison
+		if reg == "" || normalizedReg == "docker.io" {
+			log.Debugf("Skipping pattern (Path: '%s', Type: '%s', Registry: '%s') with implicit/default Docker Hub registry for skeleton.", pattern.Path, pattern.Type, reg)
+			continue
+		}
+
+		// Use the original non-normalized registry name for the skeleton map key
+		if !detectedRegistries[reg] {
+			log.Debugf("Adding registry '%s' to skeleton based on pattern at path '%s'", reg, pattern.Path)
+			detectedRegistries[reg] = true
 		}
 	}
 
 	// Sort registries for consistent output
-	var registryList []string
-	for registry := range registries {
-		registryList = append(registryList, registry)
+	registryList := make([]string, 0, len(detectedRegistries))
+	for reg := range detectedRegistries {
+		registryList = append(registryList, reg)
 	}
 	sort.Strings(registryList)
 
 	// Create structured registry mappings
 	mappings := make([]registry.RegMapping, 0, len(registryList))
-	for _, reg := range registryList {
-		// Generate a sanitized target registry path
-		targetPath := strings.ReplaceAll(reg, ".", "-")
+	for _, reg := range registryList { // reg here is the key from detectedRegistries map
+		// Generate a sanitized target registry path as a suggestion
+		suggestedTarget := "your-target-registry.com/" + strings.ReplaceAll(strings.ReplaceAll(reg, ".", "-"), "/", "-")
+
+		// Generate description - Special case for known registries if desired, else generic
+		description := fmt.Sprintf("Mapping for %s", reg)
+		if reg == "quay.io" { // Example: Special description
+			description = "Quay.io Container Registry"
+		} else if reg == "gcr.io" {
+			description = "Google Container Registry"
+		} // Add more known registries if needed
+
 		mappings = append(mappings, registry.RegMapping{
-			Source:      reg,
-			Target:      "registry.local/" + targetPath,
-			Description: fmt.Sprintf("Mapping for %s", reg),
-			Enabled:     true,
+			Source:      reg,             // Source should be the registry name from the list
+			Target:      suggestedTarget, // Placeholder
+			Description: description,
+			Enabled:     true, // Default to enabled
 		})
 	}
 
-	// Create config structure using the registry package format
-	config := registry.Config{
-		Version: "1.0",
+	// Create the config structure using the registry package format
+	skeletonConfig := registry.Config{
+		Version: "1.0", // Use string literal for version
 		Registries: registry.RegConfig{
 			Mappings:      mappings,
-			DefaultTarget: "registry.local/default",
+			DefaultTarget: "your-target-registry.com/default", // Placeholder
 			StrictMode:    false,
 		},
 		Compatibility: registry.CompatibilityConfig{
-			IgnoreEmptyFields: true,
+			IgnoreEmptyFields: true, // Example setting
 		},
 	}
 
 	// Marshal to YAML
-	configYAML, err := yaml.Marshal(config)
+	yamlData, err := yaml.Marshal(skeletonConfig)
 	if err != nil {
-		return fmt.Errorf("failed to marshal config skeleton: %w", err)
+		return fmt.Errorf("failed to marshal config skeleton to YAML: %w", err)
 	}
 
 	// Add helpful comments
-	yamlWithComments := fmt.Sprintf(`# IRR Configuration File
-# 
-# This file contains registry mappings for redirecting container images
-# from public registries to your private registry. Update the target values
-# to match your registry configuration.
+	yamlWithComments := fmt.Sprintf(`# IRR Configuration File - Skeleton
 #
-# USAGE INSTRUCTIONS:
-# 1. Update the 'target' fields with your actual registry paths
-# 2. Use with 'irr override' command to generate image overrides
-# 3. Validate generated overrides with 'irr validate'
+# This skeleton was auto-generated by 'irr inspect --generate-config-skeleton'
+# based on detected non-DockerHub registries in the chart.
 #
-# IMPORTANT NOTES:
-# - This file uses the standard structured format which includes version, registries, 
-#   and compatibility sections for enhanced functionality
-# - The 'override' and 'validate' commands can run without this config, 
-#   but image redirection correctness depends on your configuration
-# - When using Harbor as a pull-through cache, ensure your target paths
-#   match your Harbor project configuration
-# - You can set or update mappings using 'irr config --source <reg> --target <path>'
-# - This file was auto-generated from detected registries in your chart
+# Instructions:
+# 1. Update 'target' fields under 'registries.mappings' with your actual private registry paths.
+# 2. Update 'registries.defaultTarget' if you want a fallback for unmapped registries (requires strictMode: false).
+# 3. Review 'strictMode'. If true, irr will fail on unmapped source registries.
+# 4. Save this file (e.g., as irr-config.yaml) and use it with 'irr override --registry-file irr-config.yaml'
 #
-%s`, string(configYAML))
+# You can also manage mappings using 'irr config set --source <reg> --target <path>'
+#
+%s`, string(yamlData))
 
-	// Write the skeleton file
-	err = afero.WriteFile(AppFs, outputFile, []byte(yamlWithComments), fileutil.ReadWriteUserPermission)
-	if err != nil {
-		return fmt.Errorf("failed to write config skeleton: %w", err)
+	// Write to file
+	if err := afero.WriteFile(AppFs, effectiveOutputFile, []byte(yamlWithComments), fileutil.ReadWriteUserPermission); err != nil {
+		return fmt.Errorf("failed to write config skeleton to file '%s': %w", effectiveOutputFile, err)
 	}
 
-	absPath, err := filepath.Abs(outputFile)
-	if err == nil {
-		log.Infof("Config skeleton written to %s", absPath)
-	} else {
-		log.Infof("Config skeleton written to %s", outputFile)
-	}
-
-	log.Infof("Update the target registry paths and use with 'irr config' to set up your configuration")
+	log.Infof("Configuration skeleton generated at: %s", effectiveOutputFile)
 	return nil
+}
+
+// buildOriginMap builds a map where keys are dot-notation paths from the final merged values
+// perspective, and values indicate the origin ("." for parent, subchart alias/name otherwise).
+func buildOriginMap(parentChart *chart.Chart) map[string]string {
+	originMap := make(map[string]string)
+
+	// 1. Process parent chart's default values
+	log.Debugf("Building origin map for parent: %s", parentChart.Metadata.Name)
+	traverseValuesForOrigin(parentChart.Values, ".", ".", originMap)
+
+	// 2. Build a lookup for loaded dependency charts by name
+	loadedDeps := make(map[string]*chart.Chart)
+	for _, depChart := range parentChart.Dependencies() {
+		if depChart != nil && depChart.Metadata != nil {
+			loadedDeps[depChart.Metadata.Name] = depChart
+			log.Debugf(" Found loaded dependency chart: %s", depChart.Metadata.Name)
+		} else {
+			log.Warnf("Parent chart %s has a nil or metadata-less dependency chart object.", parentChart.Metadata.Name)
+		}
+	}
+
+	// 3. Iterate through the dependency *metadata* from the parent's Chart.yaml
+	if parentChart.Metadata != nil && len(parentChart.Metadata.Dependencies) > 0 {
+		log.Debugf("Processing %d dependency definitions from parent Chart.yaml...", len(parentChart.Metadata.Dependencies))
+		for _, depMeta := range parentChart.Metadata.Dependencies {
+			if depMeta == nil {
+				log.Warnf("Parent chart %s has a nil entry in Metadata.Dependencies.", parentChart.Metadata.Name)
+				continue
+			}
+
+			// Determine the alias/prefix for this dependency
+			alias := depMeta.Alias
+			if alias == "" {
+				alias = depMeta.Name // Fallback to name if no alias
+			}
+			if alias == "" {
+				log.Warnf("Dependency definition found with no name or alias in parent %s. Cannot map origin.", parentChart.Metadata.Name)
+				continue
+			}
+
+			// Find the corresponding *loaded* dependency chart
+			loadedDepChart, found := loadedDeps[depMeta.Name]
+			if !found {
+				log.Warnf("Dependency '%s' (alias: '%s') in %s not found in loaded chart deps. Skipping origin map.",
+					depMeta.Name, alias, parentChart.Metadata.Name)
+				continue
+			}
+
+			// 4. Process the loaded dependency chart's default values
+			log.Debugf(" Building origin map for dependency: %s (alias/prefix: %s)", depMeta.Name, alias)
+			if loadedDepChart.Values != nil {
+				// The path prefix *is* the alias.
+				// The origin identifier *is also* the alias.
+				traverseValuesForOrigin(loadedDepChart.Values, alias, alias, originMap)
+			} else {
+				log.Debugf(" Dependency %s has no default values.", depMeta.Name)
+			}
+		}
+	} else {
+		log.Debugf("Parent chart %s has no dependency definitions in Metadata.", parentChart.Metadata.Name)
+	}
+
+	return originMap
+}
+
+// Recursively traverses the values map to identify the origin of each top-level key.
+// Combine parameter types
+func traverseValuesForOrigin(valueMap map[string]interface{}, pathPrefix, origin string, originMap map[string]string) {
+	for key, val := range valueMap {
+		// Construct the full path from the perspective of the final merged values map
+		fullPath := key
+		if pathPrefix != "." { // Prefix with alias if not the parent chart
+			fullPath = pathPrefix + "." + key
+		}
+
+		// Store the origin for this path
+		// This might overwrite if keys overlap, but Helm's coalesce likely handles this; we just care about the final structure's origin.
+		originMap[fullPath] = origin
+		log.Debugf(" OriginMap: Mapped path '%s' to origin '%s'", fullPath, origin)
+
+		// Recurse only for nested maps
+		if nestedMap, ok := val.(map[string]interface{}); ok {
+			traverseValuesForOrigin(nestedMap, fullPath, origin, originMap)
+		}
+		// Slices don't need explicit traversal here; their containing map determines origin.
+	}
 }

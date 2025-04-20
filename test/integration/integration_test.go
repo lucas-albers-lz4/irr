@@ -107,8 +107,9 @@ func TestParentChart(t *testing.T) {
 	assert.Contains(t, content, "registry: test.registry.io", "Override should include target registry")
 
 	// Check for either nginx or redis - both are valid images in the chart
-	nginxFound := strings.Contains(content, "repository: dockerio/library/nginx")
-	redisFound := strings.Contains(content, "repository: dockerio/library/redis")
+	// PrefixSourceRegistryStrategy generates dockerio/nginx, not dockerio/library/nginx
+	nginxFound := strings.Contains(content, "repository: dockerio/nginx")
+	redisFound := strings.Contains(content, "repository: dockerio/redis")
 	assert.True(t, nginxFound || redisFound, "Override should include transformed repository for either nginx or redis")
 
 	// Check that the child chart overrides are included

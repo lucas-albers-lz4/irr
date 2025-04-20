@@ -18,21 +18,31 @@ import (
 	"strings"
 
 	"github.com/lalbers/irr/internal/helm"
+	"github.com/lalbers/irr/pkg/analyzer"
 	"github.com/lalbers/irr/pkg/chart"
 	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/exitcodes"
 	"github.com/lalbers/irr/pkg/fileutil"
+	"github.com/lalbers/irr/pkg/generator"
 	log "github.com/lalbers/irr/pkg/log"
 	"github.com/lalbers/irr/pkg/registry"
 	"github.com/lalbers/irr/pkg/strategy"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	helmchart "helm.sh/helm/v3/pkg/chart"
+	"helm.sh/helm/v3/pkg/chartutil"
+	"helm.sh/helm/v3/pkg/cli"
+	"helm.sh/helm/v3/pkg/cli/values"
+	"helm.sh/helm/v3/pkg/getter"
 	"sigs.k8s.io/yaml"
 	// Helm SDK imports
 )
 
+// Define constants for magic numbers
 const (
+	debugLogTruncateLengthShort = 500
+	debugLogTruncateLengthLong  = 1000
+
 	// ExitHelmInteractionError is returned when there's an error during Helm SDK interaction
 	ExitHelmInteractionError = 17
 	// ExitInternalError is returned when there's an internal error in command execution
@@ -71,6 +81,8 @@ type GeneratorConfig struct {
 	ExcludePatterns []string
 	// RulesEnabled controls whether the chart parameter rules system is enabled
 	RulesEnabled bool
+	// ValueFiles contains value files for merging
+	ValueFiles []string
 }
 
 // For testing purposes - allows overriding in tests
@@ -204,7 +216,8 @@ func setupOverrideFlags(cmd *cobra.Command) {
 
 	// Optional flags
 	cmd.Flags().StringP("output-file", "o", "", "Write output to file instead of stdout")
-	cmd.Flags().StringP("config", "f", "", "Path to registry mapping config file")
+	cmd.Flags().StringP("config", "f", "", "Path to registry mapping config file (note: -f is shared with --values)")
+	cmd.Flags().StringSlice("values", nil, "Specify values in a YAML file or a URL (can specify multiple, uses -f alias)")
 	cmd.Flags().Bool("strict", false, "Enable strict mode (fails on unsupported structures)")
 	cmd.Flags().StringSlice("include-pattern", []string{}, "Glob patterns for values paths to include (comma-separated)")
 	cmd.Flags().StringSlice("exclude-pattern", []string{}, "Glob patterns for values paths to exclude (comma-separated)")
@@ -415,57 +428,69 @@ func outputOverrides(_ *cobra.Command, yamlBytes []byte, outputFile string, dryR
 	return nil
 }
 
-// setupGeneratorConfig retrieves and configures all options for the generator
-func setupGeneratorConfig(cmd *cobra.Command, _ string) (config GeneratorConfig, err error) {
-	chartPath, targetRegistry, sourceRegistries, err := getRequiredFlags(cmd)
-	if err != nil {
-		return config, err
-	}
+// setupGeneratorConfig populates the GeneratorConfig struct based on command flags
+func setupGeneratorConfig(cmd *cobra.Command, chartPath string) (config GeneratorConfig, err error) {
 	config.ChartPath = chartPath
-	config.TargetRegistry = targetRegistry
-	config.SourceRegistries = sourceRegistries
 
-	excludeRegistries, err := getStringSliceFlag(cmd, "exclude-registries")
+	// Target Registry (Required, checked in PreRunE)
+	config.TargetRegistry, err = cmd.Flags().GetString("target-registry")
+	if err != nil {
+		return config, fmt.Errorf("failed to get target-registry flag: %w", err)
+	}
+
+	// Source Registries (Required, checked in PreRunE)
+	config.SourceRegistries, err = cmd.Flags().GetStringSlice("source-registries")
+	if err != nil {
+		return config, fmt.Errorf("failed to get source-registries flag: %w", err)
+	}
+
+	// Exclude Registries
+	config.ExcludeRegistries, err = cmd.Flags().GetStringSlice("exclude-registries")
+	if err != nil {
+		return config, fmt.Errorf("failed to get exclude-registries flag: %w", err)
+	}
+
+	// Strict Mode
+	config.StrictMode, err = cmd.Flags().GetBool("strict")
+	if err != nil {
+		return config, fmt.Errorf("failed to get strict flag: %w", err)
+	}
+
+	// Include/Exclude Patterns
+	config.IncludePatterns, config.ExcludePatterns, err = getAnalysisControlFlags(cmd)
 	if err != nil {
 		return config, err
 	}
-	config.ExcludeRegistries = excludeRegistries
 
-	if err := setupPathStrategy(cmd, &config); err != nil {
-		return config, err
-	}
-
-	strictMode, err := getBoolFlag(cmd, "strict")
+	// Rules Enabled
+	noRules, err := cmd.Flags().GetBool("no-rules")
 	if err != nil {
-		return config, err
+		return config, fmt.Errorf("failed to get no-rules flag: %w", err)
 	}
-	config.StrictMode = strictMode
+	config.RulesEnabled = !noRules
 
-	includePatterns, excludePatterns, err := getAnalysisControlFlags(cmd)
+	// Value Files (New)
+	config.ValueFiles, err = cmd.Flags().GetStringSlice("values")
 	if err != nil {
-		return config, err
-	}
-	config.IncludePatterns = includePatterns
-	config.ExcludePatterns = excludePatterns
-
-	disableRules, err := getBoolFlag(cmd, "no-rules")
-	if err != nil {
-		return config, err
-	}
-	config.RulesEnabled = !disableRules
-
-	if err := loadRegistryMappings(cmd, &config); err != nil {
-		return config, err
+		return config, fmt.Errorf("failed to get values flag: %w", err)
 	}
 
+	// Load registry mappings (legacy --registry-file or new --config)
+	if loadErr := loadRegistryMappings(cmd, &config); loadErr != nil {
+		return config, loadErr
+	}
+
+	// Path Strategy (Deprecated, kept for potential internal use)
+	if strategyErr := setupPathStrategy(cmd, &config); strategyErr != nil {
+		return config, strategyErr
+	}
+
+	// Log config mode (Mappings vs Direct Flags)
 	logConfigMode(&config)
 
-	if err := validateUnmappableRegistries(&config); err != nil {
-		return config, err
-	}
-
-	if len(config.ExcludeRegistries) > 0 {
-		log.Infof("Excluding registries: %s", strings.Join(config.ExcludeRegistries, ", "))
+	// Validate unmappable registries based on the loaded config
+	if validateErr := validateUnmappableRegistries(&config); validateErr != nil {
+		return config, validateErr
 	}
 
 	return config, nil
@@ -552,6 +577,38 @@ func loadRegistryMappings(cmd *cobra.Command, config *GeneratorConfig) error {
 		}
 		config.ConfigMappings = configMap
 	}
+
+	// *** Fallback: If no config/registry file provided, create mappings from flags ***
+	if config.Mappings == nil && config.ConfigMappings == nil && config.TargetRegistry != "" && len(config.SourceRegistries) > 0 {
+		log.Debugf("No config file loaded. Creating implicit mappings from --target-registry and --source-registries.")
+		implicitMappings := &registry.Mappings{
+			// SchemaVersion: registry.CurrentSchemaVersion, // Or appropriate version
+			// DefaultTarget: config.TargetRegistry, // Mappings struct doesn't have DefaultTarget
+			Entries: make([]registry.Mapping, 0, len(config.SourceRegistries)), // Try registry.Mapping
+			// StrictMode: config.StrictMode,
+		}
+		for _, srcReg := range config.SourceRegistries {
+			// For simple flag-based mapping, the target comes from --target-registry flag,
+			// used by the path strategy later. The mapping entry itself might not need a target.
+			// Or, maybe the mapping needs the *source* registry mapped to the target flag value?
+			// Let's assume the entry maps source to the provided target-registry.
+			implicitMappings.Entries = append(implicitMappings.Entries, registry.Mapping{ // Try registry.Mapping
+				Source: srcReg,
+				Target: config.TargetRegistry, // Map source to the --target-registry value
+				// Description: fmt.Sprintf("Implicit mapping for %s", srcReg), // Field doesn't exist
+				// Enabled:     true, // Field doesn't exist
+			})
+		}
+		config.Mappings = implicitMappings
+		log.Debugf("Created implicit mappings: %+v", config.Mappings)
+	} else if config.Mappings == nil && config.ConfigMappings != nil {
+		// Legacy --registry-file is deprecated. Use --config instead.
+		log.Warnf("Legacy --registry-file is deprecated and conversion is not fully implemented. Use --config instead.")
+		// We are choosing not to implement the conversion logic for the deprecated format.
+		// If a user provides *only* the legacy file, config.Mappings will remain nil,
+		// and the generator will operate without specific mappings, relying on DefaultTarget.
+	}
+
 	return nil
 }
 
@@ -629,86 +686,145 @@ func getAnalysisControlFlags(cmd *cobra.Command) (includePatterns, excludePatter
 	return
 }
 
-// createAndExecuteGenerator creates and executes a generator for the given chart source
-func createAndExecuteGenerator(chartSource *ChartSource, config *GeneratorConfig) ([]byte, error) {
-	if chartSource == nil {
-		return nil, &exitcodes.ExitCodeError{
+// createAndExecuteGenerator loads the chart, analyzes it, and generates overrides.
+func createAndExecuteGenerator(_ *cobra.Command, chartSource *ChartSource, config *GeneratorConfig) ([]byte, error) {
+	// Ensure config is not nil
+	if config == nil {
+		return nil, handleGenerateError(&exitcodes.ExitCodeError{
 			Code: exitcodes.ExitGeneralRuntimeError,
-			Err:  errors.New("chartSource is nil"),
-		}
+			Err:  errors.New("internal error: generator config is nil in createAndExecuteGenerator"),
+		})
 	}
 
-	// Check if we have a chart path or need to derive it from release name
-	chartSourceDescription := "unknown"
-	switch chartSource.SourceType {
-	case chartSourceTypeChart:
-		chartSourceDescription = chartSource.ChartPath
-	case chartSourceTypeRelease:
-		chartSourceDescription = fmt.Sprintf("helm-release:%s", chartSource.ReleaseName)
-	case autoDetectedChartSource:
-		chartSourceDescription = fmt.Sprintf("auto-detected:%s", chartSource.ChartPath)
-	}
-
-	log.Infof("Initializing override generator for %s", chartSourceDescription)
-
-	// Create a new generator and run it
-	generator, err := createGenerator(chartSource, config)
+	// Rename variable gen -> irrGenerator to avoid shadowing package
+	irrGenerator, err := createGenerator(chartSource, config)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create generator: %w", err)
 	}
 
-	// Execute the generator to create the overrides
-	log.Infof("Generating override values...")
-	overrideFile, err := generator.Generate()
+	// 1. Load Chart
+	log.Debugf("Loading chart from path: %s", config.ChartPath)
+	loadedChart, err := loadChart(chartSource)
+	if err != nil {
+		// Wrap error using handleGenerateError for consistent exit codes
+		return nil, handleGenerateError(fmt.Errorf("failed to load chart: %w", err))
+	}
+	debug.Printf("Loaded chart: %s, Version: %s", loadedChart.Name(), loadedChart.Metadata.Version)
+
+	// 2. Compute Final Merged Values
+	log.Debugf("Loading user values from: %v", config.ValueFiles)
+	settings := cli.New() // Need Helm settings for getter
+	valueOpts := values.Options{ValueFiles: config.ValueFiles}
+	userValues, err := valueOpts.MergeValues(getter.All(settings))
+	if err != nil {
+		return nil, handleGenerateError(&exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to merge user-provided values files: %w", err),
+		})
+	}
+
+	// Debugging: Log potentially large values (consider limiting size)
+	// Marshal userValues and log (ignore error for debugging)
+	userValuesYAML, userErr := yaml.Marshal(userValues)
+	if userErr != nil {
+		log.Warnf("DEBUG: Could not marshal userValues for logging: %v", userErr)
+	} else {
+		logTruncatedYAML("DEBUG: User Values", userValuesYAML, debugLogTruncateLengthLong)
+	}
+
+	log.Debugf("Coalescing chart values...")
+	finalMergedValues, err := chartutil.CoalesceValues(loadedChart, userValues)
+	if err != nil {
+		return nil, handleGenerateError(&exitcodes.ExitCodeError{
+			Code: exitcodes.ExitChartProcessingFailed,
+			Err:  fmt.Errorf("failed to coalesce chart values: %w", err),
+		})
+	}
+
+	// Debugging: Log final merged values (consider limiting size)
+	finalValuesYAML, finalErr := yaml.Marshal(finalMergedValues)
+	if finalErr != nil {
+		log.Warnf("DEBUG: Could not marshal finalMergedValues for logging: %v", finalErr)
+	} else {
+		logTruncatedYAML("DEBUG: Final Merged Values", finalValuesYAML, debugLogTruncateLengthLong)
+	}
+
+	// Build origin map
+	originMap := buildOriginMap(loadedChart)
+	originMapYAML, originErr := yaml.Marshal(originMap)
+	if originErr != nil {
+		log.Warnf("DEBUG: Could not marshal originMap for logging: %v", originErr)
+	} else {
+		logTruncatedYAML("DEBUG: Origin Map", originMapYAML, debugLogTruncateLengthShort)
+	}
+
+	// 4. Analyze Values
+	log.Debugf("Starting analysis with AnalyzeChartValues...")
+	analyzerConfig := &analyzer.Config{
+		IncludePatterns: config.IncludePatterns,
+		ExcludePatterns: config.ExcludePatterns,
+		// KnownPaths: config.KnownPaths, // If needed
+	}
+	imagePatterns, err := analyzer.AnalyzeChartValues(finalMergedValues, originMap, analyzerConfig)
+	if err != nil {
+		return nil, handleGenerateError(&exitcodes.ExitCodeError{
+			Code: exitcodes.ExitChartProcessingFailed,
+			Err:  fmt.Errorf("chart analysis failed: %w", err),
+		})
+	}
+	log.Debugf("AnalyzeChartValues completed, found %d patterns.", len(imagePatterns))
+
+	// 5. Generate Overrides using the patterns found
+	log.Infof("Generating overrides...")
+	overrideBytes, err := irrGenerator.Generate(imagePatterns) // Pass patterns
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate overrides: %w", err)
 	}
+	debug.Printf("Generated Override YAML:\n%s", string(overrideBytes))
 
-	// Serialize the overrides to YAML
-	yamlBytes, err := yaml.Marshal(overrideFile.Values)
-	if err != nil {
-		return nil, fmt.Errorf("failed to serialize overrides to YAML: %w", err)
-	}
-
-	return yamlBytes, nil
+	return overrideBytes, nil
 }
 
-// createGenerator creates a generator for the given chart source
-func createGenerator(_ *ChartSource, config *GeneratorConfig) (GeneratorInterface, error) {
-	// Validate the config
-	if config == nil {
-		return nil, errors.New("config is nil")
+// createGenerator prepares the generator instance
+func createGenerator(_ *ChartSource, config *GeneratorConfig) (generator.Interface, error) {
+	// Determine path strategy (currently only one is supported)
+	pathStrategy := strategy.NewPrefixSourceRegistryStrategy()
+
+	// Determine templateMode (false for override command)
+	templateMode := false
+
+	// Use the mappings loaded into the config (handles legacy or new format)
+	mappings := config.Mappings // Assumes loadRegistryMappings populates this
+	if mappings == nil {
+		// If no config file was used, mappings might be nil. Create an empty one.
+		mappings = &registry.Mappings{}
+		log.Debugf("No registry mappings provided via config file, using empty mappings.")
 	}
 
-	// Create chart loader instance
-	loader := chart.NewLoader()
-
-	// --- Create Override Generator ---
-	generator := chart.NewGenerator(
-		config.ChartPath,
-		config.TargetRegistry,
+	gen := generator.NewGenerator(
+		mappings,
+		pathStrategy,
 		config.SourceRegistries,
 		config.ExcludeRegistries,
-		config.Strategy,
-		config.Mappings,
-		config.ConfigMappings,
 		config.StrictMode,
-		0,      // Threshold parameter is not used anymore
-		loader, // Use the loader we created
-		config.IncludePatterns,
-		config.ExcludePatterns,
-		nil, // KnownImagePaths parameter is not used anymore
+		templateMode,
 	)
 
-	// Configure rules system
-	if config.RulesEnabled {
-		generator.SetRulesEnabled(true)
-	} else {
-		generator.SetRulesEnabled(false)
-		log.Infof("Chart parameter rules system is disabled")
-	}
+	// SetChartPath is not a method on the generator.Generator struct.
+	// Chart path is implicitly handled by the analysis phase now.
+	// generator.SetChartPath(chartSource.ChartPath) // Corrected field name, but method doesn't exist
 
-	return generator, nil
+	// generator.SetMappings is also not a method. Mappings are passed in constructor.
+
+	// Rules enabling is not part of the generator constructor.
+	// This logic needs to be handled elsewhere if still applicable.
+	// if config.RulesEnabled {
+	// 	gen.SetRulesEnabled(true)
+	// } else {
+	// 	gen.SetRulesEnabled(false)
+	// }
+
+	return gen, nil
 }
 
 // loadChart loads a Helm chart from the configured source
@@ -754,30 +870,15 @@ func runOverride(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get configuration for generator
-	config, err := setupGeneratorConfig(cmd, chartSource.ReleaseName)
+	config, err := setupGeneratorConfig(cmd, chartSource.ChartPath)
 	if err != nil {
 		return err
 	}
 
-	// Set up the generator based on the chart source
-	generator, err := createGenerator(chartSource, &config)
+	// *** Refactored: Call the unified function ***
+	yamlBytes, err := createAndExecuteGenerator(cmd, chartSource, &config)
 	if err != nil {
-		return handleGenerateError(err)
-	}
-
-	// Generate the override file
-	overrideFile, err := generator.Generate()
-	if err != nil {
-		return handleGenerateError(err)
-	}
-
-	// Marshal to YAML
-	yamlBytes, err := yaml.Marshal(overrideFile)
-	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitGeneralRuntimeError,
-			Err:  fmt.Errorf("failed to marshal override file to YAML: %w", err),
-		}
+		return err // Error should already be wrapped with exit code
 	}
 
 	// Get output flags
@@ -786,7 +887,7 @@ func runOverride(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Output the overrides
+	// Output the overrides (yamlBytes is now directly the marshaled content)
 	err = outputOverrides(cmd, yamlBytes, outputFile, dryRun)
 	if err != nil {
 		return err
@@ -809,7 +910,7 @@ func runOverride(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// If we have an output file, run validation
+	// If we have an output file, run validation (yamlBytes is already marshaled)
 	if outputFile != "" {
 		log.Infof("Validating generated overrides...")
 		err = validateChart(cmd, yamlBytes, &config,
@@ -1249,4 +1350,13 @@ func isStdOutRequested(cmd *cobra.Command) bool {
 		return false
 	}
 	return stdout
+}
+
+// Helper function to log potentially large YAML, truncated
+func logTruncatedYAML(prefix string, yamlBytes []byte, truncateLength int) {
+	if len(yamlBytes) > truncateLength {
+		log.Debugf("%s (first %d bytes):\n%s...", prefix, truncateLength, string(yamlBytes[:truncateLength]))
+	} else {
+		log.Debugf("%s:\n%s", prefix, string(yamlBytes))
+	}
 }

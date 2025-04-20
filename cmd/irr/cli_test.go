@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/lalbers/irr/pkg/exitcodes"
 	"github.com/lalbers/irr/pkg/fileutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -173,14 +174,14 @@ func TestInspectCommand(t *testing.T) {
 		{
 			name:     "missing chart path",
 			args:     []string{"inspect"},
-			wantExit: 1,
-			wantErr:  "required flag \"chart-path\" not set",
+			wantExit: exitcodes.ExitInputConfigurationError,
+			wantErr:  "chart path not specified",
 		},
 		{
 			name:     "non-existent chart path",
 			args:     []string{"inspect", "--chart-path", "/non/existent/path"},
-			wantExit: 4,
-			wantErr:  "chart path not found or inaccessible",
+			wantExit: exitcodes.ExitChartLoadFailed,
+			wantErr:  "failed to load chart",
 		},
 	}
 

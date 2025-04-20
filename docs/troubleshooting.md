@@ -197,3 +197,35 @@ If you encounter an issue not covered here:
 3. Check the generated override structure
 4. Verify chart values structure
 5. Open an issue with the above information 
+
+## Override Generation Issues
+
+### Error: Threshold Not Met
+
+## Subchart Issues
+
+### Warning: Image count mismatch: Analyzer found X images in values, but template analysis found Y images...
+
+**Cause:**
+
+This warning, triggered by the `irr inspect` command (when `--warn-subchart-discrepancy` is true, which is the default), indicates a potential limitation in the current image analysis approach.
+
+- The primary analysis (`Analyzer found X images`) scans the parent chart's `values.yaml` (and any user-provided `-f` value files) for image references.
+- The secondary check (`template analysis found Y images`) renders the chart's templates using the Helm SDK (similar to `helm template`) and performs a *limited* scan of the resulting Deployments and StatefulSets for image references.
+
+A mismatch often occurs with complex "umbrella" charts where some images are only defined in the *default* `values.yaml` files of subcharts. The primary analyzer doesn't currently load or merge these subchart default values.
+
+**Implications:**
+
+- The `inspect` output might be incomplete, missing images defined solely in subchart defaults.
+- Running `irr override` based on this potentially incomplete analysis might result in an `overrides.yaml` file that doesn't cover all necessary images, leading to validation failures or runtime issues if those images aren't available in the target registry.
+
+**Resolution/Workaround:**
+
+1.  **Full Analysis (Planned):** Phase 9.2 aims to refactor the analyzer to fully replicate Helm's value merging, including subchart defaults. Once implemented, this warning should no longer appear, and analysis will be complete.
+2.  **Manual Overrides:** Until Phase 9.2 is complete, if you encounter this warning, you may need to manually inspect the subcharts or the output of `helm template <chart>` to identify missing images and add them to your generated `overrides.yaml` file.
+3.  **Disable Warning:** You can suppress this warning using `irr inspect --warn-subchart-discrepancy=false`, but be aware that the underlying issue of potentially missed images still exists.
+
+**Note:** The template analysis check in the warning mechanism is intentionally limited (currently only Deployments/StatefulSets) for performance reasons and as a temporary stop-gap. It is not a substitute for the full analysis planned in Phase 9.2.
+
+## Validation Issues 

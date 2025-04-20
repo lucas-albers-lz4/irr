@@ -17,13 +17,13 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/lalbers/irr/pkg/analyzer"
 	"github.com/lalbers/irr/pkg/exitcodes"
 	log "github.com/lalbers/irr/pkg/log"
 
 	"github.com/lalbers/irr/pkg/analysis"
 	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/helm"
-	"github.com/lalbers/irr/pkg/override"
 	"github.com/lalbers/irr/pkg/registry"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
@@ -90,9 +90,19 @@ type AnalyzerInterface interface {
 // This interface is used to allow mocking in tests and to provide a clean
 // abstraction between the CLI and the chart processing logic.
 type GeneratorInterface interface {
-	// Generate performs image reference override generation and returns
-	// the override file structure or an error if generation fails.
-	Generate() (*override.File, error)
+	// Generate produces the override values based on analyzed image patterns.
+	Generate(patterns []analyzer.ImagePattern) ([]byte, error)
+
+	// SetChartPath sets the chart path for the generator.
+	// Deprecated: Chart path is now handled during analysis phase.
+	SetChartPath(path string)
+
+	// SetMappings applies registry mappings to the generator.
+	SetMappings(mappings *registry.Mappings)
+
+	// SetRulesEnabled enables or disables the chart parameter rules system.
+	// Deprecated: Rules logic might need rework or removal.
+	SetRulesEnabled(enabled bool)
 }
 
 // Regular expression for validating registry names (simplified based on common usage)

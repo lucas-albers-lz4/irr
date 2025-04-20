@@ -62,16 +62,16 @@ dist: update-pyproject
 
 test: build
 	@echo "Running unit tests..."
-	@IRR_TESTING=true go test ./... -v || true
+	@IRR_TESTING=true go test ./... -v
 	@echo "Running CLI syntax tests..."
 	@IRR_TESTING=true go test -v ./cmd/irr/cli_test.go
 	@echo "All tests completed."
 
 test-quiet: build
 	@echo "Running unit tests with minimal output..."
-	@cd cmd && IRR_TESTING=true go test ./... -count=1 2>/dev/null || true
-	@cd pkg && IRR_TESTING=true go test ./... -count=1 2>/dev/null || true
-	@cd test && IRR_TESTING=true go test ./... -count=1 2>/dev/null || true
+	@cd cmd && IRR_TESTING=true go test ./... -count=1 2>/dev/null
+	@cd pkg && IRR_TESTING=true go test ./... -count=1 2>/dev/null
+	@cd test && IRR_TESTING=true go test ./... -count=1 2>/dev/null
 	@echo "All tests completed."
 
 test-filter: build
@@ -81,12 +81,12 @@ test-filter: build
 
 test-json: build
 	@echo "Running unit tests..."
-	@IRR_TESTING=true go test ./... -json | jq -r 'select((.Action == "fail") and .Test)' || true
+	@IRR_TESTING=true go test ./... -json | jq -r 'select((.Action == "fail") and .Test)'
 	@echo "JSON test output completed."
 
 test-packages: build
 	@echo "Running package tests (skipping cmd/irr)..."
-	@IRR_TESTING=true go test -v ./pkg/... ./test/... || true
+	@IRR_TESTING=true go test -v ./pkg/... ./test/...
 	@echo "Package tests completed."
 
 test-cli: build
@@ -96,22 +96,22 @@ test-cli: build
 
 test-pkg-image: build
 	@echo "Running image package tests..."
-	@IRR_TESTING=true go test -v ./pkg/image/... || true
+	@IRR_TESTING=true go test -v ./pkg/image/...
 	@echo "Image package tests completed."
 
 test-pkg-override: build
 	@echo "Running override package tests..."
-	@IRR_TESTING=true go test -v ./pkg/override/... || true
+	@IRR_TESTING=true go test -v ./pkg/override/...
 	@echo "Override package tests completed."
 
 test-pkg-strategy: build
 	@echo "Running strategy package tests..."
-	@IRR_TESTING=true go test -v ./pkg/strategy/... || true
+	@IRR_TESTING=true go test -v ./pkg/strategy/...
 	@echo "Strategy package tests completed."
 
 test-integration: build
 	@echo "Running integration tests..."
-	@IRR_TESTING=true go test -v ./test/integration/... || true
+	@IRR_TESTING=true go test -v ./test/integration/...
 	@echo "Integration tests completed."
 
 test-cert-manager: build

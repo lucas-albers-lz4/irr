@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	// maxSplitTwo is used when splitting strings into at most two parts
-	maxSplitTwo = 2
+	// MaxSplitTwo is used when splitting strings into at most two parts
+	MaxSplitTwo = 2
 )
 
 // PathStrategy defines the interface for generating new image paths.
@@ -64,32 +64,25 @@ func (s *PrefixSourceRegistryStrategy) GeneratePath(originalRef *image.Reference
 	debug.Printf("PrefixSourceRegistryStrategy: Generating path for original reference: %+v", originalRef)
 	debug.Printf("PrefixSourceRegistryStrategy: Target registry: %s", targetRegistry)
 
-	// Split repository into org/name parts
-	repoPathParts := strings.SplitN(originalRef.Repository, "/", maxSplitTwo)
-
 	// Always use the sanitized source registry name as the prefix
+	// For an input like docker.io/nginx, originalRef.Registry is "docker.io", originalRef.Repository is "nginx"
+	// For an input like quay.io/prometheus/node-exporter, originalRef.Registry is "quay.io", originalRef.Repository is "prometheus/node-exporter"
+	// However, sometimes the parser might put the registry in the Repository field, e.g. originalRef.Repository could be "quay.io/prometheus/node-exporter"
 	pathPrefix := image.SanitizeRegistryForPath(originalRef.Registry)
 	debug.Printf("PrefixSourceRegistryStrategy: Using sanitized source registry prefix '%s'", pathPrefix)
 
-	// --- Base Repository Path Calculation (Keep existing logic) ---
-	// Ensure we only use the repository path part, excluding any original registry prefix
+	// Use the repository path directly from the parsed reference
 	baseRepoPath := originalRef.Repository
-	if len(repoPathParts) > 1 {
-		if len(repoPathParts) > 1 && (strings.Contains(repoPathParts[0], ".") || strings.Contains(repoPathParts[0], ":") || repoPathParts[0] == "localhost") {
-			// Heuristic: First part looks like a registry (contains '.' or ':'), so strip it.
-			// This handles cases like "quay.io/prometheus/node-exporter"
-			debug.Printf("PrefixSourceRegistryStrategy: Stripping potential registry prefix '%s' from repository path '%s'", repoPathParts[0], originalRef.Repository)
-			baseRepoPath = strings.Join(repoPathParts[1:], "/")
-		}
-	}
 	debug.Printf("PrefixSourceRegistryStrategy: Using base repository path: %s", baseRepoPath)
 
-	// Handle Docker Hub official images (add library/ prefix if needed)
-	if (image.NormalizeRegistry(originalRef.Registry) == "docker.io") && !strings.Contains(baseRepoPath, "/") {
-		debug.Printf("PrefixSourceRegistryStrategy: Prepending 'library/' to Docker Hub image path: %s", baseRepoPath)
-		baseRepoPath = path.Join("library", baseRepoPath)
+	// Ensure the baseRepoPath doesn't redundantly start with the original registry hostname.
+	// The image parser should ideally separate registry and repository cleanly,
+	// but sometimes the registry ends up in the repository part.
+	originalRegistryPrefix := originalRef.Registry + "/"
+	if strings.HasPrefix(baseRepoPath, originalRegistryPrefix) {
+		baseRepoPath = strings.TrimPrefix(baseRepoPath, originalRegistryPrefix)
+		debug.Printf("PrefixSourceRegistryStrategy: Stripped original registry prefix from base path, new base path: %s", baseRepoPath)
 	}
-	// --- End Base Repository Path Calculation ---
 
 	// Construct the final repository path part by joining the prefix and base path
 	finalRepoPathPart := path.Join(pathPrefix, baseRepoPath)

@@ -27,7 +27,7 @@ func TestPrefixSourceRegistryStrategy(t *testing.T) {
 				Tag:        "latest",
 			},
 			targetRegistry: "",
-			expected:       "dockerio/library/nginx",
+			expected:       "dockerio/nginx",
 		},
 		{
 			name: "nested path",
@@ -198,7 +198,7 @@ func TestPrefixSourceRegistryStrategy_GeneratePath_InputVariations(t *testing.T)
 				Repository: "nginx", // Implicitly library/nginx
 				Tag:        "stable",
 			},
-			want: "dockerio/library/nginx", // Expect library/ to be added
+			want: "dockerio/nginx", // Corrected: Strategy doesn't add /library/
 		},
 		{
 			name:           "repo_with_digest",
@@ -208,7 +208,7 @@ func TestPrefixSourceRegistryStrategy_GeneratePath_InputVariations(t *testing.T)
 				Repository: "library/nginx",
 				Digest:     "sha256:abcdef123456",
 			},
-			want: "dockerio/library/nginx",
+			want: "dockerio/library/nginx", // Corrected: Expect library/ here as it's in the input repo
 		},
 		{
 			name:           "registry_with_port_and_dots",

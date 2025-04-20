@@ -2,7 +2,6 @@
 package analyzer
 
 import (
-	"reflect"
 	"sort"
 	"testing"
 )
@@ -32,10 +31,11 @@ func TestSimplePatternMatching(t *testing.T) {
 	// Create a default config
 	config := &Config{}
 
-	// Run the analyzer
-	patterns, err := AnalyzeHelmValues(values, config)
+	// Run the analyzer using the new function AnalyzeChartValues
+	// For this test, we don't have subcharts, so the originMap can be nil
+	patterns, err := AnalyzeChartValues(values, nil, config)
 	if err != nil {
-		t.Fatalf("AnalyzeHelmValues failed: %v", err)
+		t.Fatalf("AnalyzeChartValues failed: %v", err)
 	}
 
 	// Sort patterns for consistent testing
@@ -150,14 +150,23 @@ func TestBasicValueTraversal(t *testing.T) {
 	// Create a default config
 	config := &Config{}
 
-	// Run the analyzer
-	patterns, err := AnalyzeHelmValues(values, config)
+	// Run the analyzer using the new function AnalyzeChartValues
+	// For this test, we don't have subcharts, so the originMap can be nil
+	patterns, err := AnalyzeChartValues(values, nil, config)
 	if err != nil {
-		t.Fatalf("AnalyzeHelmValues failed: %v", err)
+		t.Fatalf("AnalyzeChartValues failed: %v", err)
 	}
 
 	// Sort patterns for consistent testing
 	sortPatternsByPath(patterns)
+
+	// --- DEBUG: Print found patterns ---
+	t.Logf("Found %d patterns:", len(patterns))
+	for i, p := range patterns {
+		t.Logf("  Pattern %d: Path='%s', Value='%v', Type='%s', Origin='%s', RawPath='%s', Count=%d, Structure=%+v",
+			i, p.Path, p.Value, p.Type, p.Origin, p.RawPath, p.Count, p.Structure)
+	}
+	// --- END DEBUG ---
 
 	// Verify basic traversal properties:
 
@@ -170,11 +179,11 @@ func TestBasicValueTraversal(t *testing.T) {
 
 	// 2. Check that the expected images were found - adjusted for actual path format
 	expectedPaths := []string{
-		"containers[0].image", // Update to match actual array index format
-		"containers[1].image", // Update to match actual array index format
-		"deployment.containers.main",
-		"deployment.containers.sidecar",
-		"image",
+		"containers[0].image",           // String type image in a slice
+		"containers[1].image",           // String type image in a slice
+		"deployment.containers.main",    // Map type image
+		"deployment.containers.sidecar", // Map type image
+		"image",                         // Simple string type image at root
 	}
 
 	// Create a map of expected paths for easier checking
@@ -185,6 +194,7 @@ func TestBasicValueTraversal(t *testing.T) {
 
 	// Check each found pattern against expected paths
 	for _, pattern := range patterns {
+		t.Logf("  Found Pattern: Path='%s', Value='%v', Type='%s'", pattern.Path, pattern.Value, pattern.Type)
 		if _, ok := expectedPathMap[pattern.Path]; ok {
 			expectedPathMap[pattern.Path] = true // Mark as found
 		} else {
@@ -301,9 +311,9 @@ func TestRecursiveAnalysisWithNestedStructures(t *testing.T) {
 	config := &Config{}
 
 	// Run the analyzer
-	patterns, err := AnalyzeHelmValues(values, config)
+	patterns, err := AnalyzeChartValues(values, nil, config)
 	if err != nil {
-		t.Fatalf("AnalyzeHelmValues failed: %v", err)
+		t.Fatalf("AnalyzeChartValues failed: %v", err)
 	}
 
 	// Sort patterns for consistent testing
@@ -311,13 +321,13 @@ func TestRecursiveAnalysisWithNestedStructures(t *testing.T) {
 
 	// Expected patterns with their paths - updated to match actual format
 	expectedPaths := map[string]string{
-		"level1.level2.level3.image":                  "deeply:nested",
-		"level1.level2.array[0].image":                "array:element1",                      // Updated array index format
-		"level1.level2.array[1].nestedArray[0].image": "double:nested",                       // Updated array index format
-		"level1.siblings.sibling1":                    "repository=sibling-repo1,tag=latest", // Updated structured format
-		"level1.siblings.sibling2":                    "repository=sibling-repo2,tag=stable", // Updated structured format
-		"mixed.image":                                 "mixed:image",
-		"mixed.nested":                                "repository=mixed-repo,tag=v1", // Updated structured format
+		"level1.level2.level3.image":                  "deeply:nested",                       // String type
+		"level1.level2.array[0].image":                "array:element1",                      // String type
+		"level1.level2.array[1].nestedArray[0].image": "double:nested",                       // String type
+		"level1.siblings.sibling1":                    "repository=sibling-repo1,tag=latest", // Map type
+		"level1.siblings.sibling2":                    "repository=sibling-repo2,tag=stable", // Map type
+		"mixed.image":                                 "mixed:image",                         // String type
+		"mixed.nested":                                "repository=mixed-repo,tag=v1",        // Map type
 	}
 
 	// Check the number of patterns
@@ -331,6 +341,7 @@ func TestRecursiveAnalysisWithNestedStructures(t *testing.T) {
 	// Check each pattern against expected
 	foundPaths := make(map[string]bool)
 	for _, pattern := range patterns {
+		t.Logf("  Found Pattern (Nested): Path='%s', Value='%v', Type='%s'", pattern.Path, pattern.Value, pattern.Type)
 		expectedValue, ok := expectedPaths[pattern.Path]
 		if !ok {
 			t.Errorf("Unexpected pattern found: %s", pattern.Path)
@@ -428,14 +439,15 @@ func TestConfigWithIncludeExcludePatterns(t *testing.T) {
 
 	// Config with include/exclude patterns
 	config := &Config{
-		IncludePatterns: []string{"include.*", "mixed.include.*"},
+		IncludePatterns: []string{"include.**", "mixed.include.*"},
 		ExcludePatterns: []string{"exclude.*", "mixed.exclude.*"},
 	}
 
-	// Run the analyzer
-	patterns, err := AnalyzeHelmValues(values, config)
+	// Run the analyzer using the new function AnalyzeChartValues
+	// Pass nil for originMap as this test focuses on include/exclude logic
+	patterns, err := AnalyzeChartValues(values, nil, config)
 	if err != nil {
-		t.Fatalf("AnalyzeHelmValues failed: %v", err)
+		t.Fatalf("AnalyzeChartValues failed: %v", err)
 	}
 
 	// Expected patterns with their paths
@@ -495,7 +507,7 @@ func TestPatternMatcherMatch(t *testing.T) {
 	}
 }
 
-// TestAnalyzeInterfaceValue tests the analyzeInterfaceValue function
+// TestAnalyzeInterfaceValue tests analysis of interface{} types
 func TestAnalyzeInterfaceValue(t *testing.T) {
 	// TODO: This test requires more sophisticated setup to properly test the analyzeInterfaceValue function
 	// It's challenging to create a reflect.Value of interface{} type with the correct inner content
@@ -550,27 +562,20 @@ func TestAnalyzeInterfaceValue(t *testing.T) {
 		},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
 			// Create a slice to collect patterns
 			patterns := []ImagePattern{}
 
 			// Create a config for the analysis
 			config := &Config{}
 
-			// Call the function being tested - use reflect.ValueOf on interface{} values to ensure proper reflection
-			if tc.value == nil {
-				// Special handling for nil value
-				analyzeInterfaceValue("test.path", reflect.ValueOf(tc.value), &patterns, config)
-			} else {
-				// For non-nil values, create an interface value to test interface handling
-				v := reflect.ValueOf(&tc.value).Elem() // Get a reflect.Value that is an interface
-				analyzeInterfaceValue("test.path", v, &patterns, config)
-			}
+			// Call the main recursive function which now handles interfaces via reflection
+			analyzeValueRecursive("", testCase.value, ".", nil, &patterns, config)
 
 			// Check if the expected number of patterns were found
-			if len(patterns) != tc.expectCount {
-				t.Errorf("analyzeInterfaceValue() found %d patterns, expected %d", len(patterns), tc.expectCount)
+			if len(patterns) != testCase.expectCount {
+				t.Errorf("analyzeInterfaceValue() found %d patterns, expected %d", len(patterns), testCase.expectCount)
 			}
 		})
 	}

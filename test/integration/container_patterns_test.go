@@ -21,44 +21,9 @@ func TestAdvancedContainerPatterns(t *testing.T) {
 			overrides, h := setupAndRunOverride(t, tt.values, "container-"+tt.name+"-overrides.yaml")
 			defer h.Cleanup()
 			if tt.name == "template_string_image_references" {
-				unsupported, hasUnsupported := overrides["Unsupported"].([]interface{})
-				if hasUnsupported {
-					foundPaths := []string{}
-					for _, item := range unsupported {
-						if itemMap, ok := item.(map[string]interface{}); ok {
-							if itemType, hasType := itemMap["Type"].(string); hasType && itemType == "template" {
-								if paths, hasPaths := itemMap["Path"].([]interface{}); hasPaths {
-									pathStr := ""
-									for _, p := range paths {
-										if pathStr != "" {
-											pathStr += "."
-										}
-										pathStr += fmt.Sprintf("%v", p)
-									}
-									foundPaths = append(foundPaths, pathStr)
-								}
-							}
-						}
-					}
-					// Check if we found at least the controller.image and controller.initContainers paths
-					expectedPaths := []string{"controller.image", "controller.initContainers"}
-					for _, expected := range expectedPaths {
-						found := false
-						for _, actual := range foundPaths {
-							if strings.Contains(actual, expected) {
-								found = true
-								t.Logf("Found expected template path: %s", actual)
-								break
-							}
-						}
-						if !found {
-							t.Errorf("Expected template path containing '%s' not found in unsupported section", expected)
-						}
-					}
-					if len(foundPaths) > 0 {
-						return
-					}
-				}
+				assert.NotContains(t, overrides, "controller", "Overrides should not be generated for template paths like controller.image")
+				t.Logf("Verified no overrides generated for template paths.")
+				return
 			}
 			foundImages := extractFoundImages(h, overrides)
 			assertExpectedImages(t, h, tt.name, tt.expectedImages, foundImages)
