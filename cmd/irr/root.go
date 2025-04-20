@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 
 	"github.com/lalbers/irr/pkg/exitcodes"
@@ -27,6 +28,8 @@ import (
 	"github.com/lalbers/irr/pkg/registry"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+	"github.com/spf13/viper"
 )
 
 // Global flag variables
@@ -48,6 +51,10 @@ var (
 
 	// Helm client
 	helmClient helm.ClientInterface
+
+	// New variables for initConfig
+	isTestMode   bool
+	isHelmPlugin bool
 )
 
 // AppFs defines the filesystem interface to use, allows mocking in tests.
@@ -181,7 +188,7 @@ func getChartSource(cmd *cobra.Command, args []string) (*ChartSource, error) {
 	// Handle the case where neither is provided - attempt auto-detection
 	if !chartPathProvided && !releaseNameProvided {
 		// Try to detect chart in current directory - use the one from inspect.go
-		detectedPath, err := detectChartInCurrentDirectory()
+		detectedPath, err := detectChartInCurrentDirectory(AppFs, ".")
 		if err != nil {
 			// In plugin mode with no inputs, return clear error
 			if isHelmPlugin {
@@ -440,6 +447,31 @@ func init() {
 		// If not running as a plugin, hide the plugin-specific flags
 		removeHelmPluginFlags(rootCmd)
 	}
+
+	// Find and read the config file
+	if cfgFile != "" {
+		// Use config file from the flag.
+		viper.SetConfigFile(cfgFile)
+	} else {
+		// Search config in home directory with name ".irr" (without extension).
+		home, err := os.UserHomeDir()
+		cobra.CheckErr(err)
+		viper.SetConfigName(".irr")
+		viper.SetConfigType("yaml")
+		viper.AddConfigPath(home)
+
+		// Attempt to find chart path for context-aware config loading
+		// We need to do this *before* viper reads the config, but Viper doesn't expose the fs easily.
+		// So, we use our own detection logic with AppFs.
+		chartDir, chartDetectErr := detectChartInCurrentDirectory(AppFs, ".") // Start search from "."
+		if chartDetectErr == nil {
+			projectConfigFile := filepath.Join(chartDir, ".irr.yaml")
+			exists, _ := afero.Exists(AppFs, projectConfigFile)
+			if exists {
+				viper.SetConfigFile(projectConfigFile)
+			}
+		}
+	}
 }
 
 // --- Analyze Command Functionality --- Now integrated into inspect command
@@ -493,3 +525,77 @@ func loadMappingsIfNeeded(fs afero.Fs, registryFile string) (*registry.Mappings,
 	return registry.LoadMappings(fs, registryFile, false)
 }
 */
+
+// initConfig reads in config file and ENV variables if set.
+func initConfig() {
+	// Check if IRR_TESTING is set
+	if os.Getenv("IRR_TESTING") != "" {
+		isTestMode = true
+		log.Infof("IRR_TESTING environment variable is set. Running in test mode.")
+	}
+
+	// Determine if running as a Helm plugin
+	if os.Getenv("HELM_BIN") != "" && os.Getenv("HELM_PLUGIN_NAME") == "irr" {
+		isHelmPlugin = true
+		// Optionally log Helm environment details for debugging plugin issues
+		if log.IsDebugEnabled() {
+			logHelmEnvironment()
+		}
+	}
+
+	// Determine if integration test mode is active
+	if os.Getenv("IRR_INTEGRATION_TEST") != "" {
+		integrationTestMode = true
+		log.Debugf("IRR_INTEGRATION_TEST environment variable is set.")
+	}
+
+	// Handle filesystem setup based on test/integration mode
+	if isTestMode || integrationTestMode {
+		// In test modes, assume AppFs is already set up by the test harness
+		log.Debugf("Test mode detected, using pre-configured AppFs: %T", AppFs)
+		if AppFs == nil {
+			log.Warnf("Test mode active, but AppFs is nil. Defaulting to OS filesystem.")
+			AppFs = afero.NewOsFs()
+		}
+	} else {
+		// In normal operation, use the real OS filesystem
+		AppFs = afero.NewOsFs()
+	}
+
+	// Get chart path and release name from flags if available
+	// Note: This uses pflag directly as cobra binding might not be complete yet
+	chartPathFlag := pflag.Lookup("chart-path")
+	chartPathProvided := chartPathFlag != nil && chartPathFlag.Changed
+
+	releaseNameFlag := pflag.Lookup("release-name")
+	releaseNameProvided := releaseNameFlag != nil && releaseNameFlag.Changed
+
+	// If chart-path and release-name are not provided, try to auto-detect
+	if !chartPathProvided && !releaseNameProvided {
+		// Try to detect chart in current directory - use the one from inspect.go
+		// Pass "." as the starting directory
+		detectedPath, err := detectChartInCurrentDirectory(AppFs, ".")
+		if err != nil {
+			// In plugin mode with no inputs, return clear error
+			if isHelmPlugin {
+				// Cobra handles this better in RunE, but good to log early if possible
+				log.Debugf("Plugin mode active, but no chart path or release name provided, and auto-detect failed: %v", err)
+			} else {
+				// Standalone mode: Log if detection fails, command will likely fail later if path is required
+				log.Debugf("Chart path not provided and auto-detect failed: %v", err)
+			}
+		} else {
+			// If detected, potentially use this path for context?
+			// For now, just log the detection.
+			log.Debugf("Auto-detected chart directory: %s", detectedPath)
+		}
+	}
+
+	// Initialize Helm client/adapter factory
+	initializeHelmAdapterFactory()
+
+	// Remove Helm plugin flags if not running as a plugin
+	if !isHelmPlugin {
+		removeHelmPluginFlags(rootCmd)
+	}
+}

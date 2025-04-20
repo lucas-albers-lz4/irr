@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"testing"
 
 	"github.com/lalbers/irr/pkg/fileutil"
 	"github.com/spf13/afero"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -77,6 +79,56 @@ func setupMemoryFSContext(t *testing.T) (fs afero.Fs, tempDir string, cleanup fu
 	}
 
 	return fs, tempDir, cleanup
+}
+
+// TestHandleTestModeOverride is a more focused test that directly tests the function
+// designed for test mode
+func TestHandleTestModeOverride(t *testing.T) {
+	// Save and restore original values
+	originalIsHelmPlugin := isHelmPlugin
+	originalIsTestMode := isTestMode
+	originalFs := AppFs
+	defer func() {
+		isHelmPlugin = originalIsHelmPlugin
+		isTestMode = originalIsTestMode
+		AppFs = originalFs
+	}()
+
+	// Set both plugin mode and test mode
+	isHelmPlugin = true
+	isTestMode = true
+
+	// Setup in-memory filesystem
+	AppFs = afero.NewMemMapFs()
+
+	// Create a new command with test args
+	cmd := newOverrideCmd()
+	cmd.SetArgs([]string{
+		"test-release", // Positional arg for release name
+		"--target-registry", "target.com",
+		"--source-registries", "docker.io",
+		"--dry-run",     // Enable dry run
+		"--no-validate", // Explicitly disable validation
+	})
+
+	// Manually set dry-run flag to true since we're calling handleTestModeOverride directly
+	// and not going through the normal flag parsing
+	cmd.Flags().Set("dry-run", "true")
+
+	output := &bytes.Buffer{}
+	cmd.SetOut(output)
+
+	// Call the test mode handler directly with the release name
+	err := handleTestModeOverride(cmd, "test-release")
+	require.NoError(t, err)
+
+	// Check output contains expected overrides
+	assert.Contains(t, output.String(), "--- Dry Run: Generated Overrides ---")
+
+	// Check that no file was created
+	exists, err := afero.Exists(AppFs, "test-release-overrides.yaml")
+	assert.NoError(t, err)
+	assert.False(t, exists, "Output file should not be created in dry run")
 }
 
 // End of file
