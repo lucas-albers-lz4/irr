@@ -9,14 +9,17 @@ import (
 	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/exitcodes"
 	log "github.com/lalbers/irr/pkg/log"
-	"github.com/lalbers/irr/pkg/version"
 	// Removed cmd import to break cycle
 )
+
+// isHelmPlugin indicates if the application is running as a Helm plugin.
+// This is determined by checking environment variables set by Helm.
+// REMOVED - Declaration moved to root.go
+// var isHelmPlugin bool
 
 // BinaryVersion is replaced during build with the value from plugin.yaml.
 // When you run make build or make dist, Go replaces this value in the compiled binary.
 var BinaryVersion = "0.2.0"
-var isHelmPlugin bool
 
 // main is the entry point of the application.
 // It calls the Execute function defined locally (likely in root.go) to set up and run the commands.
@@ -36,31 +39,27 @@ func main() {
 	}
 
 	// Check if we're running as a Helm plugin
-	isHelmPlugin = isRunningAsHelmPlugin()
+	// isHelmPlugin = isRunningAsHelmPlugin()
 
 	// Log Helm environment variables when in debug mode
-	if log.IsDebugEnabled() && isHelmPlugin {
-		logHelmEnvironment()
-		// Add more prominent message about plugin detection
-		fmt.Fprintf(os.Stderr, "### DETECTED RUNNING AS HELM PLUGIN ###\n")
-	} else if log.IsDebugEnabled() {
+	if log.IsDebugEnabled() {
 		fmt.Fprintf(os.Stderr, "### DETECTED RUNNING IN STANDALONE MODE ###\n")
 	}
 
 	// Initialize Helm plugin if necessary
-	if isHelmPlugin {
-		log.Debugf("Running as Helm plugin")
-		// Check Helm version compatibility
-		if err := version.CheckHelmVersion(); err != nil {
-			log.Errorf("Helm version check failed: %v", err)
-			if code, ok := exitcodes.IsExitCodeError(err); ok {
-				os.Exit(code)
-			}
-			os.Exit(1)
-		}
-		log.Debugf("Helm version check passed")
-		// initHelmPlugin will be called in init() of the root.go file
-	}
+	// if isHelmPlugin {
+	// 	log.Debugf("Running as Helm plugin")
+	// 	// Check Helm version compatibility
+	// 	if err := version.CheckHelmVersion(); err != nil {
+	// 		log.Errorf("Helm version check failed: %v", err)
+	// 		if code, ok := exitcodes.IsExitCodeError(err); ok {
+	// 			os.Exit(code)
+	// 		}
+	// 		os.Exit(1)
+	// 	}
+	// 	log.Debugf("Helm version check passed")
+	// 	// initHelmPlugin will be called in init() of the root.go file
+	// }
 
 	// Execute the root command (defined in root.go, package main)
 	// Cobra's Execute() handles its own error printing. We check the returned
