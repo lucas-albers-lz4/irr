@@ -7,7 +7,6 @@ import (
 )
 
 func TestDetectBitnamiChart(t *testing.T) {
-
 	// Helper function for assertion logic
 	assertDetection := func(t *testing.T, got, want Detection) {
 		t.Helper()
