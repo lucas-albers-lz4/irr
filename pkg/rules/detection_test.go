@@ -7,153 +7,152 @@ import (
 )
 
 func TestDetectBitnamiChart(t *testing.T) {
-	tests := []struct {
-		name           string
-		metadata       *chart.Metadata
-		deps           []*chart.Chart
-		expectedResult Detection
-	}{
-		{
-			name: "High confidence - multiple indicators",
-			metadata: &chart.Metadata{
-				Name: "test-chart",
-				Home: "https://bitnami.com/chart",
-				Sources: []string{
-					"https://github.com/bitnami/charts/tree/main/test",
-				},
-				Maintainers: []*chart.Maintainer{
-					{
-						Name: "Bitnami Team",
-						URL:  "https://github.com/bitnami",
-					},
-				},
-			},
-			expectedResult: Detection{
-				Provider:   ProviderBitnami,
-				Confidence: ConfidenceHigh,
-				Indicators: []string{
-					"home field contains bitnami.com",
-					"sources reference github.com/bitnami/charts",
-					"maintainer references Bitnami/Broadcom",
-					"maintainer URL references Bitnami/Broadcom",
-				},
-			},
-		},
-		{
-			name: "Medium confidence - home field only",
-			metadata: &chart.Metadata{
-				Name: "test-chart",
-				Home: "https://bitnami.com/chart",
-			},
-			expectedResult: Detection{
-				Provider:   ProviderBitnami,
-				Confidence: ConfidenceLow,
-				Indicators: []string{
-					"home field contains bitnami.com",
-				},
-			},
-		},
-		{
-			name: "No confidence - no indicators",
-			metadata: &chart.Metadata{
-				Name: "test-chart",
-				Home: "https://example.com/chart",
-			},
-			expectedResult: Detection{
-				Provider:   ProviderBitnami,
-				Confidence: ConfidenceNone,
-				Indicators: []string{},
-			},
-		},
-		{
-			name: "High confidence - copyright in annotations",
-			metadata: &chart.Metadata{
-				Name: "test-chart",
-				Annotations: map[string]string{
-					"licenses":  "Apache-2.0",
-					"copyright": "Copyright Broadcom, Inc. All Rights Reserved.",
-				},
-				Home: "https://charts.example.com",
-			},
-			expectedResult: Detection{
-				Provider:   ProviderBitnami,
-				Confidence: ConfidenceLow,
-				Indicators: []string{
-					"annotations contain Bitnami/Broadcom copyright",
-				},
-			},
-		},
-		{
-			name: "Medium confidence - common dependency via tag only",
-			metadata: &chart.Metadata{
-				Name: "dep-tag-only",
-				Dependencies: []*chart.Dependency{
-					{
-						Name: "common",
-						Tags: []string{"bitnami-common"},
-					},
-				},
-				Home: "https://bitnami.com/chart",
-			},
-			expectedResult: Detection{
-				Provider:   ProviderBitnami,
-				Confidence: ConfidenceMedium,
-				Indicators: []string{"home field contains bitnami.com", "dependency references bitnami-common"},
-			},
-		},
-		{
-			name: "With bitnami-common dependency",
-			metadata: &chart.Metadata{
-				Name: "test-chart",
-				Dependencies: []*chart.Dependency{
-					{
-						Name: "bitnami-common",
-					},
-				},
-			},
-			expectedResult: Detection{
-				Provider:   ProviderBitnami,
-				Confidence: ConfidenceLow,
-				Indicators: []string{
-					"dependency references bitnami-common",
-				},
-			},
-		},
+
+	// Helper function for assertion logic
+	assertDetection := func(t *testing.T, got, want Detection) {
+		t.Helper()
+		// Check provider
+		if got.Provider != want.Provider {
+			t.Errorf("provider = %v, want %v", got.Provider, want.Provider)
+		}
+
+		// Check confidence level
+		if got.Confidence != want.Confidence {
+			t.Errorf("confidence = %v, want %v", got.Confidence, want.Confidence)
+		}
+
+		// Check indicators (just the count, as the exact order might vary)
+		// TODO: Consider comparing indicator content more precisely if needed
+		if len(got.Indicators) != len(want.Indicators) {
+			t.Errorf("indicators count = %v, want %v (Got: %v)",
+				len(got.Indicators), len(want.Indicators), got.Indicators)
+		}
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Create a chart with the test metadata
-			ch := &chart.Chart{
-				Metadata: tt.metadata,
-				Lock:     &chart.Lock{}, // To avoid nil pointer dereference in some chart operations
-			}
+	t.Run("High confidence - multiple indicators", func(t *testing.T) {
+		metadata := &chart.Metadata{
+			Name: "test-chart",
+			Home: "https://bitnami.com/chart",
+			Sources: []string{
+				"https://github.com/bitnami/charts/tree/main/test",
+			},
+			Maintainers: []*chart.Maintainer{
+				{
+					Name: "Bitnami Team",
+					URL:  "https://github.com/bitnami",
+				},
+			},
+		}
+		expected := Detection{
+			Provider:   ProviderBitnami,
+			Confidence: ConfidenceHigh,
+			Indicators: []string{
+				"home field contains bitnami.com",
+				"sources reference github.com/bitnami/charts",
+				"maintainer references Bitnami/Broadcom",
+				"maintainer URL references Bitnami/Broadcom",
+			},
+		}
+		ch := &chart.Chart{Metadata: metadata, Lock: &chart.Lock{}}
+		got := detectBitnamiChart(ch)
+		assertDetection(t, got, expected)
+	})
 
-			// Add dependencies if provided
-			for _, dep := range tt.deps {
-				ch.AddDependency(dep)
-			}
+	t.Run("Low confidence - home field only", func(t *testing.T) {
+		metadata := &chart.Metadata{
+			Name: "test-chart",
+			Home: "https://bitnami.com/chart",
+		}
+		expected := Detection{
+			Provider:   ProviderBitnami,
+			Confidence: ConfidenceLow,
+			Indicators: []string{
+				"home field contains bitnami.com",
+			},
+		}
+		ch := &chart.Chart{Metadata: metadata, Lock: &chart.Lock{}}
+		got := detectBitnamiChart(ch)
+		assertDetection(t, got, expected)
+	})
 
-			// Run the detection
-			got := detectBitnamiChart(ch)
+	t.Run("No confidence - no indicators", func(t *testing.T) {
+		metadata := &chart.Metadata{
+			Name: "test-chart",
+			Home: "https://example.com/chart",
+		}
+		expected := Detection{
+			Provider:   ProviderBitnami, // Note: Provider is still Bitnami as detection fn assumes this
+			Confidence: ConfidenceNone,
+			Indicators: []string{},
+		}
+		ch := &chart.Chart{Metadata: metadata, Lock: &chart.Lock{}}
+		got := detectBitnamiChart(ch)
+		assertDetection(t, got, expected)
+	})
 
-			// Check provider
-			if got.Provider != tt.expectedResult.Provider {
-				t.Errorf("detectBitnamiChart() provider = %v, want %v", got.Provider, tt.expectedResult.Provider)
-			}
+	t.Run("Low confidence - copyright in annotations", func(t *testing.T) {
+		metadata := &chart.Metadata{
+			Name: "test-chart",
+			Annotations: map[string]string{
+				"licenses":  "Apache-2.0",
+				"copyright": "Copyright Broadcom, Inc. All Rights Reserved.",
+			},
+			Home: "https://charts.example.com", // No other bitnami indicators
+		}
+		expected := Detection{
+			Provider:   ProviderBitnami,
+			Confidence: ConfidenceLow,
+			Indicators: []string{
+				"annotations contain Bitnami/Broadcom copyright",
+			},
+		}
+		ch := &chart.Chart{Metadata: metadata, Lock: &chart.Lock{}}
+		got := detectBitnamiChart(ch)
+		assertDetection(t, got, expected)
+	})
 
-			// Check confidence level
-			if got.Confidence != tt.expectedResult.Confidence {
-				t.Errorf("detectBitnamiChart() confidence = %v, want %v", got.Confidence, tt.expectedResult.Confidence)
-			}
+	t.Run("Medium confidence - common dependency via tag only and home field", func(t *testing.T) {
+		metadata := &chart.Metadata{
+			Name: "dep-tag-only",
+			Dependencies: []*chart.Dependency{
+				{
+					Name: "common", // Doesn't match "bitnami-common"
+					Tags: []string{"bitnami-common"},
+				},
+			},
+			Home: "https://bitnami.com/chart", // Second indicator
+		}
+		expected := Detection{
+			Provider:   ProviderBitnami,
+			Confidence: ConfidenceMedium,
+			Indicators: []string{"home field contains bitnami.com", "dependency references bitnami-common"},
+		}
+		ch := &chart.Chart{Metadata: metadata, Lock: &chart.Lock{}}
+		got := detectBitnamiChart(ch)
+		assertDetection(t, got, expected)
+	})
 
-			// Check indicators (just the count, as the exact order might vary)
-			if len(got.Indicators) != len(tt.expectedResult.Indicators) {
-				t.Errorf("detectBitnamiChart() indicators count = %v, want %v",
-					len(got.Indicators), len(tt.expectedResult.Indicators))
-			}
-		})
-	}
+	t.Run("Low confidence - common dependency via name only", func(t *testing.T) {
+		metadata := &chart.Metadata{
+			Name: "test-chart",
+			Dependencies: []*chart.Dependency{
+				{
+					Name: "bitnami-common", // Name matches
+				},
+			},
+			Home: "https://other.com", // No other indicators
+		}
+		expected := Detection{
+			Provider:   ProviderBitnami,
+			Confidence: ConfidenceLow,
+			Indicators: []string{
+				"dependency references bitnami-common",
+			},
+		}
+		ch := &chart.Chart{Metadata: metadata, Lock: &chart.Lock{}}
+		got := detectBitnamiChart(ch)
+		assertDetection(t, got, expected)
+	})
 }
 
 func TestAppliesTo(t *testing.T) {
