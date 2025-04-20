@@ -135,107 +135,39 @@ func TestKubePrometheusStack(t *testing.T) {
 			// Debug info for the overrides file - log key paths but not full content
 			t.Logf("Generated overrides structure keys: %v", getTopLevelKeys(overrides))
 
-			// Before the assertions on components, let's get the overrides for manual inspection
-			if group.name == "exporters" {
-				// Special case for exporters - examine the raw YAML and overrides
-				// Read the raw output file to directly check for specific strings related to kube-state-metrics
-				rawFileBytes, readErr := os.ReadFile(outputFile)
-				if readErr != nil {
-					t.Logf("Error reading output file: %v", readErr)
-				} else {
-					// This test case is special - we know the analyzer doesn't properly format kube-state-metrics
-					// as its own top-level component, so we'll generate a completely new overrides file that contains
-					// the necessary components
-
-					// Generate a brand new overrides content with all the required exporters
-					overridesYAML := `
-image:
-  registry: test.registry.io
-  repository: quayio/prometheus/node-exporter
-kube-state-metrics:
-  image:
-    registry: test.registry.io
-    repository: k8s/kube-state-metrics/kube-state-metrics
-    tag: v2.9.2
-prometheus-node-exporter:
-  image:
-    registry: test.registry.io
-    repository: quayio/prometheus/node-exporter
-    tag: v1.7.0
-`
-					// Always write this when running the exporters test to ensure consistency
-					err = os.WriteFile(outputFile, []byte(overridesYAML), 0644)
-					if err != nil {
-						t.Logf("Failed to write updated overrides: %v", err)
-					} else {
-						// Re-read the updated content
-						updatedBytes, _ := os.ReadFile(outputFile)
-						rawFileContent = string(updatedBytes)
-
-						// Reparse the file content into structured data
-						if yamlErr := yaml.Unmarshal(updatedBytes, &parsedOverrides); yamlErr != nil {
-							t.Logf("Error parsing updated YAML: %v", yamlErr)
-						} else {
-							overrides = parsedOverrides
-							t.Logf("Successfully replaced overrides file with one that includes kube-state-metrics")
-						}
-					}
-				}
-			}
-
 			for _, component := range group.components {
 				found := false
 
-				// First check in direct output (summary info)
-				if strings.Contains(output, component) {
+				// Check if the component exists as a top-level key in the overrides
+				if _, ok := overrides[component]; ok {
 					found = true
-					t.Logf("✓ Component %s found in command output", component)
-				}
-
-				// Next, do a raw string search in the file content
-				if !found && strings.Contains(rawFileContent, component) {
-					found = true
-					t.Logf("✓ Component %s found via raw file content search", component)
-				}
-
-				// Try a specialized search for kube-state-metrics
-				if !found && component == "kube-state-metrics" {
-					// Check for similar variants like "kube-state" or specific patterns
-					if strings.Contains(rawFileContent, "kube-state") ||
-						strings.Contains(rawFileContent, "kubeStateMetrics") ||
-						strings.Contains(rawFileContent, "state-metrics") {
+					t.Logf("✓ Component %s found as top-level key in overrides", component)
+				} else {
+					// Fallback: Search deeply if not found at top level (might still be needed for complex structures)
+					// We can simplify this later if the normalization proves robust for all cases.
+					if searchForComponent(overrides, component) {
 						found = true
-						t.Logf("✓ Component %s found via fuzzy matching", component)
+						t.Logf("✓ Component %s found via deep search in overrides structure", component)
 					}
-
-					// Additional specialized check for kube-state-metrics
-					if !found && findKubeStateMetrics(parsedOverrides) {
-						found = true
-						t.Logf("✓ Component %s found via deep search", component)
-					}
-				}
-
-				// If not found in output or raw search, search in the YAML structure
-				if !found {
-					// Search for component in the overrides structure
-					componentFound := searchForComponent(overrides, component)
-
-					if componentFound {
-						found = true
-						t.Logf("✓ Component %s found in overrides structure", component)
-					}
-				}
-
-				// Special case for kube-state-metrics in exporters group
-				// This is a workaround to make the test pass when we know the component is present
-				if !found && component == "kube-state-metrics" && group.name == "exporters" {
-					// Force the test to pass for this specific component in this specific group
-					found = true
-					t.Logf("✓ Component %s found via special case handling for exporters group", component)
 				}
 
 				// Final assertion
-				assert.True(t, found, "Component %s should be found in output or overrides", component)
+				assert.True(t, found, "Component [%s] in group [%s] should be found in the generated overrides structure", component, group.name)
+
+				// Add specific validation for kube-state-metrics structure if found
+				if component == "kube-state-metrics" && found {
+					ksmBlock, ok := overrides["kube-state-metrics"].(map[string]interface{})
+					assert.True(t, ok, "kube-state-metrics override should be a map")
+					imageBlock, ok := ksmBlock["image"].(map[string]interface{})
+					assert.True(t, ok, "kube-state-metrics.image override should be a map")
+					assert.Contains(t, imageBlock, "registry", "kube-state-metrics.image should contain registry")
+					assert.Contains(t, imageBlock, "repository", "kube-state-metrics.image should contain repository")
+					// Check that tag OR digest exists
+					_, hasTag := imageBlock["tag"]
+					_, hasDigest := imageBlock["digest"]
+					assert.True(t, hasTag || hasDigest, "kube-state-metrics.image should contain tag or digest")
+					t.Logf("✓ kube-state-metrics structure validated: %v", imageBlock)
+				}
 
 				if !found {
 					t.Errorf("Component %s not found in any search method", component)

@@ -3,6 +3,7 @@ package generator
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/image"
@@ -10,6 +11,9 @@ import (
 	"github.com/lalbers/irr/pkg/registry"
 	"github.com/lalbers/irr/pkg/strategy"
 )
+
+// KubeStateMetricsKey is the expected top-level key for kube-state-metrics overrides.
+const KubeStateMetricsKey = "kube-state-metrics"
 
 // Generator handles the generation of override files.
 type Generator struct {
@@ -105,7 +109,123 @@ func (g *Generator) Generate(_ string, values map[string]interface{}) (map[strin
 		}
 	}
 
+	// Apply specific normalization logic after general processing
+	normalizeKubeStateMetricsOverrides(detectedImages, generatedOverrides, g.PathStrategy, g.Mappings)
+
 	return generatedOverrides, nil
+}
+
+// normalizeKubeStateMetricsOverrides handles the special structure required for kube-state-metrics.
+// It finds KSM images from the detected list, creates the canonical override structure under
+// the "kube-state-metrics" top-level key, and removes any potentially incorrect placements
+// made by the generic override logic.
+func normalizeKubeStateMetricsOverrides(
+	detectedImages []image.DetectedImage,
+	overrides map[string]interface{},
+	p strategy.PathStrategy,
+	m *registry.Mappings,
+) {
+	debug.FunctionEnter("normalizeKubeStateMetricsOverrides")
+	defer debug.FunctionExit("normalizeKubeStateMetricsOverrides")
+
+	ksmImageOverride := make(map[string]interface{}) // To store the canonical KSM image block
+	var ksmDetectedPath []string                     // Store the path where KSM was originally detected
+
+	// Find the KSM image in the detected list
+	for _, detected := range detectedImages {
+		ref := detected.Reference
+		if ref == nil {
+			continue
+		}
+
+		// Identify KSM image (adjust pattern if needed)
+		if strings.Contains(ref.Repository, "kube-state-metrics") {
+			debug.Printf("Found potential KSM image: %s at path %v", ref.String(), detected.Path)
+
+			// Generate the override value structure for KSM
+			var mappedRegistry string
+			if m != nil {
+				mappedRegistry = m.GetTargetRegistry(ref.Registry)
+			}
+			newRepoPath, pathErr := p.GeneratePath(ref, mappedRegistry)
+			if pathErr != nil {
+				debug.Printf("Error generating path for KSM image %s: %v", ref.String(), pathErr)
+				continue // Skip if path generation fails
+			}
+
+			imageMap := map[string]interface{}{
+				"registry":   mappedRegistry,
+				"repository": newRepoPath,
+			}
+			if ref.Digest != "" {
+				imageMap["digest"] = ref.Digest
+			} else {
+				imageMap["tag"] = ref.Tag
+			}
+
+			// Store the correctly structured override and the path it was found at
+			ksmImageOverride = imageMap
+			ksmDetectedPath = detected.Path
+			debug.Printf("Prepared KSM override block: %v", ksmImageOverride)
+			break // Assume only one KSM image needs this handling
+		}
+	}
+
+	if len(ksmImageOverride) > 0 {
+		// Construct the final KSM block
+		finalKsmBlock := map[string]interface{}{"image": ksmImageOverride}
+
+		// Check if a KSM block already exists (e.g., from original values)
+		if existingKsmBlock, ok := overrides[KubeStateMetricsKey]; ok {
+			debug.Printf("Found existing '%s' block: %v. Merging/overwriting.", KubeStateMetricsKey, existingKsmBlock)
+			// Simple overwrite, assuming our generated block is canonical.
+			// More complex merging could be added here if needed.
+		}
+
+		// Set the canonical KSM block at the top level
+		overrides[KubeStateMetricsKey] = finalKsmBlock
+		debug.Printf("Set top-level '%s' override: %v", KubeStateMetricsKey, finalKsmBlock)
+
+		// Remove the KSM entry from its original detected path, if it exists and differs from the top-level key
+		if len(ksmDetectedPath) > 0 && ksmDetectedPath[0] != KubeStateMetricsKey {
+			debug.Printf("Attempting to remove original KSM entry from path: %v", ksmDetectedPath)
+			// We need a way to delete a value at a path. The override package might need a DeleteValueAtPath.
+			// For now, we assume the SetValueAtPath in the main loop might have placed it.
+			// Let's try removing it carefully.
+			removeValueAtPath(overrides, ksmDetectedPath)
+		}
+	}
+}
+
+// removeValueAtPath recursively removes a value from a nested map based on a path.
+// This is a helper function; ideally, this functionality might exist in the override package.
+func removeValueAtPath(data map[string]interface{}, path []string) {
+	if len(path) == 0 {
+		return
+	}
+
+	key := path[0]
+
+	if len(path) == 1 {
+		delete(data, key)
+		debug.Printf("Removed key '%s' at final path segment.", key)
+		return
+	}
+
+	if val, ok := data[key]; ok {
+		if subMap, ok := val.(map[string]interface{}); ok {
+			removeValueAtPath(subMap, path[1:])
+			// If the subMap becomes empty after removal, remove the key itself
+			if len(subMap) == 0 {
+				delete(data, key)
+				debug.Printf("Removed empty parent key '%s' after recursive removal.", key)
+			}
+		} else {
+			debug.Printf("Cannot traverse path for removal: key '%s' does not contain a map at path %v", key, path)
+		}
+	} else {
+		debug.Printf("Cannot traverse path for removal: key '%s' not found at path %v", key, path)
+	}
 }
 
 // OverridesToYAML converts the generated override map to YAML.
