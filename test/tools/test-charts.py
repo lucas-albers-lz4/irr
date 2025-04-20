@@ -272,114 +272,6 @@ def categorize_error(error_msg: str) -> str:
     return "UNKNOWN_ERROR"
 
 
-def ensure_chart_cache():
-    """Ensure chart cache directory exists."""
-    CHART_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def get_cached_chart(chart_name: str) -> Optional[Path]:
-    """Check if chart exists in cache."""
-    cached_charts = list(CHART_CACHE_DIR.glob(f"{chart_name}*.tgz"))
-    return (
-        max(cached_charts, key=lambda x: x.stat().st_mtime) if cached_charts else None
-    )
-
-
-async def pull_chart(chart: str, output_dir: Path) -> Tuple[bool, Optional[Path]]:
-    """Pull and extract a Helm chart, caching it if successful."""
-    chart_name = chart.split("/")[-1]
-    chart_version_match = CHART_VERSION_REGEX.search(chart_name)
-    version = chart_version_match.group(1) if chart_version_match else "latest"
-
-    # Use chart name and version for the cache directory name
-    target_cache_path = (
-        output_dir / f"{chart_name}-{version}"
-    )  # <<< Removed .tgz suffix
-
-    # Check cache first
-    if target_cache_path.is_dir():
-        print(f"  Using cached chart: {target_cache_path}")
-        return True, target_cache_path
-
-    print(f"  Pulling chart: {chart} to cache dir {target_cache_path.parent}")
-    success = False
-    chart_dir = None
-    # Use a temporary directory for the initial pull to avoid conflicts
-    # and handle cases where helm pull might create unexpected structures.
-    temp_pull_dir = Path(tempfile.mkdtemp(prefix=f"{chart_name}-pull-"))
-
-    try:
-        cmd = [
-            "helm",
-            "pull",
-            chart,
-            "--untar",  # Extract the chart
-            "--untardir",
-            str(temp_pull_dir),  # Extract into the temp dir
-            "--devel",  # Include development versions if needed
-        ]
-        process = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-        )
-        stdout, stderr = await asyncio.wait_for(
-            process.communicate(), timeout=120
-        )  # 2-minute timeout
-
-        stdout_str = stdout.decode().strip() if stdout else ""
-        stderr_str = stderr.decode().strip() if stderr else ""
-
-        if process.returncode == 0:
-            # Helm pull --untar creates a subdirectory named after the chart. Find it.
-            found_dir = next((d for d in temp_pull_dir.iterdir() if d.is_dir()), None)
-
-            if found_dir:
-                # Move the extracted directory to the final cache location
-                if (
-                    target_cache_path.exists()
-                ):  # Clean up if exists (e.g., from failed previous run)
-                    shutil.rmtree(target_cache_path)
-
-                shutil.move(str(found_dir), str(target_cache_path))
-                print(
-                    f"  Successfully pulled and cached {chart} to {target_cache_path}"
-                )
-                chart_dir = target_cache_path  # Return the path in the actual cache
-                success = True
-            else:
-                print(
-                    f"  Error: Could not find chart directory in {temp_pull_dir} after helm pull for {chart}"
-                )
-                print(f"    Stdout: {stdout_str}")
-                print(f"    Stderr: {stderr_str}")
-                # Log contents for debugging
-                try:
-                    dir_contents = os.listdir(temp_pull_dir)
-                    print(f"    Contents of {temp_pull_dir}: {dir_contents}")
-                except OSError as list_err:
-                    print(f"    Could not list contents of {temp_pull_dir}: {list_err}")
-
-        else:
-            print(f"  Error pulling chart {chart} (code {process.returncode}):")
-            if stderr_str:
-                print(f"    Stderr: {stderr_str}")
-            if stdout_str:
-                print(f"    Stdout: {stdout_str}")
-
-    except asyncio.TimeoutError:
-        print(f"  Timeout pulling chart {chart}")
-    except Exception as e:
-        print(f"  Unexpected error pulling chart {chart}: {e}")
-        import traceback
-
-        traceback.print_exc()
-    finally:
-        # Clean up the temporary pull directory
-        if temp_pull_dir.exists():
-            shutil.rmtree(temp_pull_dir)
-
-    return success, chart_dir
-
-
 def test_chart(chart: str, chart_dir: Path) -> bool:
     """Test a chart's template rendering."""
     chart_name = os.path.basename(chart)
@@ -461,6 +353,10 @@ async def test_chart_override(chart_info, target_registry, irr_binary, session, 
     chart_name, chart_path = chart_info
     output_file = TEST_OUTPUT_DIR / f"{chart_name}-values.yaml"
     debug_log_file = TEST_OUTPUT_DIR / f"{chart_name}-override-debug.log"
+
+    # --- Clean up any existing output YAML file for this chart ---
+    if output_file.exists():
+        output_file.unlink()
 
     # --- Initialize variables ---
     classification = "UNKNOWN"
@@ -1300,81 +1196,12 @@ def get_values_content(classification: str, target_registry: str) -> str:
 async def process_charts(
     charts_to_test_names: List[str], args
 ) -> List[Tuple[str, Path]]:
-    """Process charts either from local cache or by pulling them."""
+    """Scan test/chart-cache for .tgz files and return (chart_name, chart_path) tuples."""
     charts_to_process_info: List[Tuple[str, Path]] = []
-
-    if args.local_only:
-        # In local mode, directly use cached charts
-        for chart_name in charts_to_test_names:
-            chart_path = CHART_CACHE_DIR / f"{chart_name}.tgz"
-            if chart_path.exists():
-                charts_to_process_info.append((chart_name, chart_path))
-            else:
-                print(f"Warning: Chart file not found: {chart_path}")
-    else:
-        # In update mode, handle chart pulling and caching
-        pull_tasks = []
-        charts_to_attempt_pull = []
-
-        # Decide which charts need pulling
-        for chart_full_name in charts_to_test_names:
-            chart_name = (
-                chart_full_name.split("/")[1]
-                if "/" in chart_full_name
-                else chart_full_name
-            )
-            cached_path = get_cached_chart(chart_name)
-            if not cached_path or args.no_cache:
-                charts_to_attempt_pull.append(chart_full_name)
-
-        # Pull needed charts concurrently
-        async with asyncio.Semaphore(10):  # Limit concurrent helm pulls
-            for chart_full_name in charts_to_attempt_pull:
-                pull_tasks.append(
-                    asyncio.create_task(pull_chart(chart_full_name, CHART_CACHE_DIR))
-                )
-
-            pull_results = await asyncio.gather(*pull_tasks, return_exceptions=True)
-
-        # Process pull results and gather charts to test
-        pull_errors = 0
-        pulled_chart_paths = {}
-        for i, result in enumerate(pull_results):
-            chart_full_name = charts_to_attempt_pull[i]
-            if isinstance(result, Exception):
-                print(f"Error pulling chart {chart_full_name}: {result}")
-                pull_errors += 1
-            elif result[0]:  # Success
-                chart_name = (
-                    chart_full_name.split("/")[1]
-                    if "/" in chart_full_name
-                    else chart_full_name
-                )
-                pulled_chart_paths[chart_name] = result[1]
-            else:  # Failure reported by pull_chart
-                pull_errors += 1
-
-        # Add successfully pulled and cached charts
-        for chart_full_name in charts_to_test_names:
-            chart_name = (
-                chart_full_name.split("/")[1]
-                if "/" in chart_full_name
-                else chart_full_name
-            )
-            if chart_name in pulled_chart_paths:
-                charts_to_process_info.append(
-                    (chart_name, pulled_chart_paths[chart_name])
-                )
-            else:
-                cached_path = get_cached_chart(chart_name)
-                if (
-                    cached_path and chart_name not in pulled_chart_paths
-                ):  # Only add if not attempted/failed pull
-                    charts_to_process_info.append((chart_name, cached_path))
-
-        if pull_errors > 0:
-            print(f"\nWarning: Failed to pull or process {pull_errors} charts.")
-
+    for chart_file in CHART_CACHE_DIR.glob("*.tgz"):
+        chart_name = chart_file.stem
+        if not charts_to_test_names or chart_name in charts_to_test_names:
+            charts_to_process_info.append((chart_name, chart_file))
     return charts_to_process_info
 
 
@@ -1405,14 +1232,6 @@ async def main():
     )
     parser.add_argument("--no-cache", action="store_true", help="Disable chart caching")
     parser.add_argument(
-        "--update-repos", action="store_true", help="Force update Helm repositories"
-    )
-    parser.add_argument(
-        "--local-only",
-        action="store_true",
-        help="Only test charts present in test/chart-cache directory",
-    )
-    parser.add_argument(
         "--source-registries",
         required=True,
         help="Comma-separated list of source registries (required)",
@@ -1437,11 +1256,6 @@ async def main():
         type=int,
         default=120,
         help="Timeout in seconds for chart operations",
-    )
-
-    # Add release name parameter
-    parser.add_argument(
-        "--release-name", help="Release name for helm template validation"
     )
 
     # Solver-specific arguments
@@ -1489,50 +1303,23 @@ async def main():
         sys.exit(1)
 
     # Get list of charts to test
-    if args.local_only:
-        print("Running in local-only mode - testing charts from cache directory")
-        charts_to_test_names = []
-        for chart_file in CHART_CACHE_DIR.glob("*.tgz"):
-            chart_name = chart_file.stem  # Remove .tgz extension
-            # For validate operation, only include charts with override files
-            if args.operation == "validate":
-                if (TEST_OUTPUT_DIR / f"{chart_name}-values.yaml").exists():
-                    charts_to_test_names.append(chart_name)
-            else:
-                charts_to_test_names.append(chart_name)
-        print(f"Found {len(charts_to_test_names)} charts in cache directory")
-    else:
-        print("Running in update and test mode")
-        print("Adding Helm repositories...")
-        add_helm_repositories()
+    charts_to_test_names = []
+    for chart_file in CHART_CACHE_DIR.glob("*.tgz"):
+        chart_name = chart_file.stem
+        charts_to_test_names.append(chart_name)
+    print(f"Found {len(charts_to_test_names)} charts in cache directory")
 
-        if args.update_repos:
-            print("Updating Helm repositories...")
-            update_helm_repositories()
+    # Apply skip_charts filter
+    skip_list = args.skip_charts.split(",") if args.skip_charts else []
+    charts_to_test_names = [c for c in charts_to_test_names if c not in skip_list]
 
-        print("Listing charts...")
-        all_charts_full_names = list_charts()
-        print(f"Found {len(all_charts_full_names)} total charts in repositories.")
+    # Apply chart_filter regex if provided
+    if args.chart_filter:
+        pattern = re.compile(args.chart_filter)
+        charts_to_test_names = [c for c in charts_to_test_names if pattern.search(c)]
+        print(f"Filtered to {len(charts_to_test_names)} charts based on pattern: {args.chart_filter}")
 
-        # Apply filtering
-        charts_to_test_names = []
-        skip_list = args.skip_charts.split(",") if args.skip_charts else []
-        if args.chart_filter:
-            pattern = re.compile(args.chart_filter)
-            charts_to_test_names = [
-                chart
-                for chart in all_charts_full_names
-                if pattern.search(chart) and chart not in skip_list
-            ]
-            print(
-                f"Filtered to {len(charts_to_test_names)} charts based on pattern: {args.chart_filter}"
-            )
-        else:
-            charts_to_test_names = [
-                chart for chart in all_charts_full_names if chart not in skip_list
-            ]
-
-    # Apply max charts limit
+    # Apply max_charts limit
     if args.max_charts is not None and len(charts_to_test_names) > args.max_charts:
         charts_to_test_names = charts_to_test_names[: args.max_charts]
         print(f"Limited to testing {len(charts_to_test_names)} charts.")
@@ -1552,8 +1339,8 @@ async def main():
     # Check if running in solver mode
     if args.solver_mode:
         print("\n--- Running in Solver Mode ---")
-        if not args.local_only:
-            print("Error: Solver mode only works with --local-only flag")
+        if not charts_to_process_info:
+            print("Error: Solver mode requires charts to process.")
             sys.exit(1)
 
         if ChartSolver is None:
