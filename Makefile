@@ -69,9 +69,9 @@ test: build
 
 test-quiet: build
 	@echo "Running unit tests with minimal output..."
-	@cd cmd && IRR_TESTING=true go test ./... -count=1 2>/dev/null || true
-	@cd pkg && IRR_TESTING=true go test ./... -count=1 2>/dev/null || true
-	@cd test && IRR_TESTING=true go test ./... -count=1 2>/dev/null || true
+	@cd cmd && IRR_TESTING=true go test ./... -count=1 2>/dev/null 
+	@cd pkg && IRR_TESTING=true go test ./... -count=1 2>/dev/null 
+	@cd test && IRR_TESTING=true go test ./... -count=1 2>/dev/null 
 	@echo "All tests completed."
 
 test-filter: build
