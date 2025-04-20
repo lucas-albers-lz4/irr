@@ -607,8 +607,9 @@ func (g *Generator) Generate() (*override.File, error) {
 	// Load the chart to access metadata for rule application
 	loadedChart, err := g.loader.Load(g.chartPath)
 	if err != nil {
-		log.Warnf("Failed to load chart for rule application: %v", err)
-		// Continue without applying rules
+		log.Errorf("Failed to load chart %s for rule application: %v", g.chartPath, err)
+		// Consider returning the error, as rules cannot be applied
+		return nil, fmt.Errorf("failed to load chart %s for rule application: %w", g.chartPath, err)
 	} else if g.rulesEnabled {
 		// Apply rules if enabled and chart loaded successfully
 		rulesApplied := false
@@ -626,10 +627,16 @@ func (g *Generator) Generate() (*override.File, error) {
 			if !ok {
 				log.Warnf("Rules registry type assertion failed")
 			} else {
+				log.Debugf("Chart [%s]: Applying rules. Override map BEFORE ApplyRules: %v", loadedChart.Name(), overrides)
+
 				rulesApplied, err = regInstance.ApplyRules(loadedChart, overrides)
+
+				log.Debugf("Chart [%s]: Rules applied = %v. Override map AFTER ApplyRules: %v", loadedChart.Name(), rulesApplied, overrides)
+
 				if err != nil {
-					log.Warnf("Error applying rules to chart: %v", err)
-					// Continue with the overrides we have
+					log.Errorf("Error applying rules to chart %s: %v", loadedChart.Name(), err)
+					// Return the error, as rule application failed
+					return nil, fmt.Errorf("failed applying rules to chart %s: %w", loadedChart.Name(), err)
 				}
 				if rulesApplied {
 					debug.Printf("Successfully applied rules to chart: %s", g.chartPath)
