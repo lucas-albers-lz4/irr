@@ -84,13 +84,29 @@ func TestDetectBitnamiChart(t *testing.T) {
 			},
 		},
 		{
+			name: "Medium confidence - common dependency via tag only",
+			metadata: &chart.Metadata{
+				Name: "dep-tag-only",
+				Dependencies: []*chart.Dependency{
+					{
+						Name: "common",
+						Tags: []string{"bitnami-common"},
+					},
+				},
+				Home: "https://bitnami.com/chart",
+			},
+			expectedResult: Detection{
+				Provider:   ProviderBitnami,
+				Confidence: ConfidenceMedium,
+				Indicators: []string{"home field contains bitnami.com", "dependency references bitnami-common"},
+			},
+		},
+		{
 			name: "With bitnami-common dependency",
 			metadata: &chart.Metadata{
 				Name: "test-chart",
-			},
-			deps: []*chart.Chart{
-				{
-					Metadata: &chart.Metadata{
+				Dependencies: []*chart.Dependency{
+					{
 						Name: "bitnami-common",
 					},
 				},
