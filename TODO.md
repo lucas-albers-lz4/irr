@@ -390,91 +390,52 @@ Improve the analyzer's ability to detect and process image references in complex
 - [ ] **[P1]** Compare pass rates with normal test runs.
 - [ ] **[P1]** Investigate and fix any tests that fail *only* when `IRR_DEBUG=1` is active.
 
-## Phase 8: Implement Filesystem Abstraction for Testing
-Phase 8.1: Core Architecture Design
-[ ] Implement a filesystem abstraction layer
-[ ] Create a pkg/fsutil package with filesystem interfaces
-[ ] Define a clean FileSystem interface that wraps necessary afero functionality
-[ ] Implement concrete providers for both real OS and in-memory testing
-[ ] Add context-aware filesystem accessor that detects test environment
-Phase 8.2: Centralized Implementation
-[ ] Create a filesystem service with dependency injection
-[ ] Define FileService interface for all file operations
-[ ] Implement OsFileService for production use
-[ ] Implement TestFileService for testing
-[ ] Ensure all methods return appropriate error types with context
-[ ] Add environment detection without CLI flags
-[ ] Use environment variable IRR_TEST_MODE to trigger test filesystem
-[ ] Implement auto-detection based on test package execution context
-[ ] Create helper for test setup/teardown that configures environment
-Phase 8.3: Test Harness Implementation
-[ ] Build a robust TestHarness structure
-[ ] Create constructor that initializes in-memory filesystem
-[ ] Add methods for common file operations with error checking built-in
-[ ] Implement helpers for standard test file creation patterns
-[ ] Add consistent cleanup mechanisms
-[ ] Develop standardized test file patterns
-[ ] Create helpers for chart/values creation
-[ ] Add fixtures for common test scenarios
-[ ] Implement verification utilities for output validation
-Phase 8.4: Command Component Migration
-[ ] Update commands to use filesystem service
-[ ] Migrate validate command to filesystem abstraction
-[ ] Update override command to use filesystem service
-[ ] Convert inspect command to abstract filesystem
-[ ] Refactor config command for filesystem abstraction
-[ ] Ensure all file operations use the abstraction
-[ ] Audit all direct filesystem calls
-[ ] Replace os.* calls with filesystem service methods
-[ ] Update error handling for filesystem operations
-[ ] Add logging for important filesystem operations
-Phase 8.5: Test Migration Strategy
-[ ] Migrate tests progressively by type
-[ ] Start with simple file read/write tests
-[ ] Move to multi-file validation tests
-[ ] Update complex operations (chart loading, override generation)
-[ ] Finally migrate edge case tests (permissions, errors)
-[ ] Define test patterns for filesystem operations
-[ ] Standard pattern for file existence checks
-[ ] Consistent approach for content validation
-[ ] Uniform error checking methodology
-[ ] Common setup/teardown patterns
-Phase 8.6: Risk Mitigation
-[ ] Implement verification safeguards
-[ ] Add contract tests comparing real vs. in-memory filesystem behavior
-[ ] Create critical path tests that run against both implementations
-[ ] Implement filesystem behavior validation tests
-[ ] Add specific tests for filesystem edge cases (permissions, symbolic links)
-[ ] Include monitoring and diagnostics
-[ ] Add debug logging for filesystem operations in test mode
-[ ] Create helpers to dump filesystem state for debugging
-[ ] Implement test failure analyzers for filesystem issues
-[ ] Add verbose mode to trace all filesystem operations
-Phase 8.7: Documentation and Best Practices
-[ ] Create developer documentation
-[ ] Document filesystem abstraction usage patterns
-[ ] Create examples for common test scenarios
-[ ] Add troubleshooting guide for filesystem-related issues
-[ ] Document limitations of in-memory filesystem vs. real OS
-[ ] Establish ongoing maintenance practices
-[ ] Define process for adding new filesystem operations
-[ ] Create checklist for filesystem-related changes
-[ ] Add linting rules to prevent direct OS calls
-[ ] Implement review guidelines for filesystem changes
-
-## Phase 9: Handle Subcharts (Analyzer Enhancement)
+## Phase 8: Fix Bitnami Chart Detection and Rules Processing
 
 ### Overview
-Enhance the analyzer to correctly process Helm charts with subcharts, ensuring that image definitions from subchart default values are detected and processed correctly. This addresses limitations found with complex umbrella charts like kube-prometheus-stack.
+Address the discrepancy where integration tests for the rules system pass, but validation against a large corpus of real-world charts (`test-charts.py`) reveals failures for charts that should be identified as Bitnami. The goal is to ensure the Bitnami detection mechanism is robust enough for real-world chart variations and that the rules engine correctly applies Bitnami-specific logic when detected.
 
 ### Motivation
-- The current analyzer only processes the top-level `values.yaml` file provided via `--values` or the chart's default `values.yaml`.
-- Images defined only in subchart `values.yaml` files (or other sources merged by Helm) are missed, leading to incomplete `inspect` results and `override` files.
-- Users need accurate analysis for complex charts to generate reliable overrides.
+- The rules engine exists specifically to handle variations like those found in Bitnami charts.
+- The current Bitnami detection logic appears insufficient for the diversity of real-world charts, leading to validation failures (109 errors reported in `error_details.csv`).
+- Accurate detection and rule application are critical for the tool's reliability with common chart sources like Bitnami.
+- This needs to be fixed before tackling subchart analysis (Phase 9) as it affects the baseline processing.
 
 ### Implementation Steps
 
-#### Phase 9.1: Implement Discrepancy Warning (User Feedback Stop-Gap)
+#### Phase 8.1: Analyze Failures and Detection Logic
+- [ ] **[P0]** **Identify Failing Charts:** Extract a representative sample of the 109 failing charts from `test/output/error_details.csv` that are expected to be Bitnami charts.
+- [ ] **[P0]** **Inspect Failing Chart Characteristics:** Manually examine the `Chart.yaml` of the sample failing charts, specifically looking at the fields used by the current detection logic: `home` (expecting "bitnami.com"), `sources` (expecting "github.com/bitnami/charts"), `maintainers` (expecting "Bitnami" or "Broadcom"), and `dependencies` (expecting "bitnami-common"). Document how these fields differ or are missing compared to charts that pass `TestRulesSystemIntegration`.
+- [ ] **[P0]** **Review Current Detection Mechanism:** Locate and analyze the existing code responsible for identifying a chart as Bitnami. Confirm it checks the documented fields (`home`, `sources`, `maintainers`, `dependencies`) and applies the Medium/High confidence thresholds correctly. Add debug logging to trace the checks for each field and the final confidence assessment.
+- [ ] **[P0]** **Run with Debugging:** Execute `irr inspect` or `irr validate` with debug logging enabled on the sample failing charts to observe the detection logic's field checks and confidence scoring, pinpointing why they fail to reach Medium/High confidence.
+
+#### Phase 8.2: Refine Bitnami Detection Logic
+- [ ] **[P0]** **Update Detection Criteria:** Based on findings in 8.1, modify the detection code. This might involve: adjusting string matching for `maintainers`/`sources` (e.g., case-insensitivity, broader patterns), making the `dependencies` check more robust, adding new reliable indicators, or adjusting the number of indicators required for Medium/High confidence thresholds.
+- [ ] **[P0]** **Consider Edge Cases:** Account for charts potentially derived from Bitnami standards but with modifications (e.g., different maintainer emails but standard names/annotations, forks not updating all metadata).
+- [ ] **[P0]** **Ensure Correct Timing:** Confirm the detection logic runs early enough in the process so that subsequent steps (like rule application or specific value analysis) can leverage the "is Bitnami" status.
+
+#### Phase 8.3: Verify Rules Engine Integration
+- [ ] **[P1]** **Confirm Rule Triggering:** Add debug logs or targeted tests to ensure that once a chart *is* correctly identified as Bitnami (reaching Medium/High confidence with the refined logic from 8.2), the specific Bitnami rule adding `global.security.allowInsecureImages=true` is activated.
+- [ ] **[P1]** **Validate Rule Effects:** Verify that the activated rule correctly adds `global.security.allowInsecureImages: true` to the override structure generated by IRR.
+
+#### Phase 8.4: Testing and Validation
+- [ ] **[P0]** **Update Unit/Integration Tests:** Modify existing tests in `TestRulesSystemIntegration` or add new test cases that use fixtures more representative of the failing real-world chart patterns. Ensure these tests cover the refined detection logic.
+- [ ] **[P0]** **Re-run Bulk Validation:** Execute the `test-charts.py --operation validate` script again. Analyze the resulting `error_details.csv` to confirm a significant reduction (ideally elimination) of the Bitnami-related errors among the original 109 failures.
+- [ ] **[P1]** **Check for Regressions:** Ensure the changes haven't negatively impacted the processing of non-Bitnami charts or introduced new failures.
+
+## Phase 9: Implement Subchart Discrepancy Warning (User Feedback Stop-Gap)
+
+### Overview
+Acknowledge the current limitation where `irr` does not analyze default values from subcharts. Implement a warning mechanism in `inspect` to alert users when the number of images detected by `irr` differs from those found by rendering the chart with `helm template`. This provides feedback about potential incompleteness without undertaking the full complexity of Helm's value computation immediately.
+
+### Motivation
+- The current analyzer only processes the top-level `values.yaml` file provided via `--values` or the chart's default `values.yaml`.
+- Images defined only in subchart `values.yaml` files are missed, leading to incomplete `inspect` results and `override` files.
+- Users need clear feedback when using `irr` on complex charts where subchart defaults are common.
+- Implementing the full Helm value computation logic is complex and deferred to a later phase. This warning provides an interim solution.
+
+### Implementation Steps (Phase 9.1 in previous plan)
+
 - [ ] **[P1]** **Integrate Helm SDK Template Execution:**
     - Modify `cmd/irr/inspect.go`.
     - Import necessary Helm SDK packages (`helm.sh/helm/v3/pkg/action`, `helm.sh/helm/v3/pkg/chart/loader`, `helm.sh/helm/v3/pkg/cli`, `helm.sh/helm/v3/pkg/cli/values`).
@@ -490,7 +451,7 @@ Enhance the analyzer to correctly process Helm charts with subcharts, ensuring t
         - Traverse standard image paths: `spec.template.spec.containers[*].image`, `spec.template.spec.initContainers[*].image`.
         - Extract unique image reference strings found.
     - Store unique image strings in a map or set for counting.
-    - *Note: This warning mechanism intentionally limits parsing to Deployments/StatefulSets as a stop-gap to balance utility and implementation complexity. Full analysis in Phase 9.2 must eventually cover other resource types (e.g., DaemonSets, Jobs, CronJobs, CRDs).*
+    - *Note: This warning mechanism intentionally limits parsing to Deployments/StatefulSets as a stop-gap to balance utility and implementation complexity. Full analysis (Phase 10) must eventually cover other resource types.*
 - [ ] **[P1]** **Compare Image Counts:**
     - Retrieve the list of `ImagePattern` from the existing `analyzer.AnalyzeHelmValues` call.
     - Get the count of unique patterns found by the current analyzer.
@@ -499,7 +460,7 @@ Enhance the analyzer to correctly process Helm charts with subcharts, ensuring t
     - If counts differ, use `log.Warnf` to output a clear message.
     - Message should state the different counts (analyzer vs. template), explain the likely cause (subchart default values not analyzed by `irr inspect`), mention the limited scope of the template check (Deployments/StatefulSets only), and reference the controlling flag.
 - [ ] **[P1]** **Add Control Flag:**
-    - Add a new boolean flag (e.g., `warn-subchart-discrepancy`) to the `inspect` command definition in `cmd/irr/inspect.go` using `cobra`.
+    - Add a new boolean flag (e.g., `--warn-subchart-discrepancy`) to the `inspect` command definition in `cmd/irr/inspect.go` using `cobra`.
     - Set its default value (e.g., `true`).
     - Wrap the logic for steps 1-4 within an `if` block conditional on this flag being enabled.
 - [ ] **[P1]** **Add Tests:**
@@ -511,9 +472,25 @@ Enhance the analyzer to correctly process Helm charts with subcharts, ensuring t
         - Flag disabled -> No warning is logged, regardless of counts.
 - [ ] **[P1]** **Update Documentation:**
     - Update `docs/CLI-REFERENCE.md` to include the new `--warn-subchart-discrepancy` flag for the `inspect` command.
-    - Add a section to `docs/TROUBLESHOOTING.md` or a relevant guide explaining the warning, its cause (current analyzer limitations), and the implications for override generation.
+    - Add a section to `docs/TROUBLESHOOTING.md` or a relevant guide explaining the warning, its cause (current analyzer limitations), the limited scope of the check, and the implications for override generation. Explicitly state that `irr` does not process subchart defaults.
 
-#### Phase 9.2: Refactor Analyzer for Full Subchart Support (The Correct Fix)
+### Acceptance Criteria (Phase 9)
+- `irr inspect` includes an optional mechanism (`--warn-subchart-discrepancy`, default true) to compare its findings against a limited parse of `helm template` output.
+- A clear warning is logged if the image counts differ, explaining the likely cause and limitations.
+- New integration tests verify the warning logic and flag control.
+- Documentation is updated to clearly state the limitation regarding subchart default values and explain the warning mechanism.
+
+## Phase 10: Refactor Analyzer for Full Subchart Support (Deferred - Was Phase 9.2)
+
+### Overview
+Enhance the analyzer to correctly process Helm charts with subcharts by replicating Helm's value computation logic. This involves loading dependencies and merging values from parent charts, subcharts, and user-provided files before analysis.
+
+### Motivation
+- Provide truly accurate `inspect` and `override` results for complex umbrella charts.
+- Eliminate the need for the discrepancy warning mechanism introduced in Phase 9.
+- Address the core limitation of the current analyzer.
+
+### Implementation Steps (Details from original Phase 9.2)
 - [ ] **[P2]** **Research & Design Helm Value Computation:**
     - Deeply investigate Helm Go SDK functions for loading charts (`chart/loader.Load`), handling dependencies, and merging values (`pkg/cli/values.Options`, `pkg/chartutil.CoalesceValues`).
     - Prototype code to programmatically replicate Helm's value computation process for a given chart and user-provided value files, resulting in a final, merged values map representing what Helm uses for templating.
@@ -539,15 +516,13 @@ Enhance the analyzer to correctly process Helm charts with subcharts, ensuring t
 - [ ] **[P2]** **Update Documentation:**
     - Remove documented limitations regarding subchart analysis.
     - Ensure examples demonstrate usage with complex umbrella charts.
+- [ ] **[P3]** **Review/Remove Warning Mechanism (from Phase 9):**
+    - Once this phase (Phase 10) is complete and validated, evaluate if the warning mechanism from Phase 9 is still needed.
+    - If redundant, remove the Helm template comparison code, the `--warn-subchart-discrepancy` flag, associated tests, and documentation related to the warning mechanism.
 
-#### Phase 9.3: Review/Remove Warning Mechanism
-- [ ] **[P3]** **Evaluate Necessity:**
-    - Once Phase 9.2 is complete and validated through extensive testing, determine if the warning mechanism from Phase 9.1 still provides value or is now redundant.
-- [ ] **[P3]** **Conditional Removal:**
-    - If the refactored analyzer (Phase 9.2) is proven reliable for subchart value analysis, remove the Helm template comparison code, the `--warn-subchart-discrepancy` flag, associated tests, and documentation related to the warning mechanism.
-
-### Acceptance Criteria (Phase 9.2)
+### Acceptance Criteria (Phase 10)
 - `irr inspect` correctly identifies images defined in both parent and subchart values, reporting accurate source paths reflecting subchart context (e.g., `grafana.image`).
 - `irr override` correctly generates overrides for images originating from both parent and subchart values, placing them under the correct top-level keys in the output file (e.g., `grafana: { image: ... }`).
 - Tests confirm accurate behavior for multiple levels of subchart nesting and various value override scenarios.
 - Documented limitations regarding subcharts are removed.
+- The warning mechanism from Phase 9 may be removed if deemed obsolete.
