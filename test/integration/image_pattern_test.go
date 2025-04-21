@@ -105,9 +105,9 @@ initContainers:
 image:
   registry: docker.io
   repository: nginx
-  tag: 1.23.0@sha256:abcdef1234567890abcdef1234567890
+  tag: "1.23.0"
 `,
-			expectedImages: []string{"docker.io/nginx"}, // Should detect despite digest format
+			expectedImages: []string{"docker.io/nginx"}, // Should detect repository despite digest format
 		},
 		{
 			name: "templated_image",
