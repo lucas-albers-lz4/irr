@@ -35,10 +35,18 @@ func defaultHelmAdapterFactory() (*helm.Adapter, error) {
 	return adapter, nil
 }
 
-// initializeHelmAdapterFactory sets the package-level factory variable.
-// This ensures the adapter factory is ready for use.
-func initializeHelmAdapterFactory() {
-	helmAdapterFactory = defaultHelmAdapterFactory
+// createHelmAdapter creates a new Helm client and adapter, handling errors consistently
+func createHelmAdapter() (*helm.Adapter, error) {
+	return helmAdapterFactory()
+}
+
+// getCommandContext gets the context from a command or creates a background context if none exists
+func getCommandContext(cmd *cobra.Command) context.Context {
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return ctx
 }
 
 // getReleaseNameAndNamespaceCommon extracts and validates release name and namespace
@@ -109,18 +117,4 @@ func writeOutputFile(outputFile string, content []byte, successMessage string) e
 	}
 
 	return nil
-}
-
-// createHelmAdapter creates a new Helm client and adapter, handling errors consistently
-func createHelmAdapter() (*helm.Adapter, error) {
-	return helmAdapterFactory()
-}
-
-// getCommandContext gets the context from a command or creates a background context if none exists
-func getCommandContext(cmd *cobra.Command) context.Context {
-	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	return ctx
 }
