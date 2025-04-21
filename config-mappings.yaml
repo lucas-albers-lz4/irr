@@ -1,6 +1,0 @@
-docker.io: harbor.home.arpa/docker
-quay.io: harbor.home.arpa/quay
-gcr.io: harbor.home.arpa/gcr
-registry.k8s.io: harbor.home.arpa/k8s
-ghcr.io: harbor.home.arpa/github
-k8s.gcr.io: harbor.home.arpa/k8s 
