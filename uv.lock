@@ -133,7 +133,7 @@ sdist = { url = "https://files.pythonhosted.org/packages/ab/38/ff60c8fc9e002d50d
 
 [[package]]
 name = "registry-rewrite"
-version = "0.1.0"
+version = "0.0.7"
 source = { virtual = "." }
 dependencies = [
     { name = "pyyaml" },
