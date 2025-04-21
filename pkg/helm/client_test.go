@@ -256,16 +256,38 @@ func TestGetHelmSettings(t *testing.T) {
 }
 
 // Helper function to test common error scenarios for mock client methods
-func testMockClientErrorScenario[T any](t *testing.T, methodName string, setupMock func(*MockHelmClient, error), callMethod func(*MockHelmClient) (T, error), expectedErr error) {
-	t.Helper()
-	client := &MockHelmClient{}
-	setupMock(client, expectedErr)
+// func testMockClientErrorScenario[T any](t *testing.T, methodName string, setupMock func(*MockHelmClient, error), callMethod func(*MockHelmClient) (T, error), expectedErr error) {
+// 	t.Helper()
+// 	client := &MockHelmClient{}
+// 	setupMock(client, expectedErr)
+//
+// 	result, err := callMethod(client)
+// 	require.Error(t, err, fmt.Sprintf("Expected an error from %s", methodName))
+// 	var zero T // Get the zero value for the type T
+// 	assert.Equal(t, zero, result, fmt.Sprintf("Expected zero value result on error from %s", methodName))
+// 	assert.Equal(t, expectedErr, err, fmt.Sprintf("Returned error from %s should match the expected mock error", methodName))
+// }
 
-	result, err := callMethod(client)
-	require.Error(t, err, fmt.Sprintf("Expected an error from %s", methodName))
-	var zero T // Get the zero value for the type T
-	assert.Equal(t, zero, result, fmt.Sprintf("Expected zero value result on error from %s", methodName))
-	assert.Equal(t, expectedErr, err, fmt.Sprintf("Returned error from %s should match the expected mock error", methodName))
+// setupMockClientError configures a mock client method to return a specific error
+func setupMockClientError(t *testing.T, client *MockHelmClient, methodName string, expectedErr error, releaseName, namespace string) {
+	t.Helper() // Mark as test helper
+	switch methodName {
+	case "GetChartFromRelease":
+		client.MockGetChartFromRelease = func(_ context.Context, rn, ns string) (*chart.Chart, error) {
+			assert.Equal(t, releaseName, rn)
+			assert.Equal(t, namespace, ns)
+			return nil, expectedErr
+		}
+	case "GetReleaseMetadata":
+		client.MockGetReleaseMetadata = func(_ context.Context, rn, ns string) (*chart.Metadata, error) {
+			assert.Equal(t, releaseName, rn)
+			assert.Equal(t, namespace, ns)
+			return nil, expectedErr
+		}
+	// Add other cases as needed for different methods
+	default:
+		panic(fmt.Sprintf("setupMockClientError: unknown method name %s", methodName))
+	}
 }
 
 func TestMockHelmClient_ErrorScenarios(t *testing.T) {
@@ -273,7 +295,7 @@ func TestMockHelmClient_ErrorScenarios(t *testing.T) {
 		name           string
 		releaseName    string
 		namespace      string
-		setupMock      func(*MockHelmClient, error, string, string)
+		methodName     string
 		callMethod     func(*MockHelmClient, string, string) (interface{}, error)
 		expectedErrMsg string
 	}{
@@ -281,14 +303,8 @@ func TestMockHelmClient_ErrorScenarios(t *testing.T) {
 			name:           "GetChartFromRelease error",
 			releaseName:    "error-release",
 			namespace:      "error-namespace",
+			methodName:     "GetChartFromRelease",
 			expectedErrMsg: "mock get chart error",
-			setupMock: func(client *MockHelmClient, err error, releaseName, namespace string) {
-				client.MockGetChartFromRelease = func(_ context.Context, rn, ns string) (*chart.Chart, error) {
-					assert.Equal(t, releaseName, rn)
-					assert.Equal(t, namespace, ns)
-					return nil, err
-				}
-			},
 			callMethod: func(client *MockHelmClient, releaseName, namespace string) (interface{}, error) {
 				return client.GetChartFromRelease(context.Background(), releaseName, namespace)
 			},
@@ -297,14 +313,8 @@ func TestMockHelmClient_ErrorScenarios(t *testing.T) {
 			name:           "GetReleaseMetadata error",
 			releaseName:    "error-release",
 			namespace:      "error-namespace",
+			methodName:     "GetReleaseMetadata",
 			expectedErrMsg: "mock get metadata error",
-			setupMock: func(client *MockHelmClient, err error, releaseName, namespace string) {
-				client.MockGetReleaseMetadata = func(_ context.Context, rn, ns string) (*chart.Metadata, error) {
-					assert.Equal(t, releaseName, rn)
-					assert.Equal(t, namespace, ns)
-					return nil, err
-				}
-			},
 			callMethod: func(client *MockHelmClient, releaseName, namespace string) (interface{}, error) {
 				return client.GetReleaseMetadata(context.Background(), releaseName, namespace)
 			},
@@ -318,8 +328,8 @@ func TestMockHelmClient_ErrorScenarios(t *testing.T) {
 			// Create a new client for each test case
 			client := NewMockHelmClient()
 
-			// Setup the mock with the error
-			tc.setupMock(client, expectedErr, tc.releaseName, tc.namespace)
+			// Setup the mock with the error using the helper function
+			setupMockClientError(t, client, tc.methodName, expectedErr, tc.releaseName, tc.namespace)
 
 			// Call the method and check the error
 			_, err := tc.callMethod(client, tc.releaseName, tc.namespace)
