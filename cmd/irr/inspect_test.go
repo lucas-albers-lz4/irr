@@ -228,6 +228,31 @@ func TestWriteOutput(t *testing.T) {
 	}
 }
 
+// Helper function to create a mock command that simulates the inspect command
+// but with predictable output for testing
+func mockInspectCmd(output *ImageAnalysis, flags *InspectFlags) *cobra.Command {
+	cmd := &cobra.Command{
+		Use: "inspect",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			// Use our function to write output directly to the command's output buffer
+			return writeOutput(cmd, output, flags)
+		},
+	}
+
+	// Add all the flags that the real inspect command would have
+	cmd.Flags().String("chart-path", "", "Path to the Helm chart")
+	cmd.Flags().StringSlice("source-registries", []string{}, "Source registries to filter results")
+	cmd.Flags().String("output-file", "", "Write output to file instead of stdout")
+	cmd.Flags().String("output-format", "yaml", "Output format (yaml or json)")
+	cmd.Flags().Bool("generate-config-skeleton", false, "Generate a config skeleton based on found images")
+	cmd.Flags().StringSlice("include-pattern", []string{}, "Glob patterns for values paths to include")
+	cmd.Flags().StringSlice("exclude-pattern", []string{}, "Glob patterns for values paths to exclude")
+	cmd.Flags().String("namespace", "default", "Kubernetes namespace for the release")
+	cmd.Flags().String("release-name", "", "Release name for Helm plugin mode")
+
+	return cmd
+}
+
 func TestRunInspect(t *testing.T) {
 	// Setup mock filesystem for the entire test function
 	originalAppFs := AppFs
@@ -248,31 +273,6 @@ func TestRunInspect(t *testing.T) {
 		helmAdapterFactory = originalHelmFactory
 	}()
 
-	// Helper function to create a mock command that simulates the inspect command
-	// but with predictable output for testing
-	createMockInspectCmd := func(output *ImageAnalysis, flags *InspectFlags) *cobra.Command {
-		cmd := &cobra.Command{
-			Use: "inspect",
-			RunE: func(cmd *cobra.Command, args []string) error {
-				// Use our function to write output directly to the command's output buffer
-				return writeOutput(cmd, output, flags)
-			},
-		}
-
-		// Add all the flags that the real inspect command would have
-		cmd.Flags().String("chart-path", "", "Path to the Helm chart")
-		cmd.Flags().StringSlice("source-registries", []string{}, "Source registries to filter results")
-		cmd.Flags().String("output-file", "", "Write output to file instead of stdout")
-		cmd.Flags().String("output-format", "yaml", "Output format (yaml or json)")
-		cmd.Flags().Bool("generate-config-skeleton", false, "Generate a config skeleton based on found images")
-		cmd.Flags().StringSlice("include-pattern", []string{}, "Glob patterns for values paths to include")
-		cmd.Flags().StringSlice("exclude-pattern", []string{}, "Glob patterns for values paths to exclude")
-		cmd.Flags().String("namespace", "default", "Kubernetes namespace for the release")
-		cmd.Flags().String("release-name", "", "Release name for Helm plugin mode")
-
-		return cmd
-	}
-
 	t.Run("inspect chart path successfully (YAML output to stdout)", func(t *testing.T) {
 		// Clear and setup mock filesystem for this sub-test
 		mockFs = afero.NewMemMapFs() // Use the function-scoped mockFs
@@ -281,9 +281,15 @@ func TestRunInspect(t *testing.T) {
 
 		// Create a dummy chart in the mock filesystem
 		chartPath := "test/chart"
-		_ = mockFs.MkdirAll(filepath.Join(chartPath, "templates"), 0o755)
-		_ = afero.WriteFile(mockFs, filepath.Join(chartPath, "Chart.yaml"), []byte("apiVersion: v2\nname: mychart\nversion: 1.2.3"), 0o644)
-		_ = afero.WriteFile(mockFs, filepath.Join(chartPath, "values.yaml"), []byte("image: nginx:stable"), 0o644)
+		if err := mockFs.MkdirAll(filepath.Join(chartPath, "templates"), 0o755); err != nil {
+			t.Fatalf("Failed to create mock templates dir: %v", err)
+		}
+		if err := afero.WriteFile(mockFs, filepath.Join(chartPath, "Chart.yaml"), []byte("apiVersion: v2\nname: mychart\nversion: 1.2.3"), 0o644); err != nil {
+			t.Fatalf("Failed to write mock Chart.yaml: %v", err)
+		}
+		if err := afero.WriteFile(mockFs, filepath.Join(chartPath, "values.yaml"), []byte("image: nginx:stable"), 0o644); err != nil {
+			t.Fatalf("Failed to write mock values.yaml: %v", err)
+		}
 
 		// Create a test analysis
 		analysis := &ImageAnalysis{
@@ -301,7 +307,7 @@ func TestRunInspect(t *testing.T) {
 		}
 
 		// Create a command with our mock implementation
-		cmd := createMockInspectCmd(analysis, &InspectFlags{})
+		cmd := mockInspectCmd(analysis, &InspectFlags{})
 		cmd.SetArgs([]string{"--chart-path", chartPath})
 
 		// Create a buffer to capture output
@@ -333,10 +339,18 @@ func TestRunInspect(t *testing.T) {
 		// Create a dummy chart
 		chartPath := "test/chart-json"
 		outputFilePath := "output/result.json"
-		_ = mockFs.MkdirAll(filepath.Dir(outputFilePath), 0o755) // Ensure output dir exists
-		_ = mockFs.MkdirAll(filepath.Join(chartPath, "templates"), 0o755)
-		_ = afero.WriteFile(mockFs, filepath.Join(chartPath, "Chart.yaml"), []byte("apiVersion: v2\nname: jsonchart\nversion: 0.0.1"), 0o644)
-		_ = afero.WriteFile(mockFs, filepath.Join(chartPath, "values.yaml"), []byte("app:\n  image: redis:alpine"), 0o644)
+		if err := mockFs.MkdirAll(filepath.Dir(outputFilePath), 0o755); err != nil { // Ensure output dir exists
+			t.Fatalf("Failed to create mock output dir: %v", err)
+		}
+		if err := mockFs.MkdirAll(filepath.Join(chartPath, "templates"), 0o755); err != nil {
+			t.Fatalf("Failed to create mock templates dir: %v", err)
+		}
+		if err := afero.WriteFile(mockFs, filepath.Join(chartPath, "Chart.yaml"), []byte("apiVersion: v2\nname: jsonchart\nversion: 0.0.1"), 0o644); err != nil {
+			t.Fatalf("Failed to write mock Chart.yaml: %v", err)
+		}
+		if err := afero.WriteFile(mockFs, filepath.Join(chartPath, "values.yaml"), []byte("app:\n  image: redis:alpine"), 0o644); err != nil {
+			t.Fatalf("Failed to write mock values.yaml: %v", err)
+		}
 
 		// Create a test analysis
 		analysis := &ImageAnalysis{
@@ -360,7 +374,7 @@ func TestRunInspect(t *testing.T) {
 		}
 
 		// Create a command with our mock implementation
-		cmd := createMockInspectCmd(analysis, inspectFlags)
+		cmd := mockInspectCmd(analysis, inspectFlags)
 		cmd.SetArgs([]string{
 			"--chart-path", chartPath,
 			"--output-file", outputFilePath,
@@ -457,7 +471,7 @@ func TestRunInspect(t *testing.T) {
 		}
 
 		// Create a command with our mock implementation
-		cmd := createMockInspectCmd(analysis, &InspectFlags{})
+		cmd := mockInspectCmd(analysis, &InspectFlags{})
 		cmd.SetArgs([]string{"my-release", "--namespace", "my-namespace"})
 
 		// Create a buffer to capture output
