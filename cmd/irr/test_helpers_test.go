@@ -10,7 +10,6 @@ import (
 	"github.com/lalbers/irr/pkg/fileutil"
 	log "github.com/lalbers/irr/pkg/log"
 	"github.com/spf13/afero"
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -149,49 +148,48 @@ func TestHandleTestModeOverride(t *testing.T) {
 // --- Test Helpers ---
 
 // setupTestFs creates a basic mock filesystem structure for testing.
-func setupTestFs(fs afero.Fs, chartDir string) {
-	// Create base directories
-	_ = fs.MkdirAll(filepath.Join(chartDir, "templates"), 0o750)
-
-	// Create Chart.yaml
-	chartContent := `apiVersion: v2
-name: test-chart
-version: 0.1.0
-`
-	_ = afero.WriteFile(fs, filepath.Join(chartDir, "Chart.yaml"), []byte(chartContent), 0o644)
-
-	// Create values.yaml
-	valuesContent := `image:
-  repository: docker.io/library/nginx
-  tag: latest
-`
-	_ = afero.WriteFile(fs, filepath.Join(chartDir, "values.yaml"), []byte(valuesContent), 0o644)
-
-	// Create template files
-	templateContent := `apiVersion: apps/v1
-kind: Deployment
-spec:
-  template:
-    spec:
-      containers:
-      - image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
-`
-	_ = afero.WriteFile(fs, filepath.Join(chartDir, "templates", "deployment.yaml"), []byte(templateContent), 0o644)
-}
-
+// func setupTestFs(fs afero.Fs, chartDir string) {
+//      // Create base directories
+//      _ = fs.MkdirAll(filepath.Join(chartDir, "templates"), 0o750)
+//
+//      // Create Chart.yaml
+//      chartContent := `apiVersion: v2
+// name: test-chart
+// version: 0.1.0
+// `
+//      _ = afero.WriteFile(fs, filepath.Join(chartDir, "Chart.yaml"), []byte(chartContent), 0o644)
+//
+//      // Create values.yaml
+//      valuesContent := `image:
+// repository: docker.io/library/nginx
+// tag: latest
+// `
+//      _ = afero.WriteFile(fs, filepath.Join(chartDir, "values.yaml"), []byte(valuesContent), 0o644)
+//
+//      // Create template files
+//      templateContent := `apiVersion: apps/v1
+// kind: Deployment
+// spec:
+// template:
+//  spec:
+//    containers:
+//    - image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+// `
+//      _ = afero.WriteFile(fs, filepath.Join(chartDir, "templates", "deployment.yaml"), []byte(templateContent), 0o644)
+// }
 // executeCommandC captures stdout/stderr for a Cobra command execution and returns the command
 // Credits: Adapted from https://github.com/spf13/cobra/blob/main/command_test.go
-func executeCommandC(root *cobra.Command, args ...string) (c *cobra.Command, output string, err error) {
-	buf := new(bytes.Buffer)
-	root.SetOut(buf)
-	root.SetErr(buf)
-
-	// Use a clean argument slice for each test
-	root.SetArgs(args)
-
-	c, err = root.ExecuteC()
-	return c, buf.String(), err
-}
+// func executeCommandC(root *cobra.Command, args ...string) (c *cobra.Command, output string, err error) {
+//      buf := new(bytes.Buffer)
+//      root.SetOut(buf)
+//      root.SetErr(buf)
+//
+//      // Use a clean argument slice for each test
+//      root.SetArgs(args)
+//
+//      c, err = root.ExecuteC()
+//      return c, buf.String(), err
+// }
 
 // Helper to create a simple mock chart structure in the given FS
 func createMockChartFS(fs afero.Fs, chartPath string) error {

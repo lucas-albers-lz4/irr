@@ -561,13 +561,13 @@ func TestGlobalFlags(t *testing.T) {
 		args     []string
 		env      map[string]string
 		wantExit int
-		checkOut func(t *testing.T, _, stderr string)
+		checkOut func(t *testing.T, stdout, stderr string)
 	}{
 		{
 			name:     "debug flag",
 			args:     []string{"--debug", "help"},
 			wantExit: 0,
-			checkOut: func(t *testing.T, _, stderr string) {
+			checkOut: func(t *testing.T, _ /*stdout*/, stderr string) {
 				assert.Contains(t, stderr, "[DEBUG", "Debug output should be present")
 			},
 		},
@@ -575,7 +575,7 @@ func TestGlobalFlags(t *testing.T) {
 			name: "debug env var",
 			args: []string{"help"},
 			env:  map[string]string{"IRR_DEBUG": "true"},
-			checkOut: func(t *testing.T, _, stderr string) {
+			checkOut: func(t *testing.T, _ /*stdout*/, stderr string) {
 				assert.Contains(t, stderr, "[DEBUG", "Debug output should be present with IRR_DEBUG=true")
 			},
 		},
@@ -583,7 +583,7 @@ func TestGlobalFlags(t *testing.T) {
 			name: "debug flag overrides env var",
 			args: []string{"--debug", "help"},
 			env:  map[string]string{"IRR_DEBUG": "false"},
-			checkOut: func(t *testing.T, _, stderr string) {
+			checkOut: func(t *testing.T, _ /*stdout*/, stderr string) {
 				assert.Contains(t, stderr, "[DEBUG", "Debug flag should override IRR_DEBUG=false")
 			},
 		},
@@ -598,8 +598,8 @@ func TestGlobalFlags(t *testing.T) {
 			name:     "config flag with inspect",
 			args:     []string{"--config", configFile, "inspect", "--chart-path", chartPath, "--output-format", "yaml"},
 			wantExit: 0,
-			checkOut: func(t *testing.T, output, stderr string) {
-				assert.Contains(t, output, "chart:", "Output should include chart section")
+			checkOut: func(t *testing.T, stdout, _ /*stderr*/ string) {
+				assert.Contains(t, stdout, "chart:", "Output should include chart section")
 			},
 		},
 	}
@@ -689,7 +689,11 @@ sidecar:
 	// Setup output file path
 	tempDir := os.TempDir()
 	outputPath := filepath.Join(tempDir, fmt.Sprintf("irr-combined-output-%d.yaml", os.Getpid()))
-	defer os.Remove(outputPath)
+	defer func() {
+		if err := os.Remove(outputPath); err != nil {
+			t.Logf("Warning: failed to remove temporary output file %s: %v", outputPath, err)
+		}
+	}()
 
 	tests := []struct {
 		name     string

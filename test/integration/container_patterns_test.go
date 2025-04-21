@@ -12,6 +12,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const testNameTemplateStringImageReferences = "template_string_image_references"
+
 // TestAdvancedContainerPatterns tests more complex container patterns
 // with a focus on init containers, sidecars, and their combinations
 func TestAdvancedContainerPatterns(t *testing.T) {
@@ -20,7 +22,7 @@ func TestAdvancedContainerPatterns(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			overrides, h := setupAndRunOverride(t, tt.values, "container-"+tt.name+"-overrides.yaml")
 			defer h.Cleanup()
-			if tt.name == "template_string_image_references" {
+			if tt.name == testNameTemplateStringImageReferences {
 				// For template strings, check the unsupported section
 				unsupported, hasUnsupported := overrides["Unsupported"].([]interface{})
 				if hasUnsupported {
@@ -346,7 +348,7 @@ func assertExpectedImages(t *testing.T, h *TestHarness, testName string, expecte
 	t.Helper()
 
 	// Skip assertion for template_string_image_references as it's handled specially above
-	if testName == "template_string_image_references" {
+	if testName == testNameTemplateStringImageReferences {
 		return
 	}
 
@@ -400,7 +402,7 @@ func assertExpectedImages(t *testing.T, h *TestHarness, testName string, expecte
 			variations = append(variations, targetVariation, repoPart, strings.ToLower(repoPart))
 		}
 
-		if testName == "template_string_image_references" {
+		if testName == testNameTemplateStringImageReferences {
 			isTemplateValue := strings.Contains(expectedRepo, "{{") && strings.Contains(expectedRepo, "}}")
 			if isTemplateValue {
 				for foundImage := range foundImages {
@@ -624,7 +626,7 @@ keycloak:
 			},
 		},
 		{
-			name: "template_string_image_references",
+			name: testNameTemplateStringImageReferences,
 			values: `
 controller:
   image: "{{ .Values.imageRegistry | default \"docker.io\" }}/bitnami/nginx:{{ .Values.imageTag | default \"1.23.0\" }}"

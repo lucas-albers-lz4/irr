@@ -33,6 +33,10 @@ const (
 	TestDirPermissions = 0o750 // Restrict to owner + group
 )
 
+const legacyMappingContent = `docker.io: registry.example.com/docker
+quay.io: registry.example.com/quay
+`
+
 // Global variables for build optimization
 
 // TestHarness provides a structure for setting up and running integration tests.
@@ -1002,9 +1006,7 @@ registries:
 			content = mappingType
 		} else {
 			// Default to legacy format
-			content = `docker.io: registry.example.com/docker
-quay.io: registry.example.com/quay
-`
+			content = legacyMappingContent
 		}
 	}
 
