@@ -1,48 +1,35 @@
 package main
 
 import (
-	"bytes"
-	"io"
 	"os"
 	"testing"
 
 	"github.com/lalbers/irr/pkg/log"
 	"github.com/lalbers/irr/pkg/testutil"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // Helper function to capture stderr output for testing log functions
-func captureStderr(t *testing.T, action func()) string {
-	t.Helper()
-	oldStderr := os.Stderr
-	r, w, err := os.Pipe()
-	require.NoError(t, err, "Failed to create pipe for stderr capture")
-	os.Stderr = w
-
-	// Restore stderr in a deferred function
-	defer func() {
-		os.Stderr = oldStderr
-		errClose := w.Close()
-		if errClose != nil {
-			// Log error during cleanup but don't fail the test here
-			t.Logf("Warning: error closing stderr pipe writer: %v", errClose)
-		}
-	}()
-
-	action() // Execute the function that writes to stderr
-
-	// Close the writer *before* reading to signal EOF
-	errCloseWriter := w.Close()
-	require.NoError(t, errCloseWriter, "Failed to close stderr pipe writer before reading")
-
-	// Read captured output
-	var buf bytes.Buffer
-	_, errCopy := io.Copy(&buf, r)
-	require.NoError(t, errCopy, "Failed to read from stderr pipe reader")
-
-	return buf.String()
-}
+// func captureStderr(t *testing.T, action func()) string {
+// 	t.Helper()
+// 	oldStderr := os.Stderr
+// 	r, w, err := os.Pipe()
+// 	require.NoError(t, err, "Failed to create pipe for stderr capture")
+// 	os.Stderr = w
+//
+// 	action() // Execute the function that writes to stderr
+//
+// 	// Close the writer *before* reading to signal EOF
+// 	errCloseWriter := w.Close()
+// 	require.NoError(t, errCloseWriter, "Failed to close stderr pipe writer before reading")
+//
+// 	// Read captured output
+// 	var buf bytes.Buffer
+// 	_, errCopy := io.Copy(&buf, r)
+// 	require.NoError(t, errCopy, "Failed to read from stderr pipe reader")
+//
+// 	return buf.String()
+// }
 
 func TestIsRunningAsHelmPlugin(t *testing.T) {
 	testCases := []struct {
@@ -83,24 +70,33 @@ func TestIsRunningAsHelmPlugin(t *testing.T) {
 			originalEnv := make(map[string]string)
 			for key, value := range tc.envVars {
 				originalEnv[key] = os.Getenv(key)
-				os.Setenv(key, value)
+				if err := os.Setenv(key, value); err != nil {
+					t.Fatalf("Failed to set env var %s: %v", key, err)
+				}
 			}
 			// Unset vars not in the test case to ensure clean state
 			helmPluginVars := []string{"HELM_PLUGIN_NAME", "HELM_PLUGIN_DIR"}
 			for _, key := range helmPluginVars {
 				if _, exists := tc.envVars[key]; !exists {
 					originalEnv[key] = os.Getenv(key)
-					os.Unsetenv(key)
+					if err := os.Unsetenv(key); err != nil {
+						t.Fatalf("Failed to unset env var %s: %v", key, err)
+					}
 				}
 			}
 
 			// Restore original environment variables after the test
 			defer func() {
-				for key, value := range originalEnv {
+				for key := range tc.envVars {
+					value := originalEnv[key] // Get original value
 					if value == "" {
-						os.Unsetenv(key)
+						if err := os.Unsetenv(key); err != nil {
+							t.Logf("Warning: failed to unset env var %s: %v", key, err)
+						}
 					} else {
-						os.Setenv(key, value)
+						if err := os.Setenv(key, value); err != nil {
+							t.Logf("Warning: failed to set env var %s: %v", key, err)
+						}
 					}
 				}
 			}()
@@ -130,15 +126,23 @@ func TestParseIrrDebugEnvVar(t *testing.T) {
 		{"OtherString", stringPtr("other"), false},
 	}
 
-	originalEnv := os.Getenv("IRR_DEBUG")
-	defer os.Setenv("IRR_DEBUG", originalEnv)
+	originalDebugEnv := os.Getenv("IRR_DEBUG")
+	defer func() {
+		if err := os.Setenv("IRR_DEBUG", originalDebugEnv); err != nil {
+			t.Logf("Warning: failed to restore IRR_DEBUG: %v", err)
+		}
+	}()
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.envValue == nil {
-				os.Unsetenv("IRR_DEBUG")
+				if err := os.Unsetenv("IRR_DEBUG"); err != nil {
+					t.Fatalf("Failed to unset IRR_DEBUG: %v", err)
+				}
 			} else {
-				os.Setenv("IRR_DEBUG", *tc.envValue)
+				if err := os.Setenv("IRR_DEBUG", *tc.envValue); err != nil {
+					t.Fatalf("Failed to set IRR_DEBUG: %v", err)
+				}
 			}
 			assert.Equal(t, tc.expected, parseIrrDebugEnvVar())
 		})
