@@ -64,7 +64,7 @@ test: build
 	@echo "Running unit tests..."
 	@IRR_TESTING=true go test ./... -v || true
 	@echo "Running CLI syntax tests..."
-	@IRR_TESTING=true go test -v ./cmd/irr/cli_test.go
+	@IRR_TESTING=true go test -v ./cmd/irr
 	@echo "All tests completed."
 
 test-quiet: build
@@ -91,7 +91,7 @@ test-packages: build
 
 test-cli: build
 	@echo "Running CLI syntax tests..."
-	@IRR_TESTING=true go test -v ./cmd/irr/cli_test.go
+	@IRR_TESTING=true go test -v ./cmd/irr
 	@echo "CLI tests completed."
 
 test-pkg-image: build
