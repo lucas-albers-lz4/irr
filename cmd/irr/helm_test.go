@@ -10,6 +10,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// setTestEnvVar sets an environment variable for testing and returns a function to restore the original value
+func setTestEnvVar(t *testing.T, name, value string) func() {
+	originalValue := os.Getenv(name)
+	if err := os.Setenv(name, value); err != nil {
+		t.Fatalf("Failed to set %s: %v", name, err)
+	}
+
+	return func() {
+		if err := os.Setenv(name, originalValue); err != nil {
+			t.Logf("Warning: Failed to restore %s: %v", name, err)
+		}
+	}
+}
+
 func TestGetReleaseValues_EmptyName(t *testing.T) {
 	t.Run("returns error for empty release name", func(t *testing.T) {
 		vals, err := GetReleaseValues(context.Background(), "", "test-ns")
@@ -20,9 +34,9 @@ func TestGetReleaseValues_EmptyName(t *testing.T) {
 }
 
 func TestGetReleaseNamespace(t *testing.T) {
-	const testDefaultNs = "default"
+	testDefaultNs := "default" // Default namespace for this test suite
 
-	t.Run("namespace from flag", func(t *testing.T) {
+	t.Run("flag has precedence", func(t *testing.T) {
 		cmd := &cobra.Command{}
 		cmd.Flags().String("namespace", "", "Namespace")
 		err := cmd.Flags().Set("namespace", "flag-ns")
@@ -37,9 +51,7 @@ func TestGetReleaseNamespace(t *testing.T) {
 		cmd.Flags().String("namespace", "", "Namespace")
 
 		// Set environment variable
-		originalEnv := os.Getenv("HELM_NAMESPACE")
-		_ = os.Setenv("HELM_NAMESPACE", "env-ns")
-		defer func() { _ = os.Setenv("HELM_NAMESPACE", originalEnv) }() // Restore original value
+		defer setTestEnvVar(t, "HELM_NAMESPACE", "env-ns")()
 
 		ns := GetReleaseNamespace(cmd)
 		assert.Equal(t, "env-ns", ns)
@@ -50,9 +62,7 @@ func TestGetReleaseNamespace(t *testing.T) {
 		cmd := &cobra.Command{}
 		cmd.Flags().String("namespace", "", "Namespace")
 
-		originalEnv := os.Getenv("HELM_NAMESPACE")
-		_ = os.Setenv("HELM_NAMESPACE", "env-ns-precedence")
-		defer func() { _ = os.Setenv("HELM_NAMESPACE", originalEnv) }()
+		defer setTestEnvVar(t, "HELM_NAMESPACE", "env-ns-precedence")()
 
 		ns := GetReleaseNamespace(cmd)
 		assert.Equal(t, "env-ns-precedence", ns)
@@ -64,12 +74,18 @@ func TestGetReleaseNamespace(t *testing.T) {
 
 		// Ensure env var is empty or unset
 		originalEnv, envSet := os.LookupEnv("HELM_NAMESPACE")
-		_ = os.Unsetenv("HELM_NAMESPACE")
+		if err := os.Unsetenv("HELM_NAMESPACE"); err != nil {
+			t.Fatalf("Failed to unset HELM_NAMESPACE: %v", err)
+		}
 		defer func() {
 			if envSet {
-				_ = os.Setenv("HELM_NAMESPACE", originalEnv)
+				if err := os.Setenv("HELM_NAMESPACE", originalEnv); err != nil {
+					t.Logf("Warning: Failed to restore HELM_NAMESPACE: %v", err)
+				}
 			} else {
-				_ = os.Unsetenv("HELM_NAMESPACE") // Ensure it remains unset if originally unset
+				if err := os.Unsetenv("HELM_NAMESPACE"); err != nil {
+					t.Logf("Warning: Failed to unset HELM_NAMESPACE: %v", err)
+				}
 			}
 		}()
 
@@ -84,9 +100,7 @@ func TestGetReleaseNamespace(t *testing.T) {
 		require.NoError(t, err)
 
 		// Set environment variable (should be ignored)
-		originalEnv := os.Getenv("HELM_NAMESPACE")
-		_ = os.Setenv("HELM_NAMESPACE", "env-ns-ignored")
-		defer func() { _ = os.Setenv("HELM_NAMESPACE", originalEnv) }()
+		defer setTestEnvVar(t, "HELM_NAMESPACE", "env-ns-ignored")()
 
 		ns := GetReleaseNamespace(cmd)
 		assert.Equal(t, "flag-ns-precedence", ns)
