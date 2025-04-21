@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -253,6 +254,56 @@ func mockInspectCmd(output *ImageAnalysis, flags *InspectFlags) *cobra.Command {
 	return cmd
 }
 
+// Helper for repeated YAML output test logic
+func runYamlOutputTest(t *testing.T, chartPath, chartName, chartVersion, imageValue string, setOutputFormat bool) {
+	mockFs := afero.NewMemMapFs()
+	AppFs = mockFs
+	isHelmPlugin = false
+
+	if err := mockFs.MkdirAll(filepath.Join(chartPath, "templates"), 0o755); err != nil {
+		t.Fatalf("Failed to create mock templates dir: %v", err)
+	}
+	if err := afero.WriteFile(mockFs, filepath.Join(chartPath, "Chart.yaml"), []byte(fmt.Sprintf("apiVersion: v2\nname: %s\nversion: %s", chartName, chartVersion)), 0o644); err != nil {
+		t.Fatalf("Failed to write mock Chart.yaml: %v", err)
+	}
+	if err := afero.WriteFile(mockFs, filepath.Join(chartPath, "values.yaml"), []byte(fmt.Sprintf("image: %s", imageValue)), 0o644); err != nil {
+		t.Fatalf("Failed to write mock values.yaml: %v", err)
+	}
+
+	analysis := &ImageAnalysis{
+		Chart: ChartInfo{
+			Name:    chartName,
+			Version: chartVersion,
+		},
+		ImagePatterns: []analyzer.ImagePattern{
+			{
+				Path:  "image",
+				Type:  "string",
+				Value: imageValue,
+			},
+		},
+	}
+
+	cmd := mockInspectCmd(analysis, &InspectFlags{})
+	args := []string{"--chart-path", chartPath}
+	if setOutputFormat {
+		args = append(args, "--output-format", "yaml")
+	}
+	cmd.SetArgs(args)
+	out := new(bytes.Buffer)
+	cmd.SetOut(out)
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+	output := out.String()
+	assert.Contains(t, output, "chart:")
+	assert.Contains(t, output, "name: "+chartName)
+	assert.Contains(t, output, "version: "+chartVersion)
+	assert.Contains(t, output, "imagePatterns:")
+	assert.Contains(t, output, "value: "+imageValue)
+	assert.NotContains(t, output, "\"chart\":") // Should not be JSON
+}
+
 func TestRunInspect(t *testing.T) {
 	// Setup mock filesystem for the entire test function
 	originalAppFs := AppFs
@@ -274,60 +325,7 @@ func TestRunInspect(t *testing.T) {
 	}()
 
 	t.Run("inspect chart path successfully (YAML output to stdout)", func(t *testing.T) {
-		// Clear and setup mock filesystem for this sub-test
-		mockFs = afero.NewMemMapFs() // Use the function-scoped mockFs
-		AppFs = mockFs               // Ensure AppFs is set to the cleared mock for the sub-test
-		isHelmPlugin = false         // Run in standalone mode
-
-		// Create a dummy chart in the mock filesystem
-		chartPath := "test/chart"
-		if err := mockFs.MkdirAll(filepath.Join(chartPath, "templates"), 0o755); err != nil {
-			t.Fatalf("Failed to create mock templates dir: %v", err)
-		}
-		if err := afero.WriteFile(mockFs, filepath.Join(chartPath, "Chart.yaml"), []byte("apiVersion: v2\nname: mychart\nversion: 1.2.3"), 0o644); err != nil {
-			t.Fatalf("Failed to write mock Chart.yaml: %v", err)
-		}
-		if err := afero.WriteFile(mockFs, filepath.Join(chartPath, "values.yaml"), []byte("image: nginx:stable"), 0o644); err != nil {
-			t.Fatalf("Failed to write mock values.yaml: %v", err)
-		}
-
-		// Create a test analysis
-		analysis := &ImageAnalysis{
-			Chart: ChartInfo{
-				Name:    "mychart",
-				Version: "1.2.3",
-			},
-			ImagePatterns: []analyzer.ImagePattern{
-				{
-					Path:  "image",
-					Type:  "string",
-					Value: "nginx:stable",
-				},
-			},
-		}
-
-		// Create a command with our mock implementation
-		cmd := mockInspectCmd(analysis, &InspectFlags{})
-		cmd.SetArgs([]string{"--chart-path", chartPath})
-
-		// Create a buffer to capture output
-		out := new(bytes.Buffer)
-		cmd.SetOut(out)
-
-		// Execute the command
-		err := cmd.Execute()
-		require.NoError(t, err)
-
-		// Get the output
-		output := out.String()
-
-		// Assertions
-		assert.Contains(t, output, "chart:")
-		assert.Contains(t, output, "name: mychart")
-		assert.Contains(t, output, "version: 1.2.3")
-		assert.Contains(t, output, "imagePatterns:")
-		assert.Contains(t, output, "path: image")
-		assert.Contains(t, output, "value: nginx:stable")
+		runYamlOutputTest(t, "test/chart", "mychart", "1.2.3", "nginx:stable", true)
 	})
 
 	t.Run("inspect chart path with JSON output to file", func(t *testing.T) {
@@ -492,6 +490,37 @@ func TestRunInspect(t *testing.T) {
 		assert.Contains(t, output, "imagePatterns:")
 		assert.Contains(t, output, "path: image")
 		assert.Contains(t, output, "value: nginx:plugin")
+	})
+
+	t.Run("default output format is yaml when flag is omitted", func(t *testing.T) {
+		runYamlOutputTest(t, "test/chart-default", "defaultchart", "2.0.0", "busybox:latest", false)
+	})
+
+	t.Run("error on invalid output format", func(t *testing.T) {
+		mockFs = afero.NewMemMapFs()
+		AppFs = mockFs
+		isHelmPlugin = false
+
+		chartPath := "test/chart-invalidfmt"
+		if err := mockFs.MkdirAll(filepath.Join(chartPath, "templates"), 0o755); err != nil {
+			t.Fatalf("Failed to create mock templates dir: %v", err)
+		}
+		if err := afero.WriteFile(mockFs, filepath.Join(chartPath, "Chart.yaml"), []byte("apiVersion: v2\nname: badfmt\nversion: 3.0.0"), 0o644); err != nil {
+			t.Fatalf("Failed to write mock Chart.yaml: %v", err)
+		}
+		if err := afero.WriteFile(mockFs, filepath.Join(chartPath, "values.yaml"), []byte("image: alpine:latest"), 0o644); err != nil {
+			t.Fatalf("Failed to write mock values.yaml: %v", err)
+		}
+
+		cmd := newInspectCmd()
+		cmd.SetArgs([]string{"--chart-path", chartPath, "--output-format", "invalidfmt"})
+		out := new(bytes.Buffer)
+		errOut := new(bytes.Buffer)
+		cmd.SetOut(out)
+		cmd.SetErr(errOut)
+		err := cmd.Execute()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid output format")
 	})
 
 	// --- TODO: Add more test cases --- //

@@ -83,7 +83,7 @@ This command analyzes the chart's values.yaml and templates to find image refere
 
 	cmd.Flags().String("chart-path", "", "Path to the Helm chart")
 	cmd.Flags().String("output-file", "", "Write output to file instead of stdout")
-	cmd.Flags().String("output-format", "", "Output format (yaml or json)")
+	cmd.Flags().String("output-format", outputFormatYAML, "Output format (yaml or json)")
 	cmd.Flags().Bool("generate-config-skeleton", false, "Generate a config skeleton based on found images")
 	cmd.Flags().StringSlice("include-pattern", nil, "Glob patterns for values paths to include during analysis")
 	cmd.Flags().StringSlice("exclude-pattern", nil, "Glob patterns for values paths to exclude during analysis")
@@ -637,7 +637,12 @@ func getInspectFlags(cmd *cobra.Command, releaseNameProvided bool) (*InspectFlag
 		}
 	}
 
-	// Validate output format and fix revive:indent-error-flow
+	// If not set, default to yaml (should already be default, but double-check for empty string)
+	if outputFormat == "" {
+		outputFormat = outputFormatYAML
+	}
+
+	// Validate output format
 	if outputFormat != outputFormatYAML && outputFormat != outputFormatJSON {
 		return nil, &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitInputConfigurationError,
