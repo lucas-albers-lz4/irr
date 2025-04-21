@@ -65,6 +65,9 @@ type InspectFlags struct {
 const (
 	// DefaultConfigSkeletonFilename is the default filename for the generated config skeleton
 	DefaultConfigSkeletonFilename = "irr-config.yaml"
+	outputFormatYAML              = "yaml"
+	outputFormatJSON              = "json"
+	defaultNamespace              = "default" // Added const for default namespace
 )
 
 // newInspectCmd creates a new inspect command
@@ -129,11 +132,11 @@ func loadHelmChart(fs afero.Fs, chartPath string) (*chart.Chart, error) {
 
 		// If we have a Chart.yaml file in the mock filesystem, try to read it
 		chartYamlPath := filepath.Join(chartPath, "Chart.yaml")
-		if chartYamlExists, _ := afero.Exists(fs, chartYamlPath); chartYamlExists {
+		if chartYamlExists, checkErr := afero.Exists(fs, chartYamlPath); checkErr == nil && chartYamlExists {
 			chartYamlContent, readErr := afero.ReadFile(fs, chartYamlPath)
 			if readErr == nil {
 				var chartYaml struct {
-					ApiVersion string `yaml:"apiVersion"`
+					APIVersion string `yaml:"apiVersion"`
 					Name       string `yaml:"name"`
 					Version    string `yaml:"version"`
 				}
@@ -146,7 +149,7 @@ func loadHelmChart(fs afero.Fs, chartPath string) (*chart.Chart, error) {
 
 		// If we have a values.yaml file in the mock filesystem, try to read it
 		valuesYamlPath := filepath.Join(chartPath, "values.yaml")
-		if valuesYamlExists, _ := afero.Exists(fs, valuesYamlPath); valuesYamlExists {
+		if valuesYamlExists, checkErr := afero.Exists(fs, valuesYamlPath); checkErr == nil && valuesYamlExists {
 			valuesYamlContent, readErr := afero.ReadFile(fs, valuesYamlPath)
 			if readErr == nil {
 				var valuesYaml map[string]interface{}
@@ -282,6 +285,7 @@ func runInspect(cmd *cobra.Command, args []string) error {
 	// Get flags for the inspect command
 	var flags *InspectFlags
 	var err error
+	var releaseName string // Declare releaseName here
 
 	// Check if we're being run with a release name
 	releaseNameProvided := len(args) > 0
@@ -296,10 +300,12 @@ func runInspect(cmd *cobra.Command, args []string) error {
 	// Decide execution path based on args/plugin mode
 	if releaseNameProvided {
 		// Assume plugin mode if release name is given (validated inside inspectHelmRelease)
-		releaseName := args[0]
-		namespace, _ := cmd.Flags().GetString("namespace") // Error checked in getInspectFlags potentially
-		if namespace == "" {
-			namespace = "default" // Use default namespace string
+		releaseName = args[0] // Assign releaseName here
+		namespace, nsErr := cmd.Flags().GetString("namespace")
+		if nsErr != nil {
+			return &exitcodes.ExitCodeError{Code: exitcodes.ExitInputConfigurationError, Err: fmt.Errorf("failed to get namespace flag: %w", nsErr)}
+		} else if namespace == "" {
+			namespace = defaultNamespace // Use constant
 		}
 		return inspectHelmRelease(cmd, flags, releaseName, namespace)
 	}
@@ -310,13 +316,13 @@ func runInspect(cmd *cobra.Command, args []string) error {
 		// Log the error details for better debugging
 		log.Debugf("Error during setupAnalyzerAndLoadChart: %v", err)
 		// Ensure the error returned is an ExitCodeError for consistent handling
-		if _, ok := err.(*exitcodes.ExitCodeError); !ok {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitInputConfigurationError, // Use input config error for setup failures
-				Err:  err,
-			}
+		var exitErr *exitcodes.ExitCodeError
+		if errors.As(err, &exitErr) {
+			log.Debugf("Setup/Analysis failed with exit code %d: %v", exitErr.Code, exitErr.Err)
+		} else {
+			log.Debugf("Setup/Analysis failed with non-exit code error: %v", err)
 		}
-		return err // Return the original ExitCodeError
+		return err // Return the original error
 	}
 
 	log.Infof("Successfully loaded and analyzed chart: %s", chartPath) // Add log for success
@@ -334,7 +340,14 @@ func runInspect(cmd *cobra.Command, args []string) error {
 		outputRegistrySuggestions(uniqueRegistries)
 		// Suggest config generation only if analysis was successful and registries found
 		if len(uniqueRegistries) > 0 {
-			outputRegistryConfigSuggestion(chartPath, uniqueRegistries)
+			// Use a placeholder path for suggestion in plugin mode or the detected chart path
+			var suggestionPath string
+			if releaseNameProvided {
+				suggestionPath = fmt.Sprintf("release '%s'", releaseName)
+			} else {
+				suggestionPath = chartPath // Use the determined chartPath
+			}
+			outputRegistryConfigSuggestion(suggestionPath, uniqueRegistries)
 		}
 	}
 
@@ -343,7 +356,7 @@ func runInspect(cmd *cobra.Command, args []string) error {
 
 // setupAnalyzerAndLoadChart prepares the analyzer config and loads the chart for standalone mode.
 // It now explicitly uses AppFs for path checking and chart loading.
-func setupAnalyzerAndLoadChart(cmd *cobra.Command, flags *InspectFlags) (string, *ImageAnalysis, error) {
+func setupAnalyzerAndLoadChart(_ *cobra.Command, flags *InspectFlags) (string, *ImageAnalysis, error) {
 	config := flags.AnalyzerConfig // Already configured in getInspectFlags
 	chartPath := flags.ChartPath
 
@@ -371,11 +384,11 @@ func setupAnalyzerAndLoadChart(cmd *cobra.Command, flags *InspectFlags) (string,
 		}
 		if !exists {
 			return "", nil, &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitChartLoadFailed,
+				Code: exitcodes.ExitChartNotFound,
 				Err:  fmt.Errorf("chart path not found or inaccessible: %s", absChartPath),
 			}
 		}
-		chartPath = absChartPath // Use absolute path
+		chartPath = absChartPath // Use absolute path - Correction: chartPath is assigned, no need for absChartPath re-assignment
 	}
 
 	// Load the chart using the filesystem-aware function
@@ -397,7 +410,7 @@ func setupAnalyzerAndLoadChart(cmd *cobra.Command, flags *InspectFlags) (string,
 }
 
 // filterImagesBySourceRegistries filters the analysis results based on source registries
-func filterImagesBySourceRegistries(cmd *cobra.Command, flags *InspectFlags, analysis *ImageAnalysis) {
+func filterImagesBySourceRegistries(_ *cobra.Command, flags *InspectFlags, analysis *ImageAnalysis) {
 	if len(flags.SourceRegistries) > 0 {
 		log.Infof("Filtering results to only include registries: %s", strings.Join(flags.SourceRegistries, ", "))
 		var filteredImages []ImageInfo
@@ -512,46 +525,50 @@ func inspectHelmRelease(cmd *cobra.Command, flags *InspectFlags, releaseName, na
 
 	// Analyze the release values using the provided analyzer config
 	log.Debugf("Analyzing release values...")
-	patterns, err := analyzer.AnalyzeHelmValues(releaseValues, flags.AnalyzerConfig)
-	if err != nil {
+	analysisPatterns, analysisErr := analyzer.AnalyzeHelmValues(releaseValues, flags.AnalyzerConfig)
+	if analysisErr != nil {
 		return &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitChartProcessingFailed,
-			Err:  fmt.Errorf("release values analysis failed: %w", err),
+			Err:  fmt.Errorf("release values analysis failed: %w", analysisErr),
 		}
 	}
 
 	// Process image patterns found in values
-	images, skipped := processImagePatterns(patterns)
+	images, skipped := processImagePatterns(analysisPatterns)
 
 	// Create analysis result
 	analysis := &ImageAnalysis{
 		Chart:         chartInfo,
 		Images:        images,
-		ImagePatterns: patterns, // Patterns found in values
+		ImagePatterns: analysisPatterns, // Patterns found in values
 		Skipped:       skipped,
 		// Errors from analysis are included in the error return above
 	}
 
-	// Filter based on source registries if provided
-	filterImagesBySourceRegistries(cmd, flags, analysis)
+	// Apply source registry filtering if needed
+	if len(flags.SourceRegistries) > 0 {
+		var filteredImages []ImageInfo
 
-	// Write the output
-	if err := writeOutput(cmd, analysis, flags); err != nil {
-		return err
-	}
-
-	// Output suggestions if applicable
-	if !flags.GenerateConfigSkeleton {
-		uniqueRegistries := extractUniqueRegistries(analysis.Images)
-		outputRegistrySuggestions(uniqueRegistries)
-		// Suggest config generation only if analysis was successful and registries found
-		if len(uniqueRegistries) > 0 {
-			// Use a placeholder path for suggestion in plugin mode
-			outputRegistryConfigSuggestion(fmt.Sprintf("release '%s'", releaseName), uniqueRegistries)
+		// Create a map for O(1) lookups
+		registryMap := make(map[string]bool)
+		for _, reg := range flags.SourceRegistries {
+			registryMap[reg] = true
 		}
+
+		// Filter images
+		for _, img := range analysis.Images {
+			if registryMap[img.Registry] {
+				filteredImages = append(filteredImages, img)
+			}
+		}
+
+		// Update the analysis with filtered images
+		analysis.Images = filteredImages
+		log.Infof("Filtered images to %d registries", len(flags.SourceRegistries))
 	}
 
-	return nil
+	// Write output
+	return writeOutput(cmd, analysis, flags)
 }
 
 // getInspectFlags retrieves and validates flags for the inspect command
@@ -593,12 +610,11 @@ func getInspectFlags(cmd *cobra.Command, releaseNameProvided bool) (*InspectFlag
 					Code: exitcodes.ExitChartNotFound,
 					Err:  fmt.Errorf("chart path not found or inaccessible: %s", chartPath),
 				}
-			} else {
-				// Handle other potential errors from Stat (e.g., permissions)
-				return nil, &exitcodes.ExitCodeError{
-					Code: exitcodes.ExitChartLoadFailed, // Use a more general load fail code
-					Err:  fmt.Errorf("error accessing chart path %s: %w", chartPath, err),
-				}
+			}
+			// Handle other potential errors from Stat (e.g., permissions)
+			return nil, &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitChartLoadFailed, // Use a more general load fail code
+				Err:  fmt.Errorf("error accessing chart path %s: %w", chartPath, err),
 			}
 		}
 	}
@@ -618,6 +634,14 @@ func getInspectFlags(cmd *cobra.Command, releaseNameProvided bool) (*InspectFlag
 		return nil, &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitInputConfigurationError,
 			Err:  fmt.Errorf("failed to get output-format flag: %w", err),
+		}
+	}
+
+	// Validate output format and fix revive:indent-error-flow
+	if outputFormat != outputFormatYAML && outputFormat != outputFormatJSON {
+		return nil, &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("invalid output format '%s': must be '%s' or '%s'", outputFormat, outputFormatYAML, outputFormatJSON),
 		}
 	}
 
@@ -747,9 +771,8 @@ func detectChartInCurrentDirectory(fs afero.Fs, startDir string) (string, error)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", fmt.Errorf("starting directory for chart detection does not exist in the filesystem: %s", startDir)
-		} else {
-			return "", fmt.Errorf("failed to stat starting directory %s: %w", startDir, err)
 		}
+		return "", fmt.Errorf("failed to stat starting directory %s: %w", startDir, err)
 	}
 	if !startDirInfo.IsDir() {
 		return "", fmt.Errorf("starting path for chart detection is not a directory: %s", startDir)
