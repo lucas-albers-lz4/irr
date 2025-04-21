@@ -390,19 +390,19 @@ func outputOverrides(_ *cobra.Command, yamlBytes []byte, outputFile string, dryR
 	// Create the directory if it doesn't exist
 	dir := filepath.Dir(outputFile)
 	if dir != "" && dir != "." {
-		if err := AppFs.MkdirAll(dir, fileutil.ReadWriteExecuteUserReadExecuteOthers); err != nil {
+		if mkDirErr := AppFs.MkdirAll(dir, fileutil.ReadWriteExecuteUserReadExecuteOthers); mkDirErr != nil {
 			return &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitIOError,
-				Err:  fmt.Errorf("failed to create output directory: %w", err),
+				Err:  fmt.Errorf("failed to create output directory: %w", mkDirErr),
 			}
 		}
 	}
 
 	// Write the file
-	if err := afero.WriteFile(AppFs, outputFile, yamlBytes, fileutil.ReadWriteUserReadOthers); err != nil {
+	if writeErr := afero.WriteFile(AppFs, outputFile, yamlBytes, fileutil.ReadWriteUserReadOthers); writeErr != nil {
 		return &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitIOError,
-			Err:  fmt.Errorf("failed to write output file '%s': %w", outputFile, err),
+			Err:  fmt.Errorf("failed to write output file '%s': %w", outputFile, writeErr),
 		}
 	}
 
@@ -777,7 +777,11 @@ func loadChart(cs *ChartSource) (*helmchart.Chart, error) {
 // runOverride is the main execution function for the override command
 func runOverride(cmd *cobra.Command, args []string) error {
 	// Determine if running in test mode
-	isTestMode, _ := getBoolFlag(cmd, "test-mode")
+	isTestMode, err := getBoolFlag(cmd, "test-mode")
+	if err != nil {
+		log.Warnf("Failed to get test-mode flag, defaulting to false: %v", err)
+		isTestMode = false
+	}
 
 	// Get release name and namespace
 	releaseName, namespace, err := getReleaseNameAndNamespace(cmd, args)
@@ -868,8 +872,16 @@ func runOverride(cmd *cobra.Command, args []string) error {
 	}
 
 	// Validate the generated overrides
-	validateOverrides, _ := getBoolFlag(cmd, "validate")
-	noValidate, _ := getBoolFlag(cmd, "no-validate")
+	validateOverrides, valErr := getBoolFlag(cmd, "validate")
+	if valErr != nil {
+		log.Warnf("Failed to get validate flag, defaulting to true: %v", valErr)
+		validateOverrides = true // Default to validating if flag access fails
+	}
+	noValidate, noValErr := getBoolFlag(cmd, "no-validate")
+	if noValErr != nil {
+		log.Warnf("Failed to get no-validate flag, defaulting to false: %v", noValErr)
+		noValidate = false // Default to not skipping validation if flag access fails
+	}
 	if validateOverrides && !noValidate {
 		if err := validateChart(cmd, yamlBytes, &config, true, false, "", ""); err != nil {
 			return err // validateChart returns ExitCodeError
@@ -1123,17 +1135,17 @@ func handleTestModeOverride(cmd *cobra.Command, releaseName string) error {
 	// Create the output file if specified
 	switch {
 	case outputFile != "" && !dryRun:
-		if err := AppFs.MkdirAll(filepath.Dir(outputFile), fileutil.ReadWriteExecuteUserReadExecuteOthers); err != nil {
+		if mkDirErr := AppFs.MkdirAll(filepath.Dir(outputFile), fileutil.ReadWriteExecuteUserReadExecuteOthers); mkDirErr != nil {
 			return &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitGeneralRuntimeError,
-				Err:  fmt.Errorf("failed to create output directory: %w", err),
+				Err:  fmt.Errorf("failed to create output directory: %w", mkDirErr),
 			}
 		}
-		exists, err := afero.Exists(AppFs, outputFile)
-		if err != nil {
+		exists, checkErr := afero.Exists(AppFs, outputFile)
+		if checkErr != nil {
 			return &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitIOError,
-				Err:  fmt.Errorf("failed to check if output file exists: %w", err),
+				Err:  fmt.Errorf("failed to check if output file exists: %w", checkErr),
 			}
 		}
 		if exists {
@@ -1142,10 +1154,10 @@ func handleTestModeOverride(cmd *cobra.Command, releaseName string) error {
 				Err:  fmt.Errorf("output file '%s' already exists", outputFile),
 			}
 		}
-		if err := afero.WriteFile(AppFs, outputFile, []byte(yamlContent), fileutil.ReadWriteUserReadOthers); err != nil {
+		if writeErr := afero.WriteFile(AppFs, outputFile, []byte(yamlContent), fileutil.ReadWriteUserReadOthers); writeErr != nil {
 			return &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitGeneralRuntimeError,
-				Err:  fmt.Errorf("failed to write override file: %w", err),
+				Err:  fmt.Errorf("failed to write override file: %w", writeErr),
 			}
 		}
 		log.Infof("Successfully wrote overrides to %s", outputFile)
@@ -1155,9 +1167,6 @@ func handleTestModeOverride(cmd *cobra.Command, releaseName string) error {
 		}
 		if _, err := fmt.Fprintln(cmd.OutOrStdout(), yamlContent); err != nil {
 			return fmt.Errorf("failed to write overrides in dry run mode: %w", err) // Wrap error
-		}
-		if _, err := fmt.Fprintln(cmd.OutOrStdout(), "--- End Dry Run ---"); err != nil {
-			return fmt.Errorf("failed to write dry run footer: %w", err) // Wrap error
 		}
 
 		// Add validation output to dry run if requested
@@ -1170,12 +1179,11 @@ func handleTestModeOverride(cmd *cobra.Command, releaseName string) error {
 			}
 		}
 	default:
-		if shouldValidate {
-			if _, err := fmt.Fprintln(cmd.OutOrStdout(), "Validation successful! Chart renders correctly with overrides."); err != nil {
-				return &exitcodes.ExitCodeError{
-					Code: exitcodes.ExitGeneralRuntimeError,
-					Err:  fmt.Errorf("failed to write validation success message: %w", err),
-				}
+		// Default case: Output to stdout when no file is specified and not dry run
+		if _, err := fmt.Fprintln(cmd.OutOrStdout(), yamlContent); err != nil {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitGeneralRuntimeError,
+				Err:  fmt.Errorf("failed to write override content to stdout: %w", err),
 			}
 		}
 	}
