@@ -193,11 +193,13 @@ func TestValidateWithStrictFlag(t *testing.T) {
 	harness := NewTestHarness(t)
 	defer harness.Cleanup()
 
+	// Generate overrides file path
+	overridesFile := filepath.Join(harness.tempDir, "overrides.yaml")
+
 	// Use a chart with unsupported structures that would cause strict mode to fail
 	chartPath := harness.GetTestdataPath("charts/unsupported-test")
 
-	// Generate overrides
-	overridesFile := filepath.Join(harness.tempDir, "overrides.yaml")
+	// First, generate overrides using the override command
 	_, _, err := harness.ExecuteIRRWithStderr(
 		"override",
 		"--chart-path", chartPath,
@@ -206,24 +208,7 @@ func TestValidateWithStrictFlag(t *testing.T) {
 		"--output-file", overridesFile,
 		"--strict", // Added to test strict mode failure with unsupported structures
 	)
-	// Expect an error because the chart contains unsupported structures
 	require.Error(t, err, "override command should fail for unsupported structures")
 
-	// Since override failed, we don't proceed to validate.
-	// If the intent was to test validate --strict independently, the setup needs changing.
-	// For now, commenting out the validate part as it's unreachable.
-	/*
-		// Run the validate command with strict flag
-		_, stderr, err := harness.ExecuteIRRWithStderr(
-			"validate",
-			"--chart-path", chartPath,
-			"--values", overridesFile,
-			"--strict",
-		)
-
-		// Update the expectation: the validate command with strict mode succeeds
-		// with the current implementation, even for unsupported test charts
-		require.NoError(t, err, "validate command with strict mode should succeed with current implementation")
-		assert.Contains(t, stderr, "Validation successful", "Output should include validation success message")
-	*/
+	// The validation part is unreachable as override fails first.
 }
