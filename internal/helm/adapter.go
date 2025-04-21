@@ -634,12 +634,21 @@ func (a *Adapter) resolveChartPath(meta *ChartMetadata) (string, error) {
 
 // Add wrapper methods to expose client functionality
 
-// GetReleaseValues retrieves the computed values for a deployed release.
+// GetReleaseValues retrieves the computed values for a deployed release, wrapping potential errors.
 func (a *Adapter) GetReleaseValues(ctx context.Context, releaseName, namespace string) (map[string]interface{}, error) {
-	return a.helmClient.GetReleaseValues(ctx, releaseName, namespace)
+	values, err := a.helmClient.GetReleaseValues(ctx, releaseName, namespace)
+	if err != nil {
+		// Wrap the error for context
+		return nil, fmt.Errorf("failed to get values for release '%s' in namespace '%s': %w", releaseName, namespace, err)
+	}
+	return values, nil
 }
 
-// GetChartFromRelease retrieves the chart metadata associated with a deployed release.
+// GetChartFromRelease retrieves the chart metadata associated with a deployed release, wrapping potential errors.
 func (a *Adapter) GetChartFromRelease(ctx context.Context, releaseName, namespace string) (*ChartMetadata, error) {
-	return a.helmClient.GetReleaseChart(ctx, releaseName, namespace)
+	chartMetadata, err := a.helmClient.GetReleaseChart(ctx, releaseName, namespace)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get release chart metadata via adapter: %w", err)
+	}
+	return chartMetadata, nil
 }
