@@ -43,6 +43,8 @@ const (
 	ExpectedMappingParts = 2
 	// PercentageMultiplier is used when calculating success rates as percentages
 	PercentageMultiplier = 100.0
+	// ExpectedParts is the constant for the magic number 2 in strings.SplitN
+	ExpectedParts = 2
 )
 
 // --- Local Error Definitions ---
@@ -276,7 +278,7 @@ func (g *Generator) filterEligibleImages(detectedImages []analysis.ImagePattern)
 		case analysis.PatternTypeString:
 			// Best-effort registry extraction for filtering, without failing on parse error
 			if strings.Contains(pattern.Value, "/") {
-				parts := strings.SplitN(pattern.Value, "/", 2)
+				parts := strings.SplitN(pattern.Value, "/", ExpectedParts)
 				// Basic check: assume first part is registry if it contains '.' or ':' (like a domain or port)
 				// This avoids treating paths like 'my/image' as having registry 'my'
 				if strings.ContainsAny(parts[0], ".:") {
@@ -538,11 +540,6 @@ func (g *Generator) Generate() (*override.File, error) {
 				Type: firstUnsupported.Type,
 			}
 		}
-	} else {
-		// Handle case where analysisErr is nil but detectedImages is also nil (unexpected)
-		log.Warnf("Analysis completed without error but returned nil result for chart %s", g.chartPath)
-		// Return the empty result initialized earlier
-		return result, nil
 	}
 
 	// Filter images based on source and exclude registries using the correct function
@@ -611,10 +608,9 @@ func (g *Generator) Generate() (*override.File, error) {
 		// Only return error if in strict mode
 		if g.strict {
 			return nil, fmt.Errorf("strict mode: generation failed with %d errors: %w", len(processingErrors), errors.Join(processingErrors...))
-		} else {
-			log.Warnf("Generation completed with %d errors (non-strict mode). See logs for details.", len(processingErrors))
-			// Proceed to return result in non-strict mode
 		}
+		log.Warnf("Generation completed with %d errors (non-strict mode). See logs for details.", len(processingErrors))
+		// Proceed to return result in non-strict mode
 	}
 
 	// Apply rules if enabled
