@@ -18,7 +18,6 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"github.com/lalbers/irr/pkg/exitcodes"
 	log "github.com/lalbers/irr/pkg/log"
 
 	"github.com/lalbers/irr/pkg/analysis"
@@ -28,7 +27,6 @@ import (
 	"github.com/lalbers/irr/pkg/registry"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 )
 
@@ -129,145 +127,7 @@ type ChartSource struct {
 // - Namespace always defaults to "default" when not provided
 //
 // The function returns a ChartSource struct with all necessary information.
-func getChartSource(cmd *cobra.Command, args []string) (*ChartSource, error) {
-	// Initialize result
-	result := &ChartSource{
-		SourceType: "unknown",
-	}
-
-	// Get chart path
-	chartPath, err := cmd.Flags().GetString("chart-path")
-	if err != nil {
-		return nil, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get chart-path flag: %w", err),
-		}
-	}
-	result.ChartPath = chartPath
-	chartPathProvided := chartPath != ""
-	chartPathFlag := cmd.Flags().Changed("chart-path")
-
-	// Get release name from --release-name flag or positional argument
-	releaseNameFlag, err := cmd.Flags().GetString("release-name")
-	if err != nil {
-		return nil, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get release-name flag: %w", err),
-		}
-	}
-
-	// Get release name from args or flag
-	var releaseName string
-	if len(args) > 0 {
-		releaseName = args[0]
-		result.Message = "Release name provided as argument"
-	} else if releaseNameFlag != "" {
-		releaseName = releaseNameFlag
-		result.Message = "Release name provided via --release-name flag"
-	}
-	result.ReleaseName = releaseName
-	releaseNameProvided := releaseName != ""
-	releaseNameFlagSet := cmd.Flags().Changed("release-name")
-
-	// Get namespace with default
-	namespace, err := cmd.Flags().GetString("namespace")
-	if err != nil {
-		return nil, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get namespace flag: %w", err),
-		}
-	}
-
-	// Default namespace to "default" if not provided
-	if namespace == "" {
-		namespace = "default"
-		debug.Printf("No namespace specified, using default: %s", namespace)
-	}
-	result.Namespace = namespace
-
-	// Handle the case where neither is provided - attempt auto-detection
-	if !chartPathProvided && !releaseNameProvided {
-		// Try to detect chart in current directory - use the one from inspect.go
-		detectedPath, err := detectChartInCurrentDirectory(AppFs, ".")
-		if err != nil {
-			// In plugin mode with no inputs, return clear error
-			if isHelmPlugin {
-				return nil, &exitcodes.ExitCodeError{
-					Code: exitcodes.ExitInputConfigurationError,
-					Err:  fmt.Errorf("either --chart-path or release name must be provided"),
-				}
-			}
-
-			// In standalone mode with no inputs, return clear error
-			return nil, &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitInputConfigurationError,
-				Err:  fmt.Errorf("chart path not provided and could not auto-detect chart in current directory: %w", err),
-			}
-		}
-
-		// Successfully auto-detected
-		result.ChartPath = detectedPath
-		result.SourceType = ChartSourceTypeAutoDetected
-		result.Message = "Auto-detected chart in current directory"
-		debug.Printf("Auto-detected chart path: %s", detectedPath)
-		return result, nil
-	}
-
-	// If releaseName is provided but we're not in plugin mode, that's an error
-	if releaseNameProvided && !chartPathProvided && !isHelmPlugin {
-		return nil, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("release name provided but not running as Helm plugin. Use --chart-path in standalone mode"),
-		}
-	}
-
-	// If the --release-name flag was explicitly set but we're not in plugin mode, that's an error
-	if releaseNameFlagSet && !isHelmPlugin {
-		return nil, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("the --release-name flag is only available when running as a Helm plugin (helm irr...)"),
-		}
-	}
-
-	// If both are provided, use chart path primarily (with warning if there's potential conflict)
-	if chartPathProvided && releaseNameProvided {
-		if chartPathFlag && isHelmPlugin {
-			// Both explicitly provided in plugin mode - prioritize chart path
-			debug.Printf("Both chart path and release name provided, using chart path: %s", chartPath)
-			result.SourceType = chartSourceTypeChart
-			result.Message = "Using chart path (release name ignored)"
-		} else {
-			// In plugin mode without explicit chart path, prefer release name
-			if isHelmPlugin && !chartPathFlag {
-				result.SourceType = chartSourceTypeRelease
-				result.Message = "Using release name in plugin mode"
-			} else {
-				// Default to chart path in other cases
-				result.SourceType = chartSourceTypeChart
-				result.Message = "Using chart path"
-			}
-		}
-		return result, nil
-	}
-
-	// At this point, only one of chartPath or releaseName is provided
-	switch {
-	case chartPathProvided:
-		result.SourceType = chartSourceTypeChart
-		result.Message = "Using chart path"
-	case releaseNameProvided && isHelmPlugin:
-		result.SourceType = chartSourceTypeRelease
-		result.Message = "Using release name in plugin mode"
-	default:
-		// This should be unreachable given the checks above
-		return nil, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("internal error: unable to determine chart source"),
-		}
-	}
-
-	return result, nil
-}
+// func getChartSource(cmd *cobra.Command, args []string) (*ChartSource, error) {
 
 // detectChartInCurrentDirectory is defined in inspect.go to prevent duplicate functions
 
@@ -466,12 +326,17 @@ func init() {
 		chartDir, chartDetectErr := detectChartInCurrentDirectory(AppFs, ".") // Start search from "."
 		if chartDetectErr == nil {
 			projectConfigFile := filepath.Join(chartDir, ".irr.yaml")
-			exists, _ := afero.Exists(AppFs, projectConfigFile)
-			if exists {
+			exists, err := afero.Exists(AppFs, projectConfigFile)
+			if err != nil {
+				log.Warnf("Failed to check if project config file exists: %v", err)
+			} else if exists {
 				viper.SetConfigFile(projectConfigFile)
 			}
 		}
 	}
+
+	// Add build version info
+	rootCmd.Version = BinaryVersion
 }
 
 // --- Analyze Command Functionality --- Now integrated into inspect command
@@ -527,75 +392,75 @@ func loadMappingsIfNeeded(fs afero.Fs, registryFile string) (*registry.Mappings,
 */
 
 // initConfig reads in config file and ENV variables if set.
-func initConfig() {
-	// Check if IRR_TESTING is set
-	if os.Getenv("IRR_TESTING") != "" {
-		isTestMode = true
-		log.Infof("IRR_TESTING environment variable is set. Running in test mode.")
-	}
-
-	// Determine if running as a Helm plugin
-	if os.Getenv("HELM_BIN") != "" && os.Getenv("HELM_PLUGIN_NAME") == "irr" {
-		isHelmPlugin = true
-		// Optionally log Helm environment details for debugging plugin issues
-		if log.IsDebugEnabled() {
-			logHelmEnvironment()
-		}
-	}
-
-	// Determine if integration test mode is active
-	if os.Getenv("IRR_INTEGRATION_TEST") != "" {
-		integrationTestMode = true
-		log.Debugf("IRR_INTEGRATION_TEST environment variable is set.")
-	}
-
-	// Handle filesystem setup based on test/integration mode
-	if isTestMode || integrationTestMode {
-		// In test modes, assume AppFs is already set up by the test harness
-		log.Debugf("Test mode detected, using pre-configured AppFs: %T", AppFs)
-		if AppFs == nil {
-			log.Warnf("Test mode active, but AppFs is nil. Defaulting to OS filesystem.")
-			AppFs = afero.NewOsFs()
-		}
-	} else {
-		// In normal operation, use the real OS filesystem
-		AppFs = afero.NewOsFs()
-	}
-
-	// Get chart path and release name from flags if available
-	// Note: This uses pflag directly as cobra binding might not be complete yet
-	chartPathFlag := pflag.Lookup("chart-path")
-	chartPathProvided := chartPathFlag != nil && chartPathFlag.Changed
-
-	releaseNameFlag := pflag.Lookup("release-name")
-	releaseNameProvided := releaseNameFlag != nil && releaseNameFlag.Changed
-
-	// If chart-path and release-name are not provided, try to auto-detect
-	if !chartPathProvided && !releaseNameProvided {
-		// Try to detect chart in current directory - use the one from inspect.go
-		// Pass "." as the starting directory
-		detectedPath, err := detectChartInCurrentDirectory(AppFs, ".")
-		if err != nil {
-			// In plugin mode with no inputs, return clear error
-			if isHelmPlugin {
-				// Cobra handles this better in RunE, but good to log early if possible
-				log.Debugf("Plugin mode active, but no chart path or release name provided, and auto-detect failed: %v", err)
-			} else {
-				// Standalone mode: Log if detection fails, command will likely fail later if path is required
-				log.Debugf("Chart path not provided and auto-detect failed: %v", err)
-			}
-		} else {
-			// If detected, potentially use this path for context?
-			// For now, just log the detection.
-			log.Debugf("Auto-detected chart directory: %s", detectedPath)
-		}
-	}
-
-	// Initialize Helm client/adapter factory
-	initializeHelmAdapterFactory()
-
-	// Remove Helm plugin flags if not running as a plugin
-	if !isHelmPlugin {
-		removeHelmPluginFlags(rootCmd)
-	}
-}
+// func initConfig() {
+// 	// Check if IRR_TESTING is set
+// 	if os.Getenv("IRR_TESTING") != "" {
+// 		isTestMode = true
+// 		log.Infof("IRR_TESTING environment variable is set. Running in test mode.")
+// 	}
+//
+// 	// Determine if running as a Helm plugin
+// 	if os.Getenv("HELM_BIN") != "" && os.Getenv("HELM_PLUGIN_NAME") == "irr" {
+// 		isHelmPlugin = true
+// 		// Optionally log Helm environment details for debugging plugin issues
+// 		if log.IsDebugEnabled() {
+// 			logHelmEnvironment()
+// 		}
+// 	}
+//
+// 	// Determine if integration test mode is active
+// 	if os.Getenv("IRR_INTEGRATION_TEST") != "" {
+// 		integrationTestMode = true
+// 		log.Debugf("IRR_INTEGRATION_TEST environment variable is set.")
+// 	}
+//
+// 	// Handle filesystem setup based on test/integration mode
+// 	if isTestMode || integrationTestMode {
+// 		// In test modes, assume AppFs is already set up by the test harness
+// 		log.Debugf("Test mode detected, using pre-configured AppFs: %T", AppFs)
+// 		if AppFs == nil {
+// 			log.Warnf("Test mode active, but AppFs is nil. Defaulting to OS filesystem.")
+// 			AppFs = afero.NewOsFs()
+// 		}
+// 	} else {
+// 		// In normal operation, use the real OS filesystem
+// 		AppFs = afero.NewOsFs()
+// 	}
+//
+// 	// Get chart path and release name from flags if available
+// 	// Note: This uses pflag directly as cobra binding might not be complete yet
+// 	chartPathFlag := pflag.Lookup("chart-path")
+// 	chartPathProvided := chartPathFlag != nil && chartPathFlag.Changed
+//
+// 	releaseNameFlag := pflag.Lookup("release-name")
+// 	releaseNameProvided := releaseNameFlag != nil && releaseNameFlag.Changed
+//
+// 	// If chart-path and release-name are not provided, try to auto-detect
+// 	if !chartPathProvided && !releaseNameProvided {
+// 		// Try to detect chart in current directory - use the one from inspect.go
+// 		// Pass "." as the starting directory
+// 		detectedPath, err := detectChartInCurrentDirectory(AppFs, ".")
+// 		if err != nil {
+// 			// In plugin mode with no inputs, return clear error
+// 			if isHelmPlugin {
+// 				// Cobra handles this better in RunE, but good to log early if possible
+// 				log.Debugf("Plugin mode active, but no chart path or release name provided, and auto-detect failed: %v", err)
+// 			} else {
+// 				// Standalone mode: Log if detection fails, command will likely fail later if path is required
+// 				log.Debugf("Chart path not provided and auto-detect failed: %v", err)
+// 			}
+// 		} else {
+// 			// If detected, potentially use this path for context?
+// 			// For now, just log the detection.
+// 			log.Debugf("Auto-detected chart directory: %s", detectedPath)
+// 		}
+// 	}
+//
+// 	// Initialize Helm client/adapter factory
+// 	// initializeHelmAdapterFactory() // Commented out as it's unused
+//
+// 	// Remove Helm plugin flags if not running as a plugin
+// 	if !isHelmPlugin {
+// 		removeHelmPluginFlags(rootCmd)
+// 	}
+// }
