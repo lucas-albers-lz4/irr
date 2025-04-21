@@ -7,15 +7,13 @@
 
 This document outlines the design for a command-line tool, `irr` (Image Relocation and Rewrite), intended to automate the generation of Helm override `values.yaml` files. The primary goal is to redirect container image pulls specified within a Helm chart from various public registries to a designated local or private registry, initially focusing on Harbor configured as a pull-through cache. This addresses the manual effort and potential errors involved in modifying Helm deployments for environments requiring centralized, proxied, or private image access. Additionally, this helps organizations maintain compliance with air-gapped environments and enforce image provenance requirements.
 
-See [Tool Documentation](#) for installation and advanced usage. Planned documentation sections include:
-*   Installation Guide
-*   Quick Start & Usage Guide
-*   CLI Reference (Flags and Arguments)
-*   Path Strategies Explained
+See [Tool Documentation](#) for installation and advanced usage. The main documentation structure includes:
+*   Installation Guide (Covered in `README.md` and `USE-CASES.md`)
+*   Quick Start & Usage Guide (Covered in `README.md` and `USE-CASES.md`)
+*   CLI Reference (Covered in `cli-reference.md`)
 *   Configuration File Format (Future)
-*   Troubleshooting & Error Codes
-*   Contributor Guide
-Note: Documentation is under development.
+*   Troubleshooting & Error Codes (Covered in `troubleshooting.md` and `DEVELOPMENT.md`)
+*   Contributor Guide (Covered within this `DEVELOPMENT.md` document)
 
 ## 2. Problem Statement
 
@@ -162,11 +160,38 @@ exclude_registries:
 When an image reference matches an excluded registry, it will be skipped during processing to preserve references to private registries.
 
 ### 6.1.6 Registry Mapping Format
-The tool supports a simple YAML key-value mapping format:
-```yaml
-docker.io: target.registry/docker-mirror
-quay.io: target.registry/quay-mirror
-```
+
+The tool supports registry mappings provided via a configuration file (typically passed with `--config`). This allows redirecting specific source registries to different target paths or registries. Two YAML formats are supported for defining these mappings:
+
+1.  **Structured Format (Preferred):**
+    *   Uses a top-level `mappings:` key.
+    *   Contains a list of mapping objects, each with `source` and `target` keys.
+    *   This format is recommended, especially if mappings are part of a larger configuration file.
+
+    ```yaml
+    # Example: Structured Format
+    mappings:
+      - source: docker.io
+        target: my-registry.example.com/docker-mirror
+      - source: quay.io
+        target: my-registry.example.com/quay-mirror
+      - source: gcr.io
+        target: different-registry.example.com/google-containers
+    ```
+
+2.  **Legacy Format (Simple Key-Value):**
+    *   A simple map at the root of the YAML file.
+    *   Keys represent source registries, and values represent their corresponding targets.
+    *   Supported for backward compatibility.
+
+    ```yaml
+    # Example: Legacy Key-Value Format
+    docker.io: my-registry.example.com/docker-mirror
+    quay.io: my-registry.example.com/quay-mirror
+    ```
+
+The tool attempts to parse the structured format first. If that fails or the `mappings` key is not found, it will attempt to parse the file as the legacy key-value format.
+
 
 **Path Handling Requirements**
 - Registry mapping files must be specified with absolute paths or relative paths within the working directory
@@ -324,11 +349,11 @@ The Phase 4 implementation focuses on a standalone CLI with three core commands:
     *   **Stdout:** Minimal output on success, potentially indicating validation passed.
 *   **Scope:** Does *not* analyze rendered templates or perform diffs. Purely checks `helm template` renderability.
 
-### 7.4. Helm Plugin Interface (Phase 5)
+### 7.4. Helm Plugin Interface
 
-A Helm plugin (`helm irr`) will be developed in Phase 5, wrapping the core CLI commands. It will provide:
+A Helm plugin (`helm irr`)  provides the core CLI commands:
 *   Seamless integration (`helm irr inspect <release>`, etc.).
-*   Potentially leverage Helm's context for configuration/authentication.
+*   Namespace aware, Release aware
 
 ## 8. Target Registry Path Strategy
 
@@ -406,191 +431,4 @@ This section outlines potential future features to enhance integration with clou
 #### 9.4.1. ECR Path Sanitization (Priority: P0, Effort: Low)
 
 **Problem:**
-ECR repository names must adhere to specific naming conventions (lowercase, no underscores, hyphens allowed). Current path strategies might generate invalid paths if source registries use characters disallowed by ECR (e.g., `docker.io/MyApp/Image:latest`).
-
-**Solution:**
-Implement automatic path sanitization within the path generation logic specifically when the target registry is identified as ECR. This function should convert the repository path (and potentially the prefixed source registry name) to lowercase and replace underscores with hyphens.
-
-**Example Transformation:**
-`docker.io/MyApp/Image:latest` -> `<ecr-registry>/dockerio/myapp/image:latest`
-
-**Implementation:**
-Integrate a sanitization function into the relevant path strategies:
-```go
-// sanitizeECRPathComponent ensures a string segment conforms to ECR naming rules.
-func sanitizeECRPathComponent(component string) string {
-    sanitized := strings.ToLower(component)
-    sanitized = strings.ReplaceAll(sanitized, "_", "-")
-    // Add further validation/sanitization if needed based on ECR rules.
-    return sanitized
-}
-
-// Example integration into prefix-source-registry strategy:
-func (s *prefixSourceRegistryStrategy) applyECR(sourceRegistry, sourcePath, targetRegistry string) string {
-    sanitizedSourceRegistry := sanitizeECRPathComponent(sourceRegistry) // Sanitize the prefix too
-    sanitizedRepoPath := sanitizeECRPathComponent(sourcePath)
-    // Note: This assumes the targetRegistry URL itself is valid.
-    // Further logic might be needed to handle the full URL structure correctly.
-    return fmt.Sprintf("%s/%s/%s", targetRegistry, sanitizedSourceRegistry, sanitizedRepoPath)
-}
-```
-
-**User Value:** ★★★★★
-Critical for basic ECR compatibility. Prevents deployment failures caused by invalid repository names generated by the tool.
-
-#### 9.4.2. AWS Auth Helper Integration (Priority: P0, Effort: Medium)
-
-**Problem:**
-Authenticating Helm/Kubernetes to private ECR repositories often involves manual configuration of `imagePullSecrets` or node IAM roles, which can be complex and error-prone.
-
-**Solution:**
-**(Option A - Direct Secret Generation):** Add functionality (potentially via a separate command or flag) to use the AWS SDK to retrieve temporary ECR credentials (`ecr:GetAuthorizationToken`) and generate a standard Kubernetes `kubernetes.io/dockerconfigjson` Secret manifest. This manifest could then be applied to the cluster separately.
-
-**(Option B - Integration with Helm Authentication):** Explore leveraging Helm's existing mechanisms for registry authentication, potentially guiding users on how to configure Helm to use AWS credentials directly (e.g., using `helm registry login` with an ECR helper). *This might be preferable to the tool generating secrets directly.*
-
-**Implementation (Option A - Secret Generation):**
-1.  Add AWS SDK for Go dependency (`github.com/aws/aws-sdk-go`).
-2.  Implement credential retrieval:
-    ```go
-    import (
-        "encoding/base64"
-        "fmt"
-        "log" // Use proper logging
-
-        "github.com/aws/aws-sdk-go/aws/session"
-        "github.com/aws/aws-sdk-go/service/ecr"
-    )
-
-    func getECRAuthToken() (string, error) {
-        sess, err := session.NewSession() // Configure region/credentials appropriately
-        if err != nil {
-            return "", fmt.Errorf("failed to create AWS session: %w", err)
-        }
-        svc := ecr.New(sess)
-        input := &ecr.GetAuthorizationTokenInput{}
-        result, err := svc.GetAuthorizationToken(input)
-        if err != nil {
-            return "", fmt.Errorf("failed to get ECR authorization token: %w", err)
-        }
-        if len(result.AuthorizationData) == 0 || result.AuthorizationData[0].AuthorizationToken == nil {
-            return "", fmt.Errorf("no authorization token found in AWS response")
-        }
-        // The token is base64 encoded user:password, decode it first
-        decodedToken, err := base64.StdEncoding.DecodeString(*result.AuthorizationData[0].AuthorizationToken)
-        if err != nil {
-            return "", fmt.Errorf("failed to decode ECR authorization token: %w", err)
-        }
-        return string(decodedToken), nil // Return the decoded "AWS:<password>"
-    }
-
-    func generateECRDockerConfigJson(registryURL string) (string, error) {
-        // Note: registryURL should be the ECR registry endpoint, e.g., 123456789012.dkr.ecr.us-east-1.amazonaws.com
-        authToken, err := getECRAuthToken() // This gives "AWS:<password>"
-        if err != nil {
-            return "", err
-        }
-        // We need to base64 encode the "AWS:<password>" string for the auth field
-        authField := base64.StdEncoding.EncodeToString([]byte(authToken))
-        dockerConfig := fmt.Sprintf(`{
-          "auths": {
-            "%s": {
-              "auth": "%s"
-            }
-          }
-        }`, registryURL, authField)
-        return base64.StdEncoding.EncodeToString([]byte(dockerConfig)), nil // Return base64 of the whole structure
-    }
-
-    func generateImagePullSecretManifest(secretName, registryURL string) (string, error) {
-        dockerConfigJsonBase64, err := generateECRDockerConfigJson(registryURL)
-        if err != nil {
-            return "", err
-        }
-        manifest := fmt.Sprintf(`
-apiVersion: v1
-kind: Secret
-metadata:
-  name: %s
-type: kubernetes.io/dockerconfigjson
-data:
-  .dockerconfigjson: %s
-`, secretName, dockerConfigJsonBase64)
-        return manifest, nil
-    }
-    ```
-
-**Security Considerations:**
-Generating secrets directly requires careful handling of AWS credentials where the tool runs. The tool would need appropriate IAM permissions (`ecr:GetAuthorizationToken`). Users need to be aware of the security implications of running such a command. *Integrating with existing auth helpers (Option B) might be inherently safer.*
-
-**User Value:** ★★★★★ (if implemented securely)
-Greatly simplifies authentication for private ECR repositories, reducing manual effort and potential errors. Essential for secure, automated deployments.
-
-*(Note: The `ensureECRRepoExists` function mentioned in the input seems related but distinct - it's about ensuring the *repository* exists, potentially creating it. This could be a separate P2/P3 feature requiring `ecr:CreateRepository` permissions, which carries higher risk.)*
-
-#### 9.4.3. AWS Partition Support (Priority: P1, Effort: Medium)
-
-**Problem:**
-AWS GovCloud (`*.amazonaws-us-gov.com`) and China (`*.amazonaws.com.cn`) regions use different ECR domain suffixes than the standard commercial regions (`*.amazonaws.com`). The tool needs to correctly identify these and potentially adjust behavior.
-
-**Solution:**
-Auto-detect the AWS partition based on the `--target-registry` URL suffix. This detection can then inform other logic, such as path strategies or authentication endpoints if they differ by partition.
-
-**Implementation:**
-```go
-func detectAWSPartition(registryURL string) string {
-    // Order checks from most specific to least specific is safer
-    if strings.HasSuffix(registryURL, ".amazonaws.com.cn") {
-        return "aws-cn"
-    }
-    if strings.HasSuffix(registryURL, ".amazonaws-us-gov.com") {
-        return "aws-us-gov"
-    }
-    // Assume standard commercial if no other partition matches
-    // Could add more validation here if needed.
-    if strings.Contains(registryURL, ".amazonaws.com") {
-         return "aws"
-    }
-    // Return default or unknown if it doesn't look like an AWS registry
-    return "unknown"
-}
-
-// Example integration into path strategy (if needed):
-// func (s *prefixSourceRegistryStrategy) apply(sourceRegistry, sourcePath, targetRegistry string) string {
-//     partition := detectAWSPartition(targetRegistry)
-//     // ... potentially adjust logic based on partition ...
-// }
-## 10. CI/CD Integration
-
-The tool is designed for easy integration into CI/CD pipelines:
-
-1. **Checkout:** Obtain chart source.
-2. **Generate Override:** Execute `irr` with environment-specific variables for `--target-registry` and potentially `--source-registries`. Output to a known file (e.g., `generated-override.yaml`).
-3. **Deploy:** Use `helm install/upgrade` command, including the `-f generated-override.yaml` flag alongside other values files.
-
-This ensures automated, consistent application of registry redirection rules across environments.
-
-### Example Pipeline Snippet (GitHub Actions)
-
-```yaml
-- name: Generate Image Overrides
-  run: |
-    irr \
-      --chart-path ./my-chart \
-      --target-registry ${{ env.TARGET_REGISTRY }} \
-      --source-registries docker.io,quay.io \
-      --output-file ./overrides.yaml
-
-- name: Deploy with Helm
-  run: |
-    helm upgrade --install my-release ./my-chart \
-      -f ./values.yaml \
-      -f ./overrides.yaml
-```
-
-## 11. Limitations
-
-* **Templated Images:** Images generated via Helm templating (e.g., `{{ .Values.image }}:{{ .Chart.AppVersion }}`) are not detected unless statically defined in values.yaml.
-* **Split Keys:** Images defined across multiple keys (e.g., image.name and image.tag) are not supported.
-* **Non-String Tags:** Tags must be strings; numeric values (e.g., tag: 1.2.3) are not parsed as image tags.
-* **Registry Ports:** Port numbers in source registries (e.g., docker.io:443) are ignored during filtering. The tool matches based on the registry domain only.
-* **Digest Limitations:** While digest-based references are supported, complex digest formats or non-standard digest implementations may not work correctly.
+ECR repository names must adhere to specific naming conventions (lowercase, no underscores, hyphens allowed). Current path strategies might generate invalid paths if source registries use characters disallowed by ECR (e.g., `

@@ -262,3 +262,61 @@ irr override --chart-path ./problematic-chart --strict --dry-run
    - Periodically re-analyze charts after updates
    - Update registry mappings when adding new source registries
    - Check for deprecated registry patterns 
+
+## Streamlined Workflow Example (Helm Plugin)
+
+This demonstrates a common, streamlined workflow using the `helm irr` plugin, assuming the user has already configured registry mappings globally or via `--config`.
+
+### 1. (Optional, One-Time) Configure Registry Mappings
+
+If not already set, configure registry mappings once per environment or when mappings change.
+
+```bash
+# Example using a hypothetical 'helm irr config' (Assuming global config setup)
+# Or manually edit ~/.irr.yaml or provide via --config flag later
+```
+*(Note: Assuming mappings like `docker.io -> harbor.home.arpa/docker`, `quay.io -> harbor.home.arpa/quay`, etc. are configured)*
+
+### 2. Inspect a Release
+
+Inspect an installed release to see used images and verify mappings.
+
+```bash
+helm irr inspect cert-manager -n cert-manager
+# Output example: Detected registries: docker.io, quay.io
+# Output example (if mapping missing): Suggestion: run 'helm irr config --source quay.io --target <your-target>' to add missing mapping.
+```
+
+### 3. Generate Overrides
+
+Generate overrides for the release. The tool uses sensible defaults for output naming and auto-detects registries if `--source-registries` is omitted.
+
+```bash
+helm irr override cert-manager -n cert-manager --target-registry harbor.home.arpa
+# Output: Generated cert-manager-cert-manager-overrides.yaml
+# Output: Validation successful (if validation runs by default)
+```
+
+### 4. Apply the Override with Helm
+
+Apply the generated overrides using standard Helm commands.
+
+```bash
+helm upgrade cert-manager jetstack/cert-manager -n cert-manager -f cert-manager-cert-manager-overrides.yaml
+```
+
+### 5. Batch Processing (Optional)
+
+Generate overrides for multiple releases (example using awk):
+
+```bash
+helm list -A | grep -v NAMESPACE | awk '{print "helm irr override "$1" -n "$2" --target-registry harbor.home.arpa"}' | sh
+```
+
+### Key Points of Streamlined Workflow:
+
+*   Minimal manual editing of YAML.
+*   Scriptable, non-interactive commands.
+*   Sensible defaults reduce flag complexity.
+*   Tool guides on missing configuration.
+*   Validation can be integrated into the override step. 
