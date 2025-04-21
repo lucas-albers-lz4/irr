@@ -960,64 +960,64 @@ func (h *TestHarness) ValidateWithRegistryPrefix(targetRegistry string) {
 	h.ValidateHelmTemplate([]string{targetRegistry}, "")
 }
 
-// CreateRegistryMappingsFile creates a registry mappings file with the specified content.
-func (h *TestHarness) CreateRegistryMappingsFile(mappings string) string {
-	// Create a temp file for the mappings
-	mappingFile := filepath.Join(h.tempDir, "registry-mappings.yaml")
+// CreateRegistryMappingsFile creates a registry mappings file with the provided content
+// Returns the path to the mappings file
+func (h *TestHarness) CreateRegistryMappingsFile(mappingType string) string {
+	var content string
 
-	// Handle empty content case
-	if strings.TrimSpace(mappings) == "" {
-		h.logger.Printf("Creating empty registry mappings file")
-		err := os.WriteFile(mappingFile, []byte(""), fileutil.ReadWriteUserPermission)
-		if err != nil {
-			h.t.Fatalf("Failed to create empty registry mappings file: %v", err)
-		}
-		return mappingFile
-	}
-
-	// Check if the content is already in a structured format
-	isStructured := strings.Contains(mappings, "version:") &&
-		(strings.Contains(mappings, "mappings:") || strings.Contains(mappings, "registries:"))
-
-	// Check if content is in legacy key-value format (contains colon but not structured format markers)
-	isLegacyFormat := !isStructured && strings.Contains(mappings, ":")
-
-	switch {
-	case isStructured:
-		// Write structured content as is
-		h.logger.Printf("Writing structured format registry mappings file")
-		err := os.WriteFile(mappingFile, []byte(mappings), fileutil.ReadWriteUserPermission)
-		if err != nil {
-			h.t.Fatalf("Failed to create registry mappings file: %v", err)
-		}
-	case isLegacyFormat:
-		// Handle legacy key-value format - write as is without conversion
-		h.logger.Printf("Writing legacy format registry mappings file")
-		err := os.WriteFile(mappingFile, []byte(mappings), fileutil.ReadWriteUserPermission)
-		if err != nil {
-			h.t.Fatalf("Failed to create registry mappings file: %v", err)
-		}
+	switch mappingType {
+	case "structured":
+		content = `version: "1.0"
+registries:
+  mappings:
+  - source: docker.io
+    target: registry.example.com/dockerio
+    enabled: true
+    description: "Docker Hub mapping"
+  - source: quay.io
+    target: registry.example.com/quay
+    enabled: true
+    description: "Quay.io mapping"
+  defaultTarget: registry.example.com/default
+  strictMode: false
+compatibility:
+  ignoreEmptyFields: true
+`
+	case "legacy":
+		content = `docker.io: registry.example.com/docker
+quay.io: registry.example.com/quay
+`
+	case "empty":
+		content = ``
+	case "invalid_structured_format_-_missing_required_fields":
+		content = `version: "1.0"
+registries:
+  # Missing mappings section
+  defaultTarget: registry.example.com/default
+  strictMode: false
+`
 	default:
-		// Not recognized as structured or legacy format
-		h.logger.Printf("Writing unrecognized format registry mappings file")
-		err := os.WriteFile(mappingFile, []byte(mappings), fileutil.ReadWriteUserPermission)
-		if err != nil {
-			h.t.Fatalf("Failed to create registry mappings file: %v", err)
+		// If content is provided directly, use it
+		if mappingType != "" {
+			content = mappingType
+		} else {
+			// Default to legacy format
+			content = `docker.io: registry.example.com/docker
+quay.io: registry.example.com/quay
+`
 		}
 	}
 
-	// Verify the file was written correctly by reading it back
-	fileContent, err := os.ReadFile(mappingFile) // #nosec G304 - test file created in this method
+	h.logger.Printf("Writing %s format registry mappings file", mappingType)
+	h.logger.Printf("Registry mappings file content verification:\n%s", content)
+
+	mappingsPath := filepath.Join(h.tempDir, "registry-mappings.yaml")
+	err := os.WriteFile(mappingsPath, []byte(content), fileutil.ReadWriteUserPermission)
 	if err != nil {
-		h.logger.Printf("Warning: Could not read back registry mappings file: %v", err)
-	} else {
-		h.logger.Printf("Registry mappings file content verification:\n%s", string(fileContent))
-		if len(fileContent) == 0 && mappings != "" {
-			h.logger.Printf("Warning: Registry mappings file is empty after writing!")
-		}
+		h.t.Fatalf("Failed to write registry mappings file: %v", err)
 	}
 
-	return mappingFile
+	return mappingsPath
 }
 
 // GeneratedOverridesFile returns the path to the generated overrides file.
