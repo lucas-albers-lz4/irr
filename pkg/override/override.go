@@ -71,7 +71,7 @@ func GenerateOverrides(ref *image.Reference, path []string) (map[string]interfac
 	}
 
 	// Set the value at the specified path in the overrides map
-	err := SetValueAtPath(overrides, path, valueToSet, false)
+	err := SetValueAtPath(overrides, path, valueToSet)
 	if err != nil {
 		return nil, fmt.Errorf("failed to set value at path: %w", err)
 	}

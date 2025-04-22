@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/lalbers/irr/pkg/log"
 )
 
 //nolint:unused // Kept for potential future uses
@@ -40,8 +42,7 @@ func DeepCopy(src interface{}) interface{} {
 // SetValueAtPath sets a value at a given path in a nested map structure.
 // The path is specified as a slice of strings, where each element represents
 // a key in the nested structure.
-// The 'debug' parameter controls verbose logging.
-func SetValueAtPath(data map[string]interface{}, path []string, value interface{}, debug bool) error {
+func SetValueAtPath(data map[string]interface{}, path []string, value interface{}) error {
 	if data == nil {
 		return ErrNilDataMap
 	}
@@ -125,12 +126,14 @@ func SetValueAtPath(data map[string]interface{}, path []string, value interface{
 		return WrapPathParsing(lastPart, err)
 	}
 
-	// Debugging output controlled by flag
-	if debug {
-		fmt.Printf("[DEBUG irr SPATH] Target Map (m) before setting key '%s': %#v\n", key, m)
-		fmt.Printf("[DEBUG irr SPATH] Path: %v, Key: %s, IsArray: %v, ArrayIndex: %d\n", path, key, isArrayAccess, arrayIndex)
-		fmt.Printf("[DEBUG irr SPATH] Value to set: %#v\n", value)
+	if m == nil {
+		m = make(map[string]interface{})
 	}
+
+	// Debug logging before setting the value
+	log.Debug(fmt.Sprintf("[DEBUG irr SPATH] Target Map (m) before setting key '%s': %#v", key, m))
+	log.Debug(fmt.Sprintf("[DEBUG irr SPATH] Path: %v, Key: %s, IsArray: %v, ArrayIndex: %d", path, key, isArrayAccess, arrayIndex))
+	log.Debug(fmt.Sprintf("[DEBUG irr SPATH] Value to set: %#v", value))
 
 	if isArrayAccess {
 		// First get or create the array
@@ -176,15 +179,11 @@ func SetValueAtPath(data map[string]interface{}, path []string, value interface{
 		}
 	}
 
-	// Debugging output controlled by flag
-	if debug {
-		fmt.Printf("[DEBUG irr SPATH] Target Map (m) AFTER setting key '%s': %#v\n", key, m)
-	}
+	// Debug logging after setting the value
+	log.Debug(fmt.Sprintf("[DEBUG irr SPATH] Target Map (m) AFTER setting key '%s': %#v", key, m))
 
-	// Debugging output controlled by flag
-	if debug {
-		fmt.Printf("[DEBUG irr SPATH] FINAL Target Map (m) state for key '%s': %#v\n", key, m)
-	}
+	// Debug logging for the final state of the target map for the current key
+	log.Debug(fmt.Sprintf("[DEBUG irr SPATH] FINAL Target Map (m) state for key '%s': %#v", key, m))
 
 	return nil
 }

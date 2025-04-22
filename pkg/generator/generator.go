@@ -98,7 +98,7 @@ func (g *Generator) Generate(_ string, values map[string]interface{}) (map[strin
 		}
 
 		// Set the override value in the generated map
-		err = override.SetValueAtPath(generatedOverrides, detected.Path, overrideValue, false)
+		err = override.SetValueAtPath(generatedOverrides, detected.Path, overrideValue)
 		if err != nil {
 			// Handle error: log, skip, or return error
 			log.Debug("Error setting override at path", detected.Path, "error", err)
