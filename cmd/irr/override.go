@@ -117,67 +117,101 @@ func newOverrideCmd() *cobra.Command {
 			"- When using Harbor as a pull-through cache, ensure your target paths match your Harbor project configuration.",
 		Args: cobra.MaximumNArgs(1),
 		PreRunE: func(cmd *cobra.Command, args []string) error {
+			// --- DEBUGGING ---
+			log.Debugf("Override PreRunE: START")
+			log.Debugf("Override PreRunE: Args: %v (len=%d)", args, len(args))
+			detectedPluginMode := isRunningAsHelmPlugin() // Call detection function directly
+			log.Debugf("Override PreRunE: isRunningAsHelmPlugin(): %v", detectedPluginMode)
+			// --- END DEBUGGING ---
+
 			// Check if we're in plugin mode with a release name
-			hasReleaseName := len(args) > 0 && isHelmPlugin
-			inTestMode := isTestMode && isHelmPlugin
-
-			// Only check for required flags if not in plugin mode with a release name
-			// AND not in test mode
-			if !hasReleaseName && !inTestMode {
-				// Check required flags
-				var missingFlags []string
-
-				chartPath, err := cmd.Flags().GetString("chart-path")
-				if err != nil || chartPath == "" {
-					missingFlags = append(missingFlags, "chart-path")
+			// Use the directly detected plugin mode status instead of the potentially stale global variable
+			hasReleaseName := len(args) > 0 && detectedPluginMode
+			// Get chart path flag value early to check if it was explicitly provided
+			chartPath, err := cmd.Flags().GetString("chart-path")
+			if err != nil {
+				return &exitcodes.ExitCodeError{
+					Code: exitcodes.ExitInputConfigurationError,
+					Err:  fmt.Errorf("failed to get chart-path flag: %w", err),
 				}
+			}
+			chartPathProvided := chartPath != ""
 
-				targetRegistry, err := cmd.Flags().GetString("target-registry")
-				if err != nil || targetRegistry == "" {
+			// --- DEBUGGING ---
+			log.Debugf("Override PreRunE: hasReleaseName: %v", hasReleaseName)
+			log.Debugf("Override PreRunE: chartPath: %q", chartPath)
+			log.Debugf("Override PreRunE: chartPathProvided: %v", chartPathProvided)
+			// --- END DEBUGGING ---
+
+			// Get required flags for later checks
+			targetRegistry, err := cmd.Flags().GetString("target-registry")
+			if err != nil {
+				return &exitcodes.ExitCodeError{
+					Code: exitcodes.ExitInputConfigurationError,
+					Err:  fmt.Errorf("failed to get target-registry flag: %w", err),
+				}
+			}
+			sourceRegistries, err := cmd.Flags().GetStringSlice("source-registries")
+			if err != nil {
+				return &exitcodes.ExitCodeError{
+					Code: exitcodes.ExitInputConfigurationError,
+					Err:  fmt.Errorf("failed to get source-registries flag: %w", err),
+				}
+			}
+			configPath, err := cmd.Flags().GetString("config")
+			if err != nil {
+				return &exitcodes.ExitCodeError{
+					Code: exitcodes.ExitInputConfigurationError,
+					Err:  fmt.Errorf("failed to get config flag: %w", err),
+				}
+			}
+
+			var missingFlags []string
+
+			// Chart source check:
+			// Require chart-path ONLY if no release name is given positionally in plugin mode,
+			// AND chart-path flag was not explicitly provided.
+			if !hasReleaseName && !chartPathProvided {
+				missingFlags = append(missingFlags, "chart-path")
+			}
+
+			// Target registry is always required
+			if targetRegistry == "" {
+				// Special case: if config file is provided, target-registry *might* be optional later,
+				// but for PreRunE simplicity, we require it unless the user explicitly provides a config.
+				// The main RunE logic should handle the case where mappings provide the target.
+				// Let's keep the original check: require target unless config is specified AND target IS specified.
+				// Simplified: Always require target for PreRun check clarity. RunE can be smarter.
+				// Re-evaluating: The original logic checks if config path is provided AND target is empty. Keep that.
+				if configPath == "" || (configPath != "" && targetRegistry == "") {
+					// Correction: Simpler check - target registry is always required in PreRun
 					missingFlags = append(missingFlags, "target-registry")
 				}
+			}
 
-				sourceRegistries, err := cmd.Flags().GetStringSlice("source-registries")
-				if err != nil || len(sourceRegistries) == 0 {
+			// Source registries are always required
+			if len(sourceRegistries) == 0 {
+				// Allow skipping source-registries if a config file is provided, as it might contain mappings.
+				// RunE will handle validation if mappings don't cover sources.
+				if configPath == "" {
 					missingFlags = append(missingFlags, "source-registries")
 				}
+			}
 
-				// Ensure --target-registry is provided even when --config is used
-				configPath, configErr := cmd.Flags().GetString("config")
-				if configErr != nil {
-					return &exitcodes.ExitCodeError{
-						Code: exitcodes.ExitInputConfigurationError,
-						Err:  fmt.Errorf("failed to get config flag: %w", configErr),
+			if len(missingFlags) > 0 {
+				// Remove duplicates just in case logic above adds the same flag twice
+				uniqueFlags := make(map[string]bool)
+				finalMissing := []string{}
+				for _, flag := range missingFlags {
+					if !uniqueFlags[flag] {
+						uniqueFlags[flag] = true
+						finalMissing = append(finalMissing, flag)
 					}
 				}
-				if configPath != "" && (err != nil || targetRegistry == "") {
-					missingFlags = append(missingFlags, "target-registry")
-				}
-
-				if len(missingFlags) > 0 {
-					sort.Strings(missingFlags) // Sort for consistent error message
-					return &exitcodes.ExitCodeError{
-						Code: exitcodes.ExitMissingRequiredFlag,
-						Err:  fmt.Errorf("required flag(s) \"%s\" not set", strings.Join(missingFlags, "\", \"")),
-					}
-				}
-			} else {
-				// Even in plugin mode, always require target-registry
-				targetRegistry, err := cmd.Flags().GetString("target-registry")
-				if err != nil || targetRegistry == "" {
-					return &exitcodes.ExitCodeError{
-						Code: exitcodes.ExitMissingRequiredFlag,
-						Err:  fmt.Errorf("required flag(s) \"target-registry\" not set"),
-					}
-				}
-
-				// Always require source-registries
-				sourceRegistries, err := cmd.Flags().GetStringSlice("source-registries")
-				if err != nil || len(sourceRegistries) == 0 {
-					return &exitcodes.ExitCodeError{
-						Code: exitcodes.ExitMissingRequiredFlag,
-						Err:  fmt.Errorf("required flag(s) \"source-registries\" not set"),
-					}
+				sort.Strings(finalMissing) // Sort for consistent error message
+				return &exitcodes.ExitCodeError{
+					Code: exitcodes.ExitMissingRequiredFlag,
+					Err:  fmt.Errorf("required flag(s) \"%s\" not set", strings.Join(finalMissing, "\", \"")),
 				}
 			}
 
@@ -340,7 +374,7 @@ func getOutputFlags(cmd *cobra.Command, releaseName string) (outputFile string, 
 	}
 
 	// Set default output file in plugin mode with release name
-	if outputFile == "" && isHelmPlugin && releaseName != "" {
+	if outputFile == "" && isRunningAsHelmPlugin() && releaseName != "" {
 		outputFile = fmt.Sprintf("%s-overrides.yaml", releaseName)
 		debug.Printf("No output file specified in plugin mode, using default based on release name: %s", outputFile)
 	}
@@ -774,6 +808,147 @@ func loadChart(cs *ChartSource) (*helmchart.Chart, error) {
 	return c, nil
 }
 
+// runOverridePluginMode handles the logic when override is run in plugin mode.
+func runOverridePluginMode(cmd *cobra.Command, releaseName, namespace, outputFile string, dryRun bool) error {
+	log.Debugf("Plugin mode detected with release name: %s", releaseName)
+	var config GeneratorConfig
+	// Gather required flags directly, skipping chart-path validation
+	targetRegistry, err := getStringFlag(cmd, "target-registry")
+	if err != nil {
+		return err
+	}
+	if targetRegistry == "" {
+		return &exitcodes.ExitCodeError{Code: exitcodes.ExitMissingRequiredFlag, Err: errors.New("required flag \"target-registry\" not set")}
+	}
+
+	sourceRegistries, err := getStringSliceFlag(cmd, "source-registries")
+	if err != nil {
+		return err
+	}
+	// Check source-registries requirement, allowing skip if config file is present
+	configFile, err := getStringFlag(cmd, "config")
+	if err != nil {
+		return err
+	}
+	if len(sourceRegistries) == 0 && configFile == "" {
+		return &exitcodes.ExitCodeError{Code: exitcodes.ExitMissingRequiredFlag, Err: errors.New("required flag \"source-registries\" not set (or provide --config)")}
+	}
+
+	config.TargetRegistry = targetRegistry
+	config.SourceRegistries = sourceRegistries
+	config.ChartPath = "" // Explicitly set ChartPath to empty for plugin mode config
+
+	// Gather optional flags for plugin mode
+	excludeRegistries, err := getStringSliceFlag(cmd, "exclude-registries")
+	if err != nil {
+		return err
+	}
+	config.ExcludeRegistries = excludeRegistries
+
+	strictMode, err := getBoolFlag(cmd, "strict")
+	if err != nil {
+		return err
+	}
+	config.StrictMode = strictMode
+
+	includePatterns, excludePatterns, err := getAnalysisControlFlags(cmd)
+	if err != nil {
+		return err
+	}
+	config.IncludePatterns = includePatterns
+	config.ExcludePatterns = excludePatterns
+
+	disableRules, err := getBoolFlag(cmd, "no-rules")
+	if err != nil {
+		return err
+	}
+	config.RulesEnabled = !disableRules
+
+	// --- Common Config Setup (after mode-specific gathering) ---
+	if err := setupPathStrategy(cmd, &config); err != nil {
+		return err
+	}
+	if err := loadRegistryMappings(cmd, &config); err != nil {
+		return err
+	}
+	logConfigMode(&config)
+	if err := validateUnmappableRegistries(&config); err != nil {
+		return err
+	}
+	// --- End Common Config Setup ---
+
+	// Call plugin-specific handler
+	return handleHelmPluginOverride(cmd, releaseName, namespace, &config, "", outputFile, dryRun)
+}
+
+// runOverrideStandaloneMode handles the logic when override is run in standalone mode.
+func runOverrideStandaloneMode(cmd *cobra.Command, outputFile string, dryRun bool) error {
+	log.Debugf("Standalone mode detected (no release name provided)")
+	// Call original setup which requires chart-path
+	config, err := setupGeneratorConfig(cmd, "") // releaseName is "" here
+	if err != nil {
+		return err // Config setup failed
+	}
+
+	// Auto-detect chart path if not provided
+	if config.ChartPath == "" { // Check config.ChartPath which setupGeneratorConfig sets
+		log.Infof("No chart path provided, attempting to detect chart...")
+		detectedPath, detectErr := detectChartInCurrentDirectory(AppFs, ".")
+		if detectErr != nil {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitChartLoadFailed,
+				Err:  fmt.Errorf("chart path not provided and could not auto-detect chart: %w", detectErr),
+			}
+		}
+		config.ChartPath = detectedPath // Update config
+		log.Infof("Using detected chart path: %s", detectedPath)
+	}
+
+	// --- Common Config Setup (after mode-specific gathering) ---
+	if err := setupPathStrategy(cmd, &config); err != nil {
+		return err
+	}
+	if err := loadRegistryMappings(cmd, &config); err != nil {
+		return err
+	}
+	logConfigMode(&config)
+	if err := validateUnmappableRegistries(&config); err != nil {
+		return err
+	}
+	// --- End Common Config Setup ---
+
+	chartSource := &ChartSource{
+		SourceType: ChartSourceTypeChart,
+		ChartPath:  config.ChartPath,
+	}
+
+	// Execute the generator
+	yamlBytes, err := createAndExecuteGenerator(chartSource, &config)
+	if err != nil {
+		return handleGenerateError(err) // Handles exit codes
+	}
+
+	// Validate the generated overrides
+	validateOverrides, valErr := getBoolFlag(cmd, "validate")
+	if valErr != nil {
+		log.Warnf("Failed to get validate flag, defaulting to true: %v", valErr)
+		validateOverrides = true
+	}
+	noValidate, noValErr := getBoolFlag(cmd, "no-validate")
+	if noValErr != nil {
+		log.Warnf("Failed to get no-validate flag, defaulting to false: %v", noValErr)
+		noValidate = false
+	}
+	if validateOverrides && !noValidate {
+		if err := validateChart(cmd, yamlBytes, &config, true, false, "", ""); err != nil {
+			return err
+		}
+	}
+
+	// Output the results
+	return outputOverrides(cmd, yamlBytes, outputFile, dryRun)
+}
+
 // runOverride is the main execution function for the override command
 func runOverride(cmd *cobra.Command, args []string) error {
 	// Determine if running in test mode
@@ -794,102 +969,19 @@ func runOverride(cmd *cobra.Command, args []string) error {
 		return handleTestModeOverride(cmd, releaseName)
 	}
 
-	// Get configuration
-	config, err := setupGeneratorConfig(cmd, releaseName)
-	if err != nil {
-		// Config setup failed, return the error directly
-		return err
-	}
-	// --- The following operations depend on a valid config object ---
-
-	// Handle path strategy setup (currently fixed)
-	if err := setupPathStrategy(cmd, &config); err != nil {
-		return err
-	}
-
-	// Load registry mappings if applicable
-	if err := loadRegistryMappings(cmd, &config); err != nil {
-		return err
-	}
-
-	// Log config mode (standalone vs. config file)
-	logConfigMode(&config)
-
-	// Validate unmappable registries in strict mode
-	if err := validateUnmappableRegistries(&config); err != nil {
-		return err
-	}
-
-	// --- End of config-dependent operations ---
-
-	// Get output flags
+	// Get output flags (needed regardless of mode)
 	outputFile, dryRun, err := getOutputFlags(cmd, releaseName)
 	if err != nil {
 		return err
 	}
 
-	// Handle Helm plugin mode
-	if releaseName != "" {
-		return handleHelmPluginOverride(cmd, releaseName, namespace, &config, "", outputFile, dryRun)
+	// Handle Helm plugin mode vs. Standalone mode
+	if releaseName != "" { // Plugin Mode
+		return runOverridePluginMode(cmd, releaseName, namespace, outputFile, dryRun)
 	}
 
-	// Standalone mode (no release name)
-	chartSource := &ChartSource{
-		SourceType: ChartSourceTypeChart,
-		ChartPath:  config.ChartPath,
-	}
-
-	// Auto-detect chart path if not provided
-	// Only attempt auto-detect if chartPath is empty AND releaseName is also empty
-	if chartSource.ChartPath == "" && releaseName == "" {
-		log.Infof("No chart path provided, attempting to detect chart...")
-		// Pass "." as the starting directory for detection
-		detectedPath, detectErr := detectChartInCurrentDirectory(AppFs, ".") // Use AppFs and start from current dir
-		if detectErr != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitChartLoadFailed,
-				Err:  fmt.Errorf("chart path not provided and could not auto-detect chart: %w", detectErr),
-			}
-		}
-		chartSource.ChartPath = detectedPath
-		config.ChartPath = detectedPath                      // Update config as well
-		chartSource.SourceType = ChartSourceTypeAutoDetected // Use correct field name and constant
-		log.Infof("Using detected chart path: %s", detectedPath)
-	}
-
-	// Get analysis patterns
-	includePatterns, excludePatterns, err := getAnalysisControlFlags(cmd)
-	if err != nil {
-		return err
-	}
-	config.IncludePatterns = includePatterns
-	config.ExcludePatterns = excludePatterns
-
-	// Execute the generator
-	yamlBytes, err := createAndExecuteGenerator(chartSource, &config)
-	if err != nil {
-		return handleGenerateError(err) // Handles exit codes
-	}
-
-	// Validate the generated overrides
-	validateOverrides, valErr := getBoolFlag(cmd, "validate")
-	if valErr != nil {
-		log.Warnf("Failed to get validate flag, defaulting to true: %v", valErr)
-		validateOverrides = true // Default to validating if flag access fails
-	}
-	noValidate, noValErr := getBoolFlag(cmd, "no-validate")
-	if noValErr != nil {
-		log.Warnf("Failed to get no-validate flag, defaulting to false: %v", noValErr)
-		noValidate = false // Default to not skipping validation if flag access fails
-	}
-	if validateOverrides && !noValidate {
-		if err := validateChart(cmd, yamlBytes, &config, true, false, "", ""); err != nil {
-			return err // validateChart returns ExitCodeError
-		}
-	}
-
-	// Output the results
-	return outputOverrides(cmd, yamlBytes, outputFile, dryRun)
+	// Standalone Mode
+	return runOverrideStandaloneMode(cmd, outputFile, dryRun)
 }
 
 // getReleaseNameAndNamespace gets the release name and namespace from the command
@@ -1080,7 +1172,7 @@ func handleTestModeOverride(cmd *cobra.Command, releaseName string) error {
 		return err
 	}
 
-	releaseNameProvided := releaseName != "" && isHelmPlugin
+	releaseNameProvided := releaseName != "" && isRunningAsHelmPlugin()
 
 	// Log what we're doing
 	if releaseNameProvided {
@@ -1111,14 +1203,14 @@ func handleTestModeOverride(cmd *cobra.Command, releaseName string) error {
 		yamlContent += fmt.Sprintf("release: %s\n", releaseName)
 
 		// Add namespace information for tests
-		namespace, err := cmd.Flags().GetString("namespace")
-		if err == nil {
-			// If no namespace specified, use "default"
-			if namespace == "" {
-				namespace = validateTestNamespace
-			}
-			yamlContent += fmt.Sprintf("namespace: %s\n", namespace)
+		namespace, err := getStringFlag(cmd, "namespace")
+		if err != nil {
+			return err
 		}
+		if namespace == "" {
+			namespace = validateTestNamespace
+		}
+		yamlContent += fmt.Sprintf("namespace: %s\n", namespace)
 	}
 
 	targetRegistry, err := cmd.Flags().GetString("target-registry")
