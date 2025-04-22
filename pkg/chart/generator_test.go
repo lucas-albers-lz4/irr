@@ -554,7 +554,7 @@ func TestGenerator_Generate_ImagePatternError(t *testing.T) {
 	mockStrategy := &MockPathStrategy{}
 
 	// Capture logs using CaptureJSONLogs
-	jsonLogs, captureErr := testutil.CaptureJSONLogs(log.LevelWarn, func() {
+	_, jsonLogs, captureErr := testutil.CaptureJSONLogs(log.LevelWarn, func() {
 		g := NewGenerator(
 			"test-chart",
 			"target.registry.com",
@@ -604,14 +604,14 @@ func TestGenerator_Generate_ImagePatternError(t *testing.T) {
 		// Let's assert the fields we are most confident about.
 		"badImage": "invalid image format: invalid image reference",
 	}
-	testutil.AssertLogContainsJSON(t, jsonLogs, expectedLogFields, "Expected warning log for pattern processing error")
+	testutil.AssertLogContainsJSON(t, jsonLogs, expectedLogFields)
 
 	// Check for the final aggregated error message (if applicable, might be logged at WARN or ERROR)
 	finalErrorLogFields := map[string]interface{}{
 		"level": "ERROR", // Based on previous findings, it seems aggregated errors log at ERROR level
 		"msg":   "Combined error details: %v",
 	}
-	testutil.AssertLogContainsJSON(t, jsonLogs, finalErrorLogFields, "Expected final aggregated error log")
+	testutil.AssertLogContainsJSON(t, jsonLogs, finalErrorLogFields)
 
 	// Optional: Verify the content of the !BADKEY if needed more specifically
 }
@@ -632,7 +632,7 @@ func TestGenerator_Generate_OverrideError(t *testing.T) {
 	}
 
 	// Capture logs using CaptureJSONLogs
-	jsonLogs, captureErr := testutil.CaptureJSONLogs(log.LevelWarn, func() { // Capture WARN level initially
+	_, jsonLogs, captureErr := testutil.CaptureJSONLogs(log.LevelWarn, func() { // Capture WARN level initially
 		g := NewGenerator(
 			"test-chart",
 			"target.registry.com",
@@ -678,7 +678,7 @@ func TestGenerator_Generate_OverrideError(t *testing.T) {
 		"source.registry.com/app/image2:v2": "path generation failed for 'source.registry.com/app/image2:v2': assert.AnError general error for testing",
 		// Error details are embedded in the value above, not a separate key here
 	}
-	testutil.AssertLogContainsJSON(t, jsonLogs, expectedPathGenErrLog, "Expected warning log for path generation error")
+	testutil.AssertLogContainsJSON(t, jsonLogs, expectedPathGenErrLog)
 
 	// Check for the final aggregated error message (likely at WARN or ERROR level, depends on implementation)
 	// Assuming it logs at WARN based on non-strict mode
@@ -686,7 +686,7 @@ func TestGenerator_Generate_OverrideError(t *testing.T) {
 		"level": "WARN",
 		"msg":   "Generation completed with %d errors (non-strict mode). See logs for details.",
 	}
-	testutil.AssertLogContainsJSON(t, jsonLogs, finalWarnLogFields, "Expected final non-strict mode warning log")
+	testutil.AssertLogContainsJSON(t, jsonLogs, finalWarnLogFields)
 
 	// Optional: Check the count in the final message if needed
 	// Optional: Verify the content of !BADKEY in the final message if implemented this way
