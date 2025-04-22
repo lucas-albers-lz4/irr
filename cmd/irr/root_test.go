@@ -11,6 +11,7 @@ import (
 	"github.com/lalbers/irr/pkg/debug"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRootCommand_NoSubcommand(t *testing.T) {
@@ -83,9 +84,7 @@ func TestDebugFlagAndEnvVarInteraction(t *testing.T) {
 		t.Run("NoFlag_DebugDisabled", func(t *testing.T) {
 			// Unset environment variable to avoid interference
 			err := os.Unsetenv("IRR_DEBUG")
-			if err != nil {
-				t.Fatalf("Failed to unset IRR_DEBUG environment variable: %v", err)
-			}
+			require.NoError(t, err)
 
 			// Reset debug state
 			debug.Enabled = false
@@ -106,9 +105,7 @@ func TestDebugFlagAndEnvVarInteraction(t *testing.T) {
 		t.Run("WithFlag_DebugEnabled", func(t *testing.T) {
 			// Unset environment variable to avoid interference
 			err := os.Unsetenv("IRR_DEBUG")
-			if err != nil {
-				t.Fatalf("Failed to unset IRR_DEBUG environment variable: %v", err)
-			}
+			require.NoError(t, err)
 
 			// Reset debug state
 			debug.Enabled = false
@@ -129,9 +126,7 @@ func TestDebugFlagAndEnvVarInteraction(t *testing.T) {
 		t.Run("FlagOverridesEnv", func(t *testing.T) {
 			// Set environment variable to disabled
 			err := os.Setenv("IRR_DEBUG", "false")
-			if err != nil {
-				t.Fatalf("Failed to set IRR_DEBUG environment variable: %v", err)
-			}
+			require.NoError(t, err)
 
 			// Reset debug state
 			debug.Enabled = false
@@ -187,9 +182,7 @@ func TestDebugFlagAndEnvVarInteraction(t *testing.T) {
 		t.Run("EnvVar_True", func(t *testing.T) {
 			// Setup: Set env var to true
 			err := os.Setenv("IRR_DEBUG", "true")
-			if err != nil {
-				t.Fatalf("Failed to set IRR_DEBUG environment variable: %v", err)
-			}
+			require.NoError(t, err)
 
 			// Reset debug state to ensure clean test
 			debug.Enabled = false
@@ -205,9 +198,7 @@ func TestDebugFlagAndEnvVarInteraction(t *testing.T) {
 		t.Run("EnvVar_False", func(t *testing.T) {
 			// Setup: Set env var to false
 			err := os.Setenv("IRR_DEBUG", "false")
-			if err != nil {
-				t.Fatalf("Failed to set IRR_DEBUG environment variable: %v", err)
-			}
+			require.NoError(t, err)
 
 			// Set debug state to true to verify it gets disabled
 			debug.Enabled = true
@@ -223,9 +214,7 @@ func TestDebugFlagAndEnvVarInteraction(t *testing.T) {
 		t.Run("EnvVar_Invalid", func(t *testing.T) {
 			// Setup: Set env var to invalid value
 			err := os.Setenv("IRR_DEBUG", "notabool")
-			if err != nil {
-				t.Fatalf("Failed to set IRR_DEBUG environment variable: %v", err)
-			}
+			require.NoError(t, err)
 
 			// Set debug state to true to verify it gets disabled
 			debug.Enabled = true
@@ -247,9 +236,7 @@ func TestDebugFlagAndEnvVarInteraction(t *testing.T) {
 		t.Run("EnvVar_Empty", func(t *testing.T) {
 			// Setup: Set env var to empty string
 			err := os.Setenv("IRR_DEBUG", "")
-			if err != nil {
-				t.Fatalf("Failed to set IRR_DEBUG environment variable: %v", err)
-			}
+			require.NoError(t, err)
 
 			// Set debug state to true to verify it gets disabled
 			debug.Enabled = true
@@ -268,9 +255,7 @@ func TestDebugFlagAndEnvVarInteraction(t *testing.T) {
 		t.Run("ForceEnable_OverridesEnvVar", func(t *testing.T) {
 			// Setup: Set env var to false
 			err := os.Setenv("IRR_DEBUG", "false")
-			if err != nil {
-				t.Fatalf("Failed to set IRR_DEBUG environment variable: %v", err)
-			}
+			require.NoError(t, err)
 
 			// Reset debug state to ensure clean test
 			debug.Enabled = false
@@ -286,14 +271,15 @@ func TestDebugFlagAndEnvVarInteraction(t *testing.T) {
 }
 
 func TestExecutionModeDetection(t *testing.T) {
-	// Save original isHelmPlugin value and restore it after the test
-	originalIsHelmPlugin := isHelmPlugin
-	defer func() {
-		isHelmPlugin = originalIsHelmPlugin
-	}()
-
 	// Test case 1: Plugin mode
-	isHelmPlugin = true
+	err := os.Setenv("HELM_PLUGIN_NAME", "irr")
+	require.NoError(t, err)
+	defer func() {
+		err := os.Unsetenv("HELM_PLUGIN_NAME")
+		if err != nil {
+			t.Errorf("Error unsetting HELM_PLUGIN_NAME: %v", err)
+		}
+	}()
 	cmd := getRootCmd()
 
 	// Call initHelmPlugin directly to ensure flags are properly set up
@@ -307,7 +293,8 @@ func TestExecutionModeDetection(t *testing.T) {
 	assert.NotNil(t, namespaceFlag, "namespace flag should be available in plugin mode")
 
 	// Test case 2: Standalone mode
-	isHelmPlugin = false
+	err = os.Unsetenv("HELM_PLUGIN_NAME")
+	require.NoError(t, err)
 	cmd = getRootCmd()
 
 	// Call removeHelmPluginFlags to hide the flags in standalone mode
@@ -324,14 +311,15 @@ func TestExecutionModeDetection(t *testing.T) {
 }
 
 func TestSubcommandRouting(t *testing.T) {
-	// Save original isHelmPlugin value and restore it after the test
-	originalIsHelmPlugin := isHelmPlugin
-	defer func() {
-		isHelmPlugin = originalIsHelmPlugin
-	}()
-
 	// Test that all expected subcommands are registered regardless of mode
-	isHelmPlugin = true
+	err := os.Setenv("HELM_PLUGIN_NAME", "irr")
+	require.NoError(t, err)
+	defer func() {
+		err := os.Unsetenv("HELM_PLUGIN_NAME")
+		if err != nil {
+			t.Errorf("Error unsetting HELM_PLUGIN_NAME: %v", err)
+		}
+	}()
 	cmd := getRootCmd()
 
 	// Check if all expected subcommands are available
@@ -349,7 +337,8 @@ func TestSubcommandRouting(t *testing.T) {
 	assert.True(t, hasCommand(cmd, "validate"), "validate command should be available")
 
 	// Same checks in standalone mode
-	isHelmPlugin = false
+	err = os.Unsetenv("HELM_PLUGIN_NAME")
+	require.NoError(t, err)
 	cmd = getRootCmd()
 
 	assert.True(t, hasCommand(cmd, "override"), "override command should be available")
