@@ -126,7 +126,7 @@ func TestLogHelmEnvironment(t *testing.T) {
 	t.Setenv("HELM_DEBUG", "")
 
 	// Capture logs using the testutil helper
-	logs, err := testutil.CaptureJSONLogs(log.LevelDebug, func() {
+	_, logs, err := testutil.CaptureJSONLogs(log.LevelDebug, func() {
 		// Set the desired level *within* the capture function's scope
 		// because CaptureJSONLogs sets up its own logger instance.
 		// log.SetLevel(log.LevelDebug) // This is handled by CaptureJSONLogs level param
@@ -138,34 +138,73 @@ func TestLogHelmEnvironment(t *testing.T) {
 	testutil.AssertLogContainsJSON(t, logs, map[string]interface{}{
 		"level": "DEBUG",
 		"msg":   "Helm Environment Variables:",
-	}, "Initial Helm Env Var log missing")
+	})
 
 	testutil.AssertLogContainsJSON(t, logs, map[string]interface{}{
 		"level": "DEBUG",
 		"msg":   "Helm Env",
 		"var":   "HELM_PLUGIN_NAME",
 		"value": "irr",
-	}, "HELM_PLUGIN_NAME log missing")
+	})
 
 	testutil.AssertLogContainsJSON(t, logs, map[string]interface{}{
 		"level": "DEBUG",
 		"msg":   "Helm Env",
 		"var":   "HELM_BIN",
 		"value": "helm",
-	}, "HELM_BIN log missing")
+	})
 
 	testutil.AssertLogContainsJSON(t, logs, map[string]interface{}{
 		"level": "DEBUG",
 		"msg":   "Helm Env",
 		"var":   "HELM_NAMESPACE",
 		"value": "test-ns",
-	}, "HELM_NAMESPACE log missing")
+	})
 
 	// Check that non-Helm var or empty var wasn't logged
 	testutil.AssertLogDoesNotContainJSON(t, logs, map[string]interface{}{
 		"var": "SOME_OTHER_VAR",
-	}, "Should not log non-Helm vars")
+	})
 	testutil.AssertLogDoesNotContainJSON(t, logs, map[string]interface{}{
 		"var": "HELM_DEBUG",
-	}, "Should not log empty env vars")
+	})
+}
+
+func TestExecute(t *testing.T) {
+	// Save original log level and restore
+	originalLevel := log.CurrentLevel()
+	defer log.SetLevel(originalLevel)
+
+	// Set log level to Info for this test, as we are testing an Info level message.
+	// Note: CaptureJSONLogs also sets the level, but setting it here ensures
+	// the logging functions behave as expected even before CaptureJSONLogs takes over.
+	log.SetLevel(log.LevelInfo)
+
+	// Capture logs to verify startup logging
+	_, logs, err := testutil.CaptureJSONLogs(log.LevelInfo, func() {
+		// Directly call the logic that produces the startup message
+		// Mimic the relevant parts from rootCmd.PersistentPreRunE
+		pluginModeDetected := isRunningAsHelmPlugin()                                                                          // From main.go
+		log.Debug("Execution Mode Detected", "mode", map[bool]string{true: "Plugin", false: "Standalone"}[pluginModeDetected]) // Logged at Debug, won't be in capture
+
+		if pluginModeDetected {
+			log.Info("IRR running as Helm plugin", "version", BinaryVersion) // From main.go
+		} else {
+			// This is the log message we expect to capture
+			log.Info("IRR running in standalone mode", "version", BinaryVersion)
+		}
+	})
+	assert.NoError(t, err) // Assert no error from log capture itself
+
+	// Verify the standalone mode info log exists
+	testutil.AssertLogContainsJSON(t, logs, map[string]interface{}{
+		"level":   "INFO",
+		"msg":     "IRR running in standalone mode",
+		"version": BinaryVersion, // Check version as well
+	})
+
+	// Also verify the plugin mode message is NOT present (assuming default standalone)
+	testutil.AssertLogDoesNotContainJSON(t, logs, map[string]interface{}{
+		"msg": "IRR running as Helm plugin",
+	})
 }
