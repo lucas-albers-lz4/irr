@@ -24,6 +24,9 @@ func TestUseTestLogger(t *testing.T) {
 // TestCaptureLogging verifies that CaptureLogOutput correctly captures log messages.
 func TestCaptureLogging(t *testing.T) {
 	t.Run("Captures Info Logs", func(t *testing.T) {
+		// Set LOG_FORMAT to text for this test
+		t.Setenv("LOG_FORMAT", "text")
+
 		logMsg := "This is an info message for capture"
 		debugMsg := "This debug message should NOT be captured"
 
@@ -45,6 +48,9 @@ func TestCaptureLogging(t *testing.T) {
 	})
 
 	t.Run("Captures Debug Logs", func(t *testing.T) {
+		// Set LOG_FORMAT to text for this test
+		t.Setenv("LOG_FORMAT", "text")
+
 		debugMsg := "This is a debug message"
 
 		// Capture logs at Debug level
