@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"testing"
 
-	"github.com/lalbers/irr/pkg/debug"
+	"github.com/lalbers/irr/pkg/log"
+	"github.com/lalbers/irr/pkg/testutil"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -71,206 +71,84 @@ func executeCommandWithStderrCapture(root *cobra.Command, args ...string) (cmdOu
 // TestDebugFlagAndEnvVarInteraction tests how debug flag and environment variables interact
 func TestDebugFlagAndEnvVarInteraction(t *testing.T) {
 	// Save and restore original state
-	origEnv := os.Getenv("IRR_DEBUG")
+	origLogLevel := os.Getenv("LOG_LEVEL")
 	defer func() {
-		err := os.Setenv("IRR_DEBUG", origEnv)
+		err := os.Setenv("LOG_LEVEL", origLogLevel)
 		if err != nil {
-			t.Logf("Warning: failed to restore IRR_DEBUG environment variable: %v", err)
+			t.Logf("Warning: failed to restore LOG_LEVEL environment variable: %v", err)
 		}
 	}()
 
 	// Part 1: Test command-line flags (simpler, less dependent on environment)
 	t.Run("FlagTests", func(t *testing.T) {
 		t.Run("NoFlag_DebugDisabled", func(t *testing.T) {
-			// Unset environment variable to avoid interference
-			err := os.Unsetenv("IRR_DEBUG")
-			require.NoError(t, err)
-
-			// Reset debug state
-			debug.Enabled = false
+			// Ensure default log level (INFO)
+			t.Setenv("LOG_LEVEL", "INFO")
 
 			// Execute command without debug flag
 			cmd := getRootCmd()
-			_, stderr, cmdErr := executeCommandWithStderrCapture(cmd, "help")
-			if cmdErr != nil {
-				t.Logf("Command execution returned error (expected for subcommand check): %v", cmdErr)
-				// Not failing the test as this might be expected behavior
-			}
+			logs, err := testutil.CaptureJSONLogs(log.LevelInfo, func() {
+				_, _, execErr := executeCommandWithStderrCapture(cmd, "help")
+				_ = execErr // Ignore potential execution error
+			})
+			require.NoError(t, err, "Log capture failed")
 
 			// Verify debug is disabled and no debug logs are present
-			assert.False(t, debug.Enabled, "debug.Enabled should be false without --debug flag")
-			assert.False(t, strings.Contains(stderr, "[DEBUG"), "No debug logs should be present")
+			testutil.AssertLogDoesNotContainJSON(t, logs, map[string]interface{}{"level": "DEBUG"}, "No debug logs should be present")
 		})
 
 		t.Run("WithFlag_DebugEnabled", func(t *testing.T) {
-			// Unset environment variable to avoid interference
-			err := os.Unsetenv("IRR_DEBUG")
-			require.NoError(t, err)
-
-			// Reset debug state
-			debug.Enabled = false
+			// Set log level to INFO initially to ensure --debug overrides it
+			t.Setenv("LOG_LEVEL", "INFO")
 
 			// Execute command with debug flag
 			cmd := getRootCmd()
-			_, stderr, cmdErr := executeCommandWithStderrCapture(cmd, "--debug", "help")
-			if cmdErr != nil {
-				t.Logf("Command execution returned error (expected for subcommand check): %v", cmdErr)
-				// Not failing the test as this might be expected behavior
-			}
+			logs, err := testutil.CaptureJSONLogs(log.LevelDebug, func() {
+				_, _, execErr := executeCommandWithStderrCapture(cmd, "--debug", "help")
+				_ = execErr // Ignore potential execution error
+			})
+			require.NoError(t, err, "Log capture failed")
 
 			// Verify debug is enabled and debug logs are present
-			assert.True(t, debug.Enabled, "debug.Enabled should be true with --debug flag")
-			assert.True(t, strings.Contains(stderr, "[DEBUG"), "Debug logs should be present")
+			// The --debug flag should set LOG_LEVEL=DEBUG implicitly
+			testutil.AssertLogContainsJSON(t, logs, map[string]interface{}{"level": "DEBUG"}, "Debug logs should be present")
 		})
 
 		t.Run("FlagOverridesEnv", func(t *testing.T) {
 			// Set environment variable to disabled
-			err := os.Setenv("IRR_DEBUG", "false")
+			err := os.Setenv("LOG_LEVEL", "INFO") // Set to INFO
 			require.NoError(t, err)
-
-			// Reset debug state
-			debug.Enabled = false
 
 			// Execute command with debug flag (should override env var)
 			cmd := getRootCmd()
-			_, stderr, cmdErr := executeCommandWithStderrCapture(cmd, "--debug", "help")
-			if cmdErr != nil {
-				t.Logf("Command execution returned error (expected for subcommand check): %v", cmdErr)
-				// Not failing the test as this might be expected behavior
-			}
+			logs, err := testutil.CaptureJSONLogs(log.LevelDebug, func() {
+				_, _, execErr := executeCommandWithStderrCapture(cmd, "--debug", "help")
+				_ = execErr // Ignore potential execution error
+			})
+			require.NoError(t, err, "Log capture failed")
 
 			// Verify debug is enabled (flag overrides env) and debug logs are present
-			assert.True(t, debug.Enabled, "debug.Enabled should be true (flag overrides env)")
-			assert.True(t, strings.Contains(stderr, "[DEBUG"), "Debug logs should be present")
-		})
-	})
-
-	// Part 2: Test environment variable behavior directly on the debug package
-	// This avoids the complexity of command execution
-	t.Run("EnvVarTests", func(t *testing.T) {
-		// Helper to capture stderr and run debug.Init
-		captureDebugInit := func(forceEnable bool) string {
-			// Set up stderr capture
-			oldStderr := os.Stderr
-			r, w, pipeErr := os.Pipe()
-			if pipeErr != nil {
-				t.Fatalf("Failed to create pipe: %v", pipeErr)
-				return "" // Unreachable, but needed for compiler
-			}
-			os.Stderr = w
-
-			// Call debug.Init
-			debug.Init(forceEnable)
-
-			// Restore stderr
-			closeErr := w.Close()
-			if closeErr != nil {
-				t.Logf("Warning: Error closing stderr pipe: %v", closeErr)
-			}
-			os.Stderr = oldStderr
-
-			// Read captured output
-			buf := new(bytes.Buffer)
-			_, copyErr := io.Copy(buf, r)
-			if copyErr != nil {
-				t.Fatalf("Error reading from stderr pipe: %v", copyErr)
-				return "" // Unreachable, but needed for compiler
-			}
-			return buf.String()
-		}
-
-		t.Run("EnvVar_True", func(t *testing.T) {
-			// Setup: Set env var to true
-			err := os.Setenv("IRR_DEBUG", "true")
-			require.NoError(t, err)
-
-			// Reset debug state to ensure clean test
-			debug.Enabled = false
-
-			// Call Init and capture output
-			output := captureDebugInit(false) // false = don't force enable
-
-			// Verify debug is enabled from env var
-			assert.True(t, debug.Enabled, "debug.Enabled should be true from IRR_DEBUG=true")
-			assert.True(t, strings.Contains(output, "Debug logging enabled"), "Should log debug enabled message")
-		})
-
-		t.Run("EnvVar_False", func(t *testing.T) {
-			// Setup: Set env var to false
-			err := os.Setenv("IRR_DEBUG", "false")
-			require.NoError(t, err)
-
-			// Set debug state to true to verify it gets disabled
-			debug.Enabled = true
-
-			// Call Init and capture output
-			output := captureDebugInit(false) // false = don't force enable
-
-			// Verify debug is disabled from env var
-			assert.False(t, debug.Enabled, "debug.Enabled should be false from IRR_DEBUG=false")
-			assert.False(t, strings.Contains(output, "Debug logging enabled"), "Should not log debug enabled message")
-		})
-
-		t.Run("EnvVar_Invalid", func(t *testing.T) {
-			// Setup: Set env var to invalid value
-			err := os.Setenv("IRR_DEBUG", "notabool")
-			require.NoError(t, err)
-
-			// Set debug state to true to verify it gets disabled
-			debug.Enabled = true
-
-			// Enable warnings for this test since we're explicitly testing the warning output
-			debug.EnableDebugEnvVarWarnings()
-
-			// Call Init and capture output
-			output := captureDebugInit(false) // false = don't force enable
-
-			// Verify debug is disabled and warning is logged
-			assert.False(t, debug.Enabled, "debug.Enabled should be false with invalid value")
-			assert.True(t, strings.Contains(output, "Invalid boolean value for IRR_DEBUG"), "Should warn about invalid value")
-
-			// Reset to default behavior
-			debug.ShowDebugEnvWarnings = false
-		})
-
-		t.Run("EnvVar_Empty", func(t *testing.T) {
-			// Setup: Set env var to empty string
-			err := os.Setenv("IRR_DEBUG", "")
-			require.NoError(t, err)
-
-			// Set debug state to true to verify it gets disabled
-			debug.Enabled = true
-
-			// Call Init and capture output
-			output := captureDebugInit(false) // false = don't force enable
-
-			// Verify debug is disabled and empty env var should behave as if not set
-			assert.False(t, debug.Enabled, "debug.Enabled should be false with empty value")
-
-			// NOTE: Empty values should not produce warnings now
-			assert.False(t, strings.Contains(output, "Invalid boolean value for IRR_DEBUG"), "Should not warn about empty value")
-			t.Logf("Output with empty env var: %q", output)
-		})
-
-		t.Run("ForceEnable_OverridesEnvVar", func(t *testing.T) {
-			// Setup: Set env var to false
-			err := os.Setenv("IRR_DEBUG", "false")
-			require.NoError(t, err)
-
-			// Reset debug state to ensure clean test
-			debug.Enabled = false
-
-			// Call Init with forceEnable=true and capture output
-			output := captureDebugInit(true) // true = force enable
-
-			// Verify debug is enabled despite env var
-			assert.True(t, debug.Enabled, "debug.Enabled should be true when force enabled")
-			assert.True(t, strings.Contains(output, "Debug logging enabled"), "Should log debug enabled message")
+			// The --debug flag should override LOG_LEVEL=INFO
+			testutil.AssertLogContainsJSON(t, logs, map[string]interface{}{"level": "DEBUG"}, "Debug logs should be present")
 		})
 	})
 }
 
 func TestExecutionModeDetection(t *testing.T) {
+	// Save original env vars
+	origName := os.Getenv("HELM_PLUGIN_NAME")
+	origDir := os.Getenv("HELM_PLUGIN_DIR")
+	defer func() {
+		err := os.Setenv("HELM_PLUGIN_NAME", origName)
+		if err != nil {
+			t.Errorf("Error restoring HELM_PLUGIN_NAME: %v", err)
+		}
+		err = os.Setenv("HELM_PLUGIN_DIR", origDir)
+		if err != nil {
+			t.Errorf("Error restoring HELM_PLUGIN_DIR: %v", err)
+		}
+	}()
+
 	// Test case 1: Plugin mode
 	err := os.Setenv("HELM_PLUGIN_NAME", "irr")
 	require.NoError(t, err)

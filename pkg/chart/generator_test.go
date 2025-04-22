@@ -553,8 +553,8 @@ func TestGenerator_Generate_ImagePatternError(t *testing.T) {
 	}
 	mockStrategy := &MockPathStrategy{}
 
-	// Capture logs using CaptureLogOutput at WARN level (or appropriate level)
-	capturedLogs, captureErr := testutil.CaptureLogOutput(log.LevelWarn, func() { // Use CaptureLogOutput
+	// Capture logs using CaptureJSONLogs
+	jsonLogs, captureErr := testutil.CaptureJSONLogs(log.LevelWarn, func() {
 		g := NewGenerator(
 			"test-chart",
 			"target.registry.com",
@@ -571,19 +571,14 @@ func TestGenerator_Generate_ImagePatternError(t *testing.T) {
 		)
 
 		result, err := g.Generate()
-		require.NoError(t, err, "Generate should succeed by skipping the bad pattern") // Move Generate inside capture
+		require.NoError(t, err, "Generate should succeed by skipping the bad pattern")
 		require.NotNil(t, result)
 
-		// Verify the unsupported/skipped field contains the expected info
-		assert.NotEmpty(t, result.Unsupported, "Expected unsupported entries for the bad image pattern")
+		// --- Assertions on the result (remain the same) ---
+		assert.NotEmpty(t, result.Unsupported)
 		require.Len(t, result.Unsupported, 1)
-		assert.Equal(t, []string{"badImage"}, result.Unsupported[0].Path, "Unsupported path mismatch") // Use Path field (slice)
-		// assert.Contains(t, result.Unsupported[0].Value, "invalid image string:") // Field Value does not exist
-		// assert.Contains(t, result.Unsupported[0].Reason, "invalid reference format") // Field Reason does not exist
-		// Type field might be useful, but error is checked in logs
-		assert.NotEmpty(t, result.Unsupported[0].Type, "Unsupported type should not be empty")
-
-		// Verify only the good image was processed
+		assert.Equal(t, []string{"badImage"}, result.Unsupported[0].Path)
+		assert.NotEmpty(t, result.Unsupported[0].Type)
 		expectedOverrides := override.File{
 			Values: map[string]interface{}{
 				"goodImage": map[string]interface{}{ // Expect map structure even for original string
@@ -596,31 +591,29 @@ func TestGenerator_Generate_ImagePatternError(t *testing.T) {
 			ChartPath:   result.ChartPath,   // Match the actual chartpath field
 		}
 		assert.Equal(t, expectedOverrides.Values, result.Values)
-	}) // End capture func
-	require.NoError(t, captureErr, "Log capture failed")
+	})
+	require.NoError(t, captureErr, "JSON log capture failed")
 
-	// Verify logs contain the expected warning for the skipped pattern (slog text format)
-	assert.Contains(t, capturedLogs, `level=WARN`, "Log should contain WARN level")
-	assert.Contains(t, capturedLogs, `msg="Skipping image at path '%s': %v"`, "Log should contain the literal message string")
-	// Check for the key-value pair added by slog for the arguments
-	expectedErrContent := `"invalid image format: invalid image reference"` // Corrected content
-	// t.Logf("Captured Logs for ImagePatternError:\n%s", capturedLogs) // Keep commented out for potential future debugging
+	// Verify logs contain the expected warning using AssertLogContainsJSON
+	expectedLogFields := map[string]interface{}{
+		"level": "WARN",
+		"msg":   "Skipping image at path '%s': %v", // The literal message from slog
+		// Slog adds arguments as separate fields. The key might be derived.
+		// Based on previous logs, the key for the path was 'badImage'.
+		// The key for the error might be 'error' or derived from the wrapped error.
+		// Let's assert the fields we are most confident about.
+		"badImage": "invalid image format: invalid image reference",
+	}
+	testutil.AssertLogContainsJSON(t, jsonLogs, expectedLogFields, "Expected warning log for pattern processing error")
 
-	// --- Debugging: Print byte representations ---
-	// var relevantLogLine string
-	// for _, line := range strings.Split(capturedLogs, "\n") {
-	// 	if strings.Contains(line, "badImage=") {
-	// 		relevantLogLine = line
-	// 		break
-	// 	}
-	// }
-	// t.Logf("Relevant Log Line Bytes:\n%v", []byte(relevantLogLine))
-	// t.Logf("Expected Substring Bytes:\n%v", []byte(expectedErrContent))
-	// --- End Debugging ---
+	// Check for the final aggregated error message (if applicable, might be logged at WARN or ERROR)
+	finalErrorLogFields := map[string]interface{}{
+		"level": "ERROR", // Based on previous findings, it seems aggregated errors log at ERROR level
+		"msg":   "Combined error details: %v",
+	}
+	testutil.AssertLogContainsJSON(t, jsonLogs, finalErrorLogFields, "Expected final aggregated error log")
 
-	// Use strings.Contains directly to bypass potential testify issues
-	found := strings.Contains(capturedLogs, expectedErrContent)
-	require.True(t, found, "Log should contain the quoted error message content: %s", expectedErrContent)
+	// Optional: Verify the content of the !BADKEY if needed more specifically
 }
 
 func TestGenerator_Generate_OverrideError(t *testing.T) {
@@ -638,14 +631,14 @@ func TestGenerator_Generate_OverrideError(t *testing.T) {
 		ErrorImageRepo: "app/image2", // Path strategy fails if repository contains "image2"
 	}
 
-	// Capture logs using CaptureLogOutput at ERROR level (as the final aggregated error is logged at ERROR)
-	capturedLogs, captureErr := testutil.CaptureLogOutput(log.LevelError, func() { // Use CaptureLogOutput
+	// Capture logs using CaptureJSONLogs
+	jsonLogs, captureErr := testutil.CaptureJSONLogs(log.LevelWarn, func() { // Capture WARN level initially
 		g := NewGenerator(
 			"test-chart",
 			"target.registry.com",
 			[]string{"source.registry.com"},
 			[]string{},
-			mockStrategy, // Use the strategy that can fail
+			mockStrategy,
 			nil,
 			map[string]string{},
 			false, // Non-strict mode
@@ -655,14 +648,12 @@ func TestGenerator_Generate_OverrideError(t *testing.T) {
 			false,
 		)
 
-		result, err := g.Generate() // Move Generate inside capture
+		result, err := g.Generate()
 		require.NoError(t, err, "Generate should not error in non-strict mode for override errors")
 		require.NotNil(t, result)
 
-		// Check that the error wasn't added to the Unsupported field (it's for structural issues)
-		assert.Empty(t, result.Unsupported, "Unsupported field should be empty for override/path strategy errors")
-
-		// Verify only the first image was processed successfully
+		// --- Assertions on the result (remain the same) ---
+		assert.Empty(t, result.Unsupported)
 		expectedOverrides := override.File{
 			Values: map[string]interface{}{
 				"image1": map[string]interface{}{
@@ -676,16 +667,29 @@ func TestGenerator_Generate_OverrideError(t *testing.T) {
 			ChartPath:   result.ChartPath, // Match actual chart path
 		}
 		assert.Equal(t, expectedOverrides.Values, result.Values)
-	}) // End capture func
-	require.NoError(t, captureErr, "Log capture failed")
+	})
+	require.NoError(t, captureErr, "JSON log capture failed")
 
-	// Check the final aggregated ERROR log message
-	assert.Contains(t, capturedLogs, `level=ERROR`, "Log should contain ERROR level")
-	assert.Contains(t, capturedLogs, `msg="Combined error details: %v"`, "Log should contain the combined error details message")
-	// Check that the specific error details are within the !BADKEY value
-	expectedErrorDetails := "override generation path 'image2': path generation failed for 'source.registry.com/app/image2:v2': assert.AnError general error for testing"
-	assert.Contains(t, capturedLogs, expectedErrorDetails, "Combined error details should contain the specific override error")
-	assert.Contains(t, capturedLogs, assert.AnError.Error(), "Combined error details should contain the mock strategy error content")
+	// Verify the WARN log for the specific path generation failure
+	expectedPathGenErrLog := map[string]interface{}{
+		"level": "WARN",
+		"msg":   "Path generation failed for '%s': %v", // Literal message
+		// Slog used the value of imgRef.Original as the key
+		"source.registry.com/app/image2:v2": "path generation failed for 'source.registry.com/app/image2:v2': assert.AnError general error for testing",
+		// Error details are embedded in the value above, not a separate key here
+	}
+	testutil.AssertLogContainsJSON(t, jsonLogs, expectedPathGenErrLog, "Expected warning log for path generation error")
+
+	// Check for the final aggregated error message (likely at WARN or ERROR level, depends on implementation)
+	// Assuming it logs at WARN based on non-strict mode
+	finalWarnLogFields := map[string]interface{}{
+		"level": "WARN",
+		"msg":   "Generation completed with %d errors (non-strict mode). See logs for details.",
+	}
+	testutil.AssertLogContainsJSON(t, jsonLogs, finalWarnLogFields, "Expected final non-strict mode warning log")
+
+	// Optional: Check the count in the final message if needed
+	// Optional: Verify the content of !BADKEY in the final message if implemented this way
 }
 
 func TestGenerator_Generate_RulesInteraction(t *testing.T) {

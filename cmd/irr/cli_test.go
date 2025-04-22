@@ -2,16 +2,19 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/lalbers/irr/internal/helm"
 	"github.com/lalbers/irr/pkg/exitcodes"
 	"github.com/lalbers/irr/pkg/fileutil"
+	"github.com/lalbers/irr/pkg/testutil"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -517,6 +520,24 @@ func TestHelpCommand(t *testing.T) {
 	}
 }
 
+// Helper function to parse a string containing newline-separated JSON logs
+func parseJSONLogsFromString(logString string) ([]map[string]interface{}, error) {
+	var logs []map[string]interface{}
+	lines := strings.Split(strings.TrimSpace(logString), "\n")
+	for i, line := range lines {
+		// Only attempt to parse lines that look like JSON objects
+		if line == "" || !strings.HasPrefix(line, "{") {
+			continue // Skip empty lines or non-JSON lines
+		}
+		var entry map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal log line %d as JSON: %w\nLine content: %s", i+1, err, line)
+		}
+		logs = append(logs, entry)
+	}
+	return logs, nil
+}
+
 // TestGlobalFlags tests the global flags across commands
 func TestGlobalFlags(t *testing.T) {
 	// Save original adapter factory and restore after test
@@ -567,24 +588,36 @@ func TestGlobalFlags(t *testing.T) {
 			name:     "debug flag",
 			args:     []string{"--debug", "help"},
 			wantExit: 0,
-			checkOut: func(t *testing.T, _ /*stdout*/, stderr string) {
-				assert.Contains(t, stderr, "[DEBUG", "Debug output should be present")
+			// Expect JSON output by default now
+			env: map[string]string{"LOG_FORMAT": "json"},
+			checkOut: func(t *testing.T, _, stderr string) {
+				// Parse the stderr from the initial runCommand
+				logs, err := parseJSONLogsFromString(stderr)
+				require.NoError(t, err, "Failed to parse logs from stderr for --debug flag")
+				testutil.AssertLogContainsJSON(t, logs, map[string]interface{}{"level": "DEBUG"}, "Debug logs should be present")
 			},
 		},
 		{
 			name: "debug env var",
 			args: []string{"help"},
-			env:  map[string]string{"IRR_DEBUG": "true"},
-			checkOut: func(t *testing.T, _ /*stdout*/, stderr string) {
-				assert.Contains(t, stderr, "[DEBUG", "Debug output should be present with IRR_DEBUG=true")
+			env:  map[string]string{"LOG_LEVEL": "DEBUG", "LOG_FORMAT": "json"},
+			checkOut: func(t *testing.T, _, stderr string) {
+				// Stderr already contains the JSON logs because we set LOG_FORMAT=json
+				logs, err := parseJSONLogsFromString(stderr)
+				require.NoError(t, err, "Failed to parse logs from stderr")
+				testutil.AssertLogContainsJSON(t, logs, map[string]interface{}{"level": "DEBUG"}, "Debug logs should be present with LOG_LEVEL=DEBUG")
 			},
 		},
 		{
 			name: "debug flag overrides env var",
 			args: []string{"--debug", "help"},
-			env:  map[string]string{"IRR_DEBUG": "false"},
-			checkOut: func(t *testing.T, _ /*stdout*/, stderr string) {
-				assert.Contains(t, stderr, "[DEBUG", "Debug flag should override IRR_DEBUG=false")
+			env:  map[string]string{"LOG_LEVEL": "INFO", "LOG_FORMAT": "json"}, // Start with INFO
+			checkOut: func(t *testing.T, _, stderr string) {
+				// Stderr already contains the JSON logs because we set LOG_FORMAT=json
+				logs, err := parseJSONLogsFromString(stderr)
+				require.NoError(t, err, "Failed to parse logs from stderr")
+				// --debug flag should force DEBUG level logs
+				testutil.AssertLogContainsJSON(t, logs, map[string]interface{}{"level": "DEBUG"}, "Debug flag should override LOG_LEVEL=INFO")
 			},
 		},
 		{

@@ -1,12 +1,13 @@
 package main
 
 import (
-	"bytes"
 	"os"
 	"testing"
 
 	"github.com/lalbers/irr/pkg/log"
+	"github.com/lalbers/irr/pkg/testutil"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Helper function to capture stderr output for testing log functions
@@ -107,67 +108,9 @@ func TestIsRunningAsHelmPlugin(t *testing.T) {
 	}
 }
 
-func TestParseIrrDebugEnvVar(t *testing.T) {
-	testCases := []struct {
-		name     string
-		envValue *string // Use pointer to differentiate between unset and empty string
-		expected bool
-	}{
-		{"Unset", nil, false},
-		{"EmptyString", stringPtr(""), false},
-		{"TrueLowercase", stringPtr("true"), true},
-		{"TrueUppercase", stringPtr("TRUE"), true},
-		{"TrueMixedcase", stringPtr("True"), true},
-		{"Number1", stringPtr("1"), true},
-		{"YesLowercase", stringPtr("yes"), true},
-		{"FalseLowercase", stringPtr("false"), false},
-		{"Number0", stringPtr("0"), false},
-		{"NoLowercase", stringPtr("no"), false},
-		{"OtherString", stringPtr("other"), false},
-	}
-
-	originalDebugEnv := os.Getenv("IRR_DEBUG")
-	defer func() {
-		if err := os.Setenv("IRR_DEBUG", originalDebugEnv); err != nil {
-			t.Logf("Warning: failed to restore IRR_DEBUG: %v", err)
-		}
-	}()
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			if tc.envValue == nil {
-				if err := os.Unsetenv("IRR_DEBUG"); err != nil {
-					t.Fatalf("Failed to unset IRR_DEBUG: %v", err)
-				}
-			} else {
-				if err := os.Setenv("IRR_DEBUG", *tc.envValue); err != nil {
-					t.Fatalf("Failed to set IRR_DEBUG: %v", err)
-				}
-			}
-			assert.Equal(t, tc.expected, parseIrrDebugEnvVar())
-		})
-	}
-}
-
-// Helper for TestParseIrrDebugEnvVar
-func stringPtr(s string) *string {
-	return &s
-}
-
 func TestLogHelmEnvironment(t *testing.T) {
-	// Set debug level for this test
-	log.SetLevel(log.LevelDebug)
-	// No need to defer log.SetLevel(originalLevel) here,
-	// as SetOutput's restore function will handle logger reconfiguration.
-
-	// --- Capture logs using log.SetOutput --- Start
-	var logBuf bytes.Buffer
-	restoreLogOutput := log.SetOutput(&logBuf) // Set buffer as output and get restore func
-	defer restoreLogOutput()                   // Ensure original output is restored after test
-
-	// Re-apply the desired log level *after* setting the output,
-	// because SetOutput reconfigures the logger based on env vars by default.
-	log.SetLevel(log.LevelDebug)
+	// Set LOG_FORMAT=json for this test
+	t.Setenv("LOG_FORMAT", "json")
 
 	// Set some Helm environment variables using t.Setenv for proper test cleanup
 	testEnvVars := map[string]string{
@@ -182,29 +125,47 @@ func TestLogHelmEnvironment(t *testing.T) {
 	// Explicitly unset a var that logHelmEnvironment checks, to ensure it's not logged
 	t.Setenv("HELM_DEBUG", "")
 
-	// Call the function that logs
-	logHelmEnvironment()
+	// Capture logs using the testutil helper
+	logs, err := testutil.CaptureJSONLogs(log.LevelDebug, func() {
+		// Set the desired level *within* the capture function's scope
+		// because CaptureJSONLogs sets up its own logger instance.
+		// log.SetLevel(log.LevelDebug) // This is handled by CaptureJSONLogs level param
+		logHelmEnvironment()
+	})
+	require.NoError(t, err, "Failed to capture JSON logs")
 
-	// Get captured log output
-	capturedLogs := logBuf.String()
-	// --- Capture logs using log.SetOutput --- End
+	// Check that Helm environment variables were logged using JSON assertions
+	testutil.AssertLogContainsJSON(t, logs, map[string]interface{}{
+		"level": "DEBUG",
+		"msg":   "Helm Environment Variables:",
+	}, "Initial Helm Env Var log missing")
 
-	// Assertions (Uncommented and adapted for slog text format)
-	// assert.Contains(t, capturedLogs, `level=DEBUG`, "Captured stderr should contain 'level=DEBUG' when debug is enabled") // This is implicitly checked by the lines below
+	testutil.AssertLogContainsJSON(t, logs, map[string]interface{}{
+		"level": "DEBUG",
+		"msg":   "Helm Env",
+		"var":   "HELM_PLUGIN_NAME",
+		"value": "irr",
+	}, "HELM_PLUGIN_NAME log missing")
 
-	// /* // Keep previous granular assertions commented out for now // REMOVE THIS COMMENT START
-	// Check for the initial debug message in slog format
-	assert.Contains(t, capturedLogs, `level=DEBUG msg="Helm Environment Variables:"`)
+	testutil.AssertLogContainsJSON(t, logs, map[string]interface{}{
+		"level": "DEBUG",
+		"msg":   "Helm Env",
+		"var":   "HELM_BIN",
+		"value": "helm",
+	}, "HELM_BIN log missing")
 
-	// Check for the presence of individual key=value pairs for logged env vars
-	// We check them individually because slog's TextHandler doesn't guarantee key order
-	assert.Contains(t, capturedLogs, `level=DEBUG msg="Helm Env" var=HELM_PLUGIN_NAME value=irr`)
+	testutil.AssertLogContainsJSON(t, logs, map[string]interface{}{
+		"level": "DEBUG",
+		"msg":   "Helm Env",
+		"var":   "HELM_NAMESPACE",
+		"value": "test-ns",
+	}, "HELM_NAMESPACE log missing")
 
-	assert.Contains(t, capturedLogs, `level=DEBUG msg="Helm Env" var=HELM_BIN value=helm`)
-
-	assert.Contains(t, capturedLogs, `level=DEBUG msg="Helm Env" var=HELM_NAMESPACE value=test-ns`)
-
-	assert.NotContains(t, capturedLogs, "SOME_OTHER_VAR") // Verify non-Helm vars are not logged
-	assert.NotContains(t, capturedLogs, "var=HELM_DEBUG") // Verify empty vars are not logged (as the value is empty)
-	// */ // REMOVE THIS COMMENT END // REMOVE THIS LINE
+	// Check that non-Helm var or empty var wasn't logged
+	testutil.AssertLogDoesNotContainJSON(t, logs, map[string]interface{}{
+		"var": "SOME_OTHER_VAR",
+	}, "Should not log non-Helm vars")
+	testutil.AssertLogDoesNotContainJSON(t, logs, map[string]interface{}{
+		"var": "HELM_DEBUG",
+	}, "Should not log empty env vars")
 }

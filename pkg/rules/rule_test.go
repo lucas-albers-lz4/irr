@@ -6,6 +6,7 @@ import (
 	"github.com/lalbers/irr/pkg/log"
 	"github.com/lalbers/irr/pkg/testutil"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"helm.sh/helm/v3/pkg/chart"
 )
 
@@ -516,56 +517,71 @@ func TestSetValueAtPath(t *testing.T) {
 }
 
 func TestApplyRulesToMap_LogOutput(t *testing.T) {
-	// Skip this test for now as it requires debugging the log capture mechanism
-	t.Skip("This test needs more investigation into debug log capture")
-
-	// Create a test chart
-	testChart := &chart.Chart{
-		Metadata: &chart.Metadata{
-			Name: "test-chart",
+	// Define a test rule with parameters
+	rule := &mockTestRule{
+		baseRule: BaseRule{
+			name:        "test-log-rule",
+			description: "Rule for testing logging",
+			priority:    10,
+			parameters: []Parameter{
+				{Path: "global.security.allowInsecureImages", Value: true},
+			},
 		},
+		applies: true, // Ensure this rule applies
 	}
 
-	// Create a rule that applies
-	rule := &mockTestRule{
-		baseRule: NewBaseRule("test-log-rule", "Test rule for log output", []Parameter{
-			{
-				Path:  "global.security.allowInsecureImages",
-				Value: true,
-				Type:  TypeDeploymentCritical,
-			},
-		}, 100),
-		applies: true,
+	// Create a dummy chart
+	testChart := &chart.Chart{
+		Metadata: &chart.Metadata{Name: "test-chart"},
 	}
 
 	// Create an override map
 	overrideMap := make(map[string]interface{})
 
-	// Set log level to debug
+	// Set log level to debug (use slog level)
 	originalLevel := log.CurrentLevel()
-	log.SetLevel(1)
+	log.SetLevel(log.LevelDebug)
 	defer log.SetLevel(originalLevel)
 
-	// Capture log output during rule application
-	output, err := testutil.CaptureLogOutput(1, func() {
+	// --- Test with Rules Enabled ---
+	enabledLogs, err := testutil.CaptureJSONLogs(log.LevelDebug, func() {
 		// Apply the rule and check error
 		_, applyErr := ApplyRulesToMap([]Rule{rule}, testChart, overrideMap)
 		assert.NoError(t, applyErr, "ApplyRulesToMap should not produce an error")
 	})
+	require.NoError(t, err, "Log capture should not produce an error")
 
-	// Verify no error in log capture
-	assert.NoError(t, err, "Log capture should not produce an error")
+	// Check log output contains expected information using JSON helpers
 
-	// Print captured output for debugging
-	t.Logf("Captured output: %s", output)
+	// Assertion 0: Check for initial rule checking message
+	testutil.AssertLogContainsJSON(t, enabledLogs, map[string]interface{}{
+		"level":      "DEBUG",
+		"msg":        "Checking rules for chart",
+		"rule_count": 1.0, // JSON unmarshals numbers as float64
+		"chart_name": "test-chart",
+	}, "Initial rule check log missing or incorrect")
 
-	// Check log output contains expected information
-	assert.Contains(t, output, "Rule 'test-log-rule' applies to chart 'test-chart'")
-	assert.Contains(t, output, "Applied parameter 'global.security.allowInsecureImages'")
-	assert.Contains(t, output, "true")
+	// Assertion 1: Check for the rule application message
+	testutil.AssertLogContainsJSON(t, enabledLogs, map[string]interface{}{
+		"level":      "DEBUG",
+		"msg":        "Rule applies to chart",
+		"rule_name":  "test-log-rule",
+		"chart_name": "test-chart",
+		"confidence": 3.0, // JSON unmarshals numbers as float64
+	}, "Rule application log missing or incorrect")
 
-	// Test with rules system disabled
-	disabledOutput, err := testutil.CaptureLogOutput(1, func() {
+	// Assertion 2: Check for the parameter check message
+	testutil.AssertLogContainsJSON(t, enabledLogs, map[string]interface{}{
+		"level":      "DEBUG",
+		"msg":        "Checking parameter",
+		"chart_name": "test-chart",
+		"rule_name":  "test-log-rule",
+		"param_path": "global.security.allowInsecureImages",
+		"param_type": 0.0, // Type 0 (Informational), JSON unmarshals as float64
+	}, "Parameter checking log missing or incorrect")
+
+	// --- Test with Rules Disabled ---
+	disabledLogs, err := testutil.CaptureJSONLogs(log.LevelDebug, func() {
 		// Create registry with rules disabled
 		registry := NewRegistry()
 		registry.SetEnabled(false)
@@ -574,13 +590,11 @@ func TestApplyRulesToMap_LogOutput(t *testing.T) {
 		_, applyErr := registry.ApplyRules(testChart, overrideMap)
 		assert.NoError(t, applyErr, "registry.ApplyRules should not produce an error")
 	})
-
-	// Verify no error in log capture
-	assert.NoError(t, err, "Log capture should not produce an error")
-
-	// Print captured output for debugging
-	t.Logf("Disabled output: %s", disabledOutput)
+	require.NoError(t, err, "Log capture should not produce an error")
 
 	// Check log output contains message about rules being disabled
-	assert.Contains(t, disabledOutput, "Rules system is disabled")
+	testutil.AssertLogContainsJSON(t, disabledLogs, map[string]interface{}{
+		"level": "DEBUG",
+		"msg":   "Rules system is disabled, skipping rule application", // Match actual log msg
+	}, "Rules disabled log missing")
 }

@@ -80,7 +80,7 @@ func ApplyRulesToMap(rules []Rule, ch *chart.Chart, overrideMap map[string]inter
 		return false, nil
 	}
 
-	log.Debug("Checking %d rules for chart: %s", len(rules), ch.Name())
+	log.Debug("Checking rules for chart", "rule_count", len(rules), "chart_name", ch.Name())
 
 	appliedAny := false
 	for _, rule := range rules {
@@ -89,21 +89,29 @@ func ApplyRulesToMap(rules []Rule, ch *chart.Chart, overrideMap map[string]inter
 			continue
 		}
 
-		log.Debug("Rule '%s' applies to chart '%s' (confidence: %d)",
-			rule.Name(), ch.Name(), detection.Confidence)
+		log.Debug("Rule applies to chart",
+			"rule_name", rule.Name(),
+			"chart_name", ch.Name(),
+			"confidence", detection.Confidence)
 
 		// Apply all Type 1 (Deployment-Critical) parameters to the override map
 		for _, param := range rule.Parameters() {
-			log.Debug("Chart [%s]: Rule [%s]: Checking parameter [%s] with Type [%d]", ch.Name(), rule.Name(), param.Path, param.Type)
+			log.Debug("Checking parameter", "chart_name", ch.Name(), "rule_name", rule.Name(), "param_path", param.Path, "param_type", param.Type)
 			if param.Type == TypeDeploymentCritical {
-				log.Debug("Chart [%s]: Rule [%s]: Attempting to set CRITICAL parameter [%s] = %v", ch.Name(), rule.Name(), param.Path, param.Value)
+				log.Debug("Attempting to set critical parameter",
+					"chart_name", ch.Name(),
+					"rule_name", rule.Name(),
+					"param_path", param.Path,
+					"param_value", param.Value)
 				// Split the path by dots and set the value in the nested map
 				if err := setValueAtPath(overrideMap, param.Path, param.Value); err != nil {
 					return appliedAny, fmt.Errorf("failed to set parameter %s: %w", param.Path, err)
 				}
 
-				log.Debug("Applied parameter '%s' = '%v' to chart '%s'",
-					param.Path, param.Value, ch.Name())
+				log.Debug("Applied parameter to chart",
+					"param_path", param.Path,
+					"param_value", param.Value,
+					"chart_name", ch.Name())
 
 				appliedAny = true
 			}

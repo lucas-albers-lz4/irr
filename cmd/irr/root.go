@@ -4,15 +4,12 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
-	"strconv"
 
 	log "github.com/lalbers/irr/pkg/log"
 
 	"github.com/lalbers/irr/pkg/analysis"
-	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/helm"
 	"github.com/lalbers/irr/pkg/override"
 	"github.com/lalbers/irr/pkg/registry"
@@ -134,12 +131,12 @@ It also supports linting image references for potential issues.`,
 	PersistentPreRunE: func(_ *cobra.Command, _ []string) error {
 		// If debug is enabled, print environment, args, and plugin/debug status
 		// Note: This debug printing uses fmt and happens *before* slog initialization
-		if debugEnabled || os.Getenv("IRR_DEBUG") == "1" || os.Getenv("IRR_DEBUG") == "true" {
+		if debugEnabled {
 			for _, e := range os.Environ() {
 				fmt.Fprintf(os.Stderr, "[DEBUG] ENV: %s\n", e)
 			}
 			fmt.Fprintf(os.Stderr, "[DEBUG] ARGS: %v\n", os.Args)
-			fmt.Fprintf(os.Stderr, "[DEBUG] isHelmPlugin: %v, debugEnabled: %v\n", isRunningAsHelmPlugin(), debugEnabled)
+			fmt.Fprintf(os.Stderr, "[DEBUG] isHelmPlugin: %v\n", isRunningAsHelmPlugin())
 		}
 
 		// --- Setup logging using pkg/log ---
@@ -176,37 +173,6 @@ It also supports linting image references for potential issues.`,
 		}
 
 		// --- End Logging Setup ---
-
-		// Set debug.Enabled based on --debug flag OR IRR_DEBUG env var
-		// (This seems redundant with logging level, consider simplifying debug package usage)
-		if debugFlagEnabled { // Check the flag first
-			debug.Enabled = true
-			log.Debug("--debug flag enabled debug package.") // Log using the configured logger
-		} else { // If flag is not set, check the environment variable
-			debugEnv := os.Getenv("IRR_DEBUG")
-			if debugEnv != "" {
-				debugVal, err := strconv.ParseBool(debugEnv)
-				if err != nil {
-					if integrationTestMode {
-						log.Warn("Invalid boolean value for IRR_DEBUG environment variable. Defaulting to false.", "input", debugEnv)
-					}
-					debug.Enabled = false
-				} else {
-					debug.Enabled = debugVal
-					if debugVal {
-						log.Debug("IRR_DEBUG environment variable enabled debug package.")
-					}
-				}
-			} else {
-				debug.Enabled = false
-			}
-		}
-
-		// Log effective level only if debug logging is actually enabled
-		if log.CurrentLevel() <= slog.LevelDebug {
-			log.Debug("Effective log level set", "level", log.CurrentLevel().String())
-			log.Debug("Debug package enabled", "enabled", debug.Enabled)
-		}
 
 		// Integration test mode check
 		if integrationTestMode {

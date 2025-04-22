@@ -59,12 +59,14 @@ func init() {
 // (currentLevel and outputWriter). It does not read environment variables itself.
 func configureLogger() {
 	// Determine log format
-	format := strings.ToLower(os.Getenv("LOG_FORMAT")) // Format can still be dynamic
+	format := strings.ToLower(os.Getenv("LOG_FORMAT"))
 	var handler slog.Handler
-	if format == "json" {
-		handler = slog.NewJSONHandler(outputWriter, &slog.HandlerOptions{Level: currentLevel})
-	} else {
+	// Default to JSON unless LOG_FORMAT is explicitly "text"
+	if format == "text" {
 		handler = slog.NewTextHandler(outputWriter, &slog.HandlerOptions{Level: currentLevel})
+	} else {
+		// Default to JSON if LOG_FORMAT is empty/unset or explicitly "json" (or anything else)
+		handler = slog.NewJSONHandler(outputWriter, &slog.HandlerOptions{Level: currentLevel})
 	}
 	logger = slog.New(handler)
 }
