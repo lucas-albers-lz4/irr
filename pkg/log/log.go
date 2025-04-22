@@ -27,6 +27,9 @@ var (
 	outputWriter io.Writer = os.Stderr
 	// ErrInvalidLogLevel indicates an invalid log level string was provided.
 	ErrInvalidLogLevel = fmt.Errorf("invalid log level")
+	// includeTimestampsForTest is a flag used by test helpers (like testutil.CaptureJSONLogs)
+	// to temporarily force timestamp inclusion during log capture, overriding the default behavior.
+	includeTimestampsForTest bool // Defaults to false
 )
 
 // init initializes the logging package based on environment variables.
@@ -57,12 +60,25 @@ func configureLogger() {
 	// Determine log format
 	format := strings.ToLower(os.Getenv("LOG_FORMAT"))
 	var handler slog.Handler
+
+	// Prepare common options, level is always needed
+	opts := &slog.HandlerOptions{Level: currentLevel}
+
 	// Default to JSON unless LOG_FORMAT is explicitly "text"
 	if format == "text" {
-		handler = slog.NewTextHandler(outputWriter, &slog.HandlerOptions{Level: currentLevel})
+		// Text handler: Timestamps are included by default, no ReplaceAttr needed initially.
+		// If specific text format changes are needed later, they would go here.
+		handler = slog.NewTextHandler(outputWriter, opts)
 	} else {
-		// Default to JSON if LOG_FORMAT is empty/unset or explicitly "json" (or anything else)
-		handler = slog.NewJSONHandler(outputWriter, &slog.HandlerOptions{Level: currentLevel})
+		// JSON handler: Conditionally remove the time attribute based on the test flag.
+		opts.ReplaceAttr = func(_ []string, a slog.Attr) slog.Attr {
+			// Remove the time attribute ONLY if the test flag is NOT set.
+			if !includeTimestampsForTest && a.Key == slog.TimeKey {
+				return slog.Attr{} // Remove the time attribute
+			}
+			return a // Keep other attributes (or time attribute if flag is true)
+		}
+		handler = slog.NewJSONHandler(outputWriter, opts)
 	}
 	logger = slog.New(handler)
 }
@@ -170,4 +186,15 @@ func ParseLevel(levelStr string) (Level, error) {
 		// Return default level (Info) on parse error, fixing gosec G115 warning.
 		return LevelInfo, fmt.Errorf("%w: %s", ErrInvalidLogLevel, levelStr)
 	}
+}
+
+// SetTestModeWithTimestamps controls whether timestamps are included in JSON logs.
+// This is intended ONLY for use by test helpers (e.g., testutil.CaptureJSONLogs)
+// to ensure timestamps are present for assertions, even if the default is to omit them.
+func SetTestModeWithTimestamps(enabled bool) {
+	includeTimestampsForTest = enabled
+	// Reconfigure the logger immediately to apply the change
+	// This is important because the test helper might call this *before*
+	// calling SetOutput or SetLevel, which also reconfigure.
+	configureLogger()
 }
