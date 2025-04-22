@@ -87,14 +87,14 @@ func TestDebugFlagAndEnvVarInteraction(t *testing.T) {
 
 			// Execute command without debug flag
 			cmd := getRootCmd()
-			logs, err := testutil.CaptureJSONLogs(log.LevelInfo, func() {
+			_, logs, err := testutil.CaptureJSONLogs(log.LevelInfo, func() {
 				_, _, execErr := executeCommandWithStderrCapture(cmd, "help")
 				_ = execErr // Ignore potential execution error
 			})
 			require.NoError(t, err, "Log capture failed")
 
 			// Verify debug is disabled and no debug logs are present
-			testutil.AssertLogDoesNotContainJSON(t, logs, map[string]interface{}{"level": "DEBUG"}, "No debug logs should be present")
+			testutil.AssertLogDoesNotContainJSON(t, logs, map[string]interface{}{"level": "DEBUG"})
 		})
 
 		t.Run("WithFlag_DebugEnabled", func(t *testing.T) {
@@ -103,15 +103,17 @@ func TestDebugFlagAndEnvVarInteraction(t *testing.T) {
 
 			// Execute command with debug flag
 			cmd := getRootCmd()
-			logs, err := testutil.CaptureJSONLogs(log.LevelDebug, func() {
+			_, logs, err := testutil.CaptureJSONLogs(log.LevelDebug, func() {
 				_, _, execErr := executeCommandWithStderrCapture(cmd, "--debug", "help")
-				_ = execErr // Ignore potential execution error
+				if execErr != nil {
+					t.Errorf("command execution failed unexpectedly: %v", execErr)
+				}
 			})
 			require.NoError(t, err, "Log capture failed")
 
 			// Verify debug is enabled and debug logs are present
 			// The --debug flag should set LOG_LEVEL=DEBUG implicitly
-			testutil.AssertLogContainsJSON(t, logs, map[string]interface{}{"level": "DEBUG"}, "Debug logs should be present")
+			testutil.AssertLogContainsJSON(t, logs, map[string]interface{}{"level": "DEBUG"})
 		})
 
 		t.Run("FlagOverridesEnv", func(t *testing.T) {
@@ -121,15 +123,17 @@ func TestDebugFlagAndEnvVarInteraction(t *testing.T) {
 
 			// Execute command with debug flag (should override env var)
 			cmd := getRootCmd()
-			logs, err := testutil.CaptureJSONLogs(log.LevelDebug, func() {
+			_, logs, err := testutil.CaptureJSONLogs(log.LevelDebug, func() {
 				_, _, execErr := executeCommandWithStderrCapture(cmd, "--debug", "help")
-				_ = execErr // Ignore potential execution error
+				if execErr != nil {
+					t.Errorf("command execution failed unexpectedly: %v", execErr)
+				}
 			})
 			require.NoError(t, err, "Log capture failed")
 
 			// Verify debug is enabled (flag overrides env) and debug logs are present
 			// The --debug flag should override LOG_LEVEL=INFO
-			testutil.AssertLogContainsJSON(t, logs, map[string]interface{}{"level": "DEBUG"}, "Debug logs should be present")
+			testutil.AssertLogContainsJSON(t, logs, map[string]interface{}{"level": "DEBUG"})
 		})
 	})
 }
@@ -232,4 +236,37 @@ func TestRootCommandRunWithNoArgs(t *testing.T) {
 
 	assert.Error(t, err, "Executing root command with no args should return an error")
 	assert.Contains(t, err.Error(), "a subcommand is required", "Error message should indicate a subcommand is required")
+}
+
+func TestVersionCommand(t *testing.T) {
+	cmd := getRootCmd()
+	output, err := executeCommand(cmd, "--version") // Use --version flag
+	require.NoError(t, err, "Command execution failed")
+
+	// Verify the stdout output contains the version string
+	assert.Contains(t, output, "irr version 0.2.0", "Output should contain the version string")
+}
+
+func TestDebugFlagLowerPrecedence(t *testing.T) {
+	// --debug flag should override LOG_LEVEL env var if it's set to something else
+	t.Setenv("LOG_LEVEL", "INFO") // Set env var to INFO
+
+	cmd := getRootCmd()
+	// Capture logs at Debug level to see debug messages
+	_, logs, err := testutil.CaptureJSONLogs(log.LevelDebug, func() {
+		// Execute a command that triggers initialization (like help)
+		_, _, execErr := executeCommandWithStderrCapture(cmd, "--debug", "help")
+		if execErr != nil {
+			// Don't fail the test on execution error, as we're checking logs
+			t.Logf("command execution failed (ignored for log check): %v", execErr)
+		}
+	})
+	require.NoError(t, err, "Log capture failed")
+
+	// Verify the first debug log indicates the execution mode
+	testutil.AssertLogContainsJSON(t, logs, map[string]interface{}{
+		"level": "DEBUG",
+		"msg":   "Execution Mode Detected", // Updated expected message
+		// Optionally assert on the mode: "mode": "Standalone"
+	})
 }
