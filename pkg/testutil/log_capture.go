@@ -5,13 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/lalbers/irr/pkg/log"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // CaptureLogOutput redirects log output using log.SetOutput during test execution
@@ -44,13 +42,21 @@ func CaptureLogOutput(logLevel log.Level, testFunc func()) (string, error) {
 	// and *after* the log output is restored by the previous defer.
 	defer log.SetLevel(originalLevel)
 
-	// Execute the test function. Logs will go to logBuf.
-	testFunc()
+	// Execute the test function, recovering from panics.
+	var panicErr error
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				panicErr = fmt.Errorf("panic during log capture: %v", r)
+			}
+		}()
+		testFunc()
+	}()
 
 	// No need to manually handle pipes or os.Stderr anymore.
 
-	// Return the captured log content from the buffer.
-	return logBuf.String(), nil
+	// Return the captured log content from the buffer and any panic error.
+	return logBuf.String(), panicErr
 }
 
 // ContainsLog checks if the log output contains the specified message
@@ -64,18 +70,20 @@ func ContainsLog(output, message string) bool {
 // parses each line as JSON, and returns a slice of maps.
 // It restores the original LOG_FORMAT afterwards.
 // The logLevel parameter controls the minimum level of logs captured.
-func CaptureJSONLogs(logLevel log.Level, testFunc func()) ([]map[string]interface{}, error) {
+// It returns the raw captured output string, the parsed logs, and any error.
+func CaptureJSONLogs(logLevel log.Level, testFunc func()) (logOutput string, parsedLogs []map[string]interface{}, err error) {
 	// --- Environment Variable Handling ---
 	originalLogFormat := os.Getenv("LOG_FORMAT")
 	// Set LOG_FORMAT=json for the duration of this capture
-	if err := os.Setenv("LOG_FORMAT", "json"); err != nil {
-		return nil, fmt.Errorf("failed to set LOG_FORMAT=json: %w", err)
+	if setErr := os.Setenv("LOG_FORMAT", "json"); setErr != nil {
+		err = fmt.Errorf("failed to set LOG_FORMAT=json: %w", setErr)
+		return
 	}
 	defer func() {
 		// Restore original LOG_FORMAT
-		if err := os.Setenv("LOG_FORMAT", originalLogFormat); err != nil {
+		if restoreErr := os.Setenv("LOG_FORMAT", originalLogFormat); restoreErr != nil {
 			// Log an error if restoring fails, but don't fail the test here
-			log.Error("failed to restore original LOG_FORMAT environment variable", "originalValue", originalLogFormat, "error", err)
+			log.Error("failed to restore original LOG_FORMAT environment variable", "originalValue", originalLogFormat, "error", restoreErr)
 		}
 	}()
 
@@ -96,87 +104,155 @@ func CaptureJSONLogs(logLevel log.Level, testFunc func()) ([]map[string]interfac
 	// the logger reads the env var each time it creates a handler.
 	// If tests fail due to wrong format, revisit this.
 
-	testFunc()
+	// Execute the test function, recovering from panics.
+	var panicErr error
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				panicErr = fmt.Errorf("panic during log capture: %v", r)
+			}
+		}()
+		testFunc()
+	}()
 
-	// --- JSON Parsing ---
-	capturedOutput := logBuf.String()
-	var parsedLogs []map[string]interface{}
+	// Populate logOutput before returning on panic or empty buffer
+	logOutput = logBuf.String()
 
-	// Handle empty output gracefully
-	if strings.TrimSpace(capturedOutput) == "" {
-		return parsedLogs, nil // Return empty slice, not an error
+	// If the test function panicked, return the panic error immediately.
+	if panicErr != nil {
+		// Assign panicErr to the named return `err`
+		err = panicErr
+		// parsedLogs is already initialized to nil, logOutput is set
+		return
 	}
 
-	lines := strings.Split(strings.TrimSpace(capturedOutput), "\n")
+	// --- JSON Parsing ---
+	// parsedLogs is the named return value, initialized to a nil slice.
+
+	// Handle empty output gracefully
+	if strings.TrimSpace(logOutput) == "" {
+		// parsedLogs is nil, err is nil, logOutput is set
+		return
+	}
+
+	lines := strings.Split(strings.TrimSpace(logOutput), "\n")
+	var parseErr error
 	for i, line := range lines {
+		// Skip empty lines which might result from extra newlines
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
 		var entry map[string]interface{}
-		if err := json.Unmarshal([]byte(line), &entry); err != nil {
-			// Provide context in the error message
-			return nil, fmt.Errorf("failed to unmarshal log line %d as JSON: %w\nLine content: %s", i+1, err, line)
+		if unmarshalErr := json.Unmarshal([]byte(line), &entry); unmarshalErr != nil {
+			// Store the first parsing error encountered and stop processing
+			parseErr = fmt.Errorf("failed to unmarshal log line %d as JSON: %w\nLine content: %s", i+1, unmarshalErr, line)
+			break // Stop parsing on the first error
 		}
 		parsedLogs = append(parsedLogs, entry)
 	}
 
-	return parsedLogs, nil
+	// Assign the local parseErr to the named return `err`
+	err = parseErr
+	// logOutput and parsedLogs are already populated
+	return
 }
 
-// AssertLogContainsJSON asserts that at least one log entry in the provided slice
-// contains all the key-value pairs specified in expectedFields.
-// Uses require.Fail for immediate test failure if no match is found.
-func AssertLogContainsJSON(t *testing.T, logs []map[string]interface{}, expectedFields map[string]interface{}, msgAndArgs ...interface{}) {
+// AssertLogContainsJSON checks if any log entry in the captured logs (as a slice of maps)
+// contains all the key-value pairs present in the expectedLog map.
+func AssertLogContainsJSON(t *testing.T, logs []map[string]interface{}, expectedLog map[string]interface{}) {
 	t.Helper()
-
-	for _, entry := range logs {
-		match := true
-		for key, expectedValue := range expectedFields {
-			actualValue, ok := entry[key]
-			if !ok || !reflect.DeepEqual(actualValue, expectedValue) {
-				match = false
-				break
-			}
-		}
-		if match {
-			// Found a matching entry, assertion passes
-			return
+	found := false
+	for _, logEntry := range logs {
+		if containsAll(logEntry, expectedLog) {
+			found = true
+			break
 		}
 	}
+	if !found {
+		// Log the captured logs and the expected log for easier debugging
+		var logBuffer bytes.Buffer
+		encoder := json.NewEncoder(&logBuffer)
+		encoder.SetIndent("", "  ") // Pretty print the JSON
+		for _, entry := range logs {
+			_ = encoder.Encode(entry) //nolint:errcheck // Ignore error for test helper
+		}
 
-	// If no match was found after checking all entries
-	// Construct a helpful failure message
-	expectedBytes, _ := json.MarshalIndent(expectedFields, "", "  ")
-	logsBytes, _ := json.MarshalIndent(logs, "", "  ")
-	failureMsg := fmt.Sprintf("Log entries did not contain expected fields.\nExpected Fields:\n%s\n\nActual Logs:\n%s",
-		string(expectedBytes), string(logsBytes))
+		expectedLogJSON, _ := json.MarshalIndent(expectedLog, "", "  ") //nolint:errcheck // Ignore error for test helper
 
-	// Append custom message and args if provided
-	require.Fail(t, failureMsg, msgAndArgs...)
+		assert.Fail(t, "Expected log entry not found",
+			"Expected log containing:\n%s\n\nActual captured logs:\n%s",
+			string(expectedLogJSON), logBuffer.String())
+	}
 }
 
-// AssertLogDoesNotContainJSON asserts that *no* log entry in the provided slice
-// contains all the key-value pairs specified in unexpectedFields.
-// Uses assert.Fail to allow other assertions to run even if this one passes.
-func AssertLogDoesNotContainJSON(t *testing.T, logs []map[string]interface{}, unexpectedFields map[string]interface{}, msgAndArgs ...interface{}) {
+// AssertLogDoesNotContainJSON checks if no log entry in the captured logs (as a slice of maps)
+// contains all the key-value pairs present in the unexpectedLog map.
+func AssertLogDoesNotContainJSON(t *testing.T, logs []map[string]interface{}, unexpectedLog map[string]interface{}) {
 	t.Helper()
-
-	for i, entry := range logs {
-		match := true
-		for key, unexpectedValue := range unexpectedFields {
-			actualValue, ok := entry[key]
-			if !ok || !reflect.DeepEqual(actualValue, unexpectedValue) {
-				match = false
-				break
-			}
-		}
-		if match {
-			// Found a matching entry, assertion FAILS
-			unexpectedBytes, _ := json.MarshalIndent(unexpectedFields, "", "  ")
-			entryBytes, _ := json.MarshalIndent(entry, "", "  ")
-			failureMsg := fmt.Sprintf("Found unexpected log entry (index %d) containing specified fields.\nUnexpected Fields:\n%s\n\nMatching Entry:\n%s",
-				i, string(unexpectedBytes), string(entryBytes))
-			assert.Fail(t, failureMsg, msgAndArgs...)
-			return // No need to check further if one match is found
+	found := false
+	var foundEntry map[string]interface{}
+	for _, logEntry := range logs {
+		if containsAll(logEntry, unexpectedLog) {
+			found = true
+			foundEntry = logEntry
+			break
 		}
 	}
+	if found {
+		// Log the found entry and the unexpected log for easier debugging
+		foundEntryJSON, _ := json.MarshalIndent(foundEntry, "", "  ")       //nolint:errcheck // Ignore error for test helper
+		unexpectedLogJSON, _ := json.MarshalIndent(unexpectedLog, "", "  ") //nolint:errcheck // Ignore error for test helper
 
-	// If no match was found after checking all entries, assertion PASSES
+		assert.Fail(t, "Unexpected log entry found",
+			"Found log entry:\n%s\n\nUnexpected log containing:\n%s",
+			string(foundEntryJSON), string(unexpectedLogJSON))
+	}
+}
+
+// containsAll checks if the actual map contains all key-value pairs from the expected map.
+// It performs a deep comparison for nested maps and slices if necessary,
+// but primarily focuses on top-level key matching for structured logs.
+func containsAll(actual, expected map[string]interface{}) bool {
+	for key, expectedValue := range expected {
+		actualValue, ok := actual[key]
+		if !ok {
+			return false // Key not found in actual log entry
+		}
+
+		// Simple comparison for basic types (string, number, bool)
+		// Convert numbers to float64 for consistent comparison
+		switch actualVal := actualValue.(type) {
+		case float64:
+			switch expectedVal := expectedValue.(type) {
+			case float64:
+				if actualVal != expectedVal {
+					return false
+				}
+			case int:
+				// Allow comparison between float64 (from JSON) and int (from test)
+				if actualVal != float64(expectedVal) {
+					return false
+				}
+			case int64: // Allow comparison with int64 as well
+				if actualVal != float64(expectedVal) {
+					return false
+				}
+			default:
+				// Type mismatch (e.g., comparing float64 with string)
+				return false
+			}
+		// Add cases for other numeric types if needed, e.g., actualValue being int/int64
+		default:
+			// Non-float actual value, use direct comparison
+			if actualValue != expectedValue {
+				// Use assert.ObjectsAreEqual for potentially more complex types if needed,
+				// but direct comparison covers most common log field types.
+				// For now, a simple direct comparison should suffice for typical log fields.
+				// if !assert.ObjectsAreEqual(actualValue, expectedValue) { // If more complex comparison is needed
+				return false
+				// }
+			}
+		}
+	}
+	return true // All expected key-value pairs were found and matched
 }
