@@ -50,10 +50,13 @@
 
 ## 6. Outstanding Tasks
 
-- [ ] Fix any remaining test failures related to log output.
-- [ ] Complete audit of all commands for correct `stdout`/`stderr` usage.
-- [ ] Update documentation for `LOG_FORMAT` and output separation.
-- [ ] Final manual/automated verification of CLI output separation.
+- [ ] **Fix Output Stream Separation Issues:**
+    - [ ] Refactor `inspect` command output.
+    - [x] Refactor `override --dry-run` command output.
+    - [x] Refactor `validate` command output.
+- [ ] **Final Verification:** Re-run manual checks for `inspect`, `override --dry-run`, `validate` after fixes.
+- [ ] **Documentation:** Update user-facing docs regarding `LOG_FORMAT` and output separation guarantees.
+- [ ] **Code Polish (Optional):** Review `pkg/chart/generator.go` logging for potential improvements.
 
 ## 7. Open Questions/Considerations
 
@@ -76,13 +79,17 @@
 - [x] Investigate and fix `TestVersionCommand` log assertion failure.
 - [x] Investigate and fix `TestDebugFlagLowerPrecedence` log assertion failure.
 - [x] Investigate and fix `TestParentChart` assertion failure.
-- [/] Audit Stdout vs. Stderr usage across commands. (*Note: `root.go` warnings remain due to apply issues*)
+- [ ] Audit Stdout vs. Stderr usage across commands. (*Status: In Progress*)
+    - [x] **`inspect`:** Mixes YAML output (stdout) with JSON logs (stderr). Informational messages use direct print, not `log.Info`. -> **Fixed**
+    - [x] **`override --dry-run`:** Embeds YAML output within an `INFO` log message (stderr) instead of printing to `stdout`. -> **Fixed**
+    - [x] **`validate`:** Mixes rendered YAML output (stdout) with JSON logs/Helm warnings (stderr). -> **Fixed**
 - [x] Audit remaining log assertions in tests. (*Note: `pkg/chart/generator.go` logging could be improved*)
 - [x] Document `LOG_FORMAT` configuration.
 - [x] Verify `make test` passes cleanly.
 - [ ] Verify CLI output separation.
     - **Goal:** Confirm user-facing output (help, version, results) goes to `stdout`; diagnostic logs (INFO, WARN, ERROR, DEBUG) go to `stderr` (JSON default).
     - **Method:** Run key commands (`--help`, `--version`, `inspect`, `override`, `validate`) in standalone & plugin modes, with default (`INFO`) and `DEBUG` log levels. Capture `stdout` and `stderr` separately for analysis.
+    - **Status (Partial):** `--help`, `--version`, `override -o file`, `inspect`, `override --dry-run` appear correct. `validate` needs fixing.
 
 ## Completion Summary
 
