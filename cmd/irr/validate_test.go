@@ -13,7 +13,6 @@ import (
 
 	// Mock internal/helm for testing command logic without actual Helm calls
 	"github.com/lalbers/irr/internal/helm"
-	"github.com/lalbers/irr/pkg/exitcodes"
 	"github.com/lalbers/irr/pkg/fileutil"
 	"github.com/spf13/afero"
 )
@@ -34,11 +33,6 @@ var mockHelmTemplate func(options *helm.TemplateOptions) (*helm.CommandResult, e
 
 //nolint:unused // This function is available for testing but not currently used
 func setupValidateTest(t *testing.T) (cmd *cobra.Command, cleanup func()) {
-	// Save the original isHelmPlugin value to restore later
-	originalIsHelmPlugin := isHelmPlugin
-	// Set isHelmPlugin to true for tests to allow release-name flag
-	isHelmPlugin = true
-
 	// Create a temporary directory for chart and values
 	tempDir, err := os.MkdirTemp("", "validate-test-")
 	require.NoError(t, err)
@@ -88,7 +82,6 @@ func setupValidateTest(t *testing.T) (cmd *cobra.Command, cleanup func()) {
 
 	cleanup = func() {
 		helm.HelmTemplateFunc = originalHelmTemplate // Restore original
-		isHelmPlugin = originalIsHelmPlugin          // Restore original isHelmPlugin value
 		err := os.RemoveAll(tempDir)
 		if err != nil {
 			t.Logf("Warning: failed to clean up temp directory %s: %v", tempDir, err)
@@ -131,64 +124,6 @@ func setupCommandForTest() *cobra.Command {
 	cmd.PreRunE = nil
 
 	return cmd
-}
-
-// setupMockAdapter sets up a mock Helm adapter for tests
-func setupMockAdapter(_ *testing.T) (cleanup func()) {
-	// Save original factory function
-	originalFactory := helmAdapterFactory
-
-	// Save original test mode flag and set to true for the test
-	originalTestMode := isValidateTestMode
-	isValidateTestMode = true
-
-	// Replace with a test mock that returns success
-	helmAdapterFactory = func() (*helm.Adapter, error) {
-		// Create a mock adapter with nil client but our test filesystem
-		adapter := helm.NewAdapter(nil, AppFs, true)
-
-		// We can't directly modify the adapter's methods, but our tests will succeed
-		// because isHelmPlugin is set to true, and we're mocking the HelmTemplateFunc
-		return adapter, nil
-	}
-
-	cleanup = func() {
-		helmAdapterFactory = originalFactory
-		isValidateTestMode = originalTestMode
-	}
-
-	return cleanup
-}
-
-// setupMockAdapterForInvalidVersion sets up a mock Helm adapter that returns an error
-func setupMockAdapterForInvalidVersion(_ *testing.T, invalidVersion string) (cleanup func()) {
-	// Save original factory function
-	originalFactory := helmAdapterFactory
-
-	// Save original test mode flag
-	originalTestMode := isValidateTestMode
-	isValidateTestMode = true
-
-	// If no invalid version is provided, use a default
-	if invalidVersion == "" {
-		invalidVersion = "not-a-semver"
-	}
-
-	// Replace with a test mock that returns the expected error
-	helmAdapterFactory = func() (*helm.Adapter, error) {
-		// Since we can't directly mock ValidateRelease, return an error from the factory
-		return nil, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitHelmCommandFailed,
-			Err:  fmt.Errorf("invalid kubernetes version: %s", invalidVersion),
-		}
-	}
-
-	cleanup = func() {
-		helmAdapterFactory = originalFactory
-		isValidateTestMode = originalTestMode
-	}
-
-	return cleanup
 }
 
 // TestValidateCmd_DefaultKubeVersion tests validation with default Kubernetes version
@@ -245,17 +180,15 @@ func TestValidateCmd_DefaultKubeVersion(t *testing.T) {
 	err := cmd.Execute()
 	require.NoError(t, err, "Command should execute without error")
 
-	// Save original isHelmPlugin value and restore after test
-	originalIsHelmPlugin := isHelmPlugin
-	defer func() { isHelmPlugin = originalIsHelmPlugin }()
-	// Set plugin mode to true for release name test
-	isHelmPlugin = true
-
-	// Setup mock adapter
-	cleanupAdapter := setupMockAdapter(t)
-	defer cleanupAdapter()
-
 	// Now test with release name validation
+	err = os.Setenv("HELM_PLUGIN_NAME", "irr")
+	require.NoError(t, err)
+	defer func() {
+		err := os.Unsetenv("HELM_PLUGIN_NAME")
+		if err != nil {
+			t.Errorf("Error unsetting HELM_PLUGIN_NAME: %v", err)
+		}
+	}()
 	cmd = setupCommandForTest()
 	cmd.SetArgs([]string{
 		"--release-name", "test-release",
@@ -328,17 +261,15 @@ func TestValidateCmd_ExplicitKubeVersion(t *testing.T) {
 	err := cmd.Execute()
 	require.NoError(t, err, "Command should execute without error")
 
-	// Save original isHelmPlugin value and restore after test
-	originalIsHelmPlugin := isHelmPlugin
-	defer func() { isHelmPlugin = originalIsHelmPlugin }()
-	// Set plugin mode to true for release name test
-	isHelmPlugin = true
-
-	// Setup mock adapter
-	cleanupAdapter := setupMockAdapter(t)
-	defer cleanupAdapter()
-
 	// Now test with release name validation
+	err = os.Setenv("HELM_PLUGIN_NAME", "irr")
+	require.NoError(t, err)
+	defer func() {
+		err := os.Unsetenv("HELM_PLUGIN_NAME")
+		if err != nil {
+			t.Errorf("Error unsetting HELM_PLUGIN_NAME: %v", err)
+		}
+	}()
 	cmd = setupCommandForTest()
 	cmd.SetArgs([]string{
 		"--release-name", "test-release",
@@ -435,17 +366,15 @@ func TestValidateCmd_InvalidKubeVersionFormat(t *testing.T) {
 	require.Error(t, err, "Command should fail with invalid Kubernetes version")
 	assert.Contains(t, err.Error(), "invalid kubernetes version", "Error should mention invalid version")
 
-	// Save original isHelmPlugin value and restore after test
-	originalIsHelmPlugin := isHelmPlugin
-	defer func() { isHelmPlugin = originalIsHelmPlugin }()
-	// Set plugin mode to true for release name test
-	isHelmPlugin = true
-
-	// Setup mock adapter for this test that returns an error
-	cleanupAdapter := setupMockAdapterForInvalidVersion(t, invalidVersion)
-	defer cleanupAdapter()
-
 	// Now test with release name validation
+	err = os.Setenv("HELM_PLUGIN_NAME", "irr")
+	require.NoError(t, err)
+	defer func() {
+		err := os.Unsetenv("HELM_PLUGIN_NAME")
+		if err != nil {
+			t.Errorf("Error unsetting HELM_PLUGIN_NAME: %v", err)
+		}
+	}()
 	cmd = setupCommandForTest()
 	cmd.SetArgs([]string{
 		"--release-name", "test-release",
