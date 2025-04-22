@@ -544,7 +544,7 @@ func TestApplyRulesToMap_LogOutput(t *testing.T) {
 	defer log.SetLevel(originalLevel)
 
 	// --- Test with Rules Enabled ---
-	enabledLogs, err := testutil.CaptureJSONLogs(log.LevelDebug, func() {
+	_, enabledLogs, err := testutil.CaptureJSONLogs(log.LevelDebug, func() {
 		// Apply the rule and check error
 		_, applyErr := ApplyRulesToMap([]Rule{rule}, testChart, overrideMap)
 		assert.NoError(t, applyErr, "ApplyRulesToMap should not produce an error")
@@ -559,7 +559,7 @@ func TestApplyRulesToMap_LogOutput(t *testing.T) {
 		"msg":        "Checking rules for chart",
 		"rule_count": 1.0, // JSON unmarshals numbers as float64
 		"chart_name": "test-chart",
-	}, "Initial rule check log missing or incorrect")
+	})
 
 	// Assertion 1: Check for the rule application message
 	testutil.AssertLogContainsJSON(t, enabledLogs, map[string]interface{}{
@@ -568,7 +568,7 @@ func TestApplyRulesToMap_LogOutput(t *testing.T) {
 		"rule_name":  "test-log-rule",
 		"chart_name": "test-chart",
 		"confidence": 3.0, // JSON unmarshals numbers as float64
-	}, "Rule application log missing or incorrect")
+	})
 
 	// Assertion 2: Check for the parameter check message
 	testutil.AssertLogContainsJSON(t, enabledLogs, map[string]interface{}{
@@ -578,10 +578,10 @@ func TestApplyRulesToMap_LogOutput(t *testing.T) {
 		"rule_name":  "test-log-rule",
 		"param_path": "global.security.allowInsecureImages",
 		"param_type": 0.0, // Type 0 (Informational), JSON unmarshals as float64
-	}, "Parameter checking log missing or incorrect")
+	})
 
 	// --- Test with Rules Disabled ---
-	disabledLogs, err := testutil.CaptureJSONLogs(log.LevelDebug, func() {
+	_, disabledLogs, err := testutil.CaptureJSONLogs(log.LevelDebug, func() {
 		// Create registry with rules disabled
 		registry := NewRegistry()
 		registry.SetEnabled(false)
@@ -596,5 +596,5 @@ func TestApplyRulesToMap_LogOutput(t *testing.T) {
 	testutil.AssertLogContainsJSON(t, disabledLogs, map[string]interface{}{
 		"level": "DEBUG",
 		"msg":   "Rules system is disabled, skipping rule application", // Match actual log msg
-	}, "Rules disabled log missing")
+	})
 }
