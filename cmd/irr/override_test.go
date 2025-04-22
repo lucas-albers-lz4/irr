@@ -168,11 +168,6 @@ func TestOverrideRelease(t *testing.T) {
 	originalHelmAdapterFactory := helmAdapterFactory
 	defer func() { helmAdapterFactory = originalHelmAdapterFactory }()
 
-	// Save original isHelmPlugin value and restore after test
-	originalIsHelmPlugin := isHelmPlugin
-	isHelmPlugin = true
-	defer func() { isHelmPlugin = originalIsHelmPlugin }()
-
 	// Mock the helm adapter factory
 	mockClient := &MockHelmClient{
 		ReleaseValues: map[string]interface{}{
