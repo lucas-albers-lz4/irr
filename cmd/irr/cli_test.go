@@ -594,7 +594,7 @@ func TestGlobalFlags(t *testing.T) {
 				// Parse the stderr from the initial runCommand
 				logs, err := parseJSONLogsFromString(stderr)
 				require.NoError(t, err, "Failed to parse logs from stderr for --debug flag")
-				testutil.AssertLogContainsJSON(t, logs, map[string]interface{}{"level": "DEBUG"}, "Debug logs should be present")
+				testutil.AssertLogContainsJSON(t, logs, map[string]interface{}{"level": "DEBUG"})
 			},
 		},
 		{
@@ -605,7 +605,7 @@ func TestGlobalFlags(t *testing.T) {
 				// Stderr already contains the JSON logs because we set LOG_FORMAT=json
 				logs, err := parseJSONLogsFromString(stderr)
 				require.NoError(t, err, "Failed to parse logs from stderr")
-				testutil.AssertLogContainsJSON(t, logs, map[string]interface{}{"level": "DEBUG"}, "Debug logs should be present with LOG_LEVEL=DEBUG")
+				testutil.AssertLogContainsJSON(t, logs, map[string]interface{}{"level": "DEBUG"})
 			},
 		},
 		{
@@ -617,7 +617,7 @@ func TestGlobalFlags(t *testing.T) {
 				logs, err := parseJSONLogsFromString(stderr)
 				require.NoError(t, err, "Failed to parse logs from stderr")
 				// --debug flag should force DEBUG level logs
-				testutil.AssertLogContainsJSON(t, logs, map[string]interface{}{"level": "DEBUG"}, "Debug flag should override LOG_LEVEL=INFO")
+				testutil.AssertLogContainsJSON(t, logs, map[string]interface{}{"level": "DEBUG"})
 			},
 		},
 		{
