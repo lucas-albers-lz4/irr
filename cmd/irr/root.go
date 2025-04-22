@@ -51,8 +51,7 @@ var (
 	helmClient helm.ClientInterface
 
 	// New variables for initConfig
-	isTestMode   bool
-	isHelmPlugin bool
+	isTestMode bool
 )
 
 // AppFs defines the filesystem interface to use, allows mocking in tests.
@@ -151,7 +150,7 @@ It also supports linting image references for potential issues.`,
 			// Print all arguments
 			fmt.Fprintf(os.Stderr, "[DEBUG] ARGS: %v\n", os.Args)
 			// Print plugin/debug status
-			fmt.Fprintf(os.Stderr, "[DEBUG] isHelmPlugin: %v, debugEnabled: %v\n", isHelmPlugin, debugEnabled)
+			fmt.Fprintf(os.Stderr, "[DEBUG] isHelmPlugin: %v, debugEnabled: %v\n", isRunningAsHelmPlugin(), debugEnabled)
 		}
 
 		// Setup logging before any command logic runs
@@ -212,7 +211,7 @@ It also supports linting image references for potential issues.`,
 		}
 
 		// Initialize Helm client if running as a Helm plugin
-		if isHelmPlugin {
+		if isRunningAsHelmPlugin() {
 			settings := helm.GetHelmSettings()
 			helmClient = helm.NewRealHelmClient(settings)
 			debug.Printf("Initialized Helm client for plugin mode")
@@ -295,18 +294,8 @@ func init() {
 	rootCmd.AddCommand(newValidateCmd())
 
 	// Add release-name and namespace flags to root command for all modes
-	// We'll check isHelmPlugin before using them in the command execution
 	addReleaseFlag(rootCmd)
 	addNamespaceFlag(rootCmd)
-
-	// Check if running as Helm plugin
-	if isHelmPlugin {
-		// Initialize Helm plugin specific functionality
-		initHelmPlugin()
-	} else {
-		// If not running as a plugin, hide the plugin-specific flags
-		removeHelmPluginFlags(rootCmd)
-	}
 
 	// Find and read the config file
 	if cfgFile != "" {
@@ -464,3 +453,10 @@ func loadMappingsIfNeeded(fs afero.Fs, registryFile string) (*registry.Mappings,
 // 		removeHelmPluginFlags(rootCmd)
 // 	}
 // }
+
+// checkRequiredFlags performs early validation, e.g., for global config file issues.
+func checkRequiredFlags(_ *cobra.Command) error {
+	// Currently, no global required flags need checking here *before* subcommand execution.
+	// Subcommand required flags are checked in their respective PreRunE functions.
+	return nil
+}
