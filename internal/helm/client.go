@@ -1,12 +1,14 @@
 package helm
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/lalbers/irr/pkg/log"
 	"github.com/spf13/afero"
@@ -120,41 +122,101 @@ func (c *RealHelmClient) GetReleaseChart(_ context.Context, releaseName, namespa
 func (c *RealHelmClient) TemplateChart(_ context.Context, releaseName, chartPath string, values map[string]interface{}, namespace, kubeVersion string) (string, error) {
 	log.Debug("Templating chart", "chartPath", chartPath, "release", releaseName, "namespace", namespace)
 
-	client := action.NewInstall(c.actionConfig)
+	// --- Capture Helm SDK logs ---
+	// Create a buffer to capture Helm's log output
+	var helmLogBuffer bytes.Buffer
+	// Create a logger function that writes to the buffer
+	helmLogger := func(format string, v ...interface{}) {
+		// Write the formatted log message to the buffer
+		// Ensure a newline is added if not present in the format string
+		if !strings.HasSuffix(format, "\\n") {
+			format += "\\n"
+		}
+		fmt.Fprintf(&helmLogBuffer, format, v...)
+	}
+	// Create a *new* action config specifically for this operation to avoid race conditions if the client is reused
+	actionConfig := new(action.Configuration)
+	// Initialize the new config, setting our custom logger
+	// We need to re-initialize settings that might be needed by Init or Install
+	if err := actionConfig.Init(c.settings.RESTClientGetter(), namespace, os.Getenv("HELM_DRIVER"), helmLogger); err != nil {
+		return "", fmt.Errorf("failed to initialize Helm action configuration for logging: %w", err)
+	}
+	// --- End Helm log capture setup ---
+
+	// Use the new actionConfig with the custom logger
+	client := action.NewInstall(actionConfig) // Use the config with our logger
 	client.ClientOnly = true
 	client.DryRun = true
 	client.ReleaseName = releaseName
 	client.Replace = true
 	client.IncludeCRDs = true
-	client.Namespace = namespace
+	client.Namespace = namespace // Ensure namespace is set on the client too
 
 	if kubeVersion != "" {
-		client.KubeVersion = &chartutil.KubeVersion{Version: kubeVersion}
+		// Need to parse kubeVersion, action.Install uses KubeVersion struct
+		parsedKubeVersion, err := chartutil.ParseKubeVersion(kubeVersion)
+		if err != nil {
+			log.Warn("Could not parse kube-version, using default", "version", kubeVersion, "error", err)
+		} else {
+			client.KubeVersion = parsedKubeVersion
+		}
 	}
 
 	// Create chart
 	chart, err := loader.Load(chartPath)
 	if err != nil {
-		return "", fmt.Errorf("failed to load chart: %w", err)
+		// Process any logs captured so far, even on chart load failure
+		processHelmLogs(&helmLogBuffer)
+		return "", fmt.Errorf("failed to load chart %s: %w", chartPath, err)
 	}
 
 	// We need to merge chart values with provided values
 	filteredVals, err := chartutil.CoalesceValues(chart, values)
 	if err != nil {
+		// Process any logs captured so far
+		processHelmLogs(&helmLogBuffer)
 		return "", fmt.Errorf("failed to merge chart values: %w", err)
 	}
 
 	if validationErr := chart.Validate(); validationErr != nil {
+		// Process any logs captured so far
+		processHelmLogs(&helmLogBuffer)
 		return "", fmt.Errorf("chart validation error: %w", validationErr)
 	}
 
 	// Template the release
 	release, err := client.Run(chart, filteredVals)
+
+	// --- Process captured Helm logs ---
+	processHelmLogs(&helmLogBuffer)
+	// --- End log processing ---
+
 	if err != nil {
-		return "", fmt.Errorf("chart templating error: %w", err)
+		// Error already includes context, return as is after processing logs
+		// Wrapcheck requires wrapping external errors, even if descriptive.
+		return "", fmt.Errorf("helm SDK templating failed for chart %s: %w", chartPath, err)
 	}
 
 	return release.Manifest, nil
+}
+
+// processHelmLogs takes the buffer containing Helm SDK logs, splits them into lines,
+// and logs each non-empty line using the application's logger.
+func processHelmLogs(buffer *bytes.Buffer) {
+	logOutput := buffer.String()
+	if logOutput == "" {
+		return // Nothing to process
+	}
+
+	lines := strings.Split(strings.TrimSpace(logOutput), "\\n")
+	for _, line := range lines {
+		trimmedLine := strings.TrimSpace(line)
+		if trimmedLine != "" {
+			// Log Helm's output as INFO level for visibility.
+			// Could potentially parse for "WARN" or "ERROR" prefixes if needed.
+			log.Info("[Helm SDK] " + trimmedLine)
+		}
+	}
 }
 
 // GetCurrentNamespace returns the current namespace from Helm environment
