@@ -120,7 +120,7 @@ test-cert-manager: build
 
 test-cert-manager-debug: build
 	@echo "Running cert-manager component-group tests with debug output..."
-	@IRR_TESTING=true LOG_LEVEL=DEBUG IRR_DEBUG=1 go test -v ./test/integration/... -run TestCertManager
+	@IRR_TESTING=true LOG_LEVEL=DEBUG go test -v ./test/integration/... -run TestCertManager
 
 test-cert-manager-cores: build
 	@echo "Running cert-manager core controllers component test..."
@@ -132,7 +132,7 @@ test-kube-prometheus-stack: build
 
 test-kube-prometheus-stack-debug: build
 	@echo "Running kube-prometheus-stack component-group tests with debug output..."
-	@IRR_TESTING=true LOG_LEVEL=DEBUG IRR_DEBUG=1 go test -v ./test/integration/... -run TestKubePrometheusStack
+	@IRR_TESTING=true LOG_LEVEL=DEBUG go test -v ./test/integration/... -run TestKubePrometheusStack
 
 # You can run a specific integration test with:
 # make test-integration-specific TEST_NAME=TestConfigFileMappings
@@ -142,7 +142,7 @@ test-integration-specific: build
 
 test-integration-debug: build
 	@echo "Running integration tests with debug output..."
-	@IRR_TESTING=true LOG_LEVEL=DEBUG IRR_DEBUG=1 go test -v ./test/integration/...
+	@IRR_TESTING=true LOG_LEVEL=DEBUG go test -v ./test/integration/...
 
 test-charts: build
 	@echo "Running chart tests..."

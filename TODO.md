@@ -274,68 +274,37 @@ Fully standardize on the structured registry format throughout the codebase, dep
 - Verify backward compatibility works for existing configs
 - Check CLI output and help text for clarity
 
-## Phase 6: Test Output Improvement (P2: Developer Experience)
+## Phase 6: Remove IRR_DEBUG Support (Staged Approach) **[COMPLETED]**
 
-### Overview
-Improve test output readability by reducing verbose YAML output in test failures, particularly for complex charts with large override files.
+- **Goal:** Eliminate the redundant legacy `IRR_DEBUG` environment variable to simplify logging configuration and ensure documentation consistency. Rely solely on `LOG_LEVEL` for controlling log verbosity.
+- **Rationale:** `IRR_DEBUG=1` provides the same functionality as `LOG_LEVEL=DEBUG` but adds an extra configuration vector and has led to documentation inconsistencies. Removing it streamlines the logging system.
 
-### Motivation
-- Test failures for complex charts (like kube-prometheus-stack) produce overwhelming YAML output
-- Large YAML dumps make it difficult to identify the actual failure cause
-- More focused and readable output speeds up debugging and development
-- Consistent logging approach improves overall test maintenance
+- **Actions (Staged):**
 
-### Current Approach in TestKubePrometheusStack
-The current implementation in `test/integration/kube_prometheus_stack_test.go` provides a good starting point:
-- Uses component-group testing to focus on specific chart sections
-- Implements multiple search methods (string search, YAML structure search)
-- Limits output size (first 500 chars, first 10 lines)
-- Provides targeted searching for specific components
-- Uses specialized search functions for complex components (e.g., kube-state-metrics)
+    **Stage 1: Preparation and Audit**
+    - [x] Search the codebase for all uses of `IRR_DEBUG` (code, tests, docs, scripts).
+    - [x] Document all locations and usages to inform the next steps.
+    - [x] Update documentation to clarify that `LOG_LEVEL` is the only supported debug control going forward.
 
-### Implementation Steps
+    **Stage 2: Update Test and Build Infrastructure**
+    - [x] Update `Makefile`, CI scripts, and any other build/test execution commands to replace `IRR_DEBUG=1` with `LOG_LEVEL=DEBUG`.
+    - [x] Update test files to use `LOG_LEVEL=DEBUG` instead of setting/unsetting `IRR_DEBUG`.
+    - [x] Run all tests; fix any failures related to this change before proceeding.
 
-#### Phase 6.1: Create Test Output Helper Functions
-- [ ] **[P2]** Develop standardized helper functions in the test harness
-  - [ ] Create `LimitedOutput(output string, maxLength int)` helper
-  - [ ] Create `LogLimitedYAML(t *testing.T, yamlContent string)` helper
-  - [ ] Implement `SearchOverridesForComponent(overrides map[string]interface{}, component string)` helper
-  - [ ] Add `GetTopLevelKeys(overrides map[string]interface{})` for structure debugging
-  - [ ] Create specialized component search helpers for common patterns
+    **Stage 3: Remove IRR_DEBUG from Code**
+    - [x] Remove the check for `IRR_DEBUG` within the `init()` function in `pkg/log/log.go`.
+    - [x] Remove any code that sets/unsets or checks `IRR_DEBUG` in test files.
+    - [x] Run all tests; fix any failures related to this change before proceeding.
 
-#### Phase 6.2: Update Existing Tests
-- [ ] **[P2]** Apply output limiting pattern to other integration tests
-  - [ ] Identify tests with large YAML output (TestComplexChartFeatures, etc.)
-  - [ ] Update those tests to use the new helper functions
-  - [ ] Ensure tests report meaningful summaries instead of full YAML
-  - [ ] Add component-specific validation where appropriate
+    **Stage 4: Final Cleanup**
+    - [x] Remove all references to `IRR_DEBUG` from documentation files (`TESTING.md`, `DEVELOPMENT.md`, `PLUGIN-SPECIFIC.md`, `LOGGING.md`, `README.md`, `TODO.md`, etc.).
+    - [x] Search the codebase (`grep`) for any remaining uses of `IRR_DEBUG` and remove them.
+    - [x] Run all tests; ensure everything passes.
 
-#### Phase 6.3: Enhance TestHarness
-- [ ] **[P2]** Add output management capabilities to TestHarness
-  - [ ] Add `h.LogLimitedOutput(output string, reason string)` method
-  - [ ] Add `h.ValidateComponent(component string, overrides map[string]interface{})` method
-  - [ ] Implement `h.CompareOverrideKeys(expected []string, actual map[string]interface{})` method
-  - [ ] Create collection of reusable component validation patterns
-
-#### Phase 6.4: Documentation
-- [ ] **[P2]** Update developer documentation
-  - [ ] Document best practices for test output management
-  - [ ] Add examples of proper test output limiting
-  - [ ] Update testing guide with section on debugging failed tests
-  - [ ] Include code examples of helper function usage
-
-### Acceptance Criteria
-- Failed tests produce concise, focused output that highlights the actual failure
-- Complex chart tests validate components without dumping full YAML content
-- Common validation patterns are extracted into reusable helper functions
-- Full content is still available through debug logging when needed
-- All existing tests maintain the same validation quality with improved output
-
-### Testing Strategy
-- Apply helpers to one test at a time and verify test results remain consistent
-- Compare test output before and after changes to verify improvement
-- Test with intentional failures to ensure appropriate information is still shown
-- Validate that output is meaningful enough to diagnose problems without excessive verbosity
+- **Verification Criteria:**
+    - [x] All tests (`make test`) pass after each stage.
+    - [x] A codebase search (`grep -R IRR_DEBUG . --exclude-dir=.git --exclude=irr`) yields no relevant results in code or documentation at the end.
+    - [x] Manually verify that setting `export IRR_DEBUG=1` does *not* enable debug logging when `LOG_LEVEL` is not set or is set to `INFO` or higher.
 
 ## Phase 7: Image Pattern Detection Improvements (Revised Focus)
 
@@ -376,7 +345,7 @@ Improve the analyzer's ability to detect and process image references in complex
     - [ ] Correct the call signature for `detector.DetectImages` (pass initial path, handle 3 return values).
     - [ ] Resolve `image.SetVerboseDetection` usage (likely remove, rely on `debug.Enabled` and `log` level).
 - [ ] **[P0]** Validate `normalizeKubeStateMetricsOverrides` function in `pkg/generator/kube_state_metrics.go`:
-    - [ ] Use debug logs (`IRR_DEBUG=1`) to trace the function's input (`overrides`, `detectedImages`) and output (`normalizedOverrides`).
+    - [ ] Use debug logs (`LOG_LEVEL=DEBUG`) to trace the function's input (`overrides`, `detectedImages`) and output (`normalizedOverrides`).
     - [ ] Confirm it correctly identifies KSM images from `detectedImages` regardless of their original detected path.
     - [ ] Verify it constructs the expected top-level `kube-state-metrics` map structure in the `normalizedOverrides`.
     - [ ] Ensure it handles cases where `kube-state-metrics` might already exist at the top level correctly (avoids duplicates/overwrites if necessary).
@@ -386,9 +355,9 @@ Improve the analyzer's ability to detect and process image references in complex
     - [ ] Ensure the test uses realistic values/setup reflecting the actual chart structure for KSM.
 
 ## Phase 7.5: Debug Environment Test Validation
-- [ ] **[P1]** Run the full test suite with `IRR_DEBUG=1` enabled *after* Phase 7.4 is complete and verified.
+- [ ] **[P1]** Run the full test suite with `LOG_LEVEL=DEBUG` enabled *after* Phase 7.4 is complete and verified.
 - [ ] **[P1]** Compare pass rates with normal test runs.
-- [ ] **[P1]** Investigate and fix any tests that fail *only* when `IRR_DEBUG=1` is active.
+- [ ] **[P1]** Investigate and fix any tests that fail *only* when `LOG_LEVEL=DEBUG` is active.
 
 ## Phase 8: Fix Bitnami Chart Detection and Rules Processing
 

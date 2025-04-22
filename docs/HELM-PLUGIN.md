@@ -205,13 +205,11 @@ steps:
 Enable debug logging for more information:
 
 ```bash
-helm irr inspect my-release --debug
-```
+# Using environment variable (Recommended)
+LOG_LEVEL=DEBUG helm irr inspect my-release
 
-Or set the environment variable:
-
-```bash
-IRR_DEBUG=true helm irr inspect my-release
+# Using deprecated flag
+# helm irr inspect my-release --debug
 ```
 
 ## Support and Feedback

@@ -670,7 +670,7 @@ The plugin intentionally implements a simple, binary logging approach:
 
 This minimal approach prevents flag complexity and maintains consistency across CLI and plugin usage patterns.
 
-**Note for Developers:** The test framework uses several environment variables (`IRR_TESTING=true`, `LOG_LEVEL`, `IRR_DEBUG`) that are not intended for end users. These variables are reserved for testing infrastructure and should not be exposed in user documentation.
+**Note for Developers:** The test framework uses environment variables (`IRR_TESTING=true`, `LOG_LEVEL`) that are not intended for end users. These variables are reserved for testing infrastructure and should not be exposed in user documentation.
 
 **Conflicting Flag Resolution:**
 - Debug levels: `--debug` overrides `--verbose` if both provided
@@ -877,11 +877,8 @@ func configureLogging(cmd *cobra.Command) {
             return
         }
         
-        // IRR_DEBUG in test mode
-        if os.Getenv("IRR_DEBUG") == "1" {
-            setLogLevel("DEBUG")
-            return
-        }
+        // LOG_LEVEL takes precedence in test mode
+        setLogLevel("INFO") // Or DEBUG if that's the desired default for tests
     }
     
     // Production mode - check command line flag
@@ -907,11 +904,11 @@ The plugin implements a simple dual-level logging approach for users:
 The plugin's logging system integrates with the existing IRR test framework, which uses:
 - `IRR_TESTING=true`: Activates test mode
 - `LOG_LEVEL=DEBUG|INFO|WARN|ERROR`: Controls verbosity in tests
-- `IRR_DEBUG=1`: Enables debug output in test context
 
 Tests for the logging system itself will utilize these existing flags to maintain consistency with the established testing patterns.
 
 **Precedence Flow:**
 1. Test framework settings (when `IRR_TESTING=true`)
-2. Command line flags (`--debug`)
+   - `LOG_LEVEL` takes priority
+2. Command line flags (`--debug`) - Deprecated, use `LOG_LEVEL` environment variable
 3. Default logging level (INFO)

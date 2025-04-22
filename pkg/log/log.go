@@ -45,10 +45,6 @@ func init() {
 			initialLevel = slog.LevelError
 		}
 	}
-	// IRR_DEBUG=1 also enables debug unless LOG_LEVEL already set it higher
-	if os.Getenv("IRR_DEBUG") == "1" && initialLevel > slog.LevelDebug {
-		initialLevel = slog.LevelDebug
-	}
 	currentLevel = initialLevel // Set the global level determined by environment
 
 	// Configure the logger with initial settings

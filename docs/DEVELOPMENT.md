@@ -280,29 +280,18 @@ The tool's sole output is the generated override file. It does *not* directly in
 
 The IRR tool provides comprehensive debug logging capabilities that are especially useful during test development and troubleshooting. For detailed information about debugging tests, refer to the [Debug Control section in TESTING.md](docs/TESTING.md#10-debug-control-in-tests).
 
+The primary way to enable debug logging is by setting the `LOG_LEVEL=DEBUG` environment variable.
+
 Key points about debug control in tests:
 
 1. **Enabling debug output in tests**:
    ```bash
-   # For all tests
-   go test -v ./... -args --debug
-   
-   # For specific test packages
-   go test -v ./pkg/specific -args --debug
-   
-   # For specific test functions
-   go test -v ./pkg/specific -run TestSpecific -args --debug
+   LOG_LEVEL=DEBUG go test -v ./...
+   # Or target specific tests
+   LOG_LEVEL=DEBUG go test -v ./pkg/specific -run TestSpecific
    ```
 
-2. **Environment variable control**:
-   ```bash
-   IRR_DEBUG=true go test -v ./...
-   ```
-
-3. **Debug state interaction**:
-   The `--debug` flag takes precedence over the `IRR_DEBUG` environment variable, allowing tests to override environment settings.
-
-Refer to the comprehensive Debug Control section in [TESTING.md](docs/TESTING.md#10-debug-control-in-tests) for more detailed information about capturing debug output, testing debug behavior, and best practices for debug testing.
+Refer to the comprehensive Debug Logging section in [TESTING.md](docs/TESTING.md#debug-logging) for more detailed information about capturing debug output, testing debug behavior, and best practices for debug testing.
 
 ## 7. Command-Line Interface (Phase 4)
 

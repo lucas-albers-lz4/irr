@@ -115,11 +115,6 @@ func (h *TestHarness) Cleanup() {
 	if err := os.Unsetenv("IRR_TESTING"); err != nil {
 		h.t.Errorf("Failed to unset IRR_TESTING env var: %v", err)
 	}
-	// Explicitly unset IRR_DEBUG as well to avoid interference
-	if err := os.Unsetenv("IRR_DEBUG"); err != nil {
-		// Log this error but don't fail the test for it, as it might not have been set.
-		h.t.Logf("Warning: Failed to unset IRR_DEBUG env var: %v (might not have been set)", err)
-	}
 
 	// Run registered cleanup functions
 	for _, cleanup := range h.cleanupFuncs {

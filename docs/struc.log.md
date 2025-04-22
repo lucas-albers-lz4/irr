@@ -99,30 +99,31 @@ The core migration to `slog`
 
 - **Goal:** Eliminate the redundant legacy `IRR_DEBUG` environment variable to simplify logging configuration and ensure documentation consistency. Rely solely on `LOG_LEVEL` for controlling log verbosity.
 - **Rationale:** `IRR_DEBUG=1` provides the same functionality as `LOG_LEVEL=DEBUG` but adds an extra configuration vector and has led to documentation inconsistencies. Removing it streamlines the logging system.
+- **Status:** **Completed**
 
 - **Actions (Staged):**
 
     **Stage 1: Preparation and Audit**
-    - Search the codebase for all uses of `IRR_DEBUG` (code, tests, docs, scripts).
-    - Document all locations and usages to inform the next steps.
-    - Update documentation to clarify that `LOG_LEVEL` is the only supported debug control going forward.
+    - [x] Search the codebase for all uses of `IRR_DEBUG` (code, tests, docs, scripts).
+    - [x] Document all locations and usages to inform the next steps.
+    - [x] Update documentation to clarify that `LOG_LEVEL` is the only supported debug control going forward.
 
     **Stage 2: Update Test and Build Infrastructure**
-    - Update `Makefile`, CI scripts, and any other build/test execution commands to replace `IRR_DEBUG=1` with `LOG_LEVEL=DEBUG`.
-    - Update test files to use `LOG_LEVEL=DEBUG` instead of setting/unsetting `IRR_DEBUG`.
-    - Run all tests; fix any failures related to this change before proceeding.
+    - [x] Update `Makefile`, CI scripts, and any other build/test execution commands to replace `IRR_DEBUG=1` with `LOG_LEVEL=DEBUG`.
+    - [x] Update test files to use `LOG_LEVEL=DEBUG` instead of setting/unsetting `IRR_DEBUG`.
+    - [x] Run all tests; fix any failures related to this change before proceeding.
 
     **Stage 3: Remove IRR_DEBUG from Code**
-    - Remove the check for `IRR_DEBUG` within the `init()` function in `pkg/log/log.go`.
-    - Remove any code that sets/unsets or checks `IRR_DEBUG` in test files.
-    - Run all tests; fix any failures related to this change before proceeding.
+    - [x] Remove the check for `IRR_DEBUG` within the `init()` function in `pkg/log/log.go`.
+    - [x] Remove any code that sets/unsets or checks `IRR_DEBUG` in test files.
+    - [x] Run all tests; fix any failures related to this change before proceeding.
 
     **Stage 4: Final Cleanup**
-    - Remove all references to `IRR_DEBUG` from documentation files (`TESTING.md`, `DEVELOPMENT.md`, `PLUGIN-SPECIFIC.md`, `LOGGING.md`, `README.md`, `TODO.md`, etc.).
-    - Search the codebase (`grep`) for any remaining uses of `IRR_DEBUG` and remove them.
-    - Run all tests; ensure everything passes.
+    - [x] Remove all references to `IRR_DEBUG` from documentation files (`TESTING.md`, `DEVELOPMENT.md`, `PLUGIN-SPECIFIC.md`, `LOGGING.md`, `README.md`, `TODO.md`, etc.).
+    - [x] Search the codebase (`grep`) for any remaining uses of `IRR_DEBUG` and remove them.
+    - [x] Run all tests; ensure everything passes.
 
 - **Verification Criteria:**
-    - All tests (`make test`) pass after each stage.
-    - A codebase search (`grep -R IRR_DEBUG . --exclude-dir=.git --exclude=irr`) yields no relevant results in code or documentation at the end.
-    - Manually verify that setting `export IRR_DEBUG=1` does *not* enable debug logging when `LOG_LEVEL` is not set or is set to `INFO` or higher.
+    - [x] All tests (`make test`) pass after each stage.
+    - [x] A codebase search (`grep -R IRR_DEBUG . --exclude-dir=.git --exclude=irr`) yields no relevant results in code or documentation at the end.
+    - [x] Manually verify that setting `export IRR_DEBUG=1` does *not* enable debug logging when `LOG_LEVEL` is not set or is set to `INFO` or higher.

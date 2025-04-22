@@ -248,7 +248,7 @@ go test -v ./test/integration/...
 go test -v ./test/integration/... -run TestConfigFileMappings
 
 # Run with debug logging
-IRR_TESTING=true LOG_LEVEL=DEBUG IRR_DEBUG=1 go test -v ./test/integration/... -run TestConfigFileMappings
+IRR_TESTING=true LOG_LEVEL=DEBUG go test -v ./test/integration/... -run TestConfigFileMappings
 ```
 
 ### Test Coverage

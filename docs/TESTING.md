@@ -255,62 +255,29 @@ The IRR tool provides robust debugging capabilities that are especially useful d
 
 #### 10.1. Debug Control Mechanisms
 
-Debug logging in IRR is controlled through two primary mechanisms:
+Debug logging in IRR is controlled through the `LOG_LEVEL` environment variable:
 
-1. **Command-line flag**: `--debug` 
-2. **Environment variable**: `IRR_DEBUG`
+1. **Environment variable**: `LOG_LEVEL`
 
-These mechanisms interact in specific ways:
-
-- The `--debug` flag always enables debugging when present, regardless of environment variables
-- The `IRR_DEBUG` environment variable enables debug logging when set to `true`
-- The `IRR_DEBUG` environment variable disables debug logging when set to `false`
-- Invalid or empty values for `IRR_DEBUG` default to `false` (debug disabled)
-- The command-line flag takes precedence over the environment variable
+This mechanism enables debug logging when `LOG_LEVEL` is set to `DEBUG`. The `--debug` flag is deprecated and should not be used.
 
 #### 10.2. Debug Warning Behavior
 
-By default, IRR suppresses warning messages about invalid `IRR_DEBUG` environment variable values in user-facing contexts for a better user experience. This means:
-
-- Regular users won't see warnings about empty or invalid `IRR_DEBUG` values
-- The application will silently default to the appropriate debug state
-- Debug mode still works as expected when properly configured
-
-For tests and development environments, these warnings can be explicitly enabled:
+Previously, IRR could suppress warning messages about invalid `IRR_DEBUG` environment variable values. This behavior is no longer relevant as `LOG_LEVEL` is the standard way to control logging levels.
 
 ```go
-// Enable warnings about IRR_DEBUG environment variable parsing
-debug.EnableDebugEnvVarWarnings()
-
-// Disable warnings again (default state)
-debug.ShowDebugEnvWarnings = false
+// This section is no longer relevant as warnings are handled by the logging framework based on LOG_LEVEL.
+// os.Setenv("IRR_SUPPRESS_ENV_WARNINGS", "true") // Deprecated
+// ... run test code ...
 ```
-
-The integration test framework automatically enables these warnings to help with debugging and ensuring the debug state is properly set.
 
 #### 10.3. Enabling Debug Logging in Tests
 
-To enable debug logging at different levels:
+To run tests with debug logging enabled:
 
-1. **For all tests**:
-   ```bash
-   go test -v ./... -args --debug
-   ```
-
-2. **For specific test packages**:
-   ```bash
-   go test -v ./pkg/specific -args --debug
-   ```
-
-3. **For specific test functions**:
-   ```bash
-   go test -v ./pkg/specific -run TestSpecific -args --debug
-   ```
-
-4. **Using environment variables**:
-   ```bash
-   IRR_DEBUG=true go test -v ./...
-   ```
+```bash
+LOG_LEVEL=DEBUG go test -v ./...
+```
 
 #### 10.4. Capturing Debug Output in Tests
 
@@ -353,36 +320,28 @@ When writing tests that need to verify debug output:
 
 #### 10.5. Testing Debug Behavior
 
-The `TestDebugFlagAndEnvVarInteraction` test in `cmd/irr/root_test.go` provides a comprehensive verification of debug control mechanisms, including:
+The `TestLogLevelInteraction` test (or similar) in `cmd/irr/root_test.go` should provide comprehensive verification of log level control mechanisms, including:
 
-1. Default behavior without flag or environment variable
-2. Effect of the `--debug` flag
-3. Effect of the `IRR_DEBUG` environment variable with different values
-4. Flag precedence over environment variable
-5. Warning behavior with invalid environment values
+1. Default behavior (typically INFO level)
+2. Effect of `LOG_LEVEL=DEBUG`
+3. Handling of invalid `LOG_LEVEL` values (should default or error gracefully)
 
-When troubleshooting debug behavior, refer to this test for examples of proper debug state verification.
+When troubleshooting logging behavior, refer to relevant tests for examples of proper log state verification.
 
 #### 10.6. Best Practices for Debug in Tests
 
-1. **Reset state between tests**:
-   ```go
-   // Save original state
-   origDebugEnabled := debug.Enabled
-   defer func() { debug.Enabled = origDebugEnabled }()
-   
-   // Reset for this test
-   debug.Enabled = false
-   ```
+1. **Reset log level state between tests** (if modifying globally):
+   Consider using test-specific logger instances or carefully managing global state if tests alter the default log level.
 
-2. **Use explicit environment control**:
+2. **Use explicit environment control** (if testing env var interaction):
    ```go
    // Save and restore environment
-   origEnv := os.Getenv("IRR_DEBUG")
-   defer os.Setenv("IRR_DEBUG", origEnv)
-   
+   origEnv := os.Getenv("LOG_LEVEL")
+   defer os.Setenv("LOG_LEVEL", origEnv)
+
    // Set for this test
-   os.Setenv("IRR_DEBUG", "true")
+   os.Setenv("LOG_LEVEL", "DEBUG")
+   debug.Init(true) // Re-initialize if needed based on env var
    ```
 
 3. **Check debug logs without depending on exact format**:
@@ -392,7 +351,7 @@ When troubleshooting debug behavior, refer to this test for examples of proper d
    ```
 
 4. **Use proper output separation**:
-   Remember that debug logs go to stderr, while command output typically goes to stdout. Capture both separately when testing debug behavior.
+   Remember that debug logs go to stderr by default, while command output typically goes to stdout. Capture both separately when testing debug behavior.
 
 ## Test Environment
 
@@ -405,13 +364,13 @@ To enable debug logging in tests:
 
 ```bash
 # For all tests in a package
-go test -v ./... -debug
+LOG_LEVEL=DEBUG go test -v ./...
 
 # For a specific test
-go test -v ./... -run TestSpecificTest -debug
+LOG_LEVEL=DEBUG go test -v ./... -run TestSpecificTest
 
 # For integration tests
-go test -v ./test/integration/... -debug
+LOG_LEVEL=DEBUG go test -v ./test/integration/...
 ```
 
 The debug output will include detailed information about:
@@ -782,83 +741,12 @@ The integration tests create temporary directories, files, and execute the actua
 
 ### Debug Logging in Tests
 
-For detailed debug logging during test execution, you can use these environment variables:
+For detailed debug logging during test execution, use the `LOG_LEVEL` environment variable:
 
 ```bash
-# High-level debug flow messages
+# Enable debug level logging
 LOG_LEVEL=DEBUG go test -v ./test/integration/... -run TestName
 
-# Detailed function tracing and value dumps
-IRR_DEBUG=1 go test -v ./test/integration/... -run TestName
-
-# All debug output
-LOG_LEVEL=DEBUG IRR_DEBUG=1 go test -v ./test/integration/... -run TestName
+# Optionally, change log format if supported
+LOG_LEVEL=DEBUG LOG_FORMAT=json go test -v ./test/integration/... -run TestName
 ```
-
-### Test Environment Best Practices
-
-#### Using In-Memory Filesystem
-For tests involving file operations (especially in `pkg/registry`), use afero's MemMapFs:
-
-```go
-// Create a memory-backed filesystem for testing
-fs := afero.NewMemMapFs()
-
-// Set up test directories/files in memory
-require.NoError(t, fs.MkdirAll("/tmp", 0o755))
-require.NoError(t, afero.WriteFile(fs, "/tmp/test.yaml", []byte("content"), 0o644))
-
-// Use the memory filesystem in your tests
-result, err := YourFunction(fs, "/tmp/test.yaml")
-```
-
-Benefits:
-- No real filesystem interaction
-- Faster test execution
-- Consistent across different environments
-- No cleanup needed
-- No permission issues
-- No path traversal concerns in tests
-
-#### Test File Operations
-When testing functions that work with files:
-1. Always use `afero.Fs` interface in your production code
-2. Use `afero.NewMemMapFs()` in tests
-3. Use `afero.NewOsFs()` in production
-4. Properly handle permissions (0o644 for files, 0o755 for directories)
-5. Clean up resources even in memory filesystem (good practice)
-
-### 2. Chart Validation Tests (`make test-charts`)
-These tests use the `test/tools/test-charts.py` script to validate against real-world charts:
-- Tests against multiple chart types
-- Validates actual chart rendering
-- Tests with Harbor registry integration
-- Generates detailed test results
-These tests take longer to run and are better suited for validation testing.
-
-### Test Directory Structure
-- `test-data/charts/`: Contains test fixtures used by integration tests
-- `test/results/`: Contains results from chart validation tests
-- `test/overrides/`: Contains generated override files from tests
-- `test/tools/`: Contains testing scripts, including the Python-based chart testing utilities (`test-charts.py`, `pull-charts.py`, `analyze_errors.py`)
-- `test/integration/`: Contains Go integration tests
-
-### Running Tests
-```bash
-# Run unit and integration tests
-make test
-
-# Run chart validation tests (optionally specify target registry)
-make test-charts [TARGET_REGISTRY=your.registry.com]
-
-# Clean all test artifacts
-make clean
-```
-
-### Adding New Test Charts
-To add new charts for testing:
-1. Place the chart in the `test-data/charts/` directory
-2. Ensure the chart follows the expected structure
-3. If needed, update the integration tests in `test/integration/` to use the new chart
-
-When adding tests that use specific charts, always check if the chart exists and skip the test if it doesn't, to ensure the test suite can run successfully regardless of which charts are available.

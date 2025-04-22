@@ -167,7 +167,7 @@ It also supports linting image references for potential issues.`,
 		logLevelStr := logLevel          // From --log-level flag
 		debugFlagEnabled := debugEnabled // From --debug flag
 
-		// Determine the target level based on flags and env vars (IRR_DEBUG handled by pkg/log/init)
+		// Determine the target level based on flags and env vars
 		var targetLevel log.Level
 		var parseErr error
 
@@ -184,17 +184,15 @@ It also supports linting image references for potential issues.`,
 			} // If no parse error, targetLevel is set correctly
 		} else {
 			// If neither --debug nor --log-level is set, the level is determined
-			// solely by pkg/log/init based on LOG_LEVEL and IRR_DEBUG env vars.
+			// solely by pkg/log/init based on LOG_LEVEL env vars.
 			// We don't need to call SetLevel here in that case, but we can retrieve the
 			// current level for logging purposes if needed.
 			targetLevel = log.Level(log.CurrentLevel()) // Reflect the level set by init()
 		}
 
-		// Set the level explicitly *if* a flag determined it.
-		// Otherwise, let the level determined by init() stand.
-		if debugFlagEnabled || logLevelStr != "" {
-			log.SetLevel(targetLevel)
-		}
+		// Use the determined level. This takes precedence over environment vars
+		// which are handled solely by pkg/log/init based on LOG_LEVEL env vars.
+		log.SetLevel(targetLevel)
 
 		// --- End Logging Setup ---
 

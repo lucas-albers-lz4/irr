@@ -91,6 +91,7 @@ To maximize impact and efficiency, follow this order when working through files 
   
   2. **Pre-Change Verification:**
      - Run targeted tests relevant to the component being modified (e.g., `go test -v ./test/integration -run TestComplexChartFeatures/ingress-nginx_with_admission_webhook` and if you need or debug output call with IRR_DEBUG=1 , `IRR_DEBUG=1 go test -v ./test/integration -run TestComplexChartFeatures/ingress-nginx_with_admission_webhook`✓
+     - Run targeted tests relevant to the component being modified (e.g., `go test -v ./test/integration -run TestComplexChartFeatures/ingress-nginx_with_admission_webhook` and if you need debug output call with `LOG_LEVEL=DEBUG`, `LOG_LEVEL=DEBUG go test -v ./test/integration -run TestComplexChartFeatures/ingress-nginx_with_admission_webhook`)✓
      - Run targeted linting to identify specific issues (e.g., `golangci-lint run --enable-only=unused` for unused variables) ✓
   
   3. **Make Required Changes:**
