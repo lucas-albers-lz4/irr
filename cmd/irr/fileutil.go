@@ -62,7 +62,7 @@ func getReleaseNameAndNamespaceCommon(cmd *cobra.Command, args []string) (releas
 	// Check for positional argument as release name if flag is not set
 	if releaseName == "" && len(args) > 0 {
 		releaseName = args[0]
-		log.Infof("Using %s as release name from positional argument", releaseName)
+		log.Info("Using release name from positional argument", "releaseName", releaseName)
 	}
 
 	namespace, err = cmd.Flags().GetString("namespace")
@@ -113,7 +113,7 @@ func writeOutputFile(outputFile string, content []byte, successMessage string) e
 
 	// Log success message if provided
 	if successMessage != "" {
-		log.Infof(successMessage, outputFile)
+		log.Info("Output file written", "file", outputFile)
 	}
 
 	return nil

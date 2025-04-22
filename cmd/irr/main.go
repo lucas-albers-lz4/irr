@@ -28,9 +28,7 @@ func main() {
 	debug.Init(debug.Enabled)
 
 	// Use stdLog for consistency, check if debug is enabled
-	if log.IsDebugEnabled() {
-		log.Debugf("--- IRR BINARY VERSION: %s ---", BinaryVersion)
-	}
+	log.Debug("--- IRR BINARY VERSION:", "version", BinaryVersion)
 
 	// Check for IRR_DEBUG environment variable for potential future debug setup
 	if parseIrrDebugEnvVar() {
@@ -42,9 +40,7 @@ func main() {
 	// isHelmPlugin = isRunningAsHelmPlugin()
 
 	// Log Helm environment variables when in debug mode
-	if log.IsDebugEnabled() {
-		fmt.Fprintf(os.Stderr, "### DETECTED RUNNING IN STANDALONE MODE ###\n")
-	}
+	log.Debug("### DETECTED RUNNING IN STANDALONE MODE ###")
 
 	// Initialize Helm plugin if necessary
 	// if isHelmPlugin {
@@ -107,11 +103,13 @@ func logHelmEnvironment() {
 		"HELM_REPOSITORY_CONFIG",
 	}
 
-	log.Debugf("Helm Environment Variables:")
+	log.Debug("Helm Environment Variables:")
 	for _, envVar := range helmEnvVars {
 		value := os.Getenv(envVar)
 		if value != "" {
-			log.Debugf("  %s=%s", envVar, value)
+			log.Debug("Helm Env", "var", envVar, "value", value)
 		}
 	}
 }
+
+// MIGRATION NOTE: All legacy log.Debugf and log.IsDebugEnabled calls have been migrated to slog-based logging.

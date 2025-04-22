@@ -7,7 +7,7 @@ import (
 	"strings" // Need this for normalization checks
 
 	"github.com/distribution/reference"
-	"github.com/lalbers/irr/pkg/debug"
+	log "github.com/lalbers/irr/pkg/log"
 )
 
 // Constants
@@ -79,20 +79,20 @@ var (
 //   - *Reference: A Reference struct containing the parsed components
 //   - error: An error if the image reference is invalid or cannot be parsed
 func ParseImageReference(imageRef string) (*Reference, error) {
-	debug.FunctionEnter("ParseImageReference")
-	defer debug.FunctionExit("ParseImageReference")
+	log.Debug("Enter: ParseImageReference")
+	defer log.Debug("Exit: ParseImageReference")
 
 	if imageRef == "" {
-		debug.Printf("Empty image reference")
+		log.Debug("Empty image reference")
 		return nil, ErrEmptyImageReference
 	}
 
-	debug.Printf("Parsing image reference: %s", imageRef)
+	log.Debug("Parsing image reference: %s", imageRef)
 
 	// Try to parse with distribution/reference library first
 	named, err := reference.ParseAnyReference(imageRef)
 	if err == nil {
-		debug.Printf("Successfully parsed with distribution/reference library")
+		log.Debug("Successfully parsed with distribution/reference library")
 		result := &Reference{
 			Original: imageRef,
 		}
@@ -107,20 +107,20 @@ func ParseImageReference(imageRef string) (*Reference, error) {
 		var hasTag, hasDigest bool
 		if taggedRef, ok := named.(reference.Tagged); ok {
 			result.Tag = taggedRef.Tag()
-			debug.Printf("Extracted tag: %s", result.Tag)
+			log.Debug("Extracted tag: %s", result.Tag)
 			hasTag = true
 		}
 
 		// Extract digest if present
 		if digestedRef, ok := named.(reference.Digested); ok {
 			result.Digest = digestedRef.Digest().String()
-			debug.Printf("Extracted digest: %s", result.Digest)
+			log.Debug("Extracted digest: %s", result.Digest)
 			hasDigest = true
 		}
 
 		// Check if both tag and digest are present (conflicting)
 		if hasTag && hasDigest {
-			debug.Printf("Warning: Reference has both tag (%s) and digest (%s)", result.Tag, result.Digest)
+			log.Debug("Warning: Reference has both tag (%s) and digest (%s)", result.Tag, result.Digest)
 			return nil, ErrTagAndDigestPresent
 		}
 
@@ -128,7 +128,7 @@ func ParseImageReference(imageRef string) (*Reference, error) {
 		if strings.Contains(result.Registry, ":") {
 			host, _, err := net.SplitHostPort(result.Registry)
 			if err == nil {
-				debug.Printf("Stripping port from registry domain: %s → %s", result.Registry, host)
+				log.Debug("Stripping port from registry domain: %s → %s", result.Registry, host)
 				result.Registry = host
 			}
 		}
@@ -136,14 +136,14 @@ func ParseImageReference(imageRef string) (*Reference, error) {
 		// Default tag to latest for repository-only references
 		if result.Tag == "" && result.Digest == "" {
 			result.Tag = LatestTag
-			debug.Printf("Setting default tag: %s", result.Tag)
+			log.Debug("Setting default tag: %s", result.Tag)
 		}
 
-		debug.Printf("Parsed reference: %+v", result)
+		log.Debug("Parsed reference: %+v", result)
 		return result, nil
 	}
 
-	debug.Printf("Distribution/reference library failed to parse: %v. Falling back to regex parsing.", err)
+	log.Debug("Distribution/reference library failed to parse: %v. Falling back to regex parsing.", err)
 
 	// Fall back to our regex-based parser for better error messages or special cases
 	return parseWithRegex(imageRef)
@@ -152,11 +152,11 @@ func ParseImageReference(imageRef string) (*Reference, error) {
 // parseWithRegex parses an image reference using regular expressions.
 // This is used as a fallback when the distribution library parser fails.
 func parseWithRegex(imageRef string) (*Reference, error) {
-	debug.Printf("Using regex parser for: %s", imageRef)
+	log.Debug("Using regex parser for: %s", imageRef)
 
 	// Quick validation for common invalid formats
 	if strings.Contains(imageRef, "///") || strings.Contains(imageRef, "::") {
-		debug.Printf("Invalid image reference format detected: %s", imageRef)
+		log.Debug("Invalid image reference format detected: %s", imageRef)
 		return nil, ErrInvalidImageReference
 	}
 
@@ -164,7 +164,7 @@ func parseWithRegex(imageRef string) (*Reference, error) {
 	invalidChars := []string{" ", "@", "$", "?", "#", "\\"}
 	for _, char := range invalidChars {
 		if strings.Contains(imageRef, char) {
-			debug.Printf("Invalid repository name character detected in: %s", imageRef)
+			log.Debug("Invalid repository name character detected in: %s", imageRef)
 			return nil, ErrInvalidImageReference
 		}
 	}
@@ -176,7 +176,7 @@ func parseWithRegex(imageRef string) (*Reference, error) {
 			digest := digestParts[1]
 			// Valid digest should be algo:hex where algo is usually sha256
 			if !strings.Contains(digest, ":") || !strings.HasPrefix(digest, "sha256:") {
-				debug.Printf("Invalid digest format detected: %s", digest)
+				log.Debug("Invalid digest format detected: %s", digest)
 				return nil, ErrInvalidImageReference
 			}
 		}
@@ -189,7 +189,7 @@ func parseWithRegex(imageRef string) (*Reference, error) {
 			tag := tagParts[len(tagParts)-1]
 			// Quick validation for obviously invalid tag formats
 			if strings.Contains(tag, "/") || strings.Contains(tag, "\\") {
-				debug.Printf("Invalid tag format detected: %s", tag)
+				log.Debug("Invalid tag format detected: %s", tag)
 				return nil, ErrInvalidImageReference
 			}
 		}
@@ -197,7 +197,7 @@ func parseWithRegex(imageRef string) (*Reference, error) {
 
 	// Special case for repository-only references (no tag or digest)
 	if match := repositoryPattern.FindStringSubmatch(imageRef); match != nil && strings.Count(imageRef, "/") == 0 {
-		debug.Printf("Matched repository-only pattern")
+		log.Debug("Matched repository-only pattern")
 		return &Reference{
 			Original:   imageRef,
 			Repository: match[1],
@@ -207,7 +207,7 @@ func parseWithRegex(imageRef string) (*Reference, error) {
 
 	// Special case for registry/repository format (no tag or digest)
 	if match := registryRepPattern.FindStringSubmatch(imageRef); match != nil && !strings.Contains(imageRef, ":") && !strings.Contains(imageRef, "@") {
-		debug.Printf("Matched registry/repository pattern")
+		log.Debug("Matched registry/repository pattern")
 		registry := match[1]
 		repository := match[2]
 
@@ -215,7 +215,7 @@ func parseWithRegex(imageRef string) (*Reference, error) {
 		if strings.Contains(registry, ":") {
 			host, _, err := net.SplitHostPort(registry)
 			if err == nil {
-				debug.Printf("Stripping port from registry domain: %s → %s", registry, host)
+				log.Debug("Stripping port from registry domain: %s → %s", registry, host)
 				registry = host
 			}
 		}
@@ -230,7 +230,7 @@ func parseWithRegex(imageRef string) (*Reference, error) {
 
 	// Try matching against the comprehensive reference pattern
 	if match := referencePattern.FindStringSubmatch(imageRef); match != nil {
-		debug.Printf("Matched comprehensive reference pattern")
+		log.Debug("Matched comprehensive reference pattern")
 		result := &Reference{
 			Original:   imageRef,
 			Registry:   match[1],
@@ -239,27 +239,27 @@ func parseWithRegex(imageRef string) (*Reference, error) {
 
 		// Check if both tag and digest are present (conflicting)
 		if match[3] != "" && match[5] != "" {
-			debug.Printf("Both tag and digest present in reference")
+			log.Debug("Both tag and digest present in reference")
 			return nil, ErrTagAndDigestPresent
 		}
 
 		// Extract tag if present
 		if match[3] != "" {
 			result.Tag = match[4]
-			debug.Printf("Extracted tag: %s", result.Tag)
+			log.Debug("Extracted tag: %s", result.Tag)
 		}
 
 		// Extract digest if present
 		if match[5] != "" {
 			result.Digest = match[6]
-			debug.Printf("Extracted digest: %s", result.Digest)
+			log.Debug("Extracted digest: %s", result.Digest)
 		}
 
 		// Strip port from registry domain if present
 		if strings.Contains(result.Registry, ":") {
 			host, _, err := net.SplitHostPort(result.Registry)
 			if err == nil {
-				debug.Printf("Stripping port from registry domain: %s → %s", result.Registry, host)
+				log.Debug("Stripping port from registry domain: %s → %s", result.Registry, host)
 				result.Registry = host
 			}
 		}
@@ -267,14 +267,14 @@ func parseWithRegex(imageRef string) (*Reference, error) {
 		// Default tag to latest for repository-only references if neither tag nor digest is present
 		if result.Tag == "" && result.Digest == "" {
 			result.Tag = LatestTag
-			debug.Printf("Setting default tag: %s", result.Tag)
+			log.Debug("Setting default tag: %s", result.Tag)
 		}
 
-		debug.Printf("Regex parsed reference: %+v", result)
+		log.Debug("Regex parsed reference: %+v", result)
 		return result, nil
 	}
 
-	debug.Printf("Failed to match reference against any pattern")
+	log.Debug("Failed to match reference against any pattern")
 	return nil, ErrInvalidImageReference
 }
 
@@ -286,3 +286,10 @@ func parseWithRegex(imageRef string) (*Reference, error) {
 // func parseRegistryRepo(namePart, imgStr string) (registry string, repository string, err error) { // REMOVED UNUSED
 // 	return "", "", errors.New("parseRegistryRepo is deprecated and should not be called") // REMOVED UNUSED
 // } // REMOVED UNUSED
+
+// ---
+// Logging migration progress note:
+// - pkg/image/parser.go: All debug logging migrated to slog-based logger (log.Debug, log.Error, log.Warn).
+// - All debug.* calls replaced with slog style logging.
+// - Next: Continue migration in other files using the debug package.
+// ---

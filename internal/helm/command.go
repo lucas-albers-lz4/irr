@@ -50,7 +50,7 @@ func Template(options *TemplateOptions) (*CommandResult, error) {
 	settings := cli.New()
 	actionConfig := new(action.Configuration)
 	// Use an empty namespace initially, let Helm determine default or use provided
-	if err := actionConfig.Init(settings.RESTClientGetter(), options.Namespace, "", log.Infof); err != nil {
+	if err := actionConfig.Init(settings.RESTClientGetter(), options.Namespace, "", func(string, ...interface{}) {}); err != nil {
 		return nil, fmt.Errorf("failed to initialize Helm action config: %w", err)
 	}
 
@@ -64,7 +64,7 @@ func Template(options *TemplateOptions) (*CommandResult, error) {
 
 	// Log if strict mode is enabled
 	if options.Strict {
-		log.Debugf("Using strict mode for templating")
+		log.Debug("Using strict mode for templating")
 		// Note: Helm SDK doesn't support strict mode via action.Install directly
 		// We'll implement our own strict validation after the template is generated
 	}
@@ -83,7 +83,7 @@ func Template(options *TemplateOptions) (*CommandResult, error) {
 			return nil, fmt.Errorf("invalid Kubernetes version %q: %w", options.KubeVersion, err)
 		}
 		install.KubeVersion = kubeVersion
-		log.Debugf("Using Kubernetes version for templating: %s", options.KubeVersion)
+		log.Debug("Using Kubernetes version for templating", "version", options.KubeVersion)
 	}
 
 	// Load chart values
@@ -126,14 +126,14 @@ func GetValues(options *GetValuesOptions) (*CommandResult, error) {
 		ns = settings.Namespace() // Use default if not specified
 	}
 
-	if err := actionConfig.Init(settings.RESTClientGetter(), ns, "", log.Infof); err != nil {
+	if err := actionConfig.Init(settings.RESTClientGetter(), ns, "", func(string, ...interface{}) {}); err != nil {
 		return nil, fmt.Errorf("failed to initialize Helm action config: %w", err)
 	}
 
 	getValuesAction := action.NewGetValues(actionConfig)
 	// Configure output format through appropriate method or property if needed
 
-	log.Infof("Executing helm get values for release %q in namespace %q", options.ReleaseName, ns)
+	log.Info("Executing helm get values for release", "release", options.ReleaseName, "namespace", ns)
 	values, err := getValuesAction.Run(options.ReleaseName)
 	if err != nil {
 		return nil, fmt.Errorf("helm get values failed for release %q: %w", options.ReleaseName, err)
@@ -150,7 +150,7 @@ func GetValues(options *GetValuesOptions) (*CommandResult, error) {
 		if err := os.WriteFile(options.OutputFile, yamlData, fileutil.ReadWriteUserPermission); err != nil {
 			return nil, fmt.Errorf("failed to write values to output file %q: %w", options.OutputFile, err)
 		}
-		log.Infof("Release values written to %s", options.OutputFile)
+		log.Info("Release values written to", "file", options.OutputFile)
 		// Return success but no stdout as it went to file
 		return &CommandResult{Success: true, Stdout: "", Stderr: ""}, nil
 	}

@@ -9,7 +9,6 @@ import (
 	"sort"
 
 	"github.com/lalbers/irr/pkg/debug"
-	log "github.com/lalbers/irr/pkg/log"
 	"github.com/spf13/afero"
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart/loader"
@@ -52,7 +51,7 @@ func NewHelmClient() (*RealHelmClient, error) {
 	actionConfig := new(action.Configuration)
 
 	// Initialize with default namespace, will be overridden in operations
-	if err := actionConfig.Init(settings.RESTClientGetter(), settings.Namespace(), os.Getenv("HELM_DRIVER"), log.Debugf); err != nil {
+	if err := actionConfig.Init(settings.RESTClientGetter(), settings.Namespace(), os.Getenv("HELM_DRIVER"), func(string, ...interface{}) {}); err != nil {
 		return nil, fmt.Errorf("failed to initialize Helm configuration: %w", err)
 	}
 

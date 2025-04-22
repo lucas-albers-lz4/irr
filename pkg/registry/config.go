@@ -4,8 +4,8 @@ package registry
 import (
 	"fmt"
 
-	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/fileutil"
+	"github.com/lalbers/irr/pkg/log"
 	"github.com/spf13/afero"
 	"sigs.k8s.io/yaml"
 )
@@ -63,12 +63,12 @@ func LoadStructuredConfig(fs afero.Fs, path string, skipCWDRestriction bool) (*C
 		return nil, err
 	}
 
-	debug.Printf("LoadStructuredConfig: Attempting to parse file content:\n%s", string(data))
+	log.Debug("LoadStructuredConfig: Attempting to parse file content:\n%s", string(data))
 
 	// Parse the YAML content as structured Config
 	var config Config
 	if err := yaml.Unmarshal(data, &config); err != nil {
-		debug.Printf("LoadStructuredConfig: Failed to parse as structured config: %v", err)
+		log.Debug("LoadStructuredConfig: Failed to parse as structured config: %v", err)
 		return nil, fmt.Errorf("failed to parse config file '%s' as structured format: %w", path, err)
 	}
 
@@ -77,7 +77,7 @@ func LoadStructuredConfig(fs afero.Fs, path string, skipCWDRestriction bool) (*C
 		return nil, err
 	}
 
-	debug.Printf("LoadStructuredConfig: Successfully loaded structured config from %s", path)
+	log.Debug("LoadStructuredConfig: Successfully loaded structured config from %s", path)
 	return &config, nil
 }
 
@@ -142,7 +142,7 @@ func validateStructuredConfig(config *Config, path string) error {
 	// If StrictMode is enabled, DefaultTarget is not required
 	// If StrictMode is disabled, DefaultTarget should be set
 	if !config.Registries.StrictMode && config.Registries.DefaultTarget == "" {
-		debug.Printf("Warning: StrictMode is disabled but DefaultTarget is not set in config file '%s'", path)
+		log.Debug("Warning: StrictMode is disabled but DefaultTarget is not set in config file '%s'", path)
 	}
 
 	// If DefaultTarget is set, it should be valid

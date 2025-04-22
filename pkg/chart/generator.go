@@ -20,7 +20,6 @@ import (
 	"helm.sh/helm/v3/pkg/release"
 
 	"github.com/lalbers/irr/pkg/analysis"
-	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/fileutil"
 	"github.com/lalbers/irr/pkg/image"
 	log "github.com/lalbers/irr/pkg/log"
@@ -119,7 +118,7 @@ func (l *GeneratorLoader) SetFS(fs fileutil.FS) func() {
 
 // Load implements analysis.ChartLoader interface, returning *chart.Chart
 func (l *GeneratorLoader) Load(chartPath string) (*chart.Chart, error) {
-	debug.Printf("GeneratorLoader: Loading chart from %s", chartPath)
+	log.Debug("GeneratorLoader: Loading chart from %s", chartPath)
 
 	// Verify the chart path exists using our injectable filesystem
 	_, err := l.fs.Stat(chartPath)
@@ -137,10 +136,10 @@ func (l *GeneratorLoader) Load(chartPath string) (*chart.Chart, error) {
 	// We need to extract values manually if helm loader doesn't merge them automatically
 	if loadedChart.Values == nil {
 		loadedChart.Values = make(map[string]interface{}) // Ensure Values is not nil
-		debug.Printf("Helm chart loaded with nil Values, initialized empty map for %s", chartPath)
+		log.Debug("Helm chart loaded with nil Values, initialized empty map for %s", chartPath)
 	}
 
-	debug.Printf("GeneratorLoader successfully loaded chart: %s", loadedChart.Name())
+	log.Debug("GeneratorLoader successfully loaded chart: %s", loadedChart.Name())
 	return loadedChart, nil
 }
 
@@ -298,25 +297,25 @@ func (g *Generator) filterEligibleImages(detectedImages []analysis.ImagePattern)
 			if regVal, ok := pattern.Structure["registry"].(string); ok {
 				imgRegistry = regVal
 			} else {
-				debug.Printf("Skipping map pattern at path %s due to missing registry in structure: %+v", pattern.Path, pattern.Structure)
+				log.Debug("Skipping map pattern at path %s due to missing registry in structure: %+v", pattern.Path, pattern.Structure)
 				continue
 			}
 		default:
-			debug.Printf("Skipping pattern at path %s due to unknown pattern type: %v", pattern.Path, pattern.Type)
+			log.Debug("Skipping pattern at path %s due to unknown pattern type: %v", pattern.Path, pattern.Type)
 			continue
 		}
 
 		if imgRegistry == "" {
-			debug.Printf("Skipping pattern at path %s due to empty registry", pattern.Path)
+			log.Debug("Skipping pattern at path %s due to empty registry", pattern.Path)
 			continue
 		}
 
 		if g.isExcluded(imgRegistry) {
-			debug.Printf("Skipping image pattern from excluded registry '%s' at path %s", imgRegistry, pattern.Path)
+			log.Debug("Skipping image pattern from excluded registry '%s' at path %s", imgRegistry, pattern.Path)
 			continue
 		}
 		if len(g.sourceRegistries) > 0 && !g.isSourceRegistry(imgRegistry) {
-			debug.Printf("Skipping image pattern from non-source registry '%s' at path %s", imgRegistry, pattern.Path)
+			log.Debug("Skipping image pattern from non-source registry '%s' at path %s", imgRegistry, pattern.Path)
 			continue
 		}
 		eligibleImages = append(eligibleImages, pattern)
@@ -327,7 +326,7 @@ func (g *Generator) filterEligibleImages(detectedImages []analysis.ImagePattern)
 // Determines the appropriate override structure based on the original pattern type.
 // For maps, it merges into the existing map. For strings, it creates a map.
 func (g *Generator) createOverride(pattern analysis.ImagePattern, imgRef *image.Reference, targetReg, newPath string) interface{} {
-	debug.Printf("Creating override for path %v, original type %T", pattern.Path, pattern.Value)
+	log.Debug("Creating override for path %v, original type %T", pattern.Path, pattern.Value)
 
 	overrideValue := map[string]interface{}{
 		"registry":   targetReg,
@@ -345,7 +344,7 @@ func (g *Generator) createOverride(pattern analysis.ImagePattern, imgRef *image.
 
 // setOverridePath adds the override value to the map at the specified path, creating nested maps as needed
 func (g *Generator) setOverridePath(overrides map[string]interface{}, pattern analysis.ImagePattern, overrideValue interface{}) error {
-	debug.Printf("setOverridePath: Setting override for path '%s' with value type '%T'", pattern.Path, overrideValue)
+	log.Debug("setOverridePath: Setting override for path '%s' with value type '%T'", pattern.Path, overrideValue)
 	pathParts := strings.Split(pattern.Path, ".")
 	if len(pathParts) == 0 {
 		return fmt.Errorf("invalid empty path provided for pattern: %+v", pattern)
@@ -368,16 +367,16 @@ func (g *Generator) processImagePattern(pattern analysis.ImagePattern) (*image.R
 	if g.mappings != nil {
 		originalRegistry := ref.Registry
 		if mappedTarget := g.mappings.GetTargetRegistry(originalRegistry); mappedTarget != "" {
-			debug.Printf("Generator: Applying mapping for registry '%s' -> target '%s'", originalRegistry, mappedTarget)
+			log.Debug("Generator: Applying mapping for registry '%s' -> target '%s'", originalRegistry, mappedTarget)
 			// Create a copy of the reference before modifying
 			newRef := *ref
 			// Directly modify the registry field on the copy with the mapped target
 			newRef.Registry = mappedTarget
 
-			debug.Printf("Generator: Mapped image ref: %s", newRef.String())
+			log.Debug("Generator: Mapped image ref: %s", newRef.String())
 			return &newRef, nil // Return the modified copy
 		}
-		debug.Printf("Generator: No mapping found for registry '%s'", originalRegistry)
+		log.Debug("Generator: No mapping found for registry '%s'", originalRegistry)
 	}
 
 	// If no mapping applied, return the original parsed reference
@@ -397,11 +396,11 @@ func (g *Generator) determineTargetPathAndRegistry(imgRef *image.Reference) (tar
 
 		// Special case for Docker Hub library images
 		if normalizedRegistry == "docker.io" && strings.HasPrefix(imgRef.Repository, "library/") {
-			debug.Printf("[GENERATE LOOP] Docker Hub library image detected: %s", imgRef.String())
+			log.Debug("[GENERATE LOOP] Docker Hub library image detected: %s", imgRef.String())
 		}
 
 		if mappedValue, ok := g.configMappings[normalizedRegistry]; ok {
-			debug.Printf("[GENERATE LOOP] Found config mapping for %s: %s", normalizedRegistry, mappedValue)
+			log.Debug("[GENERATE LOOP] Found config mapping for %s: %s", normalizedRegistry, mappedValue)
 
 			// Split the mappedValue at the first slash to get registry and repository prefix
 			// We expect exactly two parts: the target registry and the prefix path
@@ -418,7 +417,7 @@ func (g *Generator) determineTargetPathAndRegistry(imgRef *image.Reference) (tar
 
 				// Prepend the repository prefix from the config mapping
 				newPath = parts[1] + "/" + pathOnly
-				debug.Printf("[GENERATE LOOP] Generated new path '%s' for original '%s' using config mapping", newPath, imgRef.Original)
+				log.Debug("[GENERATE LOOP] Generated new path '%s' for original '%s' using config mapping", newPath, imgRef.Original)
 				return targetReg, newPath, nil
 			}
 		}
@@ -437,7 +436,7 @@ func (g *Generator) determineTargetPathAndRegistry(imgRef *image.Reference) (tar
 		return "", "", fmt.Errorf("path generation failed for '%s': %w", imgRef.String(), err)
 	}
 
-	debug.Printf("[GENERATE LOOP] Generated new path '%s' for original '%s'", newPath, imgRef.Original)
+	log.Debug("[GENERATE LOOP] Generated new path '%s' for original '%s'", newPath, imgRef.Original)
 	return targetReg, newPath, nil
 }
 
@@ -448,13 +447,13 @@ func (g *Generator) processAndGenerateOverride(
 	imgRef *image.Reference,
 	overrides map[string]interface{},
 ) (bool, error) {
-	debug.Printf("[GENERATE LOOP] Processing pattern with Path: %s, Type: %s", pattern.Path, pattern.Type)
+	log.Debug("[GENERATE LOOP] Processing pattern with Path: %s, Type: %s", pattern.Path, pattern.Type)
 
 	// Determine target registry and path
 	targetReg, newPath, err := g.determineTargetPathAndRegistry(imgRef)
 	if err != nil {
-		log.Warnf("Path generation failed for '%s': %v", imgRef.Original, err)
-		debug.Printf("[GENERATE LOOP ERROR] Error in determineTargetPathAndRegistry for %s: %v", pattern.Path, err)
+		log.Warn("Path generation failed for '%s': %v", imgRef.Original, err)
+		log.Debug("[GENERATE LOOP ERROR] Error in determineTargetPathAndRegistry for %s: %v", pattern.Path, err)
 		return false, err
 	}
 
@@ -463,8 +462,8 @@ func (g *Generator) processAndGenerateOverride(
 
 	// Set the override in the result map
 	if err := g.setOverridePath(overrides, pattern, overrideValue); err != nil {
-		log.Warnf("Failed to set override for path '%s': %v", pattern.Path, err)
-		debug.Printf("[GENERATE LOOP ERROR] Error in setOverridePath for %s: %v", pattern.Path, err)
+		log.Warn("Failed to set override for path '%s': %v", pattern.Path, err)
+		log.Debug("[GENERATE LOOP ERROR] Error in setOverridePath for %s: %v", pattern.Path, err)
 		return false, err
 	}
 
@@ -473,7 +472,7 @@ func (g *Generator) processAndGenerateOverride(
 
 // Generate orchestrates the chart analysis and override generation process
 func (g *Generator) Generate() (*override.File, error) {
-	debug.Printf("Generator: Starting override generation for chart: %s", g.chartPath)
+	log.Debug("Generator: Starting override generation for chart: %s", g.chartPath)
 
 	// Initialize the rules registry if it hasn't been set externally
 	if g.rulesRegistry == nil {
@@ -481,18 +480,18 @@ func (g *Generator) Generate() (*override.File, error) {
 	}
 
 	// Use the loader from the Generator instance to load the chart
-	debug.Printf("Generator: Using loader: %T", g.loader)
+	log.Debug("Generator: Using loader: %T", g.loader)
 	loadedChart, err := g.loader.Load(g.chartPath)
 	if err != nil {
-		debug.Printf("Generator: Error loading chart %s: %v", g.chartPath, err)
+		log.Debug("Generator: Error loading chart %s: %v", g.chartPath, err)
 		return nil, &LoadingError{ChartPath: g.chartPath, Err: fmt.Errorf("failed to load chart: %w", err)}
 	}
 
-	debug.Printf("Generator: Chart loaded: %s, Values type: %T", loadedChart.Name(), loadedChart.Values)
+	log.Debug("Generator: Chart loaded: %s, Values type: %T", loadedChart.Name(), loadedChart.Values)
 
 	// Ensure chart values are not nil before proceeding
 	if loadedChart.Values == nil {
-		debug.Printf("Generator: Chart %s has nil values, generating empty override file.", loadedChart.Name())
+		log.Debug("Generator: Chart %s has nil values, generating empty override file.", loadedChart.Name())
 		// Return an empty override file if there are no values to analyze
 		return &override.File{ChartPath: g.chartPath, Values: make(map[string]interface{})}, nil // Correct instantiation
 	}
@@ -515,7 +514,7 @@ func (g *Generator) Generate() (*override.File, error) {
 
 	if analysisErr != nil {
 		// Handle analysis errors: Log, potentially populate Unsupported, return result
-		log.Warnf("Analysis of chart failed for %s: %v", g.chartPath, analysisErr)
+		log.Warn("Analysis of chart failed for %s: %v", g.chartPath, analysisErr)
 		// Attempt to add info to Unsupported based on the error
 		// NOTE: This is a basic approach; might need refinement based on analyzer error types
 		result.Unsupported = append(result.Unsupported, override.UnsupportedStructure{
@@ -533,7 +532,7 @@ func (g *Generator) Generate() (*override.File, error) {
 		result.Unsupported = append(result.Unsupported, g.findUnsupportedPatterns(detectedImages.ImagePatterns)...)
 		// If strict mode and unsupported patterns found AFTER successful analysis
 		if g.strict && len(result.Unsupported) > 0 {
-			debug.Printf("Generator: Found %d unsupported patterns in strict mode.", len(result.Unsupported))
+			log.Debug("Generator: Found %d unsupported patterns in strict mode.", len(result.Unsupported))
 			firstUnsupported := result.Unsupported[0]
 			return nil, &UnsupportedStructureError{
 				Path: firstUnsupported.Path,
@@ -543,8 +542,8 @@ func (g *Generator) Generate() (*override.File, error) {
 	}
 
 	// Filter images based on source and exclude registries using the correct function
-	eligibleImages := g.filterEligibleImages(detectedImages.ImagePatterns)                                                                        // Use the correct function signature
-	debug.Printf("Generator: Found %d total image patterns, %d eligible for processing.", len(detectedImages.ImagePatterns), len(eligibleImages)) // Correct length usage
+	eligibleImages := g.filterEligibleImages(detectedImages.ImagePatterns)                                                                     // Use the correct function signature
+	log.Debug("Generator: Found %d total image patterns, %d eligible for processing.", len(detectedImages.ImagePatterns), len(eligibleImages)) // Correct length usage
 
 	// Update total count in result
 	result.TotalCount = len(eligibleImages)
@@ -559,7 +558,7 @@ func (g *Generator) Generate() (*override.File, error) {
 		imgRef, err := g.processImagePattern(pattern)
 		if err != nil {
 			// Use pattern.Path directly in log
-			log.Warnf("Skipping image at path '%s': %v", pattern.Path, err)
+			log.Warn("Skipping image at path '%s': %v", pattern.Path, err)
 			// ADDED: Populate Unsupported field for processing errors
 			result.Unsupported = append(result.Unsupported, override.UnsupportedStructure{
 				Path: strings.Split(pattern.Path, "."), // Split string path into []string
@@ -574,7 +573,7 @@ func (g *Generator) Generate() (*override.File, error) {
 		success, err := g.processAndGenerateOverride(pattern, imgRef, overrides)
 		if err != nil {
 			// Use pattern.Path directly in log
-			log.Warnf("Error generating override for path '%s': %v", pattern.Path, err)
+			log.Warn("Error generating override for path '%s': %v", pattern.Path, err)
 			// Use pattern.Path directly in error message
 			processingErrors = append(processingErrors, fmt.Errorf("override generation path '%s': %w", pattern.Path, err))
 			// Decide if we should continue or stop based on the error
@@ -585,7 +584,7 @@ func (g *Generator) Generate() (*override.File, error) {
 		}
 	}
 
-	debug.Printf("Generator: Processed %d eligible images for chart %s.", processedCount, g.chartPath)
+	log.Debug("Generator: Processed %d eligible images for chart %s.", processedCount, g.chartPath)
 
 	// Calculate success rate as float64
 	var successRate float64
@@ -593,12 +592,12 @@ func (g *Generator) Generate() (*override.File, error) {
 		successRate = float64(processedCount*PercentageMultiplier) / float64(len(eligibleImages))
 	}
 
-	debug.Printf("Generator: Success rate %.2f%% (%d/%d), Threshold %d%%", successRate, processedCount, len(eligibleImages), g.threshold)
+	log.Debug("Generator: Success rate %.2f%% (%d/%d), Threshold %d%%", successRate, processedCount, len(eligibleImages), g.threshold)
 
 	// Check for processing errors first
 	if len(processingErrors) > 0 {
 		// Aggregate errors for better reporting
-		log.Errorf("Combined error details: %v", func() string {
+		log.Error("Combined error details: %v", func() string {
 			var errStrings []string
 			for _, e := range processingErrors {
 				errStrings = append(errStrings, e.Error())
@@ -609,7 +608,7 @@ func (g *Generator) Generate() (*override.File, error) {
 		if g.strict {
 			return nil, fmt.Errorf("strict mode: generation failed with %d errors: %w", len(processingErrors), errors.Join(processingErrors...))
 		}
-		log.Warnf("Generation completed with %d errors (non-strict mode). See logs for details.", len(processingErrors))
+		log.Warn("Generation completed with %d errors (non-strict mode). See logs for details.", len(processingErrors))
 		// Proceed to return result in non-strict mode
 	}
 
@@ -617,17 +616,17 @@ func (g *Generator) Generate() (*override.File, error) {
 	if g.rulesEnabled {
 		if g.rulesRegistry == nil {
 			// This should ideally not happen if initRulesRegistry was called
-			log.Warnf("Rules enabled but registry is nil, skipping rule application.")
+			log.Warn("Rules enabled but registry is nil, skipping rule application.")
 		} else {
-			debug.Printf("Generator: Applying chart rules...")
+			log.Debug("Generator: Applying chart rules...")
 			modified, err := g.rulesRegistry.ApplyRules(loadedChart, overrides)
 			if err != nil {
 				// Decide how to handle rule errors (log? return error? depends on policy)
-				log.Errorf("Error applying chart rules: %v", err)
+				log.Error("Error applying chart rules: %v", err)
 				// Potentially return an error here if rule failures are critical
 				// return nil, fmt.Errorf("failed to apply chart rules: %w", err)
 			} else if modified {
-				debug.Printf("Generator: Rules modified the generated overrides.")
+				log.Debug("Generator: Rules modified the generated overrides.")
 			}
 		}
 	}
@@ -651,14 +650,14 @@ func (g *Generator) Generate() (*override.File, error) {
 		}
 	}
 
-	debug.Printf("Generator: Successfully generated overrides for chart %s", g.chartPath)
+	log.Debug("Generator: Successfully generated overrides for chart %s", g.chartPath)
 	return result, nil
 }
 
 // initRulesRegistry initializes the rules registry if it's not already set.
 func (g *Generator) initRulesRegistry() {
 	if g.rulesRegistry == nil {
-		debug.Printf("Generator: Initializing default rules registry.")
+		log.Debug("Generator: Initializing default rules registry.")
 		g.rulesRegistry = rules.NewRegistry() // Assuming default initialization
 		// Load default rules if necessary, or this could be handled by the registry itself
 	}
@@ -688,12 +687,12 @@ func (g *Generator) isExcluded(regStr string) bool {
 // If validation fails with a Bitnami-specific security error (exit code 16),
 // it will automatically retry with global.security.allowInsecureImages=true.
 func ValidateHelmTemplate(chartPath string, overrides []byte) error {
-	debug.FunctionEnter("ValidateHelmTemplate")
-	defer debug.FunctionExit("ValidateHelmTemplate")
+	log.Debug("ValidateHelmTemplate")
+	defer log.Debug("ValidateHelmTemplate")
 
 	// Add nil check for the chart path
 	if chartPath == "" {
-		log.Errorf("Chart path is empty in ValidateHelmTemplate")
+		log.Error("Chart path is empty in ValidateHelmTemplate")
 		return fmt.Errorf("chart path cannot be empty")
 	}
 
@@ -709,25 +708,25 @@ func ValidateHelmTemplate(chartPath string, overrides []byte) error {
 
 	// Add nil check for handler
 	if handler == nil {
-		log.Errorf("Failed to create Bitnami fallback handler in ValidateHelmTemplate")
+		log.Error("Failed to create Bitnami fallback handler in ValidateHelmTemplate")
 		return fmt.Errorf("handler creation failed, returning original error: %w", err)
 	}
 
 	if handler.ShouldRetryWithSecurityBypass(err) {
-		debug.Printf("Detected Bitnami security error, retrying with security bypass")
+		log.Debug("Detected Bitnami security error, retrying with security bypass")
 
 		// Parse the original overrides
 		var overrideMap map[string]interface{}
 		if unmarshalErr := yaml.Unmarshal(overrides, &overrideMap); unmarshalErr != nil {
 			// If we can't parse the overrides, return the original error
-			debug.Printf("Failed to parse overrides for security bypass: %v", unmarshalErr)
+			log.Debug("Failed to parse overrides for security bypass: %v", unmarshalErr)
 			return err
 		}
 
 		// Add the security bypass parameter
 		if applyErr := handler.ApplySecurityBypass(overrideMap); applyErr != nil {
 			// If we can't apply the bypass, return the original error
-			debug.Printf("Failed to apply security bypass: %v", applyErr)
+			log.Debug("Failed to apply security bypass: %v", applyErr)
 			return err
 		}
 
@@ -735,20 +734,20 @@ func ValidateHelmTemplate(chartPath string, overrides []byte) error {
 		updatedOverrides, marshalErr := yaml.Marshal(overrideMap)
 		if marshalErr != nil {
 			// If we can't marshal the updated overrides, return the original error
-			debug.Printf("Failed to marshal updated overrides: %v", marshalErr)
+			log.Debug("Failed to marshal updated overrides: %v", marshalErr)
 			return err
 		}
 
 		// Try again with the updated overrides
-		debug.Printf("Retrying validation with security bypass parameter")
+		log.Debug("Retrying validation with security bypass parameter")
 		retryErr := validateHelmTemplateInternalFunc(chartPath, updatedOverrides)
 		if retryErr == nil {
-			log.Infof("Successfully validated chart with security bypass parameter")
+			log.Info("Successfully validated chart with security bypass parameter")
 			return nil
 		}
 
 		// If the retry fails, return the new error
-		debug.Printf("Retry with security bypass failed: %v", retryErr)
+		log.Debug("Retry with security bypass failed: %v", retryErr)
 		return retryErr
 	}
 
@@ -774,7 +773,7 @@ func validateHelmTemplateInternal(chartPath string, overrides []byte) error {
 	}
 	defer func() {
 		if err := os.RemoveAll(tempDir); err != nil {
-			log.Warnf("Warning: failed to clean up temp dir %s: %v", tempDir, err)
+			log.Warn("Warning: failed to clean up temp dir %s: %v", tempDir, err)
 		}
 	}()
 
@@ -782,7 +781,7 @@ func validateHelmTemplateInternal(chartPath string, overrides []byte) error {
 	if err := os.WriteFile(overrideFilePath, overrides, FilePermissions); err != nil {
 		return fmt.Errorf("failed to write temp overrides file: %w", err)
 	}
-	debug.Printf("Temporary override file written to: %s", overrideFilePath)
+	log.Debug("Temporary override file written to: %s", overrideFilePath)
 
 	// Initialize Helm environment
 	settings := cli.New()
@@ -792,7 +791,7 @@ func validateHelmTemplateInternal(chartPath string, overrides []byte) error {
 	}
 
 	actionConfig := new(action.Configuration)
-	if err := actionConfig.Init(settings.RESTClientGetter(), settings.Namespace(), "", debug.Printf); err != nil {
+	if err := actionConfig.Init(settings.RESTClientGetter(), settings.Namespace(), "", func(string, ...interface{}) {}); err != nil {
 		return fmt.Errorf("failed to initialize Helm action config: %w", err)
 	}
 
@@ -839,7 +838,7 @@ func validateHelmTemplateInternal(chartPath string, overrides []byte) error {
 	// Render the templates
 	rendered, err := engine.New(restConfig).Render(rel.Chart, rel.Config)
 	if err != nil {
-		debug.Printf("Helm template rendering failed. Error: %v", err)
+		log.Debug("Helm template rendering failed. Error: %v", err)
 		return fmt.Errorf("helm template rendering failed: %w", err)
 	}
 
@@ -859,7 +858,7 @@ func validateHelmTemplateInternal(chartPath string, overrides []byte) error {
 	}
 
 	output := outputBuffer.String()
-	debug.Printf("Helm template rendering successful. Output length: %d", len(output))
+	log.Debug("Helm template rendering successful. Output length: %d", len(output))
 
 	if output == "" {
 		return errors.New("helm template output is empty")
@@ -868,7 +867,7 @@ func validateHelmTemplateInternal(chartPath string, overrides []byte) error {
 	// Decode the input overrides for comparison
 	inputOverridesMap := make(map[string]interface{})
 	if err := yaml.Unmarshal(overrides, &inputOverridesMap); err != nil {
-		debug.Printf("Failed to unmarshal input overrides for validation check: %v", err)
+		log.Debug("Failed to unmarshal input overrides for validation check: %v", err)
 		// Don't fail validation just because we can't parse input, but log it.
 	} else if len(inputOverridesMap) > 0 {
 		// Decode the rendered output YAML
@@ -929,10 +928,10 @@ func validateHelmTemplateInternal(chartPath string, overrides []byte) error {
 		}
 
 		if len(validationErrors) > 0 {
-			debug.Printf("Validation failed: Rendered output does not match overrides. Errors: %s", strings.Join(validationErrors, "; "))
+			log.Debug("Validation failed: Rendered output does not match overrides. Errors: %s", strings.Join(validationErrors, "; "))
 			return fmt.Errorf("validation failed: rendered output does not match overrides: %s", strings.Join(validationErrors, "; "))
 		}
-		debug.Printf("Override values successfully verified in rendered output.")
+		log.Debug("Override values successfully verified in rendered output.")
 	}
 
 	return nil
@@ -981,7 +980,7 @@ func isLikelyImageMap(v interface{}) bool {
 
 // OverridesToYAML converts the override map to a YAML byte slice.
 func OverridesToYAML(overrides map[string]interface{}) ([]byte, error) {
-	debug.Printf("Marshaling overrides to YAML")
+	log.Debug("Marshaling overrides to YAML")
 	yamlBytes, err := yaml.Marshal(overrides)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal overrides to YAML: %w", err)

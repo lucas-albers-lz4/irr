@@ -543,11 +543,11 @@ func TestApplyRulesToMap_LogOutput(t *testing.T) {
 
 	// Set log level to debug
 	originalLevel := log.CurrentLevel()
-	log.SetLevel(log.LevelDebug)
+	log.SetLevel(1)
 	defer log.SetLevel(originalLevel)
 
 	// Capture log output during rule application
-	output, err := testutil.CaptureLogOutput(log.LevelDebug, func() {
+	output, err := testutil.CaptureLogOutput(1, func() {
 		// Apply the rule and check error
 		_, applyErr := ApplyRulesToMap([]Rule{rule}, testChart, overrideMap)
 		assert.NoError(t, applyErr, "ApplyRulesToMap should not produce an error")
@@ -565,7 +565,7 @@ func TestApplyRulesToMap_LogOutput(t *testing.T) {
 	assert.Contains(t, output, "true")
 
 	// Test with rules system disabled
-	disabledOutput, err := testutil.CaptureLogOutput(log.LevelDebug, func() {
+	disabledOutput, err := testutil.CaptureLogOutput(1, func() {
 		// Create registry with rules disabled
 		registry := NewRegistry()
 		registry.SetEnabled(false)

@@ -2,11 +2,11 @@ package testutil
 
 import (
 	"fmt"
-	"os"
-	"strings"
 	"testing"
 
+	"github.com/lalbers/irr/pkg/log"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestUseTestLogger(t *testing.T) {
@@ -21,68 +21,42 @@ func TestUseTestLogger(t *testing.T) {
 	})
 }
 
-func TestSuppressLogging(t *testing.T) {
-	t.Run("Redirects and restores stdout/stderr", func(t *testing.T) {
-		// Capture original stdout/stderr for comparison after restore
-		originalStdout := os.Stdout
-		originalStderr := os.Stderr
-
-		restore := SuppressLogging()
-		assert.NotNil(t, restore, "SuppressLogging should return a restore function")
-
-		// Check if stdout/stderr were redirected (cannot easily verify they point to /dev/null)
-		assert.NotEqual(t, originalStdout, os.Stdout, "os.Stdout should be redirected")
-		assert.NotEqual(t, originalStderr, os.Stderr, "os.Stderr should be redirected")
-
-		// Attempt to print something (should go to /dev/null)
-		fmt.Println("This should be suppressed (stdout)")
-		fmt.Fprintln(os.Stderr, "This should be suppressed (stderr)")
-
-		// Restore original streams
-		restore()
-
-		// Verify that stdout/stderr are restored
-		assert.Equal(t, originalStdout, os.Stdout, "os.Stdout should be restored")
-		assert.Equal(t, originalStderr, os.Stderr, "os.Stderr should be restored")
-
-		// Verify we can print again (optional, but good check)
-		fmt.Println("Logging restored (stdout)")
-		fmt.Fprintln(os.Stderr, "Logging restored (stderr)")
-	})
-}
-
+// TestCaptureLogging verifies that CaptureLogOutput correctly captures log messages.
 func TestCaptureLogging(t *testing.T) {
-	t.Run("Captures and restores stdout/stderr", func(t *testing.T) {
-		// Capture original stdout/stderr for comparison after restore
-		originalStdout := os.Stdout
-		originalStderr := os.Stderr
+	t.Run("Captures Info Logs", func(t *testing.T) {
+		logMsg := "This is an info message for capture"
+		debugMsg := "This debug message should NOT be captured"
 
-		restoreAndGetOutput := CaptureLogging()
-		assert.NotNil(t, restoreAndGetOutput, "CaptureLogging should return a restore function")
+		// Capture logs at Info level
+		output, err := CaptureLogOutput(log.LevelInfo, func() {
+			log.Debug(debugMsg)                                        // Should not appear in output
+			log.Info(logMsg)                                           // Should appear in output
+			fmt.Println("This goes to stdout, not captured by logger") // Verify stdout is unaffected
+		})
 
-		// Check if stdout/stderr were redirected
-		assert.NotEqual(t, originalStdout, os.Stdout, "os.Stdout should be redirected")
-		assert.NotEqual(t, originalStderr, os.Stderr, "os.Stderr should be redirected")
+		// Assert results
+		require.NoError(t, err, "CaptureLogOutput failed")
+		assert.Contains(t, output, logMsg, "Captured output should contain the info message")
+		assert.NotContains(t, output, debugMsg, "Captured output should NOT contain the debug message")
+		assert.Contains(t, output, `level=INFO`, "Log entry should have INFO level (text format)") // Check text format
+		// Add more assertions as needed, e.g., checking specific key-value pairs if using structured logs
 
-		// Print messages to be captured
-		stdoutMsg := "Message for stdout"
-		stderrMsg := "Message for stderr"
-		fmt.Println(stdoutMsg)
-		fmt.Fprintln(os.Stderr, stderrMsg)
-
-		// Restore original streams and get captured output
-		capturedOut, capturedErr := restoreAndGetOutput()
-
-		// Verify that stdout/stderr are restored
-		assert.Equal(t, originalStdout, os.Stdout, "os.Stdout should be restored")
-		assert.Equal(t, originalStderr, os.Stderr, "os.Stderr should be restored")
-
-		// Verify captured output (trimming whitespace as Println might add extra newline)
-		assert.Equal(t, stdoutMsg, strings.TrimSpace(capturedOut), "Captured stdout mismatch")
-		assert.Equal(t, stderrMsg, strings.TrimSpace(capturedErr), "Captured stderr mismatch")
-
-		// Verify we can print again (optional)
-		fmt.Println("Logging restored after capture (stdout)")
-		fmt.Fprintln(os.Stderr, "Logging restored after capture (stderr)")
+		// Note: We don't check stdout directly here, as CaptureLogOutput only captures the logger's output.
 	})
+
+	t.Run("Captures Debug Logs", func(t *testing.T) {
+		debugMsg := "This is a debug message"
+
+		// Capture logs at Debug level
+		output, err := CaptureLogOutput(log.LevelDebug, func() {
+			log.Debug(debugMsg)
+		})
+
+		// Assert results
+		require.NoError(t, err, "CaptureLogOutput failed")
+		assert.Contains(t, output, debugMsg, "Captured output should contain the debug message")
+		assert.Contains(t, output, `level=DEBUG`, "Log entry should have DEBUG level (text format)") // Check text format
+	})
+
+	// Add more test cases if needed, e.g., for Warn, Error levels, different formats, etc.
 }

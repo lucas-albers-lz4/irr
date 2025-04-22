@@ -7,7 +7,6 @@ import (
 
 	"errors"
 
-	"github.com/lalbers/irr/pkg/debug"
 	log "github.com/lalbers/irr/pkg/log"
 )
 
@@ -62,7 +61,7 @@ type Detector struct {
 // NewDetector creates a new Detector with the specified detection context.
 // The context controls filtering behavior, strict mode, and template handling.
 func NewDetector(context DetectionContext) *Detector {
-	debug.Printf("NewDetector: Initializing with context: %+v", context)
+	log.Debug("NewDetector", "context", context)
 
 	// For additional safety, create a new DetectionContext if none is provided
 	// This ensures we never have a nil context
@@ -79,19 +78,19 @@ func NewDetector(context DetectionContext) *Detector {
 	if context.SourceRegistries == nil {
 		// If nil, initialize with empty slices
 		context.SourceRegistries = []string{}
-		debug.Printf("NewDetector: Initializing nil SourceRegistries with empty slice")
+		log.Debug("NewDetector", "initializing nil SourceRegistries with empty slice")
 	}
 
 	if context.ExcludeRegistries == nil {
 		// If nil, initialize with empty slices
 		context.ExcludeRegistries = []string{}
-		debug.Printf("NewDetector: Initializing nil ExcludeRegistries with empty slice")
+		log.Debug("NewDetector", "initializing nil ExcludeRegistries with empty slice")
 	}
 
 	// Store a copy of the context to ensure it's not modified externally
 	detector.context = &context
 
-	debug.Printf("NewDetector: Initialized Detector with context: %+v", *detector.context)
+	log.Debug("NewDetector", "initialized Detector with context", *detector.context)
 	return detector
 }
 
@@ -108,18 +107,18 @@ func NewDetector(context DetectionContext) *Detector {
 //   - []UnsupportedImage: Image-like structures that couldn't be processed
 //   - error: Any error encountered during processing
 func (d *Detector) DetectImages(values interface{}, path []string) ([]DetectedImage, []UnsupportedImage, error) {
-	debug.FunctionEnter("Detector.DetectImages")
+	log.Debug("Detector.DetectImages", "path", path)
 
 	// Add nil check for context
 	if d.context == nil {
-		log.Errorf("Context is nil in Detector at path %v, this is likely a configuration error", path)
+		log.Error("Context is nil in Detector at path %v, this is likely a configuration error", path)
 		return nil, nil, fmt.Errorf("detector context is nil (configuration error)")
 	}
 
-	debug.DumpValue("Input values", values)
-	debug.DumpValue("Current path", path)
-	debug.DumpValue("Context", d.context)
-	debug.Printf("[DETECTOR ENTRY] Path: %v, Type: %T", path, values)
+	log.Debug("Detector.DetectImages", "Input values", values)
+	log.Debug("Detector.DetectImages", "Current path", path)
+	log.Debug("Detector.DetectImages", "Context", d.context)
+	log.Debug("Detector.DetectImages", "DETECTOR ENTRY", "Path", path, "Type", values)
 
 	var detectedImages []DetectedImage
 	var unsupportedMatches []UnsupportedImage
@@ -144,12 +143,12 @@ func (d *Detector) DetectImages(values interface{}, path []string) ([]DetectedIm
 
 	// Post-detection Filtering for Non-Strict Mode
 	if !d.context.Strict && (len(d.context.SourceRegistries) > 0 || len(d.context.ExcludeRegistries) > 0) {
-		debug.Printf("Applying post-detection filtering (non-strict mode) to %d images for path %v", len(detectedImages), path)
+		log.Debug("Applying post-detection filtering (non-strict mode) to", len(detectedImages), "images for path", path)
 		filteredDetected := make([]DetectedImage, 0, len(detectedImages))
 		for _, detected := range detectedImages {
 			// Add a nil check before attempting to normalize the Reference
 			if detected.Reference == nil {
-				debug.Printf("Skipping nil Reference at path %v", detected.Path)
+				log.Debug("Skipping nil Reference at path", detected.Path)
 				continue
 			}
 			// Normalize before checking source registry (important for docker.io vs index.docker.io)
@@ -157,13 +156,13 @@ func (d *Detector) DetectImages(values interface{}, path []string) ([]DetectedIm
 			if IsSourceRegistry(detected.Reference, d.context.SourceRegistries, d.context.ExcludeRegistries) {
 				filteredDetected = append(filteredDetected, detected)
 			} else {
-				debug.Printf("Filtering out non-source/excluded image (non-strict): %s at path %v", detected.Reference.String(), detected.Path)
+				log.Debug("Filtering out non-source/excluded image (non-strict):", detected.Reference.String(), "at path", detected.Path)
 				// Optionally, add to unsupportedMatches if we want to report these in non-strict mode too
 				// unsupportedMatches = append(unsupportedMatches, UnsupportedImage{...})
 			}
 		}
 		detectedImages = filteredDetected // Replace with filtered list
-		debug.Printf("Finished post-detection filtering. %d images remain.", len(detectedImages))
+		log.Debug("Finished post-detection filtering.", len(detectedImages), "images remain.")
 	}
 
 	return detectedImages, unsupportedMatches, nil
@@ -171,11 +170,11 @@ func (d *Detector) DetectImages(values interface{}, path []string) ([]DetectedIm
 
 // processMapValue handles detection of images in map values
 func (d *Detector) processMapValue(v map[string]interface{}, path []string) ([]DetectedImage, []UnsupportedImage, error) {
-	debug.Println("Processing map")
+	log.Debug("Processing map")
 
 	// Add nil check for context
 	if d.context == nil {
-		log.Errorf("Context is nil in Detector at path %v, this is likely a configuration error", path)
+		log.Error("Context is nil in Detector at path %v, this is likely a configuration error", path)
 		return nil, nil, fmt.Errorf("detector context is nil (configuration error)")
 	}
 
@@ -189,19 +188,19 @@ func (d *Detector) processMapValue(v map[string]interface{}, path []string) ([]D
 	}
 
 	// If not an image map, recurse into values
-	log.Debugf("Structure at path %s did not match image map pattern, recursing into values.\n", pathToString(path))
+	log.Debug("Structure at path", pathToString(path), "did not match image map pattern, recursing into values.")
 	for key, val := range v {
 		newPath := append(append([]string{}, path...), key)
 		detected, unsupported, err := d.DetectImages(val, newPath)
 		if err != nil {
-			log.Errorf("Error processing path %v: %v\n", newPath, err)
+			log.Error("Error processing path", newPath, ":", err)
 			return nil, nil, fmt.Errorf("error processing path %v: %w", newPath, err)
 		}
 		detectedImages = append(detectedImages, detected...)
 		if len(unsupported) > 0 {
-			log.Debugf("[UNSUPPORTED AGG MAP] Path: %v, Appending %d items from key '%s'\n", path, len(unsupported), key)
+			log.Debug("Appending", len(unsupported), "items from key", key)
 			for i, item := range unsupported {
-				log.Debugf("[UNSUPPORTED AGG MAP ITEM %d] Path: %v, Type: %v, Error: %v\n", i, item.Location, item.Type, item.Error)
+				log.Debug("Appending item", i, "Path:", item.Location, "Type:", item.Type, "Error:", item.Error)
 			}
 		}
 		unsupportedMatches = append(unsupportedMatches, unsupported...)
@@ -216,12 +215,12 @@ func (d *Detector) handleImageMap(detectedImage *DetectedImage, isPotentialMap b
 
 	// Add nil check for context
 	if d.context == nil {
-		log.Errorf("Context is nil in Detector at path %v, this is likely a configuration error", path)
+		log.Error("Context is nil in Detector at path %v, this is likely a configuration error", path)
 		return nil, nil, fmt.Errorf("detector context is nil (configuration error)")
 	}
 
 	if err != nil {
-		debug.Printf("Handling error from map processing at path %v: %v", path, err)
+		log.Debug("Handling error from map processing at path", path, "error", err)
 		// Determine the type of unsupported image based on the error
 		var unsupportedType UnsupportedType
 
@@ -247,7 +246,7 @@ func (d *Detector) handleImageMap(detectedImage *DetectedImage, isPotentialMap b
 		if detectedImage != nil {
 			// Valid image map detected
 			if detectedImage.Reference == nil {
-				debug.Printf("Skipping nil Reference for detectedImage at path %v", path)
+				log.Debug("Skipping nil Reference for detectedImage at path", path)
 				return detectedImages, unsupportedMatches, nil
 			}
 			NormalizeImageReference(detectedImage.Reference)
@@ -263,7 +262,7 @@ func (d *Detector) handleImageMap(detectedImage *DetectedImage, isPotentialMap b
 			}
 		} else {
 			// It looked like a map structure, but validation failed without specific error (e.g., empty repo in non-strict)
-			debug.Printf("Map structure at path %v was skipped during validation (e.g., empty repo non-strict)", path)
+			log.Debug("Map structure at path", path, "was skipped during validation (e.g., empty repo non-strict)")
 			// No unsupported match needed here, it was just skipped.
 		}
 	} // else: It wasn't even a potential map, nothing to do.
@@ -273,11 +272,11 @@ func (d *Detector) handleImageMap(detectedImage *DetectedImage, isPotentialMap b
 
 // processSliceValue handles detection of images in slice/array values
 func (d *Detector) processSliceValue(v []interface{}, path []string) ([]DetectedImage, []UnsupportedImage, error) {
-	debug.Println("Processing slice/array")
+	log.Debug("Processing slice/array")
 
 	// Add nil check for context
 	if d.context == nil {
-		log.Errorf("Context is nil in Detector at path %v, this is likely a configuration error", path)
+		log.Error("Context is nil in Detector at path %v, this is likely a configuration error", path)
 		return nil, nil, fmt.Errorf("detector context is nil (configuration error)")
 	}
 
@@ -286,17 +285,17 @@ func (d *Detector) processSliceValue(v []interface{}, path []string) ([]Detected
 
 	for i, item := range v {
 		itemPath := append(append([]string{}, path...), fmt.Sprintf("[%d]", i))
-		log.Debugf("Recursively processing slice item %d at path %s\n", i, itemPath)
+		log.Debug("Recursively processing slice item", i, "at path", itemPath)
 		detectedInItem, unsupportedInItem, err := d.DetectImages(item, itemPath)
 		if err != nil {
-			log.Errorf("Error processing slice item at path %s: %v\n", itemPath, err)
+			log.Error("Error processing slice item at path", itemPath, ":", err)
 			return nil, nil, fmt.Errorf("error processing slice item %d at path %s: %w", i, path, err)
 		}
 		detectedImages = append(detectedImages, detectedInItem...)
 		if len(unsupportedInItem) > 0 {
-			log.Debugf("[UNSUPPORTED AGG SLICE] Path: %v, Appending %d items from index %d\n", path, len(unsupportedInItem), i)
+			log.Debug("Appending", len(unsupportedInItem), "items from index", i)
 			for j, item := range unsupportedInItem {
-				log.Debugf("[UNSUPPORTED AGG SLICE ITEM %d] Path: %v, Type: %v, Error: %v\n", j, item.Location, item.Type, item.Error)
+				log.Debug("Appending item", j, "Path:", item.Location, "Type:", item.Type, "Error:", item.Error)
 			}
 		}
 		unsupportedMatches = append(unsupportedMatches, unsupportedInItem...)
@@ -306,15 +305,15 @@ func (d *Detector) processSliceValue(v []interface{}, path []string) ([]Detected
 
 // processStringValue handles detection of images in string values
 func (d *Detector) processStringValue(v string, path []string) ([]DetectedImage, []UnsupportedImage, error) {
-	log.Debugf("[DEBUG irr DETECT STRING] Processing string value at path %s: %q\n", pathToString(path), v)
+	log.Debug("[DEBUG irr DETECT STRING] Processing string value", "path", pathToString(path), "value", v)
 
 	// Add nil check for context
 	if d.context == nil {
-		log.Errorf("Context is nil in Detector at path %v, this is likely a configuration error", path)
+		log.Error("Context is nil in Detector at path %v, this is likely a configuration error", path)
 		return nil, nil, fmt.Errorf("detector context is nil (configuration error)")
 	}
 
-	log.Debugf("[DEBUG irr DETECT STRING] Path: %v, Value: '%s', Strict Context: %v\n", path, v, d.context.Strict)
+	log.Debug("[DEBUG irr DETECT STRING] Path", path, "Value", v, "Strict Context", d.context.Strict)
 
 	var detectedImages []DetectedImage
 
@@ -323,11 +322,11 @@ func (d *Detector) processStringValue(v string, path []string) ([]DetectedImage,
 	// IMPORTANT: Added safeguard for nil shouldProcessValue - if this is triggering,
 	// the Detector struct is missing initialization of the shouldProcessValue field/function
 	if d.shouldProcessValue != nil && !d.shouldProcessValue(v) {
-		log.Debugf("Skipping string value due to shouldProcessValue filter: %q", v)
+		log.Debug("Skipping string value due to shouldProcessValue filter", "value", v)
 		return nil, nil, nil
 	} else if d.shouldProcessValue == nil {
 		// If shouldProcessValue is nil, log a warning and continue processing
-		log.Warnf("shouldProcessValue function is nil in Detector, skipping filter check at path %v", path)
+		log.Warn("shouldProcessValue function is nil in Detector, skipping filter check at path %v", path)
 	}
 
 	if d.context.Strict {
@@ -341,9 +340,9 @@ func (d *Detector) processStringValue(v string, path []string) ([]DetectedImage,
 		// In non-strict mode, any error from tryExtractImageFromString (template or parse error)
 		// means we should just skip this string value.
 		if errors.Is(err, ErrSkippedTemplateDetection) {
-			log.Debugf("[DEBUG irr DETECT STRING SKIP] Skipping template value (non-strict) at path %s: %q\n", pathToString(path), v)
+			log.Debug("[DEBUG irr DETECT STRING SKIP] Skipping template value (non-strict)", "path", pathToString(path), "value", v)
 		} else {
-			log.Debugf("[DEBUG irr DETECT STRING SKIP] Skipping unparseable value (non-strict) at path %s: %q, Error: %v\n", pathToString(path), v, err)
+			log.Debug("[DEBUG irr DETECT STRING SKIP] Skipping unparseable value (non-strict)", "path", pathToString(path), "value", v, "error", err)
 		}
 		// Return nil slices and nil error for skips in non-strict mode.
 		return nil, nil, nil
@@ -353,10 +352,10 @@ func (d *Detector) processStringValue(v string, path []string) ([]DetectedImage,
 	if imgRef != nil {
 		// In non-strict mode, always add the detected image. Filtering happens later.
 		detectedImages = append(detectedImages, *imgRef)
-		log.Debugf("[DEBUG irr DETECT STRING ADD] Detected image (non-strict) at path %s: %q\n", pathToString(path), v)
+		log.Debug("[DEBUG irr DETECT STRING ADD] Detected image (non-strict)", "path", pathToString(path), "value", v)
 	} else {
 		// This case should ideally not happen if err is nil, but log if it does.
-		log.Warnf("[DEBUG irr DETECT STRING WARN] tryExtractImageFromString returned nil error and nil imgRef (non-strict) at path %s: %q", pathToString(path), v)
+		log.Warn("[DEBUG irr DETECT STRING WARN] tryExtractImageFromString returned nil error and nil imgRef (non-strict)", "path", pathToString(path), "value", v)
 	}
 
 	// Always return nil unsupportedMatches and nil error for non-strict string processing success/skip.
@@ -370,7 +369,7 @@ func (d *Detector) processStringValueStrict(v string, path []string, isKnownImag
 
 	// Add nil check for context
 	if d.context == nil {
-		log.Errorf("Context is nil in Detector at path %v, this is likely a configuration error", path)
+		log.Error("Context is nil in Detector at path %v, this is likely a configuration error", path)
 		return nil, nil, fmt.Errorf("detector context is nil (configuration error)")
 	}
 
@@ -421,7 +420,7 @@ func (d *Detector) processStringValueStrict(v string, path []string, isKnownImag
 		// Handle the case where err is nil but imgRefDetected is also nil
 		// This happens if tryExtractImageFromString heuristic skips the parse (e.g., "invalid-string")
 		// In strict mode, if this happened at a known image path, it's an error.
-		debug.Printf("Strict mode: String at known image path %v was skipped by heuristic or returned nil ref unexpectedly.", path)
+		log.Debug("Strict mode: String at known image path", path, "was skipped by heuristic or returned nil ref unexpectedly.")
 		unsupportedMatches = append(unsupportedMatches, UnsupportedImage{
 			Location: path,
 			Type:     UnsupportedTypeStringParseError, // Treat heuristic skip at known path as parse error
@@ -447,7 +446,7 @@ func (d *Detector) validateMapStructure(m map[string]interface{}, path []string)
 
 	// Check repository key presence
 	if !repoOk {
-		debug.Printf("Path [%s] missing required 'repository' key.\n", pathToString(path))
+		log.Debug("Path", path, "missing required 'repository' key.")
 		return result
 	}
 
@@ -472,7 +471,7 @@ func (d *Detector) validateMapStructure(m map[string]interface{}, path []string)
 		regStr, regIsString := regVal.(string)
 		if !regIsString {
 			// Not a string - invalid structure
-			debug.Printf("[validateMapStructure] Invalid non-string registry value at path %v.", path)
+			log.Debug("validateMapStructure", "Invalid non-string registry value at path", path)
 			return result
 		} else if containsTemplate(regStr) {
 			result.Repository = repoStr
@@ -489,7 +488,7 @@ func (d *Detector) validateMapStructure(m map[string]interface{}, path []string)
 		tagStr, tagIsString := tagVal.(string)
 		if !tagIsString {
 			// Not a string - invalid structure
-			debug.Printf("[validateMapStructure] Invalid non-string tag value at path %v.", path)
+			log.Debug("validateMapStructure", "Invalid non-string tag value at path", path)
 			return result
 		} else if containsTemplate(tagStr) {
 			result.Repository = repoStr
@@ -506,7 +505,7 @@ func (d *Detector) validateMapStructure(m map[string]interface{}, path []string)
 		digestStr, digestIsString := digestVal.(string)
 		if !digestIsString {
 			// Not a string - invalid structure
-			debug.Printf("[validateMapStructure] Invalid non-string digest value at path %v.", path)
+			log.Debug("validateMapStructure", "Invalid non-string digest value at path", path)
 			return result
 		} else if containsTemplate(digestStr) {
 			result.Repository = repoStr
@@ -527,11 +526,10 @@ func (d *Detector) validateMapStructure(m map[string]interface{}, path []string)
 // createImageReference attempts to create a valid image Reference object from components extracted from a map.
 // It prioritizes explicit fields (registry, tag, digest) over information potentially embedded in the repository string.
 func (d *Detector) createImageReference(repoStr, regStr, tagStr, digestStr string, path []string) (*Reference, error) {
-	debug.FunctionEnter("Detector.createImageReference")
-	debug.Printf("Path: %v, Repo: %q", path, repoStr)
-	debug.Printf("[DEBUG createImageReference] Inputs: Repo=%q, Reg=%q, Tag=%q, Digest=%q", repoStr, regStr, tagStr, digestStr)
+	log.Debug("Detector.createImageReference", "Path", path, "Repo", repoStr)
+	log.Debug("[DEBUG createImageReference] Inputs: Repo=", repoStr, "Reg=", regStr, "Tag=", tagStr, "Digest=", digestStr)
 	if repoStr == "" {
-		debug.Printf("[DEBUG createImageReference] Repository string is empty.")
+		log.Debug("[DEBUG createImageReference] Repository string is empty.")
 		return nil, fmt.Errorf("repository field is mandatory but was empty at path %v", path)
 	}
 
@@ -558,25 +556,25 @@ func (d *Detector) createImageReference(repoStr, regStr, tagStr, digestStr strin
 		builder.WriteString(regStr)
 		builder.WriteByte('/')
 		registryApplied = regStr + " (explicit)"
-		debug.Printf("Using explicit registry: %s", regStr)
+		log.Debug("Using explicit registry:", regStr)
 
 	case hasRegistryPrefix:
 		// Case 2: No explicit registry, but repoStr contains registry prefix
 		// Don't add anything to builder here, as registry is part of repoStr
 		firstPart := strings.SplitN(repoStr, "/", MaxComponents)[0]
 		registryApplied = firstPart + " (in repoStr)"
-		debug.Printf("Detected potential registry prefix ('%s') in repoStr ('%s'). Skipping global registry.", firstPart, repoStr)
+		log.Debug("Detected potential registry prefix ('", firstPart, "') in repoStr ('", repoStr, "'). Skipping global registry.")
 
 	case d.context.GlobalRegistry != "":
 		// Case 3: Use global registry
 		builder.WriteString(d.context.GlobalRegistry)
 		builder.WriteByte('/')
 		registryApplied = d.context.GlobalRegistry + " (global)"
-		debug.Printf("Applying global registry: %s", d.context.GlobalRegistry)
+		log.Debug("Applying global registry:", d.context.GlobalRegistry)
 
 	default:
 		// Case 4: No registry information available
-		debug.Printf("No explicit or global registry provided, and repoStr ('%s') has no prefix.", repoStr)
+		log.Debug("No explicit or global registry provided, and repoStr ('", repoStr, "') has no prefix.")
 	}
 
 	// Add the repository string itself.
@@ -592,12 +590,12 @@ func (d *Detector) createImageReference(repoStr, regStr, tagStr, digestStr strin
 	}
 
 	candidateStr := builder.String()
-	debug.Printf("Assembled candidate string: '%s' (Registry Applied: %s)", candidateStr, registryApplied)
+	log.Debug("Assembled candidate string:", "'", candidateStr, "' (Registry Applied:", registryApplied, ")")
 
 	// Parse the constructed candidate string using the canonical parser.
 	ref, err := ParseImageReference(candidateStr)
 	if err != nil {
-		debug.Printf("Error parsing assembled reference '%s' at path %v: %v", candidateStr, path, err)
+		log.Debug("Error parsing assembled reference", "'", candidateStr, "' at path", path, ":", err)
 		return nil, fmt.Errorf("failed to parse assembled reference '%s' from path %v: %w", candidateStr, path, err)
 	}
 
@@ -613,8 +611,7 @@ func (d *Detector) createImageReference(repoStr, regStr, tagStr, digestStr strin
 // - bool: true if the map matches image structure (even if invalid), false otherwise
 // - error: Any validation errors encountered
 func (d *Detector) tryExtractImageFromMap(m map[string]interface{}, path []string) (*DetectedImage, bool, error) {
-	debug.FunctionEnter("Detector.tryExtractImageFromMap")
-	debug.DumpValue("Input map", m)
+	log.Debug("Detector.tryExtractImageFromMap", "Input map", m)
 
 	// Validate basic structure
 	result := d.validateMapStructure(m, path)
@@ -622,7 +619,7 @@ func (d *Detector) tryExtractImageFromMap(m map[string]interface{}, path []strin
 	// If validation returned an error (like template detected) or it's not an image map structure,
 	// return immediately with the results from validateMapStructure.
 	if result.TemplateErr != nil || !result.IsImageMap {
-		debug.Printf("[tryExtractImageFromMap] Validation failed or template detected. isImageMap: %t, err: %v", result.IsImageMap, result.TemplateErr)
+		log.Debug("[tryExtractImageFromMap] Validation failed or template detected. isImageMap:", result.IsImageMap, "err:", result.TemplateErr)
 		return nil, result.IsImageMap, result.TemplateErr
 	}
 
@@ -648,23 +645,22 @@ func (d *Detector) tryExtractImageFromMap(m map[string]interface{}, path []strin
 	}
 
 	// 4. Construct the image reference using createImageReference
-	debug.Printf("[DEBUG tryExtractImageFromMap] Calling createImageReference with: Repo=%q, Reg=%q, Tag=%q, Digest=%q, Path=%v",
-		result.Repository, result.Registry, result.Tag, result.Digest, path)
+	log.Debug("[DEBUG tryExtractImageFromMap] Calling createImageReference with: Repo=", result.Repository, "Reg=", result.Registry, "Tag=", result.Tag, "Digest=", result.Digest, "Path=", path)
 	imgRef, err := d.createImageReference(result.Repository, result.Registry, result.Tag, result.Digest, path)
 
 	// Log the result of createImageReference
 	switch {
 	case err != nil:
-		debug.Printf("[DEBUG tryExtractImageFromMap] createImageReference returned error: %v", err)
+		log.Debug("[DEBUG tryExtractImageFromMap] createImageReference returned error:", err)
 	case imgRef == nil:
-		debug.Printf("[DEBUG tryExtractImageFromMap] createImageReference returned nil image ref and nil error")
+		log.Debug("[DEBUG tryExtractImageFromMap] createImageReference returned nil image ref and nil error")
 	default:
-		debug.Printf("[DEBUG tryExtractImageFromMap] createImageReference returned image ref: %s", imgRef.String())
+		log.Debug("[DEBUG tryExtractImageFromMap] createImageReference returned image ref:", imgRef.String())
 	}
 
 	if err != nil {
 		// Propagate error from createImageReference (e.g., parse error)
-		debug.Printf("[DEBUG tryExtractImageFromMap] Returning error from createImageReference: %v", err)
+		log.Debug("[DEBUG tryExtractImageFromMap] Returning error from createImageReference:", err)
 		// Return isImageMap=true because the structure *looked* like an image map, even if parsing failed.
 		// The error indicates the problem.
 		return nil, true, fmt.Errorf("map structure at path %v resembles an image, but failed validation: %w", path, err)
@@ -677,8 +673,7 @@ func (d *Detector) tryExtractImageFromMap(m map[string]interface{}, path []strin
 		Pattern:   PatternMap, // Set pattern to map
 		Original:  m,          // Store the original map
 	}
-	debug.Printf("[DEBUG tryExtractImageFromMap] Successfully detected map-based image. Returning: %+v", detected.Reference)
-	debug.FunctionExit("Detector.tryExtractImageFromMap (Returning image)")
+	log.Debug("[DEBUG tryExtractImageFromMap] Successfully detected map-based image. Returning:", detected.Reference)
 	return detected, true, nil
 }
 
@@ -686,36 +681,34 @@ func (d *Detector) tryExtractImageFromMap(m map[string]interface{}, path []strin
 // Returns the parsed DetectedImage or nil if it's not a valid image format.
 // Returns ErrTemplateVariableDetected if a template is found.
 func (d *Detector) tryExtractImageFromString(s string, path []string) (*DetectedImage, error) {
-	debug.FunctionEnter("tryExtractImageFromString")
-	defer debug.FunctionExit("tryExtractImageFromString")
-	debug.Printf("Path='%v', String='%s'", path, s)
+	log.Debug("tryExtractImageFromString", "Path", path, "String", s)
 
 	// Skip template variables in normal mode
 	if containsTemplate(s) {
-		debug.Printf("[DEBUG irr DETECT STRING SKIP] Skipping template string: %s", s)
+		log.Debug("[DEBUG irr DETECT STRING SKIP] Skipping template string:", s)
 		return nil, ErrTemplateVariableDetected
 	}
 
 	// Skip strings that don't look like image references
 	if !strings.ContainsAny(s, "/:@") {
-		debug.Printf("String '%s' lacks image separators (/ : @), skipping parse attempt.", s)
+		log.Debug("String", s, "lacks image separators (/ : @), skipping parse attempt.")
 		// Return a sentinel error instead of nil, nil
 		return nil, ErrNotImageString
 	}
 
 	// DEBUG: Log input to ParseImageReference
-	debug.Printf("Calling ParseImageReference with: %s", s)
+	log.Debug("Calling ParseImageReference with:", s)
 
 	ref, err := ParseImageReference(s)
 
 	// DEBUG: Log output from ParseImageReference
-	debug.Printf("ParseImageReference returned: err=%v", err)
+	log.Debug("ParseImageReference returned:", "err", err)
 	// Use %+v to see struct details if ref is not nil
-	debug.Printf("ParseImageReference returned: ref=%+v", ref)
+	log.Debug("ParseImageReference returned:", "ref", ref)
 
 	if err != nil {
 		// Restore original debug message and error format
-		debug.Printf("ParseImageReference err: %v", err)
+		log.Debug("ParseImageReference err:", err)
 		return nil, fmt.Errorf("invalid image string format: %w", err)
 	}
 
@@ -734,8 +727,8 @@ func (d *Detector) tryExtractImageFromString(s string, path []string) (*Detected
 	}
 
 	// +++ Add Debugging +++
-	debug.Printf("[DETECTOR DEBUG tryExtractImageFromString] Returning DetectedImage for path %v with OriginalFormat: '%s'", detected.Path, detected.OriginalFormat)
-	debug.DumpValue("[DETECTOR DEBUG tryExtractImageFromString] DetectedImage Value", detected)
+	log.Debug("[DETECTOR DEBUG tryExtractImageFromString] Returning DetectedImage for path", detected.Path, "with OriginalFormat:", detected.OriginalFormat)
+	log.Debug("DumpValue", "DETECTOR DEBUG tryExtractImageFromString", "DetectedImage Value", detected)
 
 	return detected, nil
 }
@@ -745,7 +738,7 @@ func containsTemplate(s string) bool {
 	hasOpen := strings.Contains(s, "{{")
 	hasClose := strings.Contains(s, "}}")
 	result := hasOpen && hasClose
-	debug.Printf("[containsTemplate DEBUG] String: '%s', HasOpen: %v, HasClose: %v, Result: %v", s, hasOpen, hasClose, result)
+	log.Debug("[containsTemplate DEBUG] String:", s, "HasOpen:", hasOpen, "HasClose:", hasClose, "Result:", result)
 	return result
 }
 

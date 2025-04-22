@@ -1,11 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"testing"
 
 	"github.com/lalbers/irr/pkg/log"
-	"github.com/lalbers/irr/pkg/testutil"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -156,9 +156,18 @@ func stringPtr(s string) *string {
 
 func TestLogHelmEnvironment(t *testing.T) {
 	// Set debug level for this test
-	originalLevel := log.CurrentLevel()
 	log.SetLevel(log.LevelDebug)
-	defer log.SetLevel(originalLevel)
+	// No need to defer log.SetLevel(originalLevel) here,
+	// as SetOutput's restore function will handle logger reconfiguration.
+
+	// --- Capture logs using log.SetOutput --- Start
+	var logBuf bytes.Buffer
+	restoreLogOutput := log.SetOutput(&logBuf) // Set buffer as output and get restore func
+	defer restoreLogOutput()                   // Ensure original output is restored after test
+
+	// Re-apply the desired log level *after* setting the output,
+	// because SetOutput reconfigures the logger based on env vars by default.
+	log.SetLevel(log.LevelDebug)
 
 	// Set some Helm environment variables using t.Setenv for proper test cleanup
 	testEnvVars := map[string]string{
@@ -170,23 +179,32 @@ func TestLogHelmEnvironment(t *testing.T) {
 	for k, v := range testEnvVars {
 		t.Setenv(k, v)
 	}
-	// Unset one variable to ensure it's not logged if empty
+	// Explicitly unset a var that logHelmEnvironment checks, to ensure it's not logged
 	t.Setenv("HELM_DEBUG", "")
 
-	// Capture logs
-	stopCapture := testutil.CaptureLogging()
-
-	// Call the function
+	// Call the function that logs
 	logHelmEnvironment()
 
-	// Get captured logs
-	_, capturedStderr := stopCapture()
+	// Get captured log output
+	capturedLogs := logBuf.String()
+	// --- Capture logs using log.SetOutput --- End
 
-	// Assertions
-	assert.Contains(t, capturedStderr, "Helm Environment Variables:")
-	assert.Contains(t, capturedStderr, "HELM_PLUGIN_NAME=irr")
-	assert.Contains(t, capturedStderr, "HELM_BIN=helm")
-	assert.Contains(t, capturedStderr, "HELM_NAMESPACE=test-ns")
-	assert.NotContains(t, capturedStderr, "SOME_OTHER_VAR") // Verify non-Helm vars are not logged
-	assert.NotContains(t, capturedStderr, "HELM_DEBUG=")    // Verify empty vars are not logged
+	// Assertions (Uncommented and adapted for slog text format)
+	// assert.Contains(t, capturedLogs, `level=DEBUG`, "Captured stderr should contain 'level=DEBUG' when debug is enabled") // This is implicitly checked by the lines below
+
+	// /* // Keep previous granular assertions commented out for now // REMOVE THIS COMMENT START
+	// Check for the initial debug message in slog format
+	assert.Contains(t, capturedLogs, `level=DEBUG msg="Helm Environment Variables:"`)
+
+	// Check for the presence of individual key=value pairs for logged env vars
+	// We check them individually because slog's TextHandler doesn't guarantee key order
+	assert.Contains(t, capturedLogs, `level=DEBUG msg="Helm Env" var=HELM_PLUGIN_NAME value=irr`)
+
+	assert.Contains(t, capturedLogs, `level=DEBUG msg="Helm Env" var=HELM_BIN value=helm`)
+
+	assert.Contains(t, capturedLogs, `level=DEBUG msg="Helm Env" var=HELM_NAMESPACE value=test-ns`)
+
+	assert.NotContains(t, capturedLogs, "SOME_OTHER_VAR") // Verify non-Helm vars are not logged
+	assert.NotContains(t, capturedLogs, "var=HELM_DEBUG") // Verify empty vars are not logged (as the value is empty)
+	// */ // REMOVE THIS COMMENT END // REMOVE THIS LINE
 }

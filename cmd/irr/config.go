@@ -103,7 +103,7 @@ func listMappings() error {
 	if err != nil {
 		// If file doesn't exist, report empty mappings
 		if os.IsNotExist(err) {
-			log.Infof("No mappings found (file '%s' does not exist)", configFile)
+			log.Info("No mappings found (file does not exist)", "file", configFile)
 			return nil
 		}
 		return &exitcodes.ExitCodeError{
@@ -114,14 +114,14 @@ func listMappings() error {
 
 	// Check if no mappings exist
 	if mappings == nil || len(mappings.Entries) == 0 {
-		log.Infof("No mappings configured in '%s'", configFile)
+		log.Info("No mappings configured", "file", configFile)
 		return nil
 	}
 
 	// Display mappings
-	log.Infof("Registry mappings from '%s':", configFile)
+	log.Info("Registry mappings", "file", configFile)
 	for _, mapping := range mappings.Entries {
-		log.Infof("  %s -> %s", mapping.Source, mapping.Target)
+		log.Info("Mapping", "source", mapping.Source, "target", mapping.Target)
 	}
 
 	return nil
@@ -147,7 +147,7 @@ func removeMapping() error {
 
 	// Check if no mappings exist
 	if mappings == nil || len(mappings.Entries) == 0 {
-		log.Infof("No mappings found to remove in '%s'", configFile)
+		log.Info("No mappings found to remove", "file", configFile)
 		return nil
 	}
 
@@ -164,7 +164,7 @@ func removeMapping() error {
 
 	// If mapping wasn't found, report it
 	if !found {
-		log.Infof("No mapping found for source '%s' in '%s'", configSource, configFile)
+		log.Info("No mapping found for source", "source", configSource, "file", configFile)
 		return nil
 	}
 
@@ -176,7 +176,7 @@ func removeMapping() error {
 		return err
 	}
 
-	log.Infof("Successfully removed mapping for '%s' from '%s'", configSource, configFile)
+	log.Info("Successfully removed mapping", "source", configSource, "file", configFile)
 	return nil
 }
 
@@ -239,7 +239,7 @@ func addUpdateMapping() error {
 	if !found {
 		action = "Added"
 	}
-	log.Infof("%s mapping: %s -> %s in '%s'", action, configSource, configTarget, configFile)
+	log.Info("Mapping action", "action", action, "source", configSource, "target", configTarget, "file", configFile)
 	return nil
 }
 

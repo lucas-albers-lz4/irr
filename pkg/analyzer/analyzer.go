@@ -56,14 +56,14 @@ func (pm *PatternMatcher) Match(_ string) bool {
 
 // AnalyzeHelmValues analyzes Helm values content for image patterns.
 func AnalyzeHelmValues(values map[string]interface{}, config *Config) ([]ImagePattern, error) {
-	log.Debugf("Starting Helm values analysis")
+	log.Debug("Starting Helm values analysis")
 	patterns := []ImagePattern{}
 	analyzeValuesRecursive("", values, &patterns, config) // Start recursion with root path ""
 
 	// Post-process to aggregate counts for duplicate patterns
 	aggregatedPatterns := aggregatePatterns(patterns)
 
-	log.Infof("Helm values analysis complete. Found %d unique image patterns.", len(aggregatedPatterns))
+	log.Info("Helm values analysis complete. Found %d unique image patterns.", len(aggregatedPatterns))
 	return aggregatedPatterns, nil
 }
 
@@ -92,7 +92,7 @@ func aggregatePatterns(patterns []ImagePattern) []ImagePattern {
 func analyzeValuesRecursive(path string, value interface{}, patterns *[]ImagePattern, config *Config) {
 	// Handle nil values gracefully
 	if value == nil {
-		log.Debugf("Skipping nil value at path '%s'", path)
+		log.Debug("Skipping nil value at path '%s'", path)
 		return
 	}
 
@@ -101,7 +101,7 @@ func analyzeValuesRecursive(path string, value interface{}, patterns *[]ImagePat
 	// Handle pointers by dereferencing
 	if val.Kind() == reflect.Ptr {
 		if val.IsNil() {
-			log.Debugf("Skipping nil pointer at path '%s'", path)
+			log.Debug("Skipping nil pointer at path '%s'", path)
 			return
 		}
 		val = val.Elem() // Dereference the pointer
@@ -122,9 +122,9 @@ func analyzeValuesRecursive(path string, value interface{}, patterns *[]ImagePat
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
 		reflect.Float32, reflect.Float64,
 		reflect.Complex64, reflect.Complex128:
-		log.Debugf("Ignoring scalar value of type %s at path '%s'", val.Kind(), path)
+		log.Debug("Ignoring scalar value of type %s at path '%s'", val.Kind())
 	default:
-		log.Warnf("Ignoring value with unhandled type '%s' at path '%s'. Value: %v", val.Kind(), path, value)
+		log.Warn("Ignoring value with unhandled type '%s' at path '%s'. Value: %v", val.Kind(), path, value)
 	}
 }
 
@@ -132,7 +132,7 @@ func analyzeValuesRecursive(path string, value interface{}, patterns *[]ImagePat
 func analyzeMapValue(path string, val reflect.Value, patterns *[]ImagePattern, config *Config) {
 	// Check if the map key type is string, required for Helm values traversal.
 	if val.Type().Key().Kind() != reflect.String {
-		log.Warnf("Skipping map with non-string keys at path '%s'. Key type: %s", path, val.Type().Key().Kind())
+		log.Warn("Skipping map with non-string keys at path '%s'. Key type: %s", path, val.Type().Key().Kind())
 		return
 	}
 
@@ -140,14 +140,14 @@ func analyzeMapValue(path string, val reflect.Value, patterns *[]ImagePattern, c
 	mapValue, ok := val.Interface().(map[string]interface{})
 	if !ok {
 		// Fallback iteration for potentially different map types if direct assertion fails
-		log.Warnf("Skipping map at path '%s' due to unexpected map type: %T. Attempting iteration.", path, val.Interface())
+		log.Warn("Skipping map at path '%s' due to unexpected map type: %T. Attempting iteration.", path, val.Interface())
 		iter := val.MapRange()
 		for iter.Next() {
 			k := iter.Key()
 			v := iter.Value()
 			keyStr, keyOk := k.Interface().(string) // Ensure key is string
 			if !keyOk {
-				log.Warnf("Skipping non-string key in map at path %s: %v", path, k)
+				log.Warn("Skipping non-string key in map at path %s: %v", path, k)
 				continue
 			}
 			newPath := keyStr
@@ -167,7 +167,7 @@ func analyzeMapValue(path string, val reflect.Value, patterns *[]ImagePattern, c
 		if repoStr, ok := repoVal.(string); ok && repoStr != "" {
 			isImageMap = true
 			repository = repoStr
-			log.Debugf("Found 'repository' key at '%s': '%s'", path, repository)
+			log.Debug("Found 'repository' key at '%s': '%s'", path, repository)
 
 			// Handle optional registry and tag. DO NOT apply defaults here.
 			registry = ""
@@ -194,7 +194,7 @@ func analyzeMapValue(path string, val reflect.Value, patterns *[]ImagePattern, c
 		if tag != "" {
 			mapValueStr += fmt.Sprintf(",tag=%s", tag)
 		}
-		log.Debugf("Found image map at path '%s'. Content: '%s'", path, mapValueStr)
+		log.Debug("Found image map at path '%s'. Content: '%s'", path, mapValueStr)
 
 		// Add the detected image pattern
 		*patterns = append(*patterns, ImagePattern{
@@ -208,10 +208,10 @@ func analyzeMapValue(path string, val reflect.Value, patterns *[]ImagePattern, c
 			},
 			Count: 1,
 		})
-		log.Debugf("Stopping recursion at image map structure: '%s'", path)
+		log.Debug("Stopping recursion at image map structure: '%s'", path)
 	} else {
 		// If not an image map, traverse its children
-		log.Debugf("Traversing map children at path '%s'", path)
+		log.Debug("Traversing map children at path '%s'", path)
 		for key, entryValue := range mapValue {
 			newPath := key
 			if path != "" {
@@ -224,7 +224,7 @@ func analyzeMapValue(path string, val reflect.Value, patterns *[]ImagePattern, c
 
 // analyzeSliceValue handles the analysis logic for slice and array values.
 func analyzeSliceValue(path string, val reflect.Value, patterns *[]ImagePattern, config *Config) {
-	log.Debugf("Traversing slice/array at path '%s' (Length: %d)", path, val.Len())
+	log.Debug("Traversing slice/array at path '%s' (Length: %d)", path, val.Len())
 	for i := 0; i < val.Len(); i++ {
 		// Generate path with index, e.g., "ports[0]"
 		elemPath := fmt.Sprintf("%s[%d]", path, i)
@@ -235,11 +235,11 @@ func analyzeSliceValue(path string, val reflect.Value, patterns *[]ImagePattern,
 // analyzeStringValue handles the analysis logic for string values.
 func analyzeStringValue(path string, val reflect.Value, patterns *[]ImagePattern, config *Config) {
 	strValue := val.String()
-	log.Debugf("Analyzing string at path '%s'. Value: '%s'", path, strValue)
+	log.Debug("Analyzing string at path '%s'. Value: '%s'", path, strValue)
 
 	// Basic check: Ignore empty strings
 	if strValue == "" {
-		log.Debugf("Ignoring empty string at path '%s'", path)
+		log.Debug("Ignoring empty string at path '%s'", path)
 		return
 	}
 
@@ -266,7 +266,7 @@ func analyzeStringValue(path string, val reflect.Value, patterns *[]ImagePattern
 	isIncluded := config == nil || config.IncludePatterns == nil || len(config.IncludePatterns) == 0 || matchAny(path, config.IncludePatterns)
 	isExcluded := config != nil && config.ExcludePatterns != nil && len(config.ExcludePatterns) > 0 && matchAny(path, config.ExcludePatterns)
 
-	log.Debugf("String Check - Path: '%s', isImagePathHeuristic: %t, isTemplate: %t, isIncluded: %t, isExcluded: %t", path, isImagePathHeuristic, isTemplate, isIncluded, isExcluded)
+	log.Debug("String Check - Path: '%s', isImagePathHeuristic: %t, isTemplate: %t, isIncluded: %t, isExcluded: %t", path, isImagePathHeuristic, isTemplate, isIncluded, isExcluded)
 
 	if isImagePathHeuristic && !isTemplate && isIncluded && !isExcluded {
 		// We need to check if the string value itself is a valid image reference
@@ -275,13 +275,13 @@ func analyzeStringValue(path string, val reflect.Value, patterns *[]ImagePattern
 		if _, err := image.ParseImageReference(strValue); err == nil {
 			// Valid image string format, but standalone (not in a map)
 			// This might be an image string that needs overriding.
-			log.Debugf("Analyzer: Found potential standalone image string at path %s: %s", path, strValue)
+			log.Debug("Analyzer: Found potential standalone image string at path %s: %s", path, strValue)
 			*patterns = append(*patterns, ImagePattern{Path: path, Type: "string", Value: strValue, Count: 1})
 		} else {
-			log.Debugf("String at path '%s' ('%s') did not pass image reference format validation.", path, strValue)
+			log.Debug("String at path '%s' ('%s') did not pass image reference format validation.", path, strValue)
 		}
 	} else {
-		log.Debugf("String at path '%s' ('%s') did not qualify as image pattern (PathMatch=%t, IsTemplate=%t, Included=%t, Excluded=%t)", path, strValue, isImagePathHeuristic, isTemplate, isIncluded, isExcluded)
+		log.Debug("String at path '%s' ('%s') did not qualify as image pattern (PathMatch=%t, IsTemplate=%t, Included=%t, Excluded=%t)", path, strValue, isImagePathHeuristic, isTemplate, isIncluded, isExcluded)
 	}
 }
 
@@ -293,13 +293,13 @@ func analyzeInterfaceValue(path string, val reflect.Value, patterns *[]ImagePatt
 		// Only recurse if the underlying type is a map, slice/array, or string
 		kind := innerReflectValue.Kind()
 		if kind == reflect.Map || kind == reflect.Slice || kind == reflect.Array || kind == reflect.String {
-			log.Debugf("Recursing into interface{} holding %v at path '%s'", kind, path)
+			log.Debug("Recursing into interface{} holding %v at path '%s'", kind, path)
 			analyzeValuesRecursive(path, innerValue, patterns, config) // Recurse with the unwrapped value
 		} else {
-			log.Debugf("Ignoring non-map/slice/string value within interface{} at path '%s'. Type: %T", path, innerValue)
+			log.Debug("Ignoring non-map/slice/string value within interface{} at path '%s'. Type: %T", path, innerValue)
 		}
 	} else {
-		log.Debugf("Ignoring nil or invalid interface at path '%s'", path)
+		log.Debug("Ignoring nil or invalid interface at path '%s'", path)
 	}
 }
 
@@ -324,7 +324,7 @@ func matchAny(path string, patterns []string) bool {
 		match, err := filepath.Match(pattern, path)
 		// If there's an error with the pattern, consider it non-matching and log the issue
 		if err != nil {
-			log.Warnf("Invalid glob pattern '%s': %v", pattern, err)
+			log.Warn("Invalid glob pattern '%s': %v", pattern, err)
 			continue
 		}
 		if match {

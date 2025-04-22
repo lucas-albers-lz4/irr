@@ -114,7 +114,7 @@ func runValidate(cmd *cobra.Command, args []string) error {
 
 	// Handle validation
 	if isRunningAsHelmPlugin() {
-		log.Debugf("Running in Helm plugin mode, handling plugin-specific validation")
+		log.Debug("Running in Helm plugin mode, handling plugin-specific validation")
 		releaseName, namespace, err := getValidateReleaseNamespace(cmd, args)
 		if err != nil {
 			return err
@@ -186,7 +186,7 @@ func validateAndDetectChartPath(chartPath string) (string, error) {
 			}
 		}
 		chartPath = detectedPath
-		log.Infof("Detected chart at %s", chartPath)
+		log.Info("Detected chart at %s", chartPath)
 	}
 
 	// Make path absolute
@@ -235,21 +235,21 @@ func validateChartWithFiles(chartPath, releaseName, namespace string, valuesFile
 
 	// Log namespace if specified
 	if namespace != "" {
-		log.Debugf("Using namespace '%s' for validation", namespace)
+		log.Debug("Using namespace for validation", "namespace", namespace)
 	}
 
 	// Log Kubernetes version
-	log.Debugf("Using Kubernetes version '%s' for validation", kubeVersion)
+	log.Debug("Using Kubernetes version for validation", "kubeVersion", kubeVersion)
 
 	// Log if strict mode is enabled
 	if strict {
-		log.Debugf("Strict validation mode enabled")
+		log.Debug("Strict validation mode enabled")
 	}
 
 	// Execute Helm template command
 	result, err := helm.HelmTemplateFunc(templateOptions)
 	if err != nil {
-		log.Errorf("Validation failed: Chart could not be rendered.")
+		log.Error("Validation failed: Chart could not be rendered.")
 		// Print Helm's stderr for debugging
 		if result != nil && result.Stderr != "" {
 			fmt.Fprintf(os.Stderr, "--- Helm Error ---\n%s\n------------------\n", result.Stderr)
@@ -266,23 +266,23 @@ func validateChartWithFiles(chartPath, releaseName, namespace string, valuesFile
 
 			// If we found an alternative path, try validation again
 			if resolvedPath != chartPath {
-				log.Infof("Retrying validation with resolved chart path: %s", resolvedPath)
+				log.Info("Retrying validation with resolved chart path", "path", resolvedPath)
 				templateOptions.ChartPath = resolvedPath
 				retryResult, retryErr := helm.HelmTemplateFunc(templateOptions)
 				if retryErr == nil {
-					log.Infof("Validation successful with resolved chart path!")
+					log.Info("Validation successful with resolved chart path!")
 					if retryResult != nil {
 						return retryResult.Stdout, nil
 					}
-					log.Warnf("HelmTemplateFunc returned nil retryResult after successful retry")
+					log.Warn("HelmTemplateFunc returned nil retryResult after successful retry")
 					return "", nil
 				}
 
-				log.Errorf("Validation still failed with resolved path: %v", retryErr)
+				log.Error("Validation still failed with resolved path", "error", retryErr)
 				if retryResult != nil && retryResult.Stderr != "" {
 					fmt.Fprintf(os.Stderr, "--- Helm Error (Retry) ---\n%s\n------------------------\n", retryResult.Stderr)
 				} else if retryResult == nil {
-					log.Warnf("HelmTemplateFunc returned nil retryResult after retrying with resolved path")
+					log.Warn("HelmTemplateFunc returned nil retryResult after retrying with resolved path")
 				}
 			}
 		}
@@ -316,7 +316,7 @@ func validateChartWithFiles(chartPath, releaseName, namespace string, valuesFile
 
 		// Check for unresolved Helm template variables like {{ .Values.something }}
 		if strings.Contains(output, "{{") && strings.Contains(output, "}}") {
-			log.Errorf("Strict validation failed: Found unresolved template variables in output")
+			log.Error("Strict validation failed: Found unresolved template variables in output")
 			return "", &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitHelmCommandFailed,
 				Err:  fmt.Errorf("strict validation failed: unresolved template variables found in rendered output"),
@@ -325,7 +325,7 @@ func validateChartWithFiles(chartPath, releaseName, namespace string, valuesFile
 
 		// Check for other problematic patterns
 		if strings.Contains(output, "<no value>") {
-			log.Errorf("Strict validation failed: Found <no value> placeholders in output")
+			log.Error("Strict validation failed: Found <no value> placeholders in output")
 			return "", &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitHelmCommandFailed,
 				Err:  fmt.Errorf("strict validation failed: <no value> placeholders found in rendered output"),
@@ -333,7 +333,7 @@ func validateChartWithFiles(chartPath, releaseName, namespace string, valuesFile
 		}
 	}
 
-	log.Infof("Validation successful: Chart rendered successfully with values.")
+	log.Info("Validation successful: Chart rendered successfully with values.")
 	// Add nil check for result before accessing Stdout
 	if result == nil {
 		return "", nil
@@ -361,7 +361,7 @@ func handleValidateOutput(cmd *cobra.Command, templateOutput, outputFile string)
 		}
 	default:
 		// No output - this shouldn't happen but handle it gracefully
-		log.Infof("Validation complete. No output was generated.")
+		log.Info("Validation complete. No output was generated.")
 	}
 
 	return nil
@@ -395,7 +395,7 @@ func handlePluginValidate(cmd *cobra.Command, releaseName, namespace string) err
 
 	// Skip actual validation in test mode
 	if isValidateTestMode {
-		log.Infof("Validate test mode enabled, skipping actual validation for '%s'", releaseName)
+		log.Info("Validate test mode enabled, skipping actual validation for '%s'", releaseName)
 		return nil
 	}
 
@@ -403,9 +403,9 @@ func handlePluginValidate(cmd *cobra.Command, releaseName, namespace string) err
 	kubeVersionToUse := kubeVersionFlag
 	if kubeVersionToUse == "" {
 		// Running as plugin and no flag provided: Use Helm's context default (by passing empty string)
-		log.Debugf("Running as plugin, letting Helm use context Kubernetes version")
+		log.Debug("Running as plugin, letting Helm use context Kubernetes version")
 	} else {
-		log.Debugf("Using user-specified Kubernetes version: %s", kubeVersionToUse)
+		log.Debug("Using user-specified Kubernetes version", "kubeVersion", kubeVersionToUse)
 	}
 
 	// Get output flags
@@ -450,9 +450,9 @@ func handleStandaloneValidate(cmd *cobra.Command, chartPath string, valuesFiles 
 	if kubeVersionToUse == "" {
 		// Use the hardcoded default for standalone mode
 		kubeVersionToUse = DefaultKubernetesVersion
-		log.Debugf("Running standalone, using default Kubernetes version: %s", kubeVersionToUse)
+		log.Debug("Running standalone, using default Kubernetes version", "kubeVersion", kubeVersionToUse)
 	} else {
-		log.Debugf("Using user-specified Kubernetes version: %s", kubeVersionToUse)
+		log.Debug("Using user-specified Kubernetes version", "kubeVersion", kubeVersionToUse)
 	}
 
 	// Check if chart path exists or is detectable
@@ -509,7 +509,7 @@ func handleHelmPluginValidate(cmd *cobra.Command, releaseName, namespace string,
 	ctx := context.Background()
 
 	// Get release values from Helm
-	log.Infof("Getting values for release %s in namespace %s", releaseName, namespace)
+	log.Info("Getting values for release %s in namespace %s", releaseName, namespace)
 	releaseValues, err := helmClient.GetReleaseValues(ctx, releaseName, namespace)
 	if err != nil {
 		return &exitcodes.ExitCodeError{
@@ -519,7 +519,7 @@ func handleHelmPluginValidate(cmd *cobra.Command, releaseName, namespace string,
 	}
 
 	// Get chart from release
-	log.Infof("Getting chart for release %s", releaseName)
+	log.Info("Getting chart for release %s", releaseName)
 	releaseChart, err := helmClient.GetChartFromRelease(ctx, releaseName, namespace)
 	if err != nil {
 		return &exitcodes.ExitCodeError{
@@ -530,7 +530,7 @@ func handleHelmPluginValidate(cmd *cobra.Command, releaseName, namespace string,
 
 	// Since we have the chart loaded directly from Helm's release storage
 	// we don't need to download it, but we need to use it correctly with the right values
-	log.Infof("Running helm template on chart %s with %d values file(s)", releaseChart.Name(), len(valuesFiles))
+	log.Info("Running helm template on chart %s with %d values file(s)", releaseChart.Name(), len(valuesFiles))
 
 	// Write release values to a temporary file
 	tmpDir, err := os.MkdirTemp("", "irr-validate-")
@@ -542,7 +542,7 @@ func handleHelmPluginValidate(cmd *cobra.Command, releaseName, namespace string,
 	}
 	defer func() {
 		if rmErr := os.RemoveAll(tmpDir); rmErr != nil {
-			log.Warnf("Failed to remove temp dir: %v", rmErr)
+			log.Warn("Failed to remove temp dir", "error", rmErr)
 		}
 	}()
 
@@ -661,7 +661,7 @@ func handleHelmPluginValidate(cmd *cobra.Command, releaseName, namespace string,
 func handleChartYamlMissingErrors(originalErr error, originalChartPath string) (string, error) {
 	// Check if this is a Chart.yaml missing error (exit code 16)
 	if strings.Contains(originalErr.Error(), "Chart.yaml file is missing") {
-		log.Debugf("Detected Chart.yaml missing error for path: %s", originalChartPath)
+		log.Debug("Detected Chart.yaml missing error for path: %s", originalChartPath)
 
 		// Try to extract chart name and version from the path
 		chartName := filepath.Base(originalChartPath)
@@ -683,7 +683,7 @@ func handleChartYamlMissingErrors(originalErr error, originalChartPath string) (
 			}
 		}
 
-		log.Debugf("Extracted chart name: %s, version: %s", chartName, chartVersion)
+		log.Debug("Extracted chart name", "name", chartName, "version", chartVersion)
 
 		// First, try to use Helm SDK to locate the chart
 		settings := cli.New()
@@ -692,24 +692,24 @@ func handleChartYamlMissingErrors(originalErr error, originalChartPath string) (
 		}
 
 		// Try to locate chart using Helm's built-in functionality
-		log.Debugf("Attempting to locate chart %s using Helm SDK", chartName)
+		log.Debug("Attempting to locate chart %s using Helm SDK", chartName)
 		locatedPath, err := chartPathOptions.LocateChart(chartName, settings)
 		if err == nil {
-			log.Infof("Found chart using Helm SDK at: %s", locatedPath)
+			log.Info("Found chart using Helm SDK at", "path", locatedPath)
 			return locatedPath, nil
 		}
-		log.Debugf("Failed to locate chart using Helm SDK: %v", err)
+		log.Debug("Failed to locate chart using Helm SDK", "error", err)
 
 		// Try to find the chart in Helm's repository cache
 		cacheDir := settings.RepositoryCache
 		if cacheDir != "" {
-			log.Debugf("Checking Helm repository cache at: %s", cacheDir)
+			log.Debug("Checking Helm repository cache at", "path", cacheDir)
 
 			// Try exact match first if we have a version
 			if chartVersion != "" {
 				cachePath := filepath.Join(cacheDir, fmt.Sprintf("%s-%s.tgz", chartName, chartVersion))
 				if _, err := AppFs.Stat(cachePath); err == nil {
-					log.Infof("Found chart in Helm repository cache: %s", cachePath)
+					log.Info("Found chart in Helm repository cache", "path", cachePath)
 					return cachePath, nil
 				}
 			}
@@ -720,7 +720,7 @@ func handleChartYamlMissingErrors(originalErr error, originalChartPath string) (
 				for _, entry := range entries {
 					if !entry.IsDir() && strings.HasPrefix(entry.Name(), chartName+"-") {
 						chartPath := filepath.Join(cacheDir, entry.Name())
-						log.Infof("Found chart in Helm repository cache: %s", chartPath)
+						log.Info("Found chart in Helm repository cache", "path", chartPath)
 						return chartPath, nil
 					}
 				}
@@ -737,7 +737,7 @@ func handleChartYamlMissingErrors(originalErr error, originalChartPath string) (
 			filepath.Join(os.Getenv("APPDATA"), "helm", "repository"),
 		}
 
-		log.Debugf("Looking for chart %s in Helm cache directories", chartName)
+		log.Debug("Looking for chart %s in Helm cache directories", chartName)
 
 		// Try to find the chart in Helm's cache
 		for _, cachePath := range helmCachePaths {
@@ -748,14 +748,14 @@ func handleChartYamlMissingErrors(originalErr error, originalChartPath string) (
 
 			// Check if cache path exists
 			if _, err := AppFs.Stat(cachePath); os.IsNotExist(err) {
-				log.Debugf("Helm cache path does not exist: %s", cachePath)
+				log.Debug("Helm cache path does not exist", "path", cachePath)
 				continue
 			}
 
 			// Try to find an exact match for the chart
 			entries, err := afero.ReadDir(AppFs, cachePath)
 			if err != nil {
-				log.Debugf("Failed to read Helm cache directory %s: %v", cachePath, err)
+				log.Debug("Failed to read Helm cache directory", "path", cachePath, "error", err)
 				continue
 			}
 
@@ -763,7 +763,7 @@ func handleChartYamlMissingErrors(originalErr error, originalChartPath string) (
 			for _, entry := range entries {
 				if !entry.IsDir() && strings.HasPrefix(entry.Name(), chartName+"-") || entry.Name() == chartName+".tgz" {
 					chartPath := filepath.Join(cachePath, entry.Name())
-					log.Infof("Found chart in Helm cache: %s", chartPath)
+					log.Info("Found chart in Helm cache", "path", chartPath)
 					return chartPath, nil
 				}
 			}
@@ -794,7 +794,7 @@ func handleChartYamlMissingErrors(originalErr error, originalChartPath string) (
 			)
 		}
 
-		log.Debugf("Attempting fallback resolution with %d possible chart locations", len(possibleLocations))
+		log.Debug("Attempting fallback resolution with", "count", len(possibleLocations))
 
 		// Try each location
 		if found, err := findChartInPossibleLocations(originalChartPath, possibleLocations); err == nil && found != "" {
@@ -817,21 +817,21 @@ func findChartInPossibleLocations(_ string, possibleLocations []string) (string,
 	for _, location := range possibleLocations {
 		// First check if location exists
 		if _, err := AppFs.Stat(location); os.IsNotExist(err) {
-			log.Debugf("Location does not exist: %s", location)
+			log.Debug("Location does not exist", "location", location)
 			continue
 		}
 
 		// Check for Chart.yaml in this location
 		chartYamlPath := filepath.Join(location, "Chart.yaml")
 		if _, err := AppFs.Stat(chartYamlPath); err == nil {
-			log.Infof("Found Chart.yaml at alternative location: %s", location)
+			log.Info("Found Chart.yaml at alternative location", "location", location)
 			return location, nil
 		}
 
 		// If location is a directory, check subdirectories for Chart.yaml
 		entries, err := afero.ReadDir(AppFs, location)
 		if err != nil {
-			log.Debugf("Failed to read directory %s: %v", location, err)
+			log.Debug("Failed to read directory", "location", location, "error", err)
 			continue
 		}
 
@@ -840,13 +840,13 @@ func findChartInPossibleLocations(_ string, possibleLocations []string) (string,
 				subdir := filepath.Join(location, entry.Name())
 				chartYamlPath := filepath.Join(subdir, "Chart.yaml")
 				if _, err := AppFs.Stat(chartYamlPath); err == nil {
-					log.Infof("Found Chart.yaml in subdirectory: %s", subdir)
+					log.Info("Found Chart.yaml in subdirectory", "location", subdir)
 					return subdir, nil
 				}
 			}
 		}
 
-		log.Debugf("No Chart.yaml found in location: %s", location)
+		log.Debug("No Chart.yaml found in location", "location", location)
 	}
 	return "", nil
 }

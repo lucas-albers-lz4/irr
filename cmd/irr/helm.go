@@ -40,17 +40,17 @@ func initHelmPlugin() {
 	}
 
 	// Set up any other Helm-specific flags or functionality
-	log.Debugf("Helm plugin flags initialized")
+	log.Debug("Helm plugin flags initialized")
 }
 
 // removeHelmPluginFlags removes plugin-specific flags from the root command
 // This is used to ensure the root command doesn't have these flags in standalone mode
 func removeHelmPluginFlags(cmd *cobra.Command) {
 	if err := cmd.PersistentFlags().MarkHidden("release-name"); err != nil {
-		log.Warnf("Failed to mark release-name flag as hidden: %v", err)
+		log.Warn("Failed to mark release-name flag as hidden", "error", err)
 	}
 	if err := cmd.PersistentFlags().MarkHidden("namespace"); err != nil {
-		log.Warnf("Failed to mark namespace flag as hidden: %v", err)
+		log.Warn("Failed to mark namespace flag as hidden", "error", err)
 	}
 }
 
@@ -98,7 +98,7 @@ func GetChartPathFromRelease(releaseName string) (string, error) {
 
 	// Create action config
 	actionConfig := new(action.Configuration)
-	if err := actionConfig.Init(settings.RESTClientGetter(), settings.Namespace(), "", log.Infof); err != nil {
+	if err := actionConfig.Init(settings.RESTClientGetter(), settings.Namespace(), "", func(string, ...interface{}) {}); err != nil {
 		return "", fmt.Errorf("failed to initialize Helm action config: %w", err)
 	}
 
@@ -117,7 +117,7 @@ func GetChartPathFromRelease(releaseName string) (string, error) {
 		Version: rel.Chart.Metadata.Version,
 	}
 
-	log.Infof("Found chart %s version %s for release %s", chartInfo.Name, chartInfo.Version, releaseName)
+	log.Info("Found chart for release", "name", chartInfo.Name, "version", chartInfo.Version, "release", releaseName)
 
 	// Create temp directory for chart
 	tempDir, err := os.MkdirTemp("", "irr-chart-*")
@@ -167,7 +167,7 @@ func GetReleaseValues(_ context.Context, releaseName, namespace string) (map[str
 
 	// Create action config
 	actionConfig := new(action.Configuration)
-	if err := actionConfig.Init(settings.RESTClientGetter(), namespace, "", log.Infof); err != nil {
+	if err := actionConfig.Init(settings.RESTClientGetter(), namespace, "", func(string, ...interface{}) {}); err != nil {
 		return nil, fmt.Errorf("failed to initialize Helm action config: %w", err)
 	}
 

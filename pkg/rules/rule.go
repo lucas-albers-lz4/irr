@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/log"
 	"helm.sh/helm/v3/pkg/chart"
 )
@@ -81,7 +80,7 @@ func ApplyRulesToMap(rules []Rule, ch *chart.Chart, overrideMap map[string]inter
 		return false, nil
 	}
 
-	debug.Printf("Checking %d rules for chart: %s", len(rules), ch.Name())
+	log.Debug("Checking %d rules for chart: %s", len(rules), ch.Name())
 
 	appliedAny := false
 	for _, rule := range rules {
@@ -90,20 +89,20 @@ func ApplyRulesToMap(rules []Rule, ch *chart.Chart, overrideMap map[string]inter
 			continue
 		}
 
-		debug.Printf("Rule '%s' applies to chart '%s' (confidence: %d)",
+		log.Debug("Rule '%s' applies to chart '%s' (confidence: %d)",
 			rule.Name(), ch.Name(), detection.Confidence)
 
 		// Apply all Type 1 (Deployment-Critical) parameters to the override map
 		for _, param := range rule.Parameters() {
-			log.Debugf("Chart [%s]: Rule [%s]: Checking parameter [%s] with Type [%d]", ch.Name(), rule.Name(), param.Path, param.Type)
+			log.Debug("Chart [%s]: Rule [%s]: Checking parameter [%s] with Type [%d]", ch.Name(), rule.Name(), param.Path, param.Type)
 			if param.Type == TypeDeploymentCritical {
-				log.Debugf("Chart [%s]: Rule [%s]: Attempting to set CRITICAL parameter [%s] = %v", ch.Name(), rule.Name(), param.Path, param.Value)
+				log.Debug("Chart [%s]: Rule [%s]: Attempting to set CRITICAL parameter [%s] = %v", ch.Name(), rule.Name(), param.Path, param.Value)
 				// Split the path by dots and set the value in the nested map
 				if err := setValueAtPath(overrideMap, param.Path, param.Value); err != nil {
 					return appliedAny, fmt.Errorf("failed to set parameter %s: %w", param.Path, err)
 				}
 
-				debug.Printf("Applied parameter '%s' = '%v' to chart '%s'",
+				log.Debug("Applied parameter '%s' = '%v' to chart '%s'",
 					param.Path, param.Value, ch.Name())
 
 				appliedAny = true
