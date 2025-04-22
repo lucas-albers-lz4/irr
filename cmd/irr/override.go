@@ -391,16 +391,32 @@ func getOutputFlags(cmd *cobra.Command, releaseName string) (outputFile string, 
 	return outputFile, dryRun, nil
 }
 
-// outputOverrides outputs the generated overrides to a file or stdout
-func outputOverrides(_ *cobra.Command, yamlBytes []byte, outputFile string, dryRun bool) error {
+// outputOverrides handles writing the generated YAML to the correct destination
+// (stdout or file) or logging it for dry-run.
+func outputOverrides(cmd *cobra.Command, yamlBytes []byte, outputFile string, dryRun bool) error {
 	if dryRun {
-		log.Info("DRY RUN: Generated override values", "values", string(yamlBytes))
-		return nil
+		// Log that we are doing a dry run and printing to stdout
+		log.Info("DRY RUN: Displaying generated override values (stdout)")
+		// Print the actual YAML to stdout
+		if _, err := fmt.Fprintln(cmd.OutOrStdout(), string(yamlBytes)); err != nil {
+			log.Error("Failed to write dry-run output to stdout", "error", err)
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitIOError,
+				Err:  fmt.Errorf("failed to write dry-run output to stdout: %w", err),
+			}
+		}
+		return nil // Dry run successful
 	}
 
-	// If outputFile is empty, write to stdout
 	if outputFile == "" {
-		fmt.Println(string(yamlBytes))
+		// Just output to stdout
+		_, err := fmt.Fprintln(cmd.OutOrStdout(), string(yamlBytes))
+		if err != nil {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitGeneralRuntimeError,
+				Err:  fmt.Errorf("failed to write overrides to stdout: %w", err),
+			}
+		}
 		log.Info("Override values printed to stdout")
 		return nil
 	}
