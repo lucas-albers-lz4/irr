@@ -1,4 +1,8 @@
 // Package log provides a simple leveled logger.
+//
+// Note: This logger writes directly to os.Stderr using fmt.Fprintf.
+// It does not use the standard library's log.SetOutput redirection mechanism.
+// To capture logs in tests, redirect os.Stderr directly.
 package log
 
 import (
@@ -101,6 +105,7 @@ func Errorf(format string, args ...interface{}) {
 
 // Infof logs an info message (new)
 func Infof(format string, args ...interface{}) {
+	// Writes directly to os.Stderr.
 	if currentLevel <= LevelInfo {
 		fmt.Fprintf(os.Stderr, format+"\n", args...)
 	}
