@@ -8,6 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	// Use constants for file permissions instead of hardcoded values for consistency and maintainability
+	"github.com/lalbers/irr/pkg/fileutil" // Correct import path based on go.mod
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
@@ -96,7 +99,8 @@ registries:
 			// Special handling for empty file case
 			if tc.name == "empty file" {
 				// Explicitly create an empty file to override the default behavior
-				err := os.WriteFile(mappingFile, []byte(""), 0o600)
+				// Use constants for file permissions instead of hardcoded values for consistency and maintainability
+				err := os.WriteFile(mappingFile, []byte(""), fileutil.ReadWriteUserPermission)
 				require.NoError(t, err, "Should be able to create empty registry file")
 			}
 
@@ -209,7 +213,7 @@ func createTestChartWithImage(chartDir, registry, repository string) error {
 	chartYaml := `apiVersion: v2
 name: prefix-test-chart
 version: 0.1.0`
-	if err := os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), []byte(chartYaml), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), []byte(chartYaml), fileutil.ReadWriteUserPermission); err != nil {
 		return fmt.Errorf("failed to write Chart.yaml: %w", err)
 	}
 
@@ -218,7 +222,7 @@ version: 0.1.0`
   registry: ` + registry + `
   repository: ` + repository + `
   tag: "latest"`
-	if err := os.WriteFile(filepath.Join(chartDir, "values.yaml"), []byte(valuesYaml), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(chartDir, "values.yaml"), []byte(valuesYaml), fileutil.ReadWriteUserPermission); err != nil {
 		return fmt.Errorf("failed to write values.yaml: %w", err)
 	}
 
@@ -236,7 +240,7 @@ spec:
       containers:
       - name: test-container
         image: {{ .Values.image.registry }}/{{ .Values.image.repository }}:{{ .Values.image.tag }}`
-	if err := os.WriteFile(filepath.Join(chartDir, "templates", "deployment.yaml"), []byte(deploymentYaml), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(chartDir, "templates", "deployment.yaml"), []byte(deploymentYaml), fileutil.ReadWriteUserPermission); err != nil {
 		return fmt.Errorf("failed to write deployment.yaml: %w", err)
 	}
 

@@ -7,6 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	// Use constants for file permissions instead of hardcoded values for consistency and maintainability
+	"github.com/lalbers/irr/pkg/fileutil"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -112,26 +115,26 @@ dependencies:
 - name: child
   version: 0.1.0
   repository: ""`
-	require.NoError(t, os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), []byte(parentChartYaml), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), []byte(parentChartYaml), fileutil.ReadWriteUserPermission))
 
 	// Create parents values.yaml with image reference
 	parentValuesYaml := `image:
   repository: nginx
   tag: "1.23"`
-	require.NoError(t, os.WriteFile(filepath.Join(chartDir, "values.yaml"), []byte(parentValuesYaml), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(chartDir, "values.yaml"), []byte(parentValuesYaml), fileutil.ReadWriteUserPermission))
 
 	// Create subchart structure
 	require.NoError(t, os.MkdirAll(subchartDir, 0o750))
 	childChartYaml := `apiVersion: v2
 name: child
 version: 0.1.0`
-	require.NoError(t, os.WriteFile(filepath.Join(subchartDir, "Chart.yaml"), []byte(childChartYaml), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(subchartDir, "Chart.yaml"), []byte(childChartYaml), fileutil.ReadWriteUserPermission))
 
 	// Create subchart values file with image reference
 	childValuesYaml := `image:
   repository: redis
   tag: "7.0"`
-	require.NoError(t, os.WriteFile(filepath.Join(subchartDir, "values.yaml"), []byte(childValuesYaml), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(subchartDir, "values.yaml"), []byte(childValuesYaml), fileutil.ReadWriteUserPermission))
 
 	// Create subchart templates directory and deployment file
 	require.NoError(t, os.MkdirAll(filepath.Join(subchartDir, "templates"), 0o750))
@@ -145,7 +148,7 @@ spec:
       containers:
       - name: redis
         image: {{ .Values.image.repository }}:{{ .Values.image.tag }}`
-	require.NoError(t, os.WriteFile(filepath.Join(subchartDir, "templates", "deployment.yaml"), []byte(childDeploymentYaml), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(subchartDir, "templates", "deployment.yaml"), []byte(childDeploymentYaml), fileutil.ReadWriteUserPermission))
 
 	// Create parent templates directory and deployment file
 	require.NoError(t, os.MkdirAll(filepath.Join(chartDir, "templates"), 0o750))
@@ -159,7 +162,7 @@ spec:
       containers:
       - name: nginx
         image: {{ .Values.image.repository }}:{{ .Values.image.tag }}`
-	require.NoError(t, os.WriteFile(filepath.Join(chartDir, "templates", "deployment.yaml"), []byte(parentDeploymentYaml), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(chartDir, "templates", "deployment.yaml"), []byte(parentDeploymentYaml), fileutil.ReadWriteUserPermission))
 
 	// Set the chart path in the harness
 	harness.chartPath = chartDir
@@ -239,7 +242,7 @@ func TestImagePatternProcessing(t *testing.T) {
 	chartYaml := `apiVersion: v2
 name: pattern-test
 version: 0.1.0`
-	err = os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), []byte(chartYaml), 0o600)
+	err = os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), []byte(chartYaml), fileutil.ReadWriteUserPermission)
 	require.NoError(t, err)
 
 	// Create values.yaml with digest image
@@ -248,7 +251,7 @@ image:
   repository: quay.io/prometheus/prometheus
   tag: "v2.45.0@sha256:2c6c2a0e0d2d0a4d9b36c598c6d4310c0eb9b5aa0f6b3d4554be3c8f7a8c8f8"
 `
-	err = os.WriteFile(valuesFile, []byte(valuesYaml), 0o600)
+	err = os.WriteFile(valuesFile, []byte(valuesYaml), fileutil.ReadWriteUserPermission)
 	require.NoError(t, err)
 
 	// Create deployment.yaml with image reference
@@ -270,7 +273,7 @@ spec:
       - name: main
         image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
 `
-	err = os.WriteFile(filepath.Join(templatesDir, "deployment.yaml"), []byte(deploymentYaml), 0o600)
+	err = os.WriteFile(filepath.Join(templatesDir, "deployment.yaml"), []byte(deploymentYaml), fileutil.ReadWriteUserPermission)
 	require.NoError(t, err)
 
 	t.Run("image_with_digest", func(t *testing.T) {
@@ -305,7 +308,7 @@ func TestAdvancedImagePatterns(t *testing.T) {
 	chartYaml := `apiVersion: v2
 name: advanced-pattern-test
 version: 0.1.0`
-	err = os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), []byte(chartYaml), 0o600)
+	err = os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), []byte(chartYaml), fileutil.ReadWriteUserPermission)
 	require.NoError(t, err)
 
 	// Create values.yaml with complex image structures
@@ -317,7 +320,7 @@ images:
 
 templateImage: '{{ .Values.images.registry }}/{{ .Values.images.repository }}:{{ .Values.images.tag }}'
 `
-	err = os.WriteFile(valuesFile, []byte(valuesYaml), 0o600)
+	err = os.WriteFile(valuesFile, []byte(valuesYaml), fileutil.ReadWriteUserPermission)
 	require.NoError(t, err)
 
 	// Create deployment.yaml with template string image reference
@@ -341,7 +344,7 @@ spec:
       - name: separate
         image: "{{ .Values.images.registry }}/{{ .Values.images.repository }}:{{ .Values.images.tag }}"
 `
-	err = os.WriteFile(filepath.Join(templatesDir, "deployment.yaml"), []byte(deploymentYaml), 0o600)
+	err = os.WriteFile(filepath.Join(templatesDir, "deployment.yaml"), []byte(deploymentYaml), fileutil.ReadWriteUserPermission)
 	require.NoError(t, err)
 
 	t.Run("template_string_image_references", func(t *testing.T) {
