@@ -34,7 +34,7 @@ func TestGetReleaseValues_EmptyName(t *testing.T) {
 }
 
 func TestGetReleaseNamespace(t *testing.T) {
-	testDefaultNs := "default" // Default namespace for this test suite
+	testDefaultNs := validateTestNamespace // Use constant
 
 	t.Run("flag has precedence", func(t *testing.T) {
 		cmd := &cobra.Command{}
