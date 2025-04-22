@@ -176,10 +176,6 @@ func (m *mockFailDirFs) Chtimes(name string, atime, mtime time.Time) error {
 }
 
 func TestGetReleaseNameAndNamespaceCommon(t *testing.T) {
-	// Save original isHelmPlugin value and restore after test
-	originalIsHelmPlugin := isHelmPlugin
-	defer func() { isHelmPlugin = originalIsHelmPlugin }()
-
 	t.Run("release name and namespace from flags", func(t *testing.T) {
 		// Create a mock command with flags
 		cmd := &cobra.Command{}
@@ -193,14 +189,22 @@ func TestGetReleaseNameAndNamespaceCommon(t *testing.T) {
 		require.NoError(t, err)
 
 		// Test with Helm plugin mode
-		isHelmPlugin = true
+		err = os.Setenv("HELM_PLUGIN_NAME", "irr")
+		require.NoError(t, err)
+		defer func() {
+			err := os.Unsetenv("HELM_PLUGIN_NAME")
+			if err != nil {
+				t.Errorf("Error unsetting HELM_PLUGIN_NAME: %v", err)
+			}
+		}()
 		releaseName, namespace, err := getReleaseNameAndNamespaceCommon(cmd, []string{})
 		require.NoError(t, err)
 		assert.Equal(t, "test-release", releaseName)
 		assert.Equal(t, "test-namespace", namespace)
 
 		// Test with standalone mode
-		isHelmPlugin = false
+		err = os.Unsetenv("HELM_PLUGIN_NAME")
+		require.NoError(t, err)
 		releaseName, namespace, err = getReleaseNameAndNamespaceCommon(cmd, []string{})
 		require.NoError(t, err)
 		assert.Equal(t, "test-release", releaseName)
@@ -218,14 +222,22 @@ func TestGetReleaseNameAndNamespaceCommon(t *testing.T) {
 		require.NoError(t, err)
 
 		// Test with Helm plugin mode and args
-		isHelmPlugin = true
+		err = os.Setenv("HELM_PLUGIN_NAME", "irr")
+		require.NoError(t, err)
+		defer func() {
+			err := os.Unsetenv("HELM_PLUGIN_NAME")
+			if err != nil {
+				t.Errorf("Error unsetting HELM_PLUGIN_NAME: %v", err)
+			}
+		}()
 		releaseName, namespace, err := getReleaseNameAndNamespaceCommon(cmd, []string{"arg-release"})
 		require.NoError(t, err)
 		assert.Equal(t, "arg-release", releaseName)
 		assert.Equal(t, "arg-namespace", namespace)
 
 		// Test with standalone mode (should also use args for release name per implementation)
-		isHelmPlugin = false
+		err = os.Unsetenv("HELM_PLUGIN_NAME")
+		require.NoError(t, err)
 		releaseName, namespace, err = getReleaseNameAndNamespaceCommon(cmd, []string{"arg-release"})
 		require.NoError(t, err)
 		assert.Equal(t, "arg-release", releaseName)
