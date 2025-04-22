@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	log "github.com/lalbers/irr/pkg/log"
+
+	"log/slog"
 
 	"github.com/lalbers/irr/pkg/analysis"
 	"github.com/lalbers/irr/pkg/helm"
@@ -16,6 +19,11 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+)
+
+// Constants
+const (
+	expectedEnvVarParts = 2
 )
 
 // Global flag variables
@@ -129,17 +137,33 @@ It can analyze Helm charts to identify image references and generate override va
 files compatible with Helm, pointing images to a new registry according to specified strategies.
 It also supports linting image references for potential issues.`,
 	PersistentPreRunE: func(_ *cobra.Command, _ []string) error {
-		// If debug is enabled, print environment, args, and plugin/debug status
-		// Note: This debug printing uses fmt and happens *before* slog initialization
+		// --- Early Debug Logging (Before Main Slog Init) ---
 		if debugEnabled {
-			for _, e := range os.Environ() {
-				fmt.Fprintf(os.Stderr, "[DEBUG] ENV: %s\n", e)
-			}
-			fmt.Fprintf(os.Stderr, "[DEBUG] ARGS: %v\n", os.Args)
-			fmt.Fprintf(os.Stderr, "[DEBUG] isHelmPlugin: %v\n", isRunningAsHelmPlugin())
-		}
+			// Create a temporary, basic JSON logger to stderr for early debug info
+			// This won't interfere with the main logger configured later by pkg/log
+			tempLogger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+				Level: slog.LevelDebug, // Ensure debug messages are logged
+			}))
 
-		// --- Setup logging using pkg/log ---
+			// Log environment variables (consider logging only specific ones if needed)
+			envVars := make(map[string]string)
+			for _, e := range os.Environ() {
+				pair := strings.SplitN(e, "=", expectedEnvVarParts)
+				if len(pair) == expectedEnvVarParts {
+					envVars[pair[0]] = pair[1]
+				}
+			}
+			tempLogger.Debug("Early debug info", slog.Any("environment", envVars))
+
+			// Log arguments
+			tempLogger.Debug("Early debug info", slog.Any("arguments", os.Args))
+
+			// Log plugin status
+			tempLogger.Debug("Early debug info", slog.Bool("isHelmPlugin", isRunningAsHelmPlugin()))
+		}
+		// --- End Early Debug Logging ---
+
+		// --- Setup main logging using pkg/log ---
 		logLevelStr := logLevel          // From --log-level flag
 		debugFlagEnabled := debugEnabled // From --debug flag
 
@@ -249,10 +273,10 @@ func init() {
 
 	// Hide the flags from regular usage
 	if err := rootCmd.PersistentFlags().MarkHidden("integration-test"); err != nil {
-		fmt.Printf("Warning: Failed to mark integration-test flag as hidden: %v\n", err)
+		log.Warn("Failed to mark integration-test flag as hidden", "error", err)
 	}
 	if err := rootCmd.PersistentFlags().MarkHidden("test-analyze"); err != nil {
-		fmt.Printf("Warning: Failed to mark test-analyze flag as hidden: %v\n", err)
+		log.Warn("Failed to mark test-analyze flag as hidden", "error", err)
 	}
 
 	// Add commands
@@ -349,75 +373,45 @@ func loadMappingsIfNeeded(fs afero.Fs, registryFile string) (*registry.Mappings,
 */
 
 // initConfig reads in config file and ENV variables if set.
-// func initConfig() {
-// 	// Check if IRR_TESTING is set
-// 	if os.Getenv("IRR_TESTING") != "" {
-// 		isTestMode = true
-// 		log.Infof("IRR_TESTING environment variable is set. Running in test mode.")
-// 	}
 //
-// 	// Determine if running as a Helm plugin
-// 	if os.Getenv("HELM_BIN") != "" && os.Getenv("HELM_PLUGIN_NAME") == "irr" {
-// 		isHelmPlugin = true
-// 		// Optionally log Helm environment details for debugging plugin issues
-// 		if log.IsDebugEnabled() {
-// 			logHelmEnvironment()
-// 		}
-// 	}
-//
-// 	// Determine if integration test mode is active
-// 	if os.Getenv("IRR_INTEGRATION_TEST") != "" {
-// 		integrationTestMode = true
-// 		log.Debugf("IRR_INTEGRATION_TEST environment variable is set.")
-// 	}
-//
-// 	// Handle filesystem setup based on test/integration mode
-// 	if isTestMode || integrationTestMode {
-// 		// In test modes, assume AppFs is already set up by the test harness
-// 		log.Debugf("Test mode detected, using pre-configured AppFs: %T", AppFs)
-// 		if AppFs == nil {
-// 			log.Warnf("Test mode active, but AppFs is nil. Defaulting to OS filesystem.")
-// 			AppFs = afero.NewOsFs()
-// 		}
-// 	} else {
-// 		// In normal operation, use the real OS filesystem
-// 		AppFs = afero.NewOsFs()
-// 	}
-//
-// 	// Get chart path and release name from flags if available
-// 	// Note: This uses pflag directly as cobra binding might not be complete yet
-// 	chartPathFlag := pflag.Lookup("chart-path")
-// 	chartPathProvided := chartPathFlag != nil && chartPathFlag.Changed
-//
-// 	releaseNameFlag := pflag.Lookup("release-name")
-// 	releaseNameProvided := releaseNameFlag != nil && releaseNameFlag.Changed
-//
-// 	// If chart-path and release-name are not provided, try to auto-detect
-// 	if !chartPathProvided && !releaseNameProvided {
-// 		// Try to detect chart in current directory - use the one from inspect.go
-// 		// Pass "." as the starting directory
-// 		detectedPath, err := detectChartInCurrentDirectory(AppFs, ".")
-// 		if err != nil {
-// 			// In plugin mode with no inputs, return clear error
-// 			if isHelmPlugin {
-// 				// Cobra handles this better in RunE, but good to log early if possible
-// 				log.Debugf("Plugin mode active, but no chart path or release name provided, and auto-detect failed: %v", err)
-// 			} else {
-// 				// Standalone mode: Log if detection fails, command will likely fail later if path is required
-// 				log.Debugf("Chart path not provided and auto-detect failed: %v", err)
-// 			}
-// 		} else {
-// 			// If detected, potentially use this path for context?
-// 			// For now, just log the detection.
-// 			log.Debugf("Auto-detected chart directory: %s", detectedPath)
-// 		}
-// 	}
-//
-// 	// Initialize Helm client/adapter factory
-// 	// initializeHelmAdapterFactory() // Commented out as it's unused
-//
-// 	// Remove Helm plugin flags if not running as a plugin
-// 	if !isHelmPlugin {
-// 		removeHelmPluginFlags(rootCmd)
-// 	}
-// }
+//nolint:unused // initConfig is called by cobra.OnInitialize in init()
+func initConfig() {
+	// Only run initConfig once
+	if viper.IsSet("config.read") {
+		return
+	}
+
+	if cfgFile != "" {
+		// Use config file from the flag.
+		viper.SetConfigFile(cfgFile)
+	} else {
+		// Find home directory.
+		home, err := os.UserHomeDir()
+		cobra.CheckErr(err) // This will exit on error
+
+		// Search config in home directory with name ".irr" (without extension).
+		viper.AddConfigPath(home)
+		viper.SetConfigType("yaml")
+		viper.SetConfigName(".irr")
+	}
+
+	viper.AutomaticEnv() // read in environment variables that match
+
+	// Attempt to read the config file
+	if err := viper.ReadInConfig(); err == nil {
+		// Use slog for logging config file usage
+		log.Debug("Using configuration file", "file", viper.ConfigFileUsed())
+	} else {
+		// Log the error only if it's not a "file not found" error, or if a specific file was requested
+		if !errors.As(err, &viper.ConfigFileNotFoundError{}) || cfgFile != "" {
+			// Use slog for logging config file errors
+			log.Warn("Error reading configuration file", "file", viper.ConfigFileUsed(), "error", err)
+		} else {
+			// Use slog for logging when no config file is found (debug level)
+			log.Debug("No configuration file found or specified, using defaults.")
+		}
+	}
+
+	// Mark config as read to prevent re-running
+	viper.Set("config.read", true)
+}

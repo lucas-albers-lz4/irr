@@ -440,39 +440,43 @@ func extractUniqueRegistries(images []ImageInfo) map[string]bool {
 	return registries
 }
 
-// outputRegistrySuggestions prints suggestions for missing registry mappings
+// outputRegistrySuggestions prints suggestions for the --source-registries flag
 func outputRegistrySuggestions(registries map[string]bool) {
-	if len(registries) > 0 {
-		log.Info("\nDetected registries you may want to configure:")
-		var regList []string
-		for reg := range registries {
-			regList = append(regList, reg)
-		}
-		sort.Strings(regList)
-		for _, reg := range regList {
-			log.Info("  %s -> YOUR_REGISTRY/%s", reg, strings.ReplaceAll(reg, ".", "-"))
-		}
-		log.Info("\nYou can configure these mappings with:")
-		for _, reg := range regList {
-			log.Info("  irr config --source %s --target YOUR_REGISTRY/%s", reg, strings.ReplaceAll(reg, ".", "-"))
-		}
+	if len(registries) == 0 {
+		return
 	}
+
+	registryList := make([]string, 0, len(registries))
+	for reg := range registries {
+		registryList = append(registryList, reg)
+	}
+	sort.Strings(registryList)
+
+	log.Info("Found images from the following registries:")
+	for _, reg := range registryList {
+		log.Info(fmt.Sprintf("  - %s", reg)) // Use Info for each item
+	}
+	log.Info("Consider using the --source-registries flag to filter results, e.g.:")
+	log.Info(fmt.Sprintf("  irr inspect --source-registries %s ...", strings.Join(registryList, ",")))
 }
 
-// outputRegistryConfigSuggestion prints a suggestion to generate a config skeleton
+// outputRegistryConfigSuggestion prints a suggestion for creating a registry config file
 func outputRegistryConfigSuggestion(chartPath string, registries map[string]bool) {
-	log.Info("\nRegistry configuration suggestions:")
-	log.Info("To generate a config file with detected registries, run:")
-	log.Info("  irr inspect --chart-path %s --generate-config-skeleton", chartPath)
-	log.Info("Or configure individual mappings with:")
-	var regList []string
+	if len(registries) == 0 {
+		return
+	}
+	log.Info("\nSuggestion: Create a registry mapping file ('registry-mappings.yaml') to define target registries:")
+	log.Info("Example structure:")
+	log.Info("```yaml")
+	log.Info("mappings:")
 	for reg := range registries {
-		regList = append(regList, reg)
+		log.Info(fmt.Sprintf("  - source: %s", reg))
+		log.Info("    target: your-private-registry.com/path") // Placeholder
+		log.Info("    # strategy: default (optional)")
 	}
-	sort.Strings(regList)
-	for _, reg := range regList {
-		log.Info("  irr config --source %s --target YOUR_REGISTRY/%s", reg, strings.ReplaceAll(reg, ".", "-"))
-	}
+	log.Info("```")
+	log.Info("Then use it with the 'override' command:")
+	log.Info(fmt.Sprintf("  irr override --chart-path %s --registry-file registry-mappings.yaml ...", chartPath))
 }
 
 // inspectHelmRelease handles inspection when a release name is provided (plugin mode)
