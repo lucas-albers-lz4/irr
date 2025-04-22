@@ -258,7 +258,6 @@ func mockInspectCmd(output *ImageAnalysis, flags *InspectFlags) *cobra.Command {
 func runYamlOutputTest(t *testing.T, chartPath, chartName, chartVersion, imageValue string, setOutputFormat bool) {
 	mockFs := afero.NewMemMapFs()
 	AppFs = mockFs
-	isHelmPlugin = false
 
 	if err := mockFs.MkdirAll(filepath.Join(chartPath, "templates"), 0o755); err != nil {
 		t.Fatalf("Failed to create mock templates dir: %v", err)
@@ -332,7 +331,6 @@ func TestRunInspect(t *testing.T) {
 		// Clear and setup mock filesystem for this sub-test
 		mockFs = afero.NewMemMapFs() // Use the function-scoped mockFs
 		AppFs = mockFs               // Ensure AppFs is set to the cleared mock for the sub-test
-		isHelmPlugin = false         // Run in standalone mode
 
 		// Create a dummy chart
 		chartPath := "test/chart-json"
@@ -404,7 +402,6 @@ func TestRunInspect(t *testing.T) {
 		// Clear and setup mock filesystem for this sub-test
 		mockFs = afero.NewMemMapFs() // Use the function-scoped mockFs
 		AppFs = mockFs               // Ensure AppFs is set to the cleared mock for the sub-test
-		isHelmPlugin = false         // Run in standalone mode
 
 		chartPath := "non/existent/chart"
 
@@ -435,7 +432,6 @@ func TestRunInspect(t *testing.T) {
 		// Clear and setup mock filesystem for this sub-test
 		mockFs = afero.NewMemMapFs() // Use the function-scoped mockFs
 		AppFs = mockFs               // Ensure AppFs is set to the cleared mock for the sub-test
-		isHelmPlugin = true          // Run in plugin mode
 
 		// Mock the Helm adapter factory
 		mockClient := helm.NewMockHelmClient()
@@ -499,7 +495,6 @@ func TestRunInspect(t *testing.T) {
 	t.Run("error on invalid output format", func(t *testing.T) {
 		mockFs = afero.NewMemMapFs()
 		AppFs = mockFs
-		isHelmPlugin = false
 
 		chartPath := "test/chart-invalidfmt"
 		if err := mockFs.MkdirAll(filepath.Join(chartPath, "templates"), 0o755); err != nil {
