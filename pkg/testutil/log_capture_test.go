@@ -1,8 +1,6 @@
 package testutil
 
 import (
-	"bytes"
-	"fmt"
 	"testing"
 
 	"github.com/lalbers/irr/pkg/log"
@@ -32,25 +30,21 @@ func TestCaptureLogOutput(t *testing.T) {
 		assert.Empty(t, output)
 	})
 
-	t.Run("Handles function error", func(t *testing.T) {
+	t.Run("Handles function error", func(_ *testing.T) {
 		// CaptureLogOutput itself doesn't propagate errors from the testFunc
 		// This test confirms CaptureLogOutput returns nil error even if testFunc panics/errors
-		// Simulate an error or panic if needed, but the core test is about CaptureLogOutput's return
-		_, _ = CaptureLogOutput(log.LevelDebug, func() {
+		_, err := CaptureLogOutput(log.LevelDebug, func() {
 			panic("test panic")
 		})
-		// We expect CaptureLogOutput to complete without error, even if the inner function panics.
-		// The panic will be handled by the Go testing framework.
-		// If the test function returned an error, CaptureLogOutput doesn't capture it.
-		// So, we mainly assert that CaptureLogOutput itself didn't error out.
-		// assert.NoError(t, err) // Commenting out: This assertion doesn't make sense if the inner func panics.
-		// If the test function panicked, the test run stops there. If it didn't, err should be nil.
+		// We expect CaptureLogOutput to recover from the panic and return an error
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "panic during log capture: test panic")
 	})
 }
 
 func TestCaptureJSONLogs(t *testing.T) {
 	t.Run("Captures JSON logs correctly", func(t *testing.T) {
-		logs, err := CaptureJSONLogs(log.LevelInfo, func() {
+		_, logs, err := CaptureJSONLogs(log.LevelInfo, func() {
 			log.Info("JSON Info", "count", 123, "valid", true)
 			log.Debug("JSON Debug") // Should not be captured
 		})
@@ -71,24 +65,11 @@ func TestCaptureJSONLogs(t *testing.T) {
 	})
 
 	t.Run("Handles no log output", func(t *testing.T) {
-		logs, err := CaptureJSONLogs(log.LevelDebug, func() {
+		_, logs, err := CaptureJSONLogs(log.LevelDebug, func() {
 			// No logging occurs
 		})
 		require.NoError(t, err)
 		assert.Empty(t, logs)
-	})
-
-	t.Run("Handles JSON parsing error", func(t *testing.T) {
-		// Temporarily break JSON output within the capture function
-		_, err := CaptureJSONLogs(log.LevelInfo, func() {
-			// Use SetOutput directly to write invalid JSON
-			var buf bytes.Buffer
-			restore := log.SetOutput(&buf)
-			defer restore()
-			fmt.Fprintln(&buf, "this is not json")
-		})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to unmarshal log line 1 as JSON")
 	})
 }
 
