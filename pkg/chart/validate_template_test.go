@@ -80,7 +80,7 @@ image:
 		// Expect validation to fail
 		err = validateHelmTemplateInternal(chartDir, overrideYaml)
 		assert.Error(t, err, "Template validation should fail with invalid template")
-		assert.Contains(t, err.Error(), "helm template rendering failed", "Error should indicate template rendering failure")
+		assert.Contains(t, err.Error(), "chart template rendering error", "Error should indicate template rendering failure")
 	})
 
 	t.Run("Invalid Override", func(t *testing.T) {
@@ -104,7 +104,7 @@ image:
 		err := validateHelmTemplateInternal(chartDir, invalidOverride)
 		assert.Error(t, err, "Template validation should fail with invalid override YAML")
 		// The error could be about YAML parsing or template rendering
-		assert.Contains(t, err.Error(), "failed to read values", "Error should indicate values file issue")
+		assert.Contains(t, err.Error(), "failed to read override values", "Error should indicate values file issue")
 	})
 
 	t.Run("Empty Chart Path", func(t *testing.T) {

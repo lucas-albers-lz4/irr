@@ -248,7 +248,12 @@ func TestGenerateWithRulesTypeAssertion(t *testing.T) {
 			Name:    "test-chart",
 			Version: "1.0.0",
 		},
-		Values: map[string]interface{}{},
+		Values: map[string]interface{}{ // Add some values to trigger analysis
+			"image": map[string]interface{}{ // Simple image structure
+				"repository": "nginx",
+				"tag":        "latest",
+			},
+		},
 	}
 
 	// Configure the mock loader to return our mock chart
@@ -256,6 +261,8 @@ func TestGenerateWithRulesTypeAssertion(t *testing.T) {
 
 	// Create a mock path strategy
 	mockStrategy := new(mockPathStrategy)
+	// Set expectation for GeneratePath call
+	mockStrategy.On("GeneratePath", mock.AnythingOfType("*image.Reference"), "example.com").Return("example.com/library/nginx", nil)
 
 	// Create a new generator with our mocks (rules enabled by default)
 	generator := NewGenerator(
