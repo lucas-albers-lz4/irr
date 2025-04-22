@@ -50,12 +50,12 @@
 
 ## 6. Outstanding Tasks
 
-- [ ] **Fix Output Stream Separation Issues:**
-    - [ ] Refactor `inspect` command output.
+- [x] **Fix Output Stream Separation Issues:**
+    - [x] Refactor `inspect` command output.
     - [x] Refactor `override --dry-run` command output.
     - [x] Refactor `validate` command output.
-- [ ] **Final Verification:** Re-run manual checks for `inspect`, `override --dry-run`, `validate` after fixes.
-- [ ] **Documentation:** Update user-facing docs regarding `LOG_FORMAT` and output separation guarantees.
+- [x] **Final Verification:** Re-run manual checks for `inspect`, `override --dry-run`, `validate` after fixes.
+- [x] **Documentation:** Update user-facing docs regarding `LOG_FORMAT` and output separation guarantees.
 - [ ] **Code Polish (Optional):** Review `pkg/chart/generator.go` logging for potential improvements.
 
 ## 7. Open Questions/Considerations
@@ -79,18 +79,50 @@
 - [x] Investigate and fix `TestVersionCommand` log assertion failure.
 - [x] Investigate and fix `TestDebugFlagLowerPrecedence` log assertion failure.
 - [x] Investigate and fix `TestParentChart` assertion failure.
-- [ ] Audit Stdout vs. Stderr usage across commands. (*Status: In Progress*)
+- [x] Audit Stdout vs. Stderr usage across commands.
     - [x] **`inspect`:** Mixes YAML output (stdout) with JSON logs (stderr). Informational messages use direct print, not `log.Info`. -> **Fixed**
     - [x] **`override --dry-run`:** Embeds YAML output within an `INFO` log message (stderr) instead of printing to `stdout`. -> **Fixed**
     - [x] **`validate`:** Mixes rendered YAML output (stdout) with JSON logs/Helm warnings (stderr). -> **Fixed**
 - [x] Audit remaining log assertions in tests. (*Note: `pkg/chart/generator.go` logging could be improved*)
 - [x] Document `LOG_FORMAT` configuration.
 - [x] Verify `make test` passes cleanly.
-- [ ] Verify CLI output separation.
+- [x] Verify CLI output separation.
     - **Goal:** Confirm user-facing output (help, version, results) goes to `stdout`; diagnostic logs (INFO, WARN, ERROR, DEBUG) go to `stderr` (JSON default).
-    - **Method:** Run key commands (`--help`, `--version`, `inspect`, `override`, `validate`) in standalone & plugin modes, with default (`INFO`) and `DEBUG` log levels. Capture `stdout` and `stderr` separately for analysis.
-    - **Status (Partial):** `--help`, `--version`, `override -o file`, `inspect`, `override --dry-run` appear correct. `validate` needs fixing.
+    - **Method:** Run key commands (`--help`, `--version`, `inspect`, `override --dry-run`, `validate`) in standalone & plugin modes, with default (`INFO`) and `DEBUG` log levels. Capture `stdout` and `stderr` separately for analysis.
+    - **Status:** Verified for `--help`, `--version`, `inspect`, `override --dry-run`, `validate`.
 
 ## Completion Summary
 
 The core migration to `slog`
+
+## Phase 6: Remove IRR_DEBUG Support (Staged Approach)
+
+- **Goal:** Eliminate the redundant legacy `IRR_DEBUG` environment variable to simplify logging configuration and ensure documentation consistency. Rely solely on `LOG_LEVEL` for controlling log verbosity.
+- **Rationale:** `IRR_DEBUG=1` provides the same functionality as `LOG_LEVEL=DEBUG` but adds an extra configuration vector and has led to documentation inconsistencies. Removing it streamlines the logging system.
+
+- **Actions (Staged):**
+
+    **Stage 1: Preparation and Audit**
+    - Search the codebase for all uses of `IRR_DEBUG` (code, tests, docs, scripts).
+    - Document all locations and usages to inform the next steps.
+    - Update documentation to clarify that `LOG_LEVEL` is the only supported debug control going forward.
+
+    **Stage 2: Update Test and Build Infrastructure**
+    - Update `Makefile`, CI scripts, and any other build/test execution commands to replace `IRR_DEBUG=1` with `LOG_LEVEL=DEBUG`.
+    - Update test files to use `LOG_LEVEL=DEBUG` instead of setting/unsetting `IRR_DEBUG`.
+    - Run all tests; fix any failures related to this change before proceeding.
+
+    **Stage 3: Remove IRR_DEBUG from Code**
+    - Remove the check for `IRR_DEBUG` within the `init()` function in `pkg/log/log.go`.
+    - Remove any code that sets/unsets or checks `IRR_DEBUG` in test files.
+    - Run all tests; fix any failures related to this change before proceeding.
+
+    **Stage 4: Final Cleanup**
+    - Remove all references to `IRR_DEBUG` from documentation files (`TESTING.md`, `DEVELOPMENT.md`, `PLUGIN-SPECIFIC.md`, `LOGGING.md`, `README.md`, `TODO.md`, etc.).
+    - Search the codebase (`grep`) for any remaining uses of `IRR_DEBUG` and remove them.
+    - Run all tests; ensure everything passes.
+
+- **Verification Criteria:**
+    - All tests (`make test`) pass after each stage.
+    - A codebase search (`grep -R IRR_DEBUG . --exclude-dir=.git --exclude=irr`) yields no relevant results in code or documentation at the end.
+    - Manually verify that setting `export IRR_DEBUG=1` does *not* enable debug logging when `LOG_LEVEL` is not set or is set to `INFO` or higher.

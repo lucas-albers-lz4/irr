@@ -15,6 +15,34 @@ These flags are available for all commands:
 | `--log-level` | Set log level | info | `--log-level debug` |
 | `--help` | Show help | | `--help` |
 
+### Logging and Output Streams
+
+**Log Format:**
+
+The format of diagnostic logs sent to `stderr` can be controlled using the `LOG_FORMAT` environment variable:
+- `LOG_FORMAT=json`: (Default) Outputs logs in structured JSON format.
+- `LOG_FORMAT=text`: Outputs logs in a human-readable plain text format, useful for local debugging.
+
+Example:
+```bash
+LOG_FORMAT=text irr inspect ...
+```
+
+**Output Streams:**
+
+`irr` follows standard Unix conventions for output streams:
+- **`stdout`**: Used for primary command output, such as YAML/JSON results (`inspect`, `override --dry-run`) or rendered templates (`validate` without `-o`).
+- **`stderr`**: Used for diagnostic messages, including logs (INFO, WARN, ERROR, DEBUG), progress updates, and error details.
+
+This separation allows you to easily redirect command results while still seeing logs, for example:
+```bash
+# Save inspect results to a file, logs still go to terminal
+irr inspect --chart-path ./my-chart > analysis.yaml
+
+# Pipe override results to another command, logs go to terminal
+irr override --chart-path ./my-chart --dry-run | kubectl apply -f -
+```
+
 ## Commands
 
 ### inspect
