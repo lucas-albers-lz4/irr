@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/distribution/reference"
-	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/log"
 )
 
@@ -209,13 +208,13 @@ func NormalizeImageReference(ref *Reference) {
 
 		if digestedRef, isDigested := named.(reference.Digested); isDigested {
 			ref.Digest = digestedRef.Digest().String()
-			debug.Printf("Normalized digest: %s", ref.Digest)
+			log.Debug("Normalized digest", "digest", ref.Digest)
 		}
 	}
 
 	// Ensure Original is set if not already (should be set by parser, but safeguard)
 	if ref.Original == "" {
 		ref.Original = ref.String()
-		debug.Printf("Normalized: Original field was empty, set to reconstructed string: %s", ref.Original)
+		log.Debug("Original field was empty, set to reconstructed string", "original", ref.Original)
 	}
 }

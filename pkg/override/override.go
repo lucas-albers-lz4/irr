@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/image"
+	"github.com/lalbers/irr/pkg/log"
 	"sigs.k8s.io/yaml"
 )
 
@@ -217,8 +217,7 @@ func VerifySubchartPath(path string, deps []ChartDependency) error {
 	// If we have chart dependencies and first part isn't recognized,
 	// it might indicate a potential path issue
 	if len(deps) > 0 && (!isName && !isAlias) {
-		debug.Printf("Warning: Generated path '%s' starts with '%s', which is not a known chart name or alias",
-			path, firstPart)
+		log.Debug("Warning: Generated path starts with unknown chart name/alias", "path", path, "firstPart", firstPart)
 	}
 
 	return nil
@@ -226,7 +225,7 @@ func VerifySubchartPath(path string, deps []ChartDependency) error {
 
 // ToYAML serializes the override structure to YAML.
 func (f *File) ToYAML() ([]byte, error) {
-	debug.Printf("Marshaling override.File to YAML")
+	log.Debug("Marshaling override.File to YAML")
 	yamlBytes, err := yaml.Marshal(f.Values)
 	if err != nil {
 		// Wrap error from external YAML library

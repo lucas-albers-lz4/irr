@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/exitcodes"
 	"github.com/lalbers/irr/pkg/fileutil"
 	log "github.com/lalbers/irr/pkg/log"
@@ -262,7 +261,7 @@ func saveMappings(mappings *registry.Mappings) error {
 	}
 
 	// Write to file
-	debug.Printf("Writing mappings to file '%s'", configFile)
+	log.Debug("Writing mappings to file", "file", configFile)
 	err = afero.WriteFile(AppFs, configFile, data, fileutil.ReadWriteUserReadOthers)
 	if err != nil {
 		return &exitcodes.ExitCodeError{

@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/lalbers/irr/pkg/debug"
+	"github.com/lalbers/irr/pkg/log"
 	"github.com/spf13/afero"
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart/loader"
@@ -63,7 +63,7 @@ func NewHelmClient() (*RealHelmClient, error) {
 
 // GetReleaseValues fetches values from an installed Helm release
 func (c *RealHelmClient) GetReleaseValues(_ context.Context, releaseName, namespace string) (map[string]interface{}, error) {
-	debug.Printf("Getting values for release %q in namespace %q", releaseName, namespace)
+	log.Debug("Getting release values", "release", releaseName, "namespace", namespace)
 
 	// Configure namespace
 	if namespace == "" {
@@ -85,7 +85,7 @@ func (c *RealHelmClient) GetReleaseValues(_ context.Context, releaseName, namesp
 
 // GetReleaseChart fetches chart metadata from an installed Helm release
 func (c *RealHelmClient) GetReleaseChart(_ context.Context, releaseName, namespace string) (*ChartMetadata, error) {
-	debug.Printf("Getting chart info for release %q in namespace %q", releaseName, namespace)
+	log.Debug("Getting release chart info", "release", releaseName, "namespace", namespace)
 
 	// Configure namespace
 	if namespace == "" {
@@ -118,7 +118,7 @@ func (c *RealHelmClient) GetReleaseChart(_ context.Context, releaseName, namespa
 
 // TemplateChart renders a chart with the given values
 func (c *RealHelmClient) TemplateChart(_ context.Context, releaseName, chartPath string, values map[string]interface{}, namespace, kubeVersion string) (string, error) {
-	debug.Printf("Templating chart %q with release name %q in namespace %q", chartPath, releaseName, namespace)
+	log.Debug("Templating chart", "chartPath", chartPath, "release", releaseName, "namespace", namespace)
 
 	client := action.NewInstall(c.actionConfig)
 	client.ClientOnly = true
@@ -184,17 +184,17 @@ func findChartInHelmCachePaths(meta *ChartMetadata, cacheDir string) (string, er
 			continue
 		}
 		potentialChartPath := filepath.Join(cachePath, meta.Name+"-"+meta.Version+".tgz")
-		debug.Printf("Checking for chart in cache path: %s", potentialChartPath)
+		log.Debug("Checking generic cache path", "path", potentialChartPath)
 		exists, err := afero.Exists(fs, potentialChartPath)
 		if err == nil && exists {
-			debug.Printf("Found chart in cache: %s", potentialChartPath)
+			log.Debug("Found chart in generic cache (exact version)", "path", potentialChartPath)
 			return potentialChartPath, nil
 		}
 		matches, err := afero.Glob(fs, filepath.Join(cachePath, meta.Name+"-*.tgz"))
 		if err == nil && len(matches) > 0 {
 			sort.Strings(matches)
 			chartPath := matches[len(matches)-1]
-			debug.Printf("Found chart in Helm cache (glob match): %s", chartPath)
+			log.Debug("Found chart in generic cache (glob match)", "path", chartPath)
 			return chartPath, nil
 		}
 	}
@@ -204,7 +204,7 @@ func findChartInHelmCachePaths(meta *ChartMetadata, cacheDir string) (string, er
 // FindChartForRelease attempts to find a chart in Helm's cache based on release information
 // It provides a robust fallback system to handle Chart.yaml missing errors
 func (c *RealHelmClient) FindChartForRelease(ctx context.Context, releaseName, namespace string) (string, error) {
-	debug.Printf("Searching for chart for release %q in namespace %q", releaseName, namespace)
+	log.Debug("Searching for chart for release", "release", releaseName, "namespace", namespace)
 
 	// First, get chart metadata from the release
 	meta, err := c.GetReleaseChart(ctx, releaseName, namespace)
@@ -213,7 +213,7 @@ func (c *RealHelmClient) FindChartForRelease(ctx context.Context, releaseName, n
 	}
 
 	// Try using action.ChartPathOptions.LocateChart first (most reliable)
-	debug.Printf("Attempting to locate chart %s:%s via Helm SDK", meta.Name, meta.Version)
+	log.Debug("Attempting LocateChart via Helm SDK", "chartName", meta.Name, "version", meta.Version)
 	chartPathOptions := action.ChartPathOptions{
 		Version: meta.Version,
 		RepoURL: meta.Repository,
@@ -225,24 +225,24 @@ func (c *RealHelmClient) FindChartForRelease(ctx context.Context, releaseName, n
 	// Try locating the chart using Helm's official method
 	chartPath, err := chartPathOptions.LocateChart(chartRef, c.settings)
 	if err == nil {
-		debug.Printf("Successfully located chart at %s", chartPath)
+		log.Debug("Successfully located chart via Helm SDK", "path", chartPath)
 		return chartPath, nil
 	}
 
 	// If it failed, log and continue with fallbacks
-	debug.Printf("Failed to locate chart via Helm SDK: %v", err)
+	log.Debug("LocateChart via Helm SDK failed", "error", err)
 
 	// Fallback 1: Try Helm's repository cache directly
 	cacheDir := c.settings.RepositoryCache
 	if cacheDir != "" {
-		debug.Printf("Checking Helm repository cache at %s", cacheDir)
+		log.Debug("Checking Helm repository cache", "dir", cacheDir)
 
 		// Try exact match first
 		chartFileName := fmt.Sprintf("%s-%s.tgz", meta.Name, meta.Version)
 		cachePath := filepath.Join(cacheDir, chartFileName)
 
 		if _, err := os.Stat(cachePath); err == nil {
-			debug.Printf("Found chart in repository cache: %s", cachePath)
+			log.Debug("Found chart in repository cache (exact match)", "path", cachePath)
 			return cachePath, nil
 		}
 
@@ -253,7 +253,7 @@ func (c *RealHelmClient) FindChartForRelease(ctx context.Context, releaseName, n
 			// Sort to get the latest version if multiple exist
 			sort.Strings(matches)
 			chartPath := matches[len(matches)-1]
-			debug.Printf("Found chart in repository cache using glob: %s", chartPath)
+			log.Debug("Found chart in repository cache (glob match)", "path", chartPath)
 			return chartPath, nil
 		}
 	}
@@ -264,16 +264,16 @@ func (c *RealHelmClient) FindChartForRelease(ctx context.Context, releaseName, n
 
 	// Fallback 3: Try to download the chart if we have repo information
 	if meta.Repository != "" {
-		debug.Printf("Attempting to pull chart %s:%s from repository", meta.Name, meta.Version)
+		log.Debug("Attempting to pull chart from repository", "chartName", meta.Name, "version", meta.Version)
 
 		// Create a temporary directory to store the downloaded chart
 		tempDir, err := os.MkdirTemp("", "irr-chart-download-")
 		if err != nil {
-			debug.Printf("Failed to create temp directory: %v", err)
+			log.Error("Failed to create temp directory for chart download", "error", err)
 		}
 		defer func() {
 			if err := os.RemoveAll(tempDir); err != nil {
-				debug.Printf("Failed to remove temp directory: %v", err)
+				log.Warn("Failed to remove temp chart download directory", "path", tempDir, "error", err)
 			}
 		}()
 
@@ -286,11 +286,11 @@ func (c *RealHelmClient) FindChartForRelease(ctx context.Context, releaseName, n
 		// Try to pull the chart
 		downloadedPath, err := pull.Run(chartRef)
 		if err == nil && downloadedPath != "" {
-			debug.Printf("Successfully pulled chart to %s", downloadedPath)
+			log.Debug("Successfully pulled chart", "path", downloadedPath)
 			return downloadedPath, nil
 		}
 
-		debug.Printf("Failed to pull chart: %v", err)
+		log.Warn("Failed to pull chart", "chartRef", chartRef, "error", err)
 	}
 
 	// If all methods fail, return an informative error
