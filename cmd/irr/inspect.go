@@ -327,28 +327,50 @@ func runInspect(cmd *cobra.Command, args []string) error {
 
 	log.Info("Successfully loaded and analyzed chart", chartPath) // Add log for success
 
-	filterImagesBySourceRegistries(cmd, flags, analysis)
-
-	// Write the output
-	if err := writeOutput(cmd, analysis, flags); err != nil {
-		return err
+	// Filter results if source-registries flag is provided
+	if len(flags.SourceRegistries) > 0 {
+		// Log filtering action
+		log.Info("Filtering results to only include registries", "registries", strings.Join(flags.SourceRegistries, ", "))
+		filterImagesBySourceRegistries(cmd, flags, analysis) // Modifies analysis in place
 	}
 
-	// Output suggestions if applicable (moved from writeOutput)
-	if !flags.GenerateConfigSkeleton {
+	// --- Informational Output (Moved Before writeOutput) ---
+	//nolint:gocritic // ifElseChain: Keeping if-else for clarity over switch here.
+	if !flags.GenerateConfigSkeleton && flags.OutputFile == "" { // Only show suggestions when printing to stdout
+		// Log the successful analysis (using the logger now)
+		log.Info("Successfully loaded and analyzed chart", "path", chartPath)
+
+		// Extract unique registries from the potentially filtered analysis.
 		uniqueRegistries := extractUniqueRegistries(analysis.Images)
-		outputRegistrySuggestions(uniqueRegistries)
-		// Suggest config generation only if analysis was successful and registries found
+
 		if len(uniqueRegistries) > 0 {
-			// Use a placeholder path for suggestion in plugin mode or the detected chart path
-			var suggestionPath string
-			if releaseNameProvided {
-				suggestionPath = fmt.Sprintf("release '%s'", releaseName)
-			} else {
-				suggestionPath = chartPath // Use the determined chartPath
+			log.Info("Found images from the following registries:")
+			uniqueRegistryList := make([]string, 0, len(uniqueRegistries))
+			for reg := range uniqueRegistries {
+				uniqueRegistryList = append(uniqueRegistryList, reg)
 			}
-			outputRegistryConfigSuggestion(suggestionPath, uniqueRegistries)
+			sort.Strings(uniqueRegistryList) // Sort for consistent output
+			for _, reg := range uniqueRegistryList {
+				log.Info(fmt.Sprintf("  - %s", reg)) // Log each registry
+			}
+
+			// Log filtering suggestion
+			log.Info("Consider using the --source-registries flag to filter results, e.g.:")
+			log.Info(fmt.Sprintf("  irr inspect --source-registries %s ...", strings.Join(uniqueRegistryList, ",")))
+
+			// Log configuration suggestion
+			outputRegistryConfigSuggestion(chartPath, uniqueRegistries)
+		} else if len(flags.SourceRegistries) > 0 {
+			log.Info("No images found matching the specified source registries.", "registries", strings.Join(flags.SourceRegistries, ", "))
+		} else {
+			log.Info("No image references found in the chart.")
 		}
+	}
+	// --- End Informational Output ---
+
+	// Output the main analysis result (after logging informational messages)
+	if err := writeOutput(cmd, analysis, flags); err != nil {
+		return err // Return error with exit code from writeOutput
 	}
 
 	return nil
@@ -409,74 +431,98 @@ func setupAnalyzerAndLoadChart(_ *cobra.Command, flags *InspectFlags) (string, *
 	return chartPath, analysis, nil
 }
 
-// filterImagesBySourceRegistries filters the analysis results based on source registries
+// filterImagesBySourceRegistries modifies the analysis object to only include images
+// from the specified source registries.
 func filterImagesBySourceRegistries(_ *cobra.Command, flags *InspectFlags, analysis *ImageAnalysis) {
-	if len(flags.SourceRegistries) > 0 {
-		log.Info("Filtering results to only include registries", strings.Join(flags.SourceRegistries, ", "))
-		var filteredImages []ImageInfo
-		for _, img := range analysis.Images {
-			for _, sourceReg := range flags.SourceRegistries {
-				if img.Registry == sourceReg {
-					filteredImages = append(filteredImages, img)
-					break
-				}
-			}
-		}
-		if len(filteredImages) == 0 && len(analysis.Images) > 0 {
-			log.Warn("No images found matching the provided source registries")
-		}
-		analysis.Images = filteredImages
+	sourceSet := make(map[string]bool)
+	for _, r := range flags.SourceRegistries {
+		normalized := image.NormalizeRegistry(r)
+		sourceSet[normalized] = true
 	}
+
+	if len(sourceSet) == 0 {
+		log.Warn("No valid source registries provided for filtering.")
+		return // No valid registries to filter by
+	}
+
+	filteredImages := make([]ImageInfo, 0, len(analysis.Images))
+	for _, img := range analysis.Images {
+		normalizedRegistry := image.NormalizeRegistry(img.Registry)
+		if sourceSet[normalizedRegistry] {
+			filteredImages = append(filteredImages, img)
+		}
+	}
+	analysis.Images = filteredImages
+
+	// Also filter imagePatterns (simple approach: remove if no resulting image matches)
+	// A more robust approach might analyze pattern structure itself.
+	filteredPatterns := make([]analyzer.ImagePattern, 0, len(analysis.ImagePatterns))
+	for _, pattern := range analysis.ImagePatterns {
+		imgRef, err := image.ParseImageReference(pattern.Value) // Assuming pattern.Value holds the image string or similar
+		if err == nil {
+			normalizedRegistry := image.NormalizeRegistry(imgRef.Registry)
+			if sourceSet[normalizedRegistry] {
+				filteredPatterns = append(filteredPatterns, pattern)
+			}
+		} else {
+			// If parsing fails, maybe keep the pattern? Or try heuristics?
+			// Keep for now, as it might represent a template or complex structure.
+			// log.Debug("Pattern value parsing failed, keeping pattern during filtering", "path", pattern.Path, "value", pattern.Value, "error", err)
+			// Heuristic: Check if *any* part of the value string matches a source registry? Risky.
+			// Let's keep patterns that don't parse cleanly for now.
+			filteredPatterns = append(filteredPatterns, pattern)
+		}
+	}
+	analysis.ImagePatterns = filteredPatterns
 }
 
-// extractUniqueRegistries extracts unique registries from image info
+// extractUniqueRegistries extracts a set of unique registry names from image info
 func extractUniqueRegistries(images []ImageInfo) map[string]bool {
 	registries := make(map[string]bool)
 	for _, img := range images {
-		if img.Registry != "" {
-			registries[img.Registry] = true
-		}
+		normalized := image.NormalizeRegistry(img.Registry)
+		registries[normalized] = true
 	}
 	return registries
 }
 
-// outputRegistrySuggestions prints suggestions for the --source-registries flag
-func outputRegistrySuggestions(registries map[string]bool) {
-	if len(registries) == 0 {
-		return
-	}
+// outputRegistrySuggestions prints suggestions for filtering based on found registries
+// Deprecated: Functionality moved to runInspect and uses logging.
+// func outputRegistrySuggestions(registries map[string]bool) {
+// \tlog.Info(\"Found images from the following registries:\")
+// \tuniqueRegistryList := make([]string, 0, len(registries))
+// \tfor reg := range registries {
+// \t\tuniqueRegistryList = append(uniqueRegistryList, reg)
+// \t}
+// \tsort.Strings(uniqueRegistryList) // Sort for consistent output
+// \tfor _, reg := range uniqueRegistryList {
+// \t\tlog.Info(fmt.Sprintf(\"  - %s\", reg))
+// \t}
+// \tlog.Info(\"Consider using the --source-registries flag to filter results, e.g.:\")
+// \tlog.Info(fmt.Sprintf(\"  irr inspect --source-registries %s ...\", strings.Join(uniqueRegistryList, \",\")))
+// }
 
-	registryList := make([]string, 0, len(registries))
-	for reg := range registries {
-		registryList = append(registryList, reg)
-	}
-	sort.Strings(registryList)
-
-	log.Info("Found images from the following registries:")
-	for _, reg := range registryList {
-		log.Info(fmt.Sprintf("  - %s", reg)) // Use Info for each item
-	}
-	log.Info("Consider using the --source-registries flag to filter results, e.g.:")
-	log.Info(fmt.Sprintf("  irr inspect --source-registries %s ...", strings.Join(registryList, ",")))
-}
-
-// outputRegistryConfigSuggestion prints a suggestion for creating a registry config file
+// outputRegistryConfigSuggestion prints suggestions for creating a registry mapping file
 func outputRegistryConfigSuggestion(chartPath string, registries map[string]bool) {
-	if len(registries) == 0 {
-		return
-	}
 	log.Info("\nSuggestion: Create a registry mapping file ('registry-mappings.yaml') to define target registries:")
 	log.Info("Example structure:")
 	log.Info("```yaml")
 	log.Info("mappings:")
+
+	uniqueRegistryList := make([]string, 0, len(registries))
 	for reg := range registries {
+		uniqueRegistryList = append(uniqueRegistryList, reg)
+	}
+	sort.Strings(uniqueRegistryList) // Sort for consistent output
+
+	for _, reg := range uniqueRegistryList {
 		log.Info(fmt.Sprintf("  - source: %s", reg))
-		log.Info("    target: your-private-registry.com/path") // Placeholder
+		log.Info("    target: your-private-registry.com/path") // Example target
 		log.Info("    # strategy: default (optional)")
 	}
 	log.Info("```")
 	log.Info("Then use it with the 'override' command:")
-	log.Info(fmt.Sprintf("  irr override --chart-path %s --registry-file registry-mappings.yaml ...", chartPath))
+	log.Info(fmt.Sprintf("  irr override --chart-path %s --config registry-mappings.yaml ...", chartPath)) // Recommend --config now
 }
 
 // inspectHelmRelease handles inspection when a release name is provided (plugin mode)
