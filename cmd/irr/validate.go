@@ -113,14 +113,12 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Handle validation
-	if isHelmPlugin {
+	if isRunningAsHelmPlugin() {
 		log.Debugf("Running in Helm plugin mode, handling plugin-specific validation")
-		// Get namespace and release from args or flags
 		releaseName, namespace, err := getValidateReleaseNamespace(cmd, args)
 		if err != nil {
 			return err
 		}
-
 		return handlePluginValidate(cmd, releaseName, namespace)
 	}
 
