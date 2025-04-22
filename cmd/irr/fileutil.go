@@ -31,7 +31,7 @@ func defaultHelmAdapterFactory() (*helm.Adapter, error) {
 	}
 
 	// Create adapter with the Helm client
-	adapter := helm.NewAdapter(helmClient, AppFs, isHelmPlugin)
+	adapter := helm.NewAdapter(helmClient, AppFs, isRunningAsHelmPlugin())
 	return adapter, nil
 }
 
