@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/image"
+	"github.com/lalbers/irr/pkg/log"
 	"github.com/lalbers/irr/pkg/override"
 	"github.com/lalbers/irr/pkg/registry"
 	"github.com/lalbers/irr/pkg/strategy"
@@ -45,9 +45,6 @@ func NewGenerator(
 // Generate produces the override values map based on detected images and strategy.
 // chartName is currently unused but kept for potential future use (e.g., logging).
 func (g *Generator) Generate(_ string, values map[string]interface{}) (map[string]interface{}, error) {
-	debug.FunctionEnter("Generator.Generate")
-	defer debug.FunctionExit("Generator.Generate")
-
 	detectionContext := &image.DetectionContext{
 		SourceRegistries:  g.SourceRegistries,
 		ExcludeRegistries: g.ExcludeRegistries,
@@ -78,14 +75,14 @@ func (g *Generator) Generate(_ string, values map[string]interface{}) (map[strin
 		var mappedRegistry string
 		if g.Mappings != nil {
 			mappedRegistry = g.Mappings.GetTargetRegistry(ref.Registry)
-			debug.Printf("Generator.Generate: Looked up mapping for registry '%s', result: '%s'", ref.Registry, mappedRegistry)
+			log.Debug("Generator.Generate", "Looked up mapping for registry", ref.Registry, "result", mappedRegistry)
 		}
 
 		// Generate the new repository path
 		newRepoPath, pathErr := g.PathStrategy.GeneratePath(ref, mappedRegistry)
 		if pathErr != nil {
 			// Handle error: log, skip, or return error depending on policy
-			debug.Printf("Error generating path for %s: %v", ref.String(), pathErr)
+			log.Debug("Error generating path for", ref.String(), "error", pathErr)
 			continue // Skip this image
 		}
 
@@ -104,7 +101,7 @@ func (g *Generator) Generate(_ string, values map[string]interface{}) (map[strin
 		err = override.SetValueAtPath(generatedOverrides, detected.Path, overrideValue, false)
 		if err != nil {
 			// Handle error: log, skip, or return error
-			debug.Printf("Error setting override at path %v: %v", detected.Path, err)
+			log.Debug("Error setting override at path", detected.Path, "error", err)
 			continue
 		}
 	}
@@ -125,9 +122,6 @@ func normalizeKubeStateMetricsOverrides(
 	p strategy.PathStrategy,
 	m *registry.Mappings,
 ) {
-	debug.FunctionEnter("normalizeKubeStateMetricsOverrides")
-	defer debug.FunctionExit("normalizeKubeStateMetricsOverrides")
-
 	ksmImageOverride := make(map[string]interface{}) // To store the canonical KSM image block
 	var ksmDetectedPath []string                     // Store the path where KSM was originally detected
 
@@ -140,7 +134,7 @@ func normalizeKubeStateMetricsOverrides(
 
 		// Identify KSM image (adjust pattern if needed)
 		if strings.Contains(ref.Repository, "kube-state-metrics") {
-			debug.Printf("Found potential KSM image: %s at path %v", ref.String(), detected.Path)
+			log.Debug("Found potential KSM image", ref.String(), "at path", detected.Path)
 
 			// Generate the override value structure for KSM
 			var mappedRegistry string
@@ -149,7 +143,7 @@ func normalizeKubeStateMetricsOverrides(
 			}
 			newRepoPath, pathErr := p.GeneratePath(ref, mappedRegistry)
 			if pathErr != nil {
-				debug.Printf("Error generating path for KSM image %s: %v", ref.String(), pathErr)
+				log.Debug("Error generating path for KSM image", ref.String(), "error", pathErr)
 				continue // Skip if path generation fails
 			}
 
@@ -166,7 +160,7 @@ func normalizeKubeStateMetricsOverrides(
 			// Store the correctly structured override and the path it was found at
 			ksmImageOverride = imageMap
 			ksmDetectedPath = detected.Path
-			debug.Printf("Prepared KSM override block: %v", ksmImageOverride)
+			log.Debug("Prepared KSM override block", ksmImageOverride)
 			break // Assume only one KSM image needs this handling
 		}
 	}
@@ -177,18 +171,18 @@ func normalizeKubeStateMetricsOverrides(
 
 		// Check if a KSM block already exists (e.g., from original values)
 		if existingKsmBlock, ok := overrides[KubeStateMetricsKey]; ok {
-			debug.Printf("Found existing '%s' block: %v. Merging/overwriting.", KubeStateMetricsKey, existingKsmBlock)
+			log.Debug("Found existing", KubeStateMetricsKey, "block", existingKsmBlock, "merging/overwriting")
 			// Simple overwrite, assuming our generated block is canonical.
 			// More complex merging could be added here if needed.
 		}
 
 		// Set the canonical KSM block at the top level
 		overrides[KubeStateMetricsKey] = finalKsmBlock
-		debug.Printf("Set top-level '%s' override: %v", KubeStateMetricsKey, finalKsmBlock)
+		log.Debug("Set top-level", KubeStateMetricsKey, "override", finalKsmBlock)
 
 		// Remove the KSM entry from its original detected path, if it exists and differs from the top-level key
 		if len(ksmDetectedPath) > 0 && ksmDetectedPath[0] != KubeStateMetricsKey {
-			debug.Printf("Attempting to remove original KSM entry from path: %v", ksmDetectedPath)
+			log.Debug("Attempting to remove original KSM entry from path", ksmDetectedPath)
 			// We need a way to delete a value at a path. The override package might need a DeleteValueAtPath.
 			// For now, we assume the SetValueAtPath in the main loop might have placed it.
 			// Let's try removing it carefully.
@@ -208,7 +202,7 @@ func removeValueAtPath(data map[string]interface{}, path []string) {
 
 	if len(path) == 1 {
 		delete(data, key)
-		debug.Printf("Removed key '%s' at final path segment.", key)
+		log.Debug("Removed key", key, "at final path segment")
 		return
 	}
 
@@ -218,20 +212,20 @@ func removeValueAtPath(data map[string]interface{}, path []string) {
 			// If the subMap becomes empty after removal, remove the key itself
 			if len(subMap) == 0 {
 				delete(data, key)
-				debug.Printf("Removed empty parent key '%s' after recursive removal.", key)
+				log.Debug("Removed empty parent key", key, "after recursive removal")
 			}
 		} else {
-			debug.Printf("Cannot traverse path for removal: key '%s' does not contain a map at path %v", key, path)
+			log.Debug("Cannot traverse path for removal: key", key, "does not contain a map at path", path)
 		}
 	} else {
-		debug.Printf("Cannot traverse path for removal: key '%s' not found at path %v", key, path)
+		log.Debug("Cannot traverse path for removal: key", key, "not found at path", path)
 	}
 }
 
 // OverridesToYAML converts the generated override map to YAML.
 // Deprecated: Use override.File.ToYAML() instead.
 // func OverridesToYAML(overrides map[string]interface{}) ([]byte, error) {
-// 	debug.Printf("Marshaling overrides to YAML")
+// 	log.Debug("Marshaling overrides to YAML")
 // 	// Wrap error from external YAML library
 // 	 yamlBytes, err := yaml.Marshal(overrides)
 // 	 if err != nil {

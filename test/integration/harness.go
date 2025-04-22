@@ -12,9 +12,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/fileutil"
 	"github.com/lalbers/irr/pkg/image"
+	irrliblog "github.com/lalbers/irr/pkg/log"
 	"github.com/lalbers/irr/pkg/registry"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
@@ -565,10 +565,7 @@ func (h *TestHarness) ExecuteIRR(args ...string) (output string, err error) {
 	h.logger.Printf("Running: %s %s", path, strings.Join(args, " "))
 
 	// For integration tests, we need to enable debug warning messages to help with diagnostics
-	debug.EnableDebugEnvVarWarnings()
-	defer func() {
-		debug.ShowDebugEnvWarnings = false
-	}()
+	irrliblog.SetLevel(irrliblog.LevelDebug)
 
 	// Always include the integration-test flag to allow loading registry files from temp directories
 	args = append([]string{"--integration-test"}, args...)
@@ -617,10 +614,7 @@ func (h *TestHarness) ExecuteIRRWithStderr(args ...string) (stdout, stderr strin
 	h.logger.Printf("Running: %s %s", path, strings.Join(args, " "))
 
 	// For integration tests, we need to enable debug warning messages to help with diagnostics
-	debug.EnableDebugEnvVarWarnings()
-	defer func() {
-		debug.ShowDebugEnvWarnings = false
-	}()
+	irrliblog.SetLevel(irrliblog.LevelDebug)
 
 	// Always include the integration-test flag to allow loading registry files from temp directories
 	args = append([]string{"--integration-test"}, args...)

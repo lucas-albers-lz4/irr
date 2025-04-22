@@ -3,7 +3,7 @@ package rules
 import (
 	"strings"
 
-	"github.com/lalbers/irr/pkg/debug"
+	"github.com/lalbers/irr/pkg/log"
 	"helm.sh/helm/v3/pkg/chart"
 )
 
@@ -118,8 +118,7 @@ func detectBitnamiChart(ch *chart.Chart) Detection {
 		confidence = ConfidenceHigh
 	}
 
-	debug.Printf("Bitnami detection for chart '%s': Confidence=%d, Indicators=%v",
-		ch.Name(), confidence, indicators)
+	log.Debug("Bitnami detection for chart", "name", ch.Name(), "confidence", confidence, "indicators", indicators)
 
 	return Detection{
 		Provider:   ProviderBitnami,

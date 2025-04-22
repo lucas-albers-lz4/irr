@@ -86,7 +86,7 @@ func (rm *RepositoryManager) FindChartInRepositories(chartName string) (string, 
 	for _, r := range repos.Repositories {
 		index, err := rm.getRepositoryIndex(r)
 		if err != nil {
-			log.Warnf("Failed to get index for repository %s: %v", r.Name, err)
+			log.Warn("Failed to get index for repository", "repository", r.Name, "error", err)
 			continue
 		}
 

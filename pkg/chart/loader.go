@@ -6,12 +6,13 @@ import (
 	"path/filepath"
 
 	"github.com/lalbers/irr/pkg/analysis"
-	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/fileutil"
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
+
 	// "helm.sh/helm/v3/pkg/chartutil" // Not needed after removing unused funcs
 	// "sigs.k8s.io/yaml" // Not needed after removing unused funcs
+	log "github.com/lalbers/irr/pkg/log"
 )
 
 // Loader defines the interface for loading Helm charts.
@@ -64,7 +65,7 @@ func (l *DefaultLoader) SetFS(fs fileutil.FS) func() {
 //   - The path doesn't contain a valid chart
 //   - There are issues with the chart's structure or metadata
 func (l *DefaultLoader) Load(chartPath string) (*chart.Chart, error) {
-	debug.Printf("Loading chart from path: %s", chartPath)
+	log.Debug("Loading chart from path", "path", chartPath)
 
 	// Convert to absolute path if it's relative
 	// Note: Although we're injecting our filesystem for testing,
@@ -74,7 +75,7 @@ func (l *DefaultLoader) Load(chartPath string) (*chart.Chart, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get absolute path for %s: %w", chartPath, err)
 	}
-	debug.Printf("Absolute chart path: %s", absPath)
+	log.Debug("Absolute chart path", "path", absPath)
 
 	// Verify the chart path exists using our injectable filesystem
 	_, err = l.fs.Stat(absPath)
@@ -89,22 +90,22 @@ func (l *DefaultLoader) Load(chartPath string) (*chart.Chart, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to load chart from %s: %w", absPath, err)
 	}
-	debug.Printf("Successfully loaded chart: %s (version: %s)", loadedChart.Name(), loadedChart.Metadata.Version)
+	log.Debug("Successfully loaded chart", "name", loadedChart.Name(), "version", loadedChart.Metadata.Version)
 
 	// Ensure chart has values
 	if loadedChart.Values == nil {
-		debug.Printf("Chart has no values, creating empty values map")
+		log.Debug("Chart has no values, creating empty values map")
 		loadedChart.Values = make(map[string]interface{})
 	}
 
 	// Output dependency information if present
 	if len(loadedChart.Dependencies()) > 0 {
-		debug.Printf("Chart has %d dependencies:", len(loadedChart.Dependencies()))
+		log.Debug("Chart has dependencies", "count", len(loadedChart.Dependencies()))
 		for i, dep := range loadedChart.Dependencies() {
-			debug.Printf("  [%d] %s (version: %s)", i, dep.Name(), dep.Metadata.Version)
+			log.Debug("Dependency", "index", i, "name", dep.Name(), "version", dep.Metadata.Version)
 		}
 	} else {
-		debug.Printf("Chart has no dependencies")
+		log.Debug("Chart has no dependencies")
 	}
 
 	return loadedChart, nil
@@ -117,3 +118,10 @@ func (l *DefaultLoader) Load(chartPath string) (*chart.Chart, error) {
 // - processChart
 // - isDir
 // - evaluateCondition
+
+// ---
+// Logging migration progress note:
+// - pkg/chart/loader.go: All debug logging migrated to slog-based logger (log.Debug, log.Error, log.Warn).
+// - All debug.* calls replaced with slog style logging.
+// - Next: Continue migration in other files using the debug package.
+// ---

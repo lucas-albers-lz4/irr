@@ -1,13 +1,3 @@
-// Package main implements the command-line interface for the irr (Image Relocation and Rewrite) tool.
-// It provides commands for analyzing Helm charts and generating override values to redirect
-// container image references from public registries to a target private registry.
-//
-// The main CLI commands are:
-//   - inspect: Inspect a Helm chart to identify image references
-//   - override: Generate override values to redirect images to a target registry
-//   - validate: Validate generated overrides with Helm template
-//
-// Each command has various flags for configuration. See the help output for details.
 package main
 
 import (
@@ -16,12 +6,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 
 	log "github.com/lalbers/irr/pkg/log"
 
 	"github.com/lalbers/irr/pkg/analysis"
-	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/helm"
 	"github.com/lalbers/irr/pkg/override"
 	"github.com/lalbers/irr/pkg/registry"
@@ -142,106 +130,87 @@ files compatible with Helm, pointing images to a new registry according to speci
 It also supports linting image references for potential issues.`,
 	PersistentPreRunE: func(_ *cobra.Command, _ []string) error {
 		// If debug is enabled, print environment, args, and plugin/debug status
-		if debugEnabled || os.Getenv("IRR_DEBUG") == "1" || os.Getenv("IRR_DEBUG") == "true" {
-			// Print all environment variables
+		// Note: This debug printing uses fmt and happens *before* slog initialization
+		if debugEnabled {
 			for _, e := range os.Environ() {
 				fmt.Fprintf(os.Stderr, "[DEBUG] ENV: %s\n", e)
 			}
-			// Print all arguments
 			fmt.Fprintf(os.Stderr, "[DEBUG] ARGS: %v\n", os.Args)
-			// Print plugin/debug status
-			fmt.Fprintf(os.Stderr, "[DEBUG] isHelmPlugin: %v, debugEnabled: %v\n", isRunningAsHelmPlugin(), debugEnabled)
+			fmt.Fprintf(os.Stderr, "[DEBUG] isHelmPlugin: %v\n", isRunningAsHelmPlugin())
 		}
 
-		// Setup logging before any command logic runs
-		logLevelStr := logLevel      // Use the global variable
-		debugEnabled := debugEnabled // Use the global variable
+		// --- Setup logging using pkg/log ---
+		logLevelStr := logLevel          // From --log-level flag
+		debugFlagEnabled := debugEnabled // From --debug flag
 
-		level := log.LevelInfo // Default level
-		if debugEnabled {
-			level = log.LevelDebug
-		} else if logLevelStr != "" { // Only check --log-level if --debug is not set
-			parsedLevel, err := log.ParseLevel(logLevelStr)
-			if err != nil {
-				log.Warnf("Invalid log level specified: '%s'. Using default: %s. Error: %v", logLevelStr, level, err)
-			} else {
-				level = parsedLevel
-			}
-		}
+		// Determine the target level based on flags and env vars (IRR_DEBUG handled by pkg/log/init)
+		var targetLevel log.Level
+		var parseErr error
 
-		log.SetLevel(level)
-
-		// Set debug.Enabled based on --debug flag OR IRR_DEBUG env var
-		// Prioritize the command-line flag if set to true.
-		if debugEnabled { // Check the flag first
-			debug.Enabled = true
-			debug.Printf("--debug flag enabled debug logging.") // Use debug.Printf
-		} else { // If flag is not set, check the environment variable
-			debugEnv := os.Getenv("IRR_DEBUG")
-			// Only attempt to parse if the environment variable is actually set
-			if debugEnv != "" {
-				debugVal, err := strconv.ParseBool(debugEnv)
-				if err != nil {
-					// Only log the warning if in test mode or if debug is already enabled
-					if integrationTestMode {
-						log.Warnf("Invalid boolean value for IRR_DEBUG environment variable: '%s'. Defaulting to false.", debugEnv)
-					}
-					debug.Enabled = false
-				} else {
-					debug.Enabled = debugVal
-					if debugVal { // If IRR_DEBUG=true, ensure log level is also debug
-						debug.Printf("IRR_DEBUG environment variable enabled debug logging.") // Use debug.Printf
-					}
+		if debugFlagEnabled { // --debug flag takes highest precedence
+			targetLevel = log.LevelDebug
+		} else if logLevelStr != "" { // Then --log-level flag
+			targetLevel, parseErr = log.ParseLevel(logLevelStr)
+			if parseErr != nil {
+				if integrationTestMode { // Only warn in test mode
+					// Use slog for warnings, assuming it might be configured by now (or default)
+					log.Warn("Invalid log level specified via flag. Using default.", "input", logLevelStr, "default", log.LevelInfo)
 				}
-			} else {
-				// Default to false if neither flag nor env var is set and non-empty
-				debug.Enabled = false
-			}
+				targetLevel = log.LevelInfo // Default to Info on parse error
+			} // If no parse error, targetLevel is set correctly
+		} else {
+			// If neither --debug nor --log-level is set, the level is determined
+			// solely by pkg/log/init based on LOG_LEVEL and IRR_DEBUG env vars.
+			// We don't need to call SetLevel here in that case, but we can retrieve the
+			// current level for logging purposes if needed.
+			targetLevel = log.Level(log.CurrentLevel()) // Reflect the level set by init()
 		}
 
-		// Only log level in debug mode to avoid duplicate output
-		if debug.Enabled {
-			debug.Printf("Effective log level set to %s", level)
+		// Set the level explicitly *if* a flag determined it.
+		// Otherwise, let the level determined by init() stand.
+		if debugFlagEnabled || logLevelStr != "" {
+			log.SetLevel(targetLevel)
 		}
-		debug.Printf("Debug package enabled: %t", debug.Enabled)
+
+		// --- End Logging Setup ---
 
 		// Integration test mode check
 		if integrationTestMode {
-			log.Warnf("Integration test mode enabled.")
+			log.Warn("Integration test mode enabled.")
 		}
 
 		// Initialize Helm client if running as a Helm plugin
 		if isRunningAsHelmPlugin() {
 			settings := helm.GetHelmSettings()
 			helmClient = helm.NewRealHelmClient(settings)
-			debug.Printf("Initialized Helm client for plugin mode")
+			log.Debug("Initialized Helm client for plugin mode")
 		}
 
 		if registryFile != "" {
 			_, isMemMapFs := AppFs.(*afero.MemMapFs)
 			if !isMemMapFs {
 				AppFs = afero.NewOsFs()
-				debug.Printf("Using OS filesystem for registry mappings")
+				log.Debug("Using OS filesystem for registry mappings")
 			} else {
-				debug.Printf("Preserving in-memory filesystem for testing")
+				log.Debug("Preserving in-memory filesystem for testing")
 			}
-			debug.Printf("Root command: Attempting to load mappings from %s", registryFile)
+			log.Debug("Root command: Attempting to load mappings", "file", registryFile)
 			_, err := registry.LoadMappings(AppFs, registryFile, integrationTestMode)
 			if err != nil {
-				debug.Printf("Root command: Failed to load mappings: %v", err)
-				debug.Printf("Warning: Failed to load registry mappings from %s: %v. Proceeding without mappings.", registryFile, err)
+				log.Debug("Root command: Failed to load mappings", "error", err)
+				log.Debug("Warning: Failed to load registry mappings. Proceeding without mappings.", "file", registryFile, "error", err)
 			}
 		}
 
 		// Add debug log for execution mode detection
 		pluginModeDetected := isRunningAsHelmPlugin()
-		debug.Printf("Execution Mode Detected: %s", map[bool]string{true: "Plugin", false: "Standalone"}[pluginModeDetected])
+		log.Debug("Execution Mode Detected", "mode", map[bool]string{true: "Plugin", false: "Standalone"}[pluginModeDetected])
 
 		// Add a clear log message for plugin mode that will appear even at info level
 		if pluginModeDetected {
-			log.Infof("IRR v%s running as Helm plugin", BinaryVersion)
+			log.Info("IRR running as Helm plugin", "version", BinaryVersion)
 		} else {
-			log.Infof("IRR v%s running in standalone mode", BinaryVersion)
+			log.Info("IRR running in standalone mode", "version", BinaryVersion)
 		}
 
 		return nil
@@ -249,8 +218,7 @@ It also supports linting image references for potential issues.`,
 	RunE: func(_ *cobra.Command, args []string) error {
 		// If no arguments (subcommand) are provided, return an error.
 		if len(args) == 0 {
-			// Use Errorf for consistency
-			log.Errorf("Error: a subcommand is required. Use 'irr --help' for available commands.")
+			log.Error("A subcommand is required. Use 'irr --help' for available commands.")
 			return errors.New("a subcommand is required")
 		}
 		// Otherwise, let Cobra handle the subcommand or help text.
@@ -317,7 +285,7 @@ func init() {
 			projectConfigFile := filepath.Join(chartDir, ".irr.yaml")
 			exists, err := afero.Exists(AppFs, projectConfigFile)
 			if err != nil {
-				log.Warnf("Failed to check if project config file exists: %v", err)
+				log.Warn("Failed to check if project config file exists", "error", err)
 			} else if exists {
 				viper.SetConfigFile(projectConfigFile)
 			}
@@ -453,10 +421,3 @@ func loadMappingsIfNeeded(fs afero.Fs, registryFile string) (*registry.Mappings,
 // 		removeHelmPluginFlags(rootCmd)
 // 	}
 // }
-
-// checkRequiredFlags performs early validation, e.g., for global config file issues.
-func checkRequiredFlags(_ *cobra.Command) error {
-	// Currently, no global required flags need checking here *before* subcommand execution.
-	// Subcommand required flags are checked in their respective PreRunE functions.
-	return nil
-}

@@ -4,7 +4,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/lalbers/irr/pkg/debug"
+	"github.com/lalbers/irr/pkg/log"
 	"helm.sh/helm/v3/pkg/chart"
 )
 
@@ -26,7 +26,7 @@ func NewRegistry() *Registry {
 	// Register default rules
 	registry.AddRule(NewBitnamiSecurityBypassRule())
 
-	debug.Printf("Created rule registry with %d default rules", len(registry.rules))
+	log.Debug("Created rule registry with %d default rules", len(registry.rules))
 	return registry
 }
 
@@ -42,7 +42,7 @@ func (r *Registry) AddRule(rule Rule) {
 		return r.rules[i].Priority() > r.rules[j].Priority()
 	})
 
-	debug.Printf("Added rule '%s' to registry", rule.Name())
+	log.Debug("Added rule '%s' to registry", rule.Name())
 }
 
 // GetRules returns all registered rules
@@ -68,14 +68,14 @@ func (r *Registry) SetEnabled(enabled bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.enabled = enabled
-	debug.Printf("Rules system enabled: %v", enabled)
+	log.Debug("Rules system enabled: %v", enabled)
 }
 
 // ApplyRules applies all matching rules to the chart's override map
 // but only includes Type 1 (Deployment-Critical) parameters
 func (r *Registry) ApplyRules(ch *chart.Chart, overrideMap map[string]interface{}) (bool, error) {
 	if !r.IsEnabled() {
-		debug.Printf("Rules system is disabled, skipping rule application")
+		log.Debug("Rules system is disabled, skipping rule application")
 		return false, nil
 	}
 

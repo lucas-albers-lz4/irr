@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/lalbers/irr/internal/helm"
@@ -62,7 +63,7 @@ func getReleaseNameAndNamespaceCommon(cmd *cobra.Command, args []string) (releas
 	// Check for positional argument as release name if flag is not set
 	if releaseName == "" && len(args) > 0 {
 		releaseName = args[0]
-		log.Infof("Using %s as release name from positional argument", releaseName)
+		log.Info("Using release name from positional argument", "releaseName", releaseName)
 	}
 
 	namespace, err = cmd.Flags().GetString("namespace")
@@ -72,6 +73,20 @@ func getReleaseNameAndNamespaceCommon(cmd *cobra.Command, args []string) (releas
 			Err:  fmt.Errorf("failed to get namespace flag: %w", err),
 		}
 	}
+
+	// --- Helm Plugin Namespace Correction ---
+	// If running as a plugin and the namespace flag is still the default,
+	// try getting the namespace from the HELM_NAMESPACE env var.
+	if isRunningAsHelmPlugin() && namespace == "default" {
+		envNamespace := os.Getenv("HELM_NAMESPACE")
+		if envNamespace != "" {
+			log.Debug("Namespace flag was default in plugin mode, using HELM_NAMESPACE env var instead", "env_namespace", envNamespace)
+			namespace = envNamespace
+		} else {
+			log.Debug("Namespace flag was default in plugin mode, but HELM_NAMESPACE env var is also empty. Using default.")
+		}
+	}
+	// --- End Helm Plugin Namespace Correction ---
 
 	return releaseName, namespace, nil
 }
@@ -113,7 +128,7 @@ func writeOutputFile(outputFile string, content []byte, successMessage string) e
 
 	// Log success message if provided
 	if successMessage != "" {
-		log.Infof(successMessage, outputFile)
+		log.Info("Output file written", "file", outputFile)
 	}
 
 	return nil

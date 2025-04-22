@@ -44,7 +44,7 @@ func CheckHelmVersion() error {
 		}
 	}
 
-	log.Debugf("Helm version check passed: %s", version)
+	log.Debug("Helm version check passed", "version", version)
 	return nil
 }
 

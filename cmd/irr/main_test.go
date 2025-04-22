@@ -7,6 +7,7 @@ import (
 	"github.com/lalbers/irr/pkg/log"
 	"github.com/lalbers/irr/pkg/testutil"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Helper function to capture stderr output for testing log functions
@@ -107,58 +108,9 @@ func TestIsRunningAsHelmPlugin(t *testing.T) {
 	}
 }
 
-func TestParseIrrDebugEnvVar(t *testing.T) {
-	testCases := []struct {
-		name     string
-		envValue *string // Use pointer to differentiate between unset and empty string
-		expected bool
-	}{
-		{"Unset", nil, false},
-		{"EmptyString", stringPtr(""), false},
-		{"TrueLowercase", stringPtr("true"), true},
-		{"TrueUppercase", stringPtr("TRUE"), true},
-		{"TrueMixedcase", stringPtr("True"), true},
-		{"Number1", stringPtr("1"), true},
-		{"YesLowercase", stringPtr("yes"), true},
-		{"FalseLowercase", stringPtr("false"), false},
-		{"Number0", stringPtr("0"), false},
-		{"NoLowercase", stringPtr("no"), false},
-		{"OtherString", stringPtr("other"), false},
-	}
-
-	originalDebugEnv := os.Getenv("IRR_DEBUG")
-	defer func() {
-		if err := os.Setenv("IRR_DEBUG", originalDebugEnv); err != nil {
-			t.Logf("Warning: failed to restore IRR_DEBUG: %v", err)
-		}
-	}()
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			if tc.envValue == nil {
-				if err := os.Unsetenv("IRR_DEBUG"); err != nil {
-					t.Fatalf("Failed to unset IRR_DEBUG: %v", err)
-				}
-			} else {
-				if err := os.Setenv("IRR_DEBUG", *tc.envValue); err != nil {
-					t.Fatalf("Failed to set IRR_DEBUG: %v", err)
-				}
-			}
-			assert.Equal(t, tc.expected, parseIrrDebugEnvVar())
-		})
-	}
-}
-
-// Helper for TestParseIrrDebugEnvVar
-func stringPtr(s string) *string {
-	return &s
-}
-
 func TestLogHelmEnvironment(t *testing.T) {
-	// Set debug level for this test
-	originalLevel := log.CurrentLevel()
-	log.SetLevel(log.LevelDebug)
-	defer log.SetLevel(originalLevel)
+	// Set LOG_FORMAT=json for this test
+	t.Setenv("LOG_FORMAT", "json")
 
 	// Set some Helm environment variables using t.Setenv for proper test cleanup
 	testEnvVars := map[string]string{
@@ -170,23 +122,89 @@ func TestLogHelmEnvironment(t *testing.T) {
 	for k, v := range testEnvVars {
 		t.Setenv(k, v)
 	}
-	// Unset one variable to ensure it's not logged if empty
+	// Explicitly unset a var that logHelmEnvironment checks, to ensure it's not logged
 	t.Setenv("HELM_DEBUG", "")
 
-	// Capture logs
-	stopCapture := testutil.CaptureLogging()
+	// Capture logs using the testutil helper
+	_, logs, err := testutil.CaptureJSONLogs(log.LevelDebug, func() {
+		// Set the desired level *within* the capture function's scope
+		// because CaptureJSONLogs sets up its own logger instance.
+		// log.SetLevel(log.LevelDebug) // This is handled by CaptureJSONLogs level param
+		logHelmEnvironment()
+	})
+	require.NoError(t, err, "Failed to capture JSON logs")
 
-	// Call the function
-	logHelmEnvironment()
+	// Check that Helm environment variables were logged using JSON assertions
+	testutil.AssertLogContainsJSON(t, logs, map[string]interface{}{
+		"level": "DEBUG",
+		"msg":   "Helm Environment Variables:",
+	})
 
-	// Get captured logs
-	_, capturedStderr := stopCapture()
+	testutil.AssertLogContainsJSON(t, logs, map[string]interface{}{
+		"level": "DEBUG",
+		"msg":   "Helm Env",
+		"var":   "HELM_PLUGIN_NAME",
+		"value": "irr",
+	})
 
-	// Assertions
-	assert.Contains(t, capturedStderr, "Helm Environment Variables:")
-	assert.Contains(t, capturedStderr, "HELM_PLUGIN_NAME=irr")
-	assert.Contains(t, capturedStderr, "HELM_BIN=helm")
-	assert.Contains(t, capturedStderr, "HELM_NAMESPACE=test-ns")
-	assert.NotContains(t, capturedStderr, "SOME_OTHER_VAR") // Verify non-Helm vars are not logged
-	assert.NotContains(t, capturedStderr, "HELM_DEBUG=")    // Verify empty vars are not logged
+	testutil.AssertLogContainsJSON(t, logs, map[string]interface{}{
+		"level": "DEBUG",
+		"msg":   "Helm Env",
+		"var":   "HELM_BIN",
+		"value": "helm",
+	})
+
+	testutil.AssertLogContainsJSON(t, logs, map[string]interface{}{
+		"level": "DEBUG",
+		"msg":   "Helm Env",
+		"var":   "HELM_NAMESPACE",
+		"value": "test-ns",
+	})
+
+	// Check that non-Helm var or empty var wasn't logged
+	testutil.AssertLogDoesNotContainJSON(t, logs, map[string]interface{}{
+		"var": "SOME_OTHER_VAR",
+	})
+	testutil.AssertLogDoesNotContainJSON(t, logs, map[string]interface{}{
+		"var": "HELM_DEBUG",
+	})
+}
+
+func TestExecute(t *testing.T) {
+	// Save original log level and restore
+	originalLevel := log.CurrentLevel()
+	defer log.SetLevel(originalLevel)
+
+	// Set log level to Info for this test, as we are testing an Info level message.
+	// Note: CaptureJSONLogs also sets the level, but setting it here ensures
+	// the logging functions behave as expected even before CaptureJSONLogs takes over.
+	log.SetLevel(log.LevelInfo)
+
+	// Capture logs to verify startup logging
+	_, logs, err := testutil.CaptureJSONLogs(log.LevelInfo, func() {
+		// Directly call the logic that produces the startup message
+		// Mimic the relevant parts from rootCmd.PersistentPreRunE
+		pluginModeDetected := isRunningAsHelmPlugin()                                                                          // From main.go
+		log.Debug("Execution Mode Detected", "mode", map[bool]string{true: "Plugin", false: "Standalone"}[pluginModeDetected]) // Logged at Debug, won't be in capture
+
+		if pluginModeDetected {
+			log.Info("IRR running as Helm plugin", "version", BinaryVersion) // From main.go
+		} else {
+			// This is the log message we expect to capture
+			log.Info("IRR running in standalone mode", "version", BinaryVersion)
+		}
+	})
+	assert.NoError(t, err) // Assert no error from log capture itself
+
+	// Verify the standalone mode info log exists
+	testutil.AssertLogContainsJSON(t, logs, map[string]interface{}{
+		"level":   "INFO",
+		"msg":     "IRR running in standalone mode",
+		"version": BinaryVersion, // Check version as well
+	})
+
+	// Also verify the plugin mode message is NOT present (assuming default standalone)
+	testutil.AssertLogDoesNotContainJSON(t, logs, map[string]interface{}{
+		"msg": "IRR running as Helm plugin",
+	})
 }

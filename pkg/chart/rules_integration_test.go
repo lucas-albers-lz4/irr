@@ -42,7 +42,7 @@ func (m *mockRulesRegistry) Get(name string) (rules.Rule, bool) {
 	rule, ok := args.Get(0).(rules.Rule)
 	if !ok && args.Get(0) != nil {
 		// Only log an error if the value wasn't nil to begin with
-		log.Errorf("Type assertion failed for rules.Rule in Get")
+		log.Error("Type assertion failed for rules.Rule in Get")
 	}
 	return rule, args.Bool(1)
 }
@@ -52,7 +52,7 @@ func (m *mockRulesRegistry) GetRuleByName(name string) rules.Rule {
 	rule, ok := args.Get(0).(rules.Rule)
 	if !ok && args.Get(0) != nil {
 		// Only log an error if the value wasn't nil to begin with
-		log.Errorf("Type assertion failed for rules.Rule in GetRuleByName")
+		log.Error("Type assertion failed for rules.Rule in GetRuleByName")
 	}
 	return rule
 }

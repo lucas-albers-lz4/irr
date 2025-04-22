@@ -10,7 +10,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/lalbers/irr/pkg/debug"
+	"github.com/lalbers/irr/pkg/log"
 	helmchart "helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
 )
@@ -183,8 +183,8 @@ func (a *Analyzer) normalizeImageValues(val map[string]interface{}) (registry, r
 // Returns:
 //   - Error if analysis fails
 func (a *Analyzer) analyzeValues(values map[string]interface{}, prefix string, analysis *ChartAnalysis) error {
-	debug.Printf("[analyzeValues ENTER] Prefix: '%s', Map Keys: %v", prefix, reflect.ValueOf(values).MapKeys()) // Log map keys
-	defer debug.Printf("[analyzeValues EXIT] Prefix: '%s'", prefix)
+	log.Debug("analyzeValues ENTER", "prefix", prefix, "keys", reflect.ValueOf(values).MapKeys())
+	defer log.Debug("analyzeValues EXIT", "prefix", prefix)
 
 	for k, v := range values {
 		path := k
@@ -192,7 +192,7 @@ func (a *Analyzer) analyzeValues(values map[string]interface{}, prefix string, a
 			path = prefix + "." + k
 		}
 
-		debug.Printf("[analyzeValues LOOP] Path: '%s', Type: %T", path, v)
+		log.Debug("analyzeValues LOOP", "path", path, "type", fmt.Sprintf("%T", v))
 		if err := a.analyzeSingleValue(k, v, path, analysis); err != nil {
 			// If analyzing a single value fails, wrap the error with context
 			return fmt.Errorf("error analyzing path '%s': %w", path, err)
@@ -223,8 +223,10 @@ func (a *Analyzer) analyzeValues(values map[string]interface{}, prefix string, a
 // Returns:
 //   - Error if analysis fails
 func (a *Analyzer) analyzeSingleValue(key string, value interface{}, path string, analysis *ChartAnalysis) error {
-	debug.Printf("[analyzeSingleValue ENTER] Path: '%s', Type: %T", path, value)
-	defer debug.Printf("[analyzeSingleValue EXIT] Path: '%s', ImagePatterns Count: %d", path, len(analysis.ImagePatterns))
+	log.Debug("analyzeSingleValue ENTER", "path", path, "type", fmt.Sprintf("%T", value))
+	defer func() {
+		log.Debug("analyzeSingleValue EXIT", "path", path, "imagePatternsCount", len(analysis.ImagePatterns))
+	}()
 
 	switch val := value.(type) {
 	case map[string]interface{}:
@@ -250,12 +252,14 @@ func (a *Analyzer) analyzeSingleValue(key string, value interface{}, path string
 // Returns:
 //   - Error if analysis fails
 func (a *Analyzer) analyzeMapValue(val map[string]interface{}, path string, analysis *ChartAnalysis) error {
-	debug.Printf("[analyzeMapValue ENTER] Path: '%s', Value: %#v", path, val)
-	defer debug.Printf("[analyzeMapValue EXIT] Path: '%s', ImagePatterns Count: %d", path, len(analysis.ImagePatterns))
+	log.Debug("analyzeMapValue ENTER", "path", path, "value", fmt.Sprintf("%#v", val))
+	defer func() {
+		log.Debug("analyzeMapValue EXIT", "path", path, "imagePatternsCount", len(analysis.ImagePatterns))
+	}()
 
 	// Check if this is an image map pattern
 	isMap := a.isImageMap(val)
-	debug.Printf("[analyzeMapValue] Path: '%s', isImageMap result: %v", path, isMap)
+	log.Debug("analyzeMapValue: isImageMap check", "path", path, "isImageMap", isMap)
 	if isMap {
 		registry, repository, tag := a.normalizeImageValues(val)
 		if repository != "" {
@@ -271,7 +275,7 @@ func (a *Analyzer) analyzeMapValue(val map[string]interface{}, path string, anal
 				Count: 1,
 			}
 			analysis.ImagePatterns = append(analysis.ImagePatterns, pattern)
-			debug.Printf("[analyzeMapValue IMAGE APPEND] Path: '%s', Value: '%s' STRUCT: %#v", pattern.Path, pattern.Value, pattern.Structure)
+			log.Debug("analyzeMapValue: IMAGE APPEND", "path", pattern.Path, "value", pattern.Value, "structure", fmt.Sprintf("%#v", pattern.Structure))
 		}
 		return nil
 	}
@@ -292,8 +296,10 @@ func (a *Analyzer) analyzeMapValue(val map[string]interface{}, path string, anal
 // Returns:
 //   - Error if analysis fails
 func (a *Analyzer) analyzeStringValue(key, val, path string, analysis *ChartAnalysis) error {
-	debug.Printf("[analyzeStringValue ENTER] Path: '%s', Key: '%s', Value: '%s'", path, key, val)
-	defer debug.Printf("[analyzeStringValue EXIT] Path: '%s', ImagePatterns Count: %d", path, len(analysis.ImagePatterns))
+	log.Debug("analyzeStringValue ENTER", "path", path, "key", key, "value", val)
+	defer func() {
+		log.Debug("analyzeStringValue EXIT", "path", path, "imagePatternsCount", len(analysis.ImagePatterns))
+	}()
 
 	// Check if the value is a Go template first
 	isTemplate := strings.Contains(val, "{{") && strings.Contains(val, "}}")
@@ -318,8 +324,7 @@ func (a *Analyzer) analyzeStringValue(key, val, path string, analysis *ChartAnal
 		// Special case for obvious image strings
 		(hasSlash && (hasColon || hasDigest))
 
-	debug.Printf("[analyzeStringValue] Path: '%s', isHeuristicMatch: %v, isTemplate: %v",
-		path, isHeuristicMatch, isTemplate)
+	log.Debug("analyzeStringValue: Heuristic checks", "path", path, "isHeuristicMatch", isHeuristicMatch, "isTemplate", isTemplate)
 
 	// For test coverage purposes, always consider direct image keys and paths as image patterns
 	if keyHasImage || pathEndsWithImage || isHeuristicMatch || isTemplate {
@@ -330,7 +335,7 @@ func (a *Analyzer) analyzeStringValue(key, val, path string, analysis *ChartAnal
 			Count: 1,
 		}
 		analysis.ImagePatterns = append(analysis.ImagePatterns, pattern)
-		debug.Printf("[analyzeStringValue IMAGE APPEND] Path: '%s', Value: '%s'", pattern.Path, pattern.Value)
+		log.Debug("analyzeStringValue: IMAGE APPEND", "path", pattern.Path, "value", pattern.Value)
 	}
 
 	return nil
@@ -347,25 +352,25 @@ func (a *Analyzer) analyzeStringValue(key, val, path string, analysis *ChartAnal
 // Returns:
 //   - Error if analysis fails
 func (a *Analyzer) analyzeArray(val []interface{}, path string, analysis *ChartAnalysis) error {
-	debug.Printf("[analyzeArray ENTER] Path: '%s', ArrayLen: %d", path, len(val))
+	log.Debug("analyzeArray ENTER", "path", path, "arrayLen", len(val))
 	// Check if this looks like a container array (common path names)
 	isContainerArray := strings.Contains(strings.ToLower(path), "container") ||
 		path == "initContainers" || path == "containers" || strings.HasSuffix(path, ".initContainers") ||
 		strings.HasSuffix(path, ".containers") || strings.HasSuffix(path, ".sidecars")
 
 	if isContainerArray {
-		debug.Printf("[analyzeArray] Path '%s' identified as potential container array", path)
+		log.Debug("analyzeArray: Potential container array identified", "path", path)
 	}
 
 	for i, item := range val {
 		itemPath := fmt.Sprintf("%s[%d]", path, i)
-		debug.Printf("[analyzeArray ITEM] Path: '%s', Type: %T", itemPath, item)
+		log.Debug("analyzeArray: ITEM", "path", itemPath, "type", fmt.Sprintf("%T", item))
 
 		switch v := item.(type) {
 		case map[string]interface{}:
 			// Check if this might be a container definition with an image field
 			if _, hasImage := v["image"]; hasImage && isContainerArray {
-				debug.Printf("[analyzeArray ITEM] Path: '%s' contains 'image' field and is in a container array", itemPath)
+				log.Debug("analyzeArray: ITEM has 'image' field in container array", "path", itemPath)
 			}
 
 			if err := a.analyzeMapItemInArray(v, itemPath, analysis); err != nil {
@@ -389,12 +394,12 @@ func (a *Analyzer) analyzeArray(val []interface{}, path string, analysis *ChartA
 					Path: itemPath, Type: PatternTypeString, Value: v, Count: 1,
 				}
 				analysis.ImagePatterns = append(analysis.ImagePatterns, pattern)
-				debug.Printf("[analyzeArray] Added string image pattern at path '%s': %s", itemPath, v)
+				log.Debug("analyzeArray: Added string image pattern", "path", itemPath, "value", v)
 			}
 		}
 	}
 
-	debug.Printf("[analyzeArray EXIT] Path: '%s', Found %d image patterns", path, len(analysis.ImagePatterns))
+	log.Debug("analyzeArray EXIT", "path", path, "imagePatternsFound", len(analysis.ImagePatterns))
 	return nil
 }
 
@@ -409,7 +414,7 @@ func (a *Analyzer) analyzeArray(val []interface{}, path string, analysis *ChartA
 // Returns:
 //   - Error if analysis fails
 func (a *Analyzer) analyzeMapItemInArray(v map[string]interface{}, itemPath string, analysis *ChartAnalysis) error {
-	debug.Printf("[analyzeMapItemInArray ENTER] Path: '%s', Value: %#v", itemPath, v)
+	log.Debug("analyzeMapItemInArray ENTER", "path", itemPath, "value", fmt.Sprintf("%#v", v))
 	foundPatternInMapItem := false // Flag to prevent duplicate processing
 
 	// 1. Check if this map IS an image map itself
@@ -424,7 +429,7 @@ func (a *Analyzer) analyzeMapItemInArray(v map[string]interface{}, itemPath stri
 				Count:     1,
 			}
 			analysis.ImagePatterns = append(analysis.ImagePatterns, pattern)
-			debug.Printf("[analyzeMapItemInArray IMAGE APPEND] Path: '%s', Value: '%s' STRUCT: %#v", pattern.Path, pattern.Value, pattern.Structure)
+			log.Debug("analyzeMapItemInArray: IMAGE APPEND (map)", "path", pattern.Path, "value", pattern.Value, "structure", fmt.Sprintf("%#v", pattern.Structure))
 			foundPatternInMapItem = true
 		}
 	}
@@ -443,7 +448,7 @@ func (a *Analyzer) analyzeMapItemInArray(v map[string]interface{}, itemPath stri
 				Count: 1,
 			}
 			analysis.ImagePatterns = append(analysis.ImagePatterns, pattern)
-			debug.Printf("[analyzeMapItemInArray IMAGE APPEND] Path: '%s', Value: '%s' (container image field)", pattern.Path, pattern.Value)
+			log.Debug("analyzeMapItemInArray: IMAGE APPEND (string in image field)", "path", pattern.Path, "value", pattern.Value)
 			foundPatternInMapItem = true // Mark as found to avoid redundant recursion
 		}
 	}

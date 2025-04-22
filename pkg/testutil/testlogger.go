@@ -1,17 +1,19 @@
 package testutil
 
 import (
+	"bytes"
 	"io"
-	"os"
 	"sync"
 	"testing"
+
+	"github.com/lalbers/irr/pkg/log"
 )
 
 var (
 	// originalOut holds the original standard output
-	originalOut *os.File
+	// originalOut *os.File // No longer needed for log capture
 	// originalErr holds the original standard error
-	originalErr *os.File
+	// originalErr *os.File // No longer needed for log capture
 	// mutex protects concurrent access to logger state
 	mutex sync.Mutex
 )
@@ -22,86 +24,42 @@ func SuppressLogging() func() {
 	mutex.Lock()
 	defer mutex.Unlock()
 
-	originalOut = os.Stdout
-	originalErr = os.Stderr
+	// Save original logger output writer
+	var buf bytes.Buffer              // Temporary buffer, not actually used for suppression
+	restoreLog := log.SetOutput(&buf) // Get restore func first
 
-	null, err := os.Open(os.DevNull)
-	if err != nil {
-		panic(err)
-	}
-	os.Stdout = null
-	os.Stderr = null
+	// Now set output to io.Discard (preferred over /dev/null)
+	log.SetOutput(io.Discard)
 
 	return func() {
 		mutex.Lock()
 		defer mutex.Unlock()
-
-		os.Stdout = originalOut
-		os.Stderr = originalErr
-		err := null.Close()
-		if err != nil {
-			panic(err)
-		}
+		// Restore the original logger output
+		restoreLog()
 	}
 }
 
-// CaptureLogging captures all logging output during test execution
-// Call the returned function to restore original logging and retrieve the captured output
-func CaptureLogging() func() (string, string) {
+// CaptureLogging captures log output using log.SetOutput.
+// Call the returned function to restore original logging and retrieve the captured output.
+// Note: This only captures logs written via the pkg/log functions.
+// It does NOT capture direct writes to os.Stdout or os.Stderr.
+func CaptureLogging() func() string {
 	mutex.Lock()
-	defer mutex.Unlock()
+	// No defer mutex.Unlock() here, restore function will handle it
 
-	originalOut = os.Stdout
-	originalErr = os.Stderr
+	var logBuf bytes.Buffer
+	logRestore := log.SetOutput(&logBuf)
 
-	outReader, outWriter, err := os.Pipe()
-	if err != nil {
-		panic(err)
-	}
-	errReader, errWriter, err := os.Pipe()
-	if err != nil {
-		panic(err)
-	}
-
-	os.Stdout = outWriter
-	os.Stderr = errWriter
-
-	outChan := make(chan string)
-	errChan := make(chan string)
-
-	go func() {
-		outBytes, err := io.ReadAll(outReader)
-		if err != nil {
-			panic(err)
-		}
-		outChan <- string(outBytes)
-	}()
-
-	go func() {
-		errBytes, err := io.ReadAll(errReader)
-		if err != nil {
-			panic(err)
-		}
-		errChan <- string(errBytes)
-	}()
-
-	return func() (string, string) {
-		mutex.Lock()
+	// Return the restore function
+	return func() string {
+		// Ensure unlock happens after restoration and buffer read
 		defer mutex.Unlock()
 
-		err := outWriter.Close()
-		if err != nil {
-			panic(err)
-		}
-		err = errWriter.Close()
-		if err != nil {
-			panic(err)
-		}
+		// Restore the original logger output
+		logRestore()
 
-		os.Stdout = originalOut
-		os.Stderr = originalErr
-
-		return <-outChan, <-errChan
+		// Return the captured log content
+		return logBuf.String()
 	}
 }
 
@@ -112,15 +70,20 @@ func UseTestLogger(t *testing.T) func() {
 
 	// Only capture output on non-verbose test runs
 	if !testing.Verbose() {
-		output, errOutput := CaptureLogging()()
+		// Use the new CaptureLogging which only captures log output
+		restoreAndGetLogs := CaptureLogging()
+
 		t.Cleanup(func() {
+			capturedLogs := restoreAndGetLogs() // Call restore func to get logs
 			// Only print the output if the test fails
 			if t.Failed() {
-				t.Logf("Standard output captured during test:\n%s", output)
-				t.Logf("Standard error captured during test:\n%s", errOutput)
+				t.Logf("Log output captured during test:\n%s", capturedLogs)
+				// No separate stdout/stderr capture now
+				// t.Logf("Standard error captured during test:\n%s", errOutput)
 			}
 		})
 	}
 
+	// Return a no-op function, as cleanup handles restoration
 	return func() {}
 }

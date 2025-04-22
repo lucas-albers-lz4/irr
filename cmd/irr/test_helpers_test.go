@@ -140,7 +140,7 @@ func TestHandleTestModeOverride(t *testing.T) {
 			}
 
 			// Log completion for clarity
-			log.Debugf("%s completed. Output:\n%s", tc.name, output)
+			log.Debug("Test case completed", "name", tc.name, "output", output)
 		})
 	}
 }

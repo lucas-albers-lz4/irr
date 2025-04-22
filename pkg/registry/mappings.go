@@ -10,9 +10,9 @@ import (
 
 	"errors"
 
-	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/fileutil"
 	"github.com/lalbers/irr/pkg/image"
+	"github.com/lalbers/irr/pkg/log"
 	"github.com/spf13/afero"
 	"sigs.k8s.io/yaml"
 )
@@ -72,7 +72,7 @@ func LoadMappings(fs afero.Fs, path string, skipCWDRestriction bool) (*Mappings,
 		return nil, WrapMappingFileEmpty(path)
 	}
 
-	debug.Printf("LoadMappings: Attempting to parse file content:\n%s", string(data))
+	log.Debug("LoadMappings: Attempting to parse file content:\n%s", string(data))
 
 	// Try the new format (with mappings key)
 	var mappings Mappings
@@ -80,23 +80,23 @@ func LoadMappings(fs afero.Fs, path string, skipCWDRestriction bool) (*Mappings,
 		Mappings []Mapping `yaml:"mappings"`
 	}
 	if err := yaml.Unmarshal(data, &newFormat); err != nil {
-		debug.Printf("LoadMappings: Failed to parse as structured format: %v", err)
+		log.Debug("LoadMappings: Failed to parse as structured format: %v", err)
 
 		// Try parsing legacy format (simple key-value pairs)
 		var legacyFormat map[string]string
 		if err := yaml.Unmarshal(data, &legacyFormat); err != nil {
-			debug.Printf("LoadMappings: Also failed to parse as legacy format: %v", err)
+			log.Debug("LoadMappings: Also failed to parse as legacy format: %v", err)
 			return nil, WrapMappingFileParse(path, err)
 		}
 
 		// Check if legacy format contains any entries
 		if len(legacyFormat) == 0 {
-			debug.Printf("LoadMappings: Legacy format was parsed but contains no entries")
+			log.Debug("LoadMappings: Legacy format was parsed but contains no entries")
 			return nil, WrapMappingFileEmpty(path)
 		}
 
 		// Convert legacy format to mappings structure
-		debug.Printf("LoadMappings: Successfully parsed legacy key-value format, found %d entries", len(legacyFormat))
+		log.Debug("LoadMappings: Successfully parsed legacy key-value format, found %d entries", len(legacyFormat))
 		mappings.Entries = make([]Mapping, 0, len(legacyFormat))
 		for source, target := range legacyFormat {
 			mappings.Entries = append(mappings.Entries, Mapping{
@@ -105,16 +105,16 @@ func LoadMappings(fs afero.Fs, path string, skipCWDRestriction bool) (*Mappings,
 			})
 		}
 
-		debug.Printf("LoadMappings: Successfully loaded %d mappings from legacy format in %s", len(mappings.Entries), path)
+		log.Debug("LoadMappings: Successfully loaded %d mappings from legacy format in %s", len(mappings.Entries), path)
 		return &mappings, nil
 	}
 
 	if len(newFormat.Mappings) == 0 {
-		debug.Printf("LoadMappings: No valid entries found after parsing")
+		log.Debug("LoadMappings: No valid entries found after parsing")
 		return nil, WrapMappingFileEmpty(path)
 	}
 
-	debug.Printf("LoadMappings: Successfully parsed structured format, found %d entries", len(newFormat.Mappings))
+	log.Debug("LoadMappings: Successfully parsed structured format, found %d entries", len(newFormat.Mappings))
 	mappings.Entries = make([]Mapping, len(newFormat.Mappings))
 	for i, m := range newFormat.Mappings {
 		mappings.Entries[i] = Mapping{
@@ -123,15 +123,15 @@ func LoadMappings(fs afero.Fs, path string, skipCWDRestriction bool) (*Mappings,
 		}
 	}
 
-	debug.Printf("LoadMappings: Successfully loaded %d mappings from %s", len(mappings.Entries), path)
+	log.Debug("LoadMappings: Successfully loaded %d mappings from %s", len(mappings.Entries), path)
 	return &mappings, nil
 }
 
 // GetTargetRegistry returns the target registry for a given source registry
 func (m *Mappings) GetTargetRegistry(source string) string {
-	debug.Printf("GetTargetRegistry: Looking for source '%s' in mappings", source)
+	log.Debug("GetTargetRegistry: Looking for source '%s' in mappings", source)
 	if m == nil || m.Entries == nil {
-		debug.Printf("GetTargetRegistry: Mappings are nil or empty.")
+		log.Debug("GetTargetRegistry: Mappings are nil or empty.")
 		return ""
 	}
 
@@ -139,12 +139,12 @@ func (m *Mappings) GetTargetRegistry(source string) string {
 	source = strings.TrimSpace(source)
 	source = strings.TrimRight(source, "\r")
 	normalizedSourceInput := image.NormalizeRegistry(source)
-	debug.Printf("GetTargetRegistry: Normalized source INPUT: '%s' -> '%s'", source, normalizedSourceInput)
+	log.Debug("GetTargetRegistry: Normalized source INPUT: '%s' -> '%s'", source, normalizedSourceInput)
 
 	// Special case: if source starts with index.docker.io, normalize it
 	if strings.HasPrefix(source, "index.docker.io/") {
 		normalizedSourceInput = "docker.io"
-		debug.Printf("GetTargetRegistry: Special case - normalized index.docker.io to docker.io")
+		log.Debug("GetTargetRegistry: Special case - normalized index.docker.io to docker.io")
 	}
 
 	for _, mapping := range m.Entries {
@@ -152,17 +152,17 @@ func (m *Mappings) GetTargetRegistry(source string) string {
 		mappingSource := strings.TrimSpace(mapping.Source)
 		mappingSource = strings.TrimRight(mappingSource, "\r")
 		normalizedMappingSource := image.NormalizeRegistry(mappingSource)
-		debug.Printf("GetTargetRegistry: Comparing normalized input '%s' with normalized mapping '%s'",
+		log.Debug("GetTargetRegistry: Comparing normalized input '%s' with normalized mapping '%s'",
 			normalizedSourceInput, normalizedMappingSource)
 
 		if normalizedSourceInput == normalizedMappingSource {
 			target := strings.TrimSpace(mapping.Target)
-			debug.Printf("GetTargetRegistry: Match found! Returning target: '%s'", target)
+			log.Debug("GetTargetRegistry: Match found! Returning target: '%s'", target)
 			return target
 		}
 	}
 
-	debug.Printf("GetTargetRegistry: No match found for source '%s'", source)
+	log.Debug("GetTargetRegistry: No match found for source '%s'", source)
 	return ""
 }
 
@@ -181,7 +181,7 @@ func validateConfigFilePath(fs afero.Fs, path string, skipCWDRestriction bool) e
 	// Only skip path traversal check if explicitly allowed in test or via parameter
 	if !skipCWDRestriction {
 		if !strings.HasPrefix(absPath, wd) {
-			debug.Printf("Path traversal detected. Path: %s, WorkDir: %s", absPath, wd)
+			log.Debug("Path traversal detected. Path: %s, WorkDir: %s", absPath, wd)
 			return WrapMappingPathNotInWD(path)
 		}
 	}
@@ -266,7 +266,7 @@ func LoadConfig(fs afero.Fs, path string, skipCWDRestriction bool) (map[string]s
 		if err := validateStructuredMappings(structuredConfig, path); err != nil {
 			return nil, err
 		}
-		debug.Printf("LoadConfig: Successfully loaded structured config with %d mappings", len(structuredConfig.Registries.Mappings))
+		log.Debug("LoadConfig: Successfully loaded structured config with %d mappings", len(structuredConfig.Registries.Mappings))
 		return ConvertToLegacyFormat(structuredConfig), nil
 	}
 
@@ -274,9 +274,9 @@ func LoadConfig(fs afero.Fs, path string, skipCWDRestriction bool) (map[string]s
 		return nil, err
 	}
 
-	debug.Printf("LoadConfig: Failed to load structured config: %v", err)
+	log.Debug("LoadConfig: Failed to load structured config: %v", err)
 
-	debug.Printf("LoadConfig: Attempting to load as legacy format")
+	log.Debug("LoadConfig: Attempting to load as legacy format")
 	legacyFormat, err := tryLoadLegacyConfig(fs, path, skipCWDRestriction)
 	if err != nil {
 		return nil, err
@@ -284,7 +284,7 @@ func LoadConfig(fs afero.Fs, path string, skipCWDRestriction bool) (map[string]s
 	if err := validateLegacyMappings(legacyFormat, path); err != nil {
 		return nil, err
 	}
-	debug.Printf("LoadConfig: Successfully loaded legacy format with %d mappings", len(legacyFormat))
+	log.Debug("LoadConfig: Successfully loaded legacy format with %d mappings", len(legacyFormat))
 	return legacyFormat, nil
 }
 
@@ -358,7 +358,7 @@ func tryLoadLegacyConfig(fs afero.Fs, path string, skipCWDRestriction bool) (map
 		return nil, fmt.Errorf("failed to parse config file '%s': %w", path, err)
 	}
 	if len(legacyFormat) == 0 {
-		debug.Printf("LoadConfig: No mappings found in legacy format")
+		log.Debug("LoadConfig: No mappings found in legacy format")
 		return nil, WrapMappingFileEmpty(path)
 	}
 	return legacyFormat, nil

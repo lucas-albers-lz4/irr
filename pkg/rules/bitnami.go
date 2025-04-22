@@ -3,7 +3,7 @@ package rules
 import (
 	"strings"
 
-	"github.com/lalbers/irr/pkg/debug"
+	"github.com/lalbers/irr/pkg/log"
 	"helm.sh/helm/v3/pkg/chart"
 )
 
@@ -43,7 +43,7 @@ func (r *BitnamiSecurityBypassRule) AppliesTo(ch *chart.Chart) (Detection, bool)
 
 	// Only apply for medium or high confidence
 	if detection.Confidence >= ConfidenceMedium {
-		debug.Printf("Bitnami security bypass rule applies to chart: %s", ch.Name())
+		log.Debug("Bitnami security bypass rule applies to chart", "chart", ch.Name())
 		return detection, true
 	}
 

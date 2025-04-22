@@ -7,109 +7,141 @@ package log
 
 import (
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"strings"
 )
 
-// Level represents the logging level
-type Level int
-
+// Log level constants matching slog and environment variable values.
 const (
-	// LevelDebug enables debug level logging
-	LevelDebug Level = iota
-	// LevelInfo enables info level logging
-	LevelInfo
-	// LevelWarn enables warning level logging
-	LevelWarn
-	// LevelError enables error level logging
-	LevelError
+	levelDebugStr = "DEBUG"
+	levelInfoStr  = "INFO"
+	levelWarnStr  = "WARN"
+	levelErrorStr = "ERROR"
 )
 
 var (
-	// currentLevel is the current logging level, default to Info
-	currentLevel = LevelInfo
+	logger       *slog.Logger
+	currentLevel           = slog.LevelInfo
+	outputWriter io.Writer = os.Stderr
 	// ErrInvalidLogLevel indicates an invalid log level string was provided.
 	ErrInvalidLogLevel = fmt.Errorf("invalid log level")
 )
 
-// init initializes the logging package
+// init initializes the logging package based on environment variables.
 func init() {
-	// Check for LOG_LEVEL environment variable
+	// Determine initial log level from environment
+	initialLevel := slog.LevelInfo // Default
 	if levelStr := os.Getenv("LOG_LEVEL"); levelStr != "" {
-		level, err := ParseLevel(levelStr)
-		if err == nil {
-			currentLevel = level
-		} else {
-			fmt.Fprintf(os.Stderr, "Invalid LOG_LEVEL '%s', using default: %s\n", levelStr, currentLevel)
+		switch strings.ToUpper(levelStr) {
+		case levelDebugStr:
+			initialLevel = slog.LevelDebug
+		case levelInfoStr:
+			initialLevel = slog.LevelInfo
+		case levelWarnStr, "WARNING": // Accept both forms
+			initialLevel = slog.LevelWarn
+		case levelErrorStr:
+			initialLevel = slog.LevelError
 		}
 	}
+	// IRR_DEBUG=1 also enables debug unless LOG_LEVEL already set it higher
+	if os.Getenv("IRR_DEBUG") == "1" && initialLevel > slog.LevelDebug {
+		initialLevel = slog.LevelDebug
+	}
+	currentLevel = initialLevel // Set the global level determined by environment
+
+	// Configure the logger with initial settings
+	configureLogger()
 }
 
-// ParseLevel converts a string to a log Level.
-func ParseLevel(levelStr string) (Level, error) {
-	switch strings.ToUpper(levelStr) {
-	case "DEBUG":
-		return LevelDebug, nil
-	case "INFO":
-		return LevelInfo, nil
-	case "WARN", "WARNING": // Allow 'WARNING' as alias
-		return LevelWarn, nil
-	case "ERROR":
-		return LevelError, nil
-	default:
-		return currentLevel, fmt.Errorf("%w: '%s'", ErrInvalidLogLevel, levelStr)
+// configureLogger sets up the logger using the current global state
+// (currentLevel and outputWriter). It does not read environment variables itself.
+func configureLogger() {
+	// Determine log format
+	format := strings.ToLower(os.Getenv("LOG_FORMAT"))
+	var handler slog.Handler
+	// Default to JSON unless LOG_FORMAT is explicitly "text"
+	if format == "text" {
+		handler = slog.NewTextHandler(outputWriter, &slog.HandlerOptions{Level: currentLevel})
+	} else {
+		// Default to JSON if LOG_FORMAT is empty/unset or explicitly "json" (or anything else)
+		handler = slog.NewJSONHandler(outputWriter, &slog.HandlerOptions{Level: currentLevel})
+	}
+	logger = slog.New(handler)
+}
+
+// SetOutput changes the output destination for the logger.
+// It returns a function that can be called to restore the original output writer.
+// This is primarily intended for testing.
+func SetOutput(w io.Writer) (restore func()) {
+	originalWriter := outputWriter
+	outputWriter = w
+	configureLogger() // Re-configure logger with the new writer
+	return func() {
+		outputWriter = originalWriter
+		configureLogger() // Restore original writer and re-configure
 	}
 }
 
-// IsDebugEnabled returns whether debug logging is enabled
-func IsDebugEnabled() bool {
-	// Only controlled by LOG_LEVEL
-	return currentLevel <= LevelDebug
+// Debug logs a debug message with optional key-value pairs
+func Debug(msg string, args ...any) {
+	logger.Debug(msg, args...)
 }
 
-// CurrentLevel returns the current logging level
-func CurrentLevel() Level {
+// Info logs an info message with optional key-value pairs
+func Info(msg string, args ...any) {
+	logger.Info(msg, args...)
+}
+
+// Warn logs a warning message with optional key-value pairs
+func Warn(msg string, args ...any) {
+	logger.Warn(msg, args...)
+}
+
+// Error logs an error message with optional key-value pairs
+func Error(msg string, args ...any) {
+	logger.Error(msg, args...)
+}
+
+// Logger returns the underlying slog.Logger
+func Logger() *slog.Logger {
+	return logger
+}
+
+// SetLevel allows changing the log level at runtime
+func SetLevel(level interface{}) {
+	switch v := level.(type) {
+	case slog.Level:
+		currentLevel = v
+	case Level:
+		currentLevel = slog.Level(v)
+	default:
+		panic(fmt.Sprintf("SetLevel: unsupported level type %T", level))
+	}
+	configureLogger() // Re-configure logger with the new level
+}
+
+// CurrentLevel returns the current slog.Level
+func CurrentLevel() slog.Level {
 	return currentLevel
 }
 
-// SetLevel sets the logging level
-func SetLevel(level Level) {
-	currentLevel = level
-	// Log the level change to stderr
-	fmt.Fprintf(os.Stderr, "Log level set to %s\n", level.String())
-	// Removed debug.Init(true) - decouple from debug package
-}
+// Level is a log level type compatible with slog.Level, for test and testutil compatibility
+// and to provide a stable API for the rest of the codebase.
+type Level int8
 
-// Debugf logs a debug message if debug logging is enabled
-func Debugf(format string, args ...interface{}) {
-	// Check if debug level is enabled via LOG_LEVEL
-	if IsDebugEnabled() {
-		// Always write to stderr for consistency
-		fmt.Fprintf(os.Stderr, "[LOG_DEBUG] "+format+"\n", args...)
-	}
-}
-
-// Warnf logs a warning message
-func Warnf(format string, args ...interface{}) {
-	if currentLevel <= LevelWarn {
-		fmt.Fprintf(os.Stderr, format+"\n", args...)
-	}
-}
-
-// Errorf logs an error message
-func Errorf(format string, args ...interface{}) {
-	if currentLevel <= LevelError {
-		fmt.Fprintf(os.Stderr, format+"\n", args...)
-	}
-}
-
-// Infof logs an info message (new)
-func Infof(format string, args ...interface{}) {
-	// Writes directly to os.Stderr.
-	if currentLevel <= LevelInfo {
-		fmt.Fprintf(os.Stderr, format+"\n", args...)
-	}
-}
+// Log level definitions.
+const (
+	// LevelDebug defines the debug log level.
+	LevelDebug Level = Level(slog.LevelDebug)
+	// LevelInfo defines the info log level.
+	LevelInfo Level = Level(slog.LevelInfo)
+	// LevelWarn defines the warn log level.
+	LevelWarn Level = Level(slog.LevelWarn)
+	// LevelError defines the error log level.
+	LevelError Level = Level(slog.LevelError)
+)
 
 // String returns the string representation of the log level.
 func (l Level) String() string {
@@ -124,5 +156,22 @@ func (l Level) String() string {
 		return "ERROR"
 	default:
 		return "UNKNOWN"
+	}
+}
+
+// ParseLevel parses a string and returns the corresponding Level.
+func ParseLevel(levelStr string) (Level, error) {
+	switch strings.ToUpper(levelStr) {
+	case levelDebugStr:
+		return LevelDebug, nil
+	case levelInfoStr:
+		return LevelInfo, nil
+	case levelWarnStr, "WARNING": // Accept both forms
+		return LevelWarn, nil
+	case levelErrorStr:
+		return LevelError, nil
+	default:
+		// Return default level (Info) on parse error, fixing gosec G115 warning.
+		return LevelInfo, fmt.Errorf("%w: %s", ErrInvalidLogLevel, levelStr)
 	}
 }

@@ -12,7 +12,6 @@ import (
 	"helm.sh/helm/v3/pkg/cli"
 
 	"github.com/lalbers/irr/pkg/exitcodes"
-	log "github.com/lalbers/irr/pkg/log"
 )
 
 // ClientInterface defines the interface for interacting with Helm.
@@ -54,7 +53,7 @@ func (c *RealHelmClient) GetReleaseValues(_ context.Context, releaseName, namesp
 
 	// Create action config
 	actionConfig := new(action.Configuration)
-	if err := actionConfig.Init(c.settings.RESTClientGetter(), namespace, "", log.Infof); err != nil {
+	if err := actionConfig.Init(c.settings.RESTClientGetter(), namespace, "", func(string, ...interface{}) {}); err != nil {
 		return nil, &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitHelmInteractionError,
 			Err:  fmt.Errorf("failed to initialize Helm action config: %w", err),
@@ -85,7 +84,7 @@ func (c *RealHelmClient) GetChartFromRelease(_ context.Context, releaseName, nam
 
 	// Create action config
 	actionConfig := new(action.Configuration)
-	if err := actionConfig.Init(c.settings.RESTClientGetter(), namespace, "", log.Infof); err != nil {
+	if err := actionConfig.Init(c.settings.RESTClientGetter(), namespace, "", func(string, ...interface{}) {}); err != nil {
 		return nil, &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitHelmInteractionError,
 			Err:  fmt.Errorf("failed to initialize Helm action config: %w", err),
@@ -121,7 +120,7 @@ func (c *RealHelmClient) GetReleaseMetadata(_ context.Context, releaseName, name
 func (c *RealHelmClient) TemplateChart(_ context.Context, chartPath, releaseName, namespace string, values map[string]interface{}, kubeVersion string) (string, error) {
 	// Create action config
 	actionConfig := new(action.Configuration)
-	if err := actionConfig.Init(c.settings.RESTClientGetter(), namespace, "", log.Infof); err != nil {
+	if err := actionConfig.Init(c.settings.RESTClientGetter(), namespace, "", func(string, ...interface{}) {}); err != nil {
 		return "", &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitHelmInteractionError,
 			Err:  fmt.Errorf("failed to initialize Helm action config: %w", err),

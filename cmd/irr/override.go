@@ -19,7 +19,6 @@ import (
 
 	"github.com/lalbers/irr/internal/helm"
 	"github.com/lalbers/irr/pkg/chart"
-	"github.com/lalbers/irr/pkg/debug"
 	"github.com/lalbers/irr/pkg/exitcodes"
 	"github.com/lalbers/irr/pkg/fileutil"
 	log "github.com/lalbers/irr/pkg/log"
@@ -118,10 +117,10 @@ func newOverrideCmd() *cobra.Command {
 		Args: cobra.MaximumNArgs(1),
 		PreRunE: func(cmd *cobra.Command, args []string) error {
 			// --- DEBUGGING ---
-			log.Debugf("Override PreRunE: START")
-			log.Debugf("Override PreRunE: Args: %v (len=%d)", args, len(args))
+			log.Debug("Override PreRunE: START")
+			log.Debug("Override PreRunE: Args", "args", args, "len", len(args))
 			detectedPluginMode := isRunningAsHelmPlugin() // Call detection function directly
-			log.Debugf("Override PreRunE: isRunningAsHelmPlugin(): %v", detectedPluginMode)
+			log.Debug("Override PreRunE: isRunningAsHelmPlugin", "value", detectedPluginMode)
 			// --- END DEBUGGING ---
 
 			// Check if we're in plugin mode with a release name
@@ -138,9 +137,9 @@ func newOverrideCmd() *cobra.Command {
 			chartPathProvided := chartPath != ""
 
 			// --- DEBUGGING ---
-			log.Debugf("Override PreRunE: hasReleaseName: %v", hasReleaseName)
-			log.Debugf("Override PreRunE: chartPath: %q", chartPath)
-			log.Debugf("Override PreRunE: chartPathProvided: %v", chartPathProvided)
+			log.Debug("Override PreRunE: hasReleaseName", "value", hasReleaseName)
+			log.Debug("Override PreRunE: chartPath", "value", chartPath)
+			log.Debug("Override PreRunE: chartPathProvided", "value", chartPathProvided)
 			// --- END DEBUGGING ---
 
 			// Get required flags for later checks
@@ -259,10 +258,10 @@ func setupOverrideFlags(cmd *cobra.Command) {
 	cmd.Flags().StringSlice("known-image-paths", []string{}, "Advanced: Custom glob patterns for known image paths")
 
 	if err := cmd.Flags().MarkHidden("path-strategy"); err != nil {
-		log.Debugf("Failed to mark path-strategy flag as hidden: %v", err)
+		log.Debug("Failed to mark path-strategy flag as hidden", "error", err)
 	}
 	if err := cmd.Flags().MarkHidden("known-image-paths"); err != nil {
-		log.Debugf("Failed to mark known-image-paths flag as hidden: %v", err)
+		log.Debug("Failed to mark known-image-paths flag as hidden", "error", err)
 	}
 
 	// Remove deprecated flags that were already not used
@@ -376,7 +375,7 @@ func getOutputFlags(cmd *cobra.Command, releaseName string) (outputFile string, 
 	// Set default output file in plugin mode with release name
 	if outputFile == "" && isRunningAsHelmPlugin() && releaseName != "" {
 		outputFile = fmt.Sprintf("%s-overrides.yaml", releaseName)
-		debug.Printf("No output file specified in plugin mode, using default based on release name: %s", outputFile)
+		log.Info("No output file specified in plugin mode, using default based on release name", "file", outputFile)
 	}
 
 	// Get dry run flag
@@ -388,21 +387,21 @@ func getOutputFlags(cmd *cobra.Command, releaseName string) (outputFile string, 
 		}
 	}
 
-	debug.Printf("Output flags: outputFile=%s, dryRun=%v", outputFile, dryRun)
+	log.Info("Output flags", "outputFile", outputFile, "dryRun", dryRun)
 	return outputFile, dryRun, nil
 }
 
 // outputOverrides outputs the generated overrides to a file or stdout
 func outputOverrides(_ *cobra.Command, yamlBytes []byte, outputFile string, dryRun bool) error {
 	if dryRun {
-		log.Infof("DRY RUN: Generated override values:\n%s", string(yamlBytes))
+		log.Info("DRY RUN: Generated override values", "values", string(yamlBytes))
 		return nil
 	}
 
 	// If outputFile is empty, write to stdout
 	if outputFile == "" {
 		fmt.Println(string(yamlBytes))
-		log.Infof("Override values printed to stdout")
+		log.Info("Override values printed to stdout")
 		return nil
 	}
 
@@ -443,9 +442,9 @@ func outputOverrides(_ *cobra.Command, yamlBytes []byte, outputFile string, dryR
 	// Log success
 	absPath, err := filepath.Abs(outputFile)
 	if err == nil {
-		log.Infof("Override values written to %s", absPath)
+		log.Info("Override values written", "path", absPath)
 	} else {
-		log.Infof("Override values written to %s", outputFile)
+		log.Info("Override values written", "path", outputFile)
 	}
 
 	return nil
@@ -495,7 +494,7 @@ func setupGeneratorConfig(cmd *cobra.Command, _ string) (config GeneratorConfig,
 
 	// Log excluded registries if any were provided
 	if len(config.ExcludeRegistries) > 0 {
-		log.Infof("Excluding registries: %s", strings.Join(config.ExcludeRegistries, ", "))
+		log.Info("Excluding registries", "registries", strings.Join(config.ExcludeRegistries, ", "))
 	}
 
 	// Successfully gathered all flags
@@ -551,7 +550,7 @@ func loadRegistryMappings(cmd *cobra.Command, config *GeneratorConfig) error {
 		}
 	}
 	if configFile != "" {
-		debug.Printf("Loading registry mappings from config file: %s", configFile)
+		log.Info("Loading registry mappings from config file", "file", configFile)
 		mappings, err := registry.LoadMappings(AppFs, configFile, skipCWDCheck())
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -575,7 +574,7 @@ func loadRegistryMappings(cmd *cobra.Command, config *GeneratorConfig) error {
 		}
 	}
 	if registryFile != "" {
-		debug.Printf("Loading registry mappings from registry file: %s", registryFile)
+		log.Info("Loading registry mappings from registry file", "file", registryFile)
 		configMap, err := registry.LoadConfig(AppFs, registryFile, skipCWDCheck())
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -597,16 +596,16 @@ func loadRegistryMappings(cmd *cobra.Command, config *GeneratorConfig) error {
 func logConfigMode(config *GeneratorConfig) {
 	// Add nil check for safety
 	if config == nil {
-		log.Warnf("logConfigMode called with nil config")
+		log.Warn("logConfigMode called with nil config")
 		return
 	}
 	if config.StrictMode {
-		log.Infof("Running in strict mode - will fail on unrecognized registries or unsupported structures")
+		log.Info("Running in strict mode - will fail on unrecognized registries or unsupported structures")
 	} else {
-		log.Infof("Running in normal mode - will skip unrecognized registries with warnings")
+		log.Info("Running in normal mode - will skip unrecognized registries with warnings")
 	}
 	if len(config.SourceRegistries) > 0 {
-		log.Infof("Using source registries: %s", strings.Join(config.SourceRegistries, ", "))
+		log.Info("Using source registries", "registries", strings.Join(config.SourceRegistries, ", "))
 	}
 }
 
@@ -632,11 +631,11 @@ func validateUnmappableRegistries(config *GeneratorConfig) error {
 			}
 		}
 		// Non-strict mode: Log warning about all source registries needing mapping
-		log.Warnf("No mapping found for registries: %s", strings.Join(config.SourceRegistries, ", "))
-		log.Infof("These registries will be redirected using the target registry: %s", config.TargetRegistry)
-		log.Infof("To add mappings, use: irr config --source <registry> --target <path>")
+		log.Warn("No mapping found for registries", "registries", strings.Join(config.SourceRegistries, ", "))
+		log.Info("These registries will be redirected using the target registry", "target", config.TargetRegistry)
+		log.Info("To add mappings, use: irr config --source <registry> --target <path>")
 		for _, reg := range config.SourceRegistries {
-			log.Infof("  irr config --source %s --target %s/%s", reg, config.TargetRegistry, strings.ReplaceAll(reg, ".", "-"))
+			log.Info("irr config suggestion", "source", reg, "target", fmt.Sprintf("%s/%s", config.TargetRegistry, strings.ReplaceAll(reg, ".", "-")))
 		}
 		return nil // Don't error in non-strict mode
 	}
@@ -674,11 +673,11 @@ func validateUnmappableRegistries(config *GeneratorConfig) error {
 				Err:  fmt.Errorf("strict mode enabled: no mapping found for registries: %s", strings.Join(unmappableRegistries, ", ")),
 			}
 		}
-		log.Warnf("No mapping found for registries: %s", strings.Join(unmappableRegistries, ", "))
-		log.Infof("These registries will be redirected using the target registry: %s", config.TargetRegistry)
-		log.Infof("To add mappings, use: irr config --source <registry> --target <path>")
+		log.Warn("No mapping found for registries", "registries", strings.Join(unmappableRegistries, ", "))
+		log.Info("These registries will be redirected using the target registry", "target", config.TargetRegistry)
+		log.Info("To add mappings, use: irr config --source <registry> --target <path>")
 		for _, reg := range unmappableRegistries {
-			log.Infof("  irr config --source %s --target %s/%s", reg, config.TargetRegistry, strings.ReplaceAll(reg, ".", "-"))
+			log.Info("irr config suggestion", "source", reg, "target", fmt.Sprintf("%s/%s", config.TargetRegistry, strings.ReplaceAll(reg, ".", "-")))
 		}
 	}
 	return nil
@@ -719,7 +718,7 @@ func createAndExecuteGenerator(chartSource *ChartSource, config *GeneratorConfig
 		chartSourceDescription = fmt.Sprintf("auto-detected:%s", chartSource.ChartPath)
 	}
 
-	log.Infof("Initializing override generator for %s", chartSourceDescription)
+	log.Info("Initializing override generator", "source", chartSourceDescription)
 
 	// Create a new generator and run it
 	generator, err := createGenerator(chartSource, config)
@@ -728,7 +727,7 @@ func createAndExecuteGenerator(chartSource *ChartSource, config *GeneratorConfig
 	}
 
 	// Execute the generator to create the overrides
-	log.Infof("Generating override values...")
+	log.Info("Generating override values...")
 	overrideFile, err := generator.Generate()
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate overrides: %w", err)
@@ -773,7 +772,7 @@ func createGenerator(_ *ChartSource, config *GeneratorConfig) (GeneratorInterfac
 
 	// Log message if rules are disabled
 	if !config.RulesEnabled {
-		log.Infof("Chart parameter rules system is disabled")
+		log.Info("Chart parameter rules system is disabled")
 	}
 
 	return generator, nil
@@ -789,7 +788,7 @@ func loadChart(cs *ChartSource) (*helmchart.Chart, error) {
 	if cs.SourceType == chartSourceTypeChart {
 		// Check if the file exists
 		if _, err := os.Stat(cs.ChartPath); os.IsNotExist(err) {
-			log.Errorf("Chart not found at path: %s", cs.ChartPath)
+			log.Error("Chart not found at path", "path", cs.ChartPath)
 			return nil, fmt.Errorf("chart not found: %w", err)
 		}
 	}
@@ -798,10 +797,10 @@ func loadChart(cs *ChartSource) (*helmchart.Chart, error) {
 	loader := chart.NewLoader()
 
 	// Load the chart
-	log.Debugf("Loading chart from source: %s", cs.Message)
+	log.Debug("Loading chart from source", "source", cs.Message)
 	c, err := loader.Load(cs.ChartPath)
 	if err != nil {
-		log.Errorf("Failed to load chart: %v", err)
+		log.Error("Failed to load chart", "error", err)
 		return nil, fmt.Errorf("failed to load chart: %w", err)
 	}
 
@@ -810,7 +809,7 @@ func loadChart(cs *ChartSource) (*helmchart.Chart, error) {
 
 // runOverridePluginMode handles the logic when override is run in plugin mode.
 func runOverridePluginMode(cmd *cobra.Command, releaseName, namespace, outputFile string, dryRun bool) error {
-	log.Debugf("Plugin mode detected with release name: %s", releaseName)
+	log.Debug("Plugin mode detected", "releaseName", releaseName)
 	var config GeneratorConfig
 	// Gather required flags directly, skipping chart-path validation
 	targetRegistry, err := getStringFlag(cmd, "target-registry")
@@ -883,7 +882,7 @@ func runOverridePluginMode(cmd *cobra.Command, releaseName, namespace, outputFil
 
 // runOverrideStandaloneMode handles the logic when override is run in standalone mode.
 func runOverrideStandaloneMode(cmd *cobra.Command, outputFile string, dryRun bool) error {
-	log.Debugf("Standalone mode detected (no release name provided)")
+	log.Debug("Standalone mode detected (no release name provided)")
 	// Call original setup which requires chart-path
 	config, err := setupGeneratorConfig(cmd, "") // releaseName is "" here
 	if err != nil {
@@ -892,7 +891,7 @@ func runOverrideStandaloneMode(cmd *cobra.Command, outputFile string, dryRun boo
 
 	// Auto-detect chart path if not provided
 	if config.ChartPath == "" { // Check config.ChartPath which setupGeneratorConfig sets
-		log.Infof("No chart path provided, attempting to detect chart...")
+		log.Info("No chart path provided, attempting to detect chart...")
 		detectedPath, detectErr := detectChartInCurrentDirectory(AppFs, ".")
 		if detectErr != nil {
 			return &exitcodes.ExitCodeError{
@@ -901,7 +900,7 @@ func runOverrideStandaloneMode(cmd *cobra.Command, outputFile string, dryRun boo
 			}
 		}
 		config.ChartPath = detectedPath // Update config
-		log.Infof("Using detected chart path: %s", detectedPath)
+		log.Info("Using detected chart path", "path", detectedPath)
 	}
 
 	// --- Common Config Setup (after mode-specific gathering) ---
@@ -931,12 +930,12 @@ func runOverrideStandaloneMode(cmd *cobra.Command, outputFile string, dryRun boo
 	// Validate the generated overrides
 	validateOverrides, valErr := getBoolFlag(cmd, "validate")
 	if valErr != nil {
-		log.Warnf("Failed to get validate flag, defaulting to true: %v", valErr)
+		log.Warn("Failed to get validate flag, defaulting to true", "error", valErr)
 		validateOverrides = true
 	}
 	noValidate, noValErr := getBoolFlag(cmd, "no-validate")
 	if noValErr != nil {
-		log.Warnf("Failed to get no-validate flag, defaulting to false: %v", noValErr)
+		log.Warn("Failed to get no-validate flag, defaulting to false", "error", noValErr)
 		noValidate = false
 	}
 	if validateOverrides && !noValidate {
@@ -954,7 +953,7 @@ func runOverride(cmd *cobra.Command, args []string) error {
 	// Determine if running in test mode
 	isTestMode, err := getBoolFlag(cmd, "test-mode")
 	if err != nil {
-		log.Warnf("Failed to get test-mode flag, defaulting to false: %v", err)
+		log.Warn("Failed to get test-mode flag, defaulting to false", "error", err)
 		isTestMode = false
 	}
 
@@ -1013,11 +1012,10 @@ func handleHelmPluginOverride(cmd *cobra.Command, releaseName, namespace string,
 	targetRegistry := config.TargetRegistry
 
 	// Add debug logging to troubleshoot nil pointer issue
-	log.Debugf("handleHelmPluginOverride details: releaseName=%q, namespace=%q, targetRegistry=%q",
-		releaseName, namespace, targetRegistry)
-	log.Debugf("handleHelmPluginOverride sourceRegistries: %v", config.SourceRegistries)
-	log.Debugf("handleHelmPluginOverride pathStrategy: %s", pathStrategy)
-	log.Debugf("handleHelmPluginOverride strictMode: %v", config.StrictMode)
+	log.Debug("handleHelmPluginOverride details", "releaseName", releaseName, "namespace", namespace, "targetRegistry", targetRegistry)
+	log.Debug("handleHelmPluginOverride sourceRegistries", "sourceRegistries", config.SourceRegistries)
+	log.Debug("handleHelmPluginOverride pathStrategy", "pathStrategy", pathStrategy)
+	log.Debug("handleHelmPluginOverride strictMode", "strictMode", config.StrictMode)
 
 	// Call the adapter's OverrideRelease method
 	overrideFile, err := adapter.OverrideRelease(ctx, releaseName, namespace, targetRegistry,
@@ -1109,10 +1107,10 @@ func validatePluginOverrides(cmd *cobra.Command, overrideFile, outputFile string
 			}
 			defer func() {
 				if err := tempFile.Close(); err != nil {
-					log.Warnf("Failed to close temporary file: %v", err)
+					log.Warn("Failed to close temporary file", "error", err)
 				}
 				if err := AppFs.Remove(tempFile.Name()); err != nil {
-					log.Warnf("Failed to remove temporary file: %v", err)
+					log.Warn("Failed to remove temporary file", "error", err)
 				}
 			}()
 
@@ -1156,9 +1154,8 @@ func validatePluginOverrides(cmd *cobra.Command, overrideFile, outputFile string
 			}
 		}
 
-		log.Infof("Validation successful! Chart renders correctly with overrides.")
-		log.Infof("To apply these changes, run:\n  helm upgrade %s -n %s -f %s",
-			releaseName, namespace, outputFile)
+		log.Info("Validation successful! Chart renders correctly with overrides.")
+		log.Info("To apply these changes, run", "command", fmt.Sprintf("helm upgrade %s -n %s -f %s", releaseName, namespace, outputFile))
 	}
 
 	return nil
@@ -1176,7 +1173,7 @@ func handleTestModeOverride(cmd *cobra.Command, releaseName string) error {
 
 	// Log what we're doing
 	if releaseNameProvided {
-		log.Infof("Using %s as release name from positional argument", releaseName)
+		log.Info("Using release name from positional argument", "releaseName", releaseName)
 	} else {
 		chartPath, err := cmd.Flags().GetString("chart-path")
 		if err != nil {
@@ -1185,7 +1182,7 @@ func handleTestModeOverride(cmd *cobra.Command, releaseName string) error {
 				Err:  fmt.Errorf("failed to get chart-path flag: %w", err),
 			}
 		}
-		log.Infof("Using chart path: %s", chartPath)
+		log.Info("Using chart path", "path", chartPath)
 	}
 
 	// Get validation flag
@@ -1252,7 +1249,7 @@ func handleTestModeOverride(cmd *cobra.Command, releaseName string) error {
 				Err:  fmt.Errorf("failed to write override file: %w", writeErr),
 			}
 		}
-		log.Infof("Successfully wrote overrides to %s", outputFile)
+		log.Info("Successfully wrote overrides to %s", outputFile)
 	case dryRun:
 		if _, err := fmt.Fprintln(cmd.OutOrStdout(), "--- Dry Run: Generated Overrides ---"); err != nil {
 			return fmt.Errorf("failed to write dry run header: %w", err) // Wrap error
@@ -1303,10 +1300,10 @@ func validateChart(cmd *cobra.Command, yamlBytes []byte, config *GeneratorConfig
 	}
 	defer func() {
 		if err := tempFile.Close(); err != nil {
-			log.Warnf("Failed to close temporary file: %v", err)
+			log.Warn("Failed to close temporary file", "error", err)
 		}
 		if err := AppFs.Remove(tempFile.Name()); err != nil {
-			log.Warnf("Failed to remove temporary file: %v", err)
+			log.Warn("Failed to remove temporary file", "error", err)
 		}
 	}()
 
@@ -1373,7 +1370,7 @@ func validateChart(cmd *cobra.Command, yamlBytes []byte, config *GeneratorConfig
 		}
 	}
 
-	log.Infof(validationResult)
+	log.Info(validationResult)
 	return nil
 }
 
@@ -1382,7 +1379,7 @@ func isStdOutRequested(cmd *cobra.Command) bool {
 	// Check for dry-run flag
 	dryRun, err := cmd.Flags().GetBool("dry-run")
 	if err != nil {
-		log.Warnf("Failed to get dry-run flag: %v", err)
+		log.Warn("Failed to get dry-run flag", "error", err)
 		// Continue checking other conditions
 	}
 	if dryRun {
@@ -1392,7 +1389,7 @@ func isStdOutRequested(cmd *cobra.Command) bool {
 	// Check if output-file is explicitly set to "-"
 	outputFile, err := cmd.Flags().GetString("output-file")
 	if err != nil {
-		log.Warnf("Failed to get output-file flag: %v", err)
+		log.Warn("Failed to get output-file flag", "error", err)
 		return false // Cannot determine if stdout requested if flag access fails
 	}
 	return outputFile == "-"
