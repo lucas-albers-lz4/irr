@@ -6,7 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/lalbers/irr/pkg/fileutil"
 	"github.com/spf13/afero"
+	"github.com/stretchr/testify/require"
 )
 
 // fsTest is a helper struct for filesystem mocking
@@ -25,7 +27,7 @@ func setupMockFS(t *testing.T) *fsTest {
 	testChartsDir := filepath.Join(testDataDir, "charts")
 
 	// Create the test directories
-	if err := fs.MkdirAll(testChartsDir, 0o755); err != nil {
+	if err := fs.MkdirAll(testChartsDir, fileutil.ReadWriteExecuteUserReadExecuteOthers); err != nil {
 		t.Fatalf("Failed to create mock test charts directory: %v", err)
 	}
 
@@ -38,16 +40,14 @@ func setupMockFS(t *testing.T) *fsTest {
 
 	for _, dir := range chartDirs {
 		chartPath := filepath.Join(testChartsDir, dir)
-		if err := fs.MkdirAll(chartPath, 0o755); err != nil {
+		if err := fs.MkdirAll(chartPath, fileutil.ReadWriteExecuteUserReadExecuteOthers); err != nil {
 			t.Fatalf("Failed to create mock chart directory %s: %v", dir, err)
 		}
 
 		// Add a simple Chart.yaml to each chart
 		chartYaml := filepath.Join(chartPath, "Chart.yaml")
-		err := afero.WriteFile(fs, chartYaml, []byte("name: "+filepath.Base(dir)), 0o644)
-		if err != nil {
-			t.Fatalf("Failed to write mock Chart.yaml: %v", err)
-		}
+		err := afero.WriteFile(fs, chartYaml, []byte("name: "+filepath.Base(dir)), fileutil.ReadWriteUserReadOthers)
+		require.NoError(t, err)
 	}
 
 	return &fsTest{fs: fs, t: t}

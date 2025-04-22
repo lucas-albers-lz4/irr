@@ -21,6 +21,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Define a constant for the test chart directory path
+const testChartDir = "/test-chart"
+
 // Mock interfaces
 type mockTimeProvider struct {
 	mock.Mock
@@ -73,13 +76,13 @@ func TestChartPathResolution(t *testing.T) {
 	mockFs := afero.NewMemMapFs()
 	SetFileSystem(mockFs)
 
-	chartDir := "/test-chart"
+	chartDir := testChartDir
 	chartYaml := `
 apiVersion: v2
 name: test-chart
 version: 0.1.0
 `
-	require.NoError(t, mockFs.MkdirAll(chartDir, 0o750))
+	require.NoError(t, mockFs.MkdirAll(chartDir, fileutil.ReadWriteExecuteUserReadGroup))
 	require.NoError(t, afero.WriteFile(mockFs, chartDir+"/Chart.yaml", []byte(chartYaml), fileutil.ReadWriteUserPermission))
 
 	// Initialize Helm environment
@@ -153,7 +156,7 @@ func TestChartPulling(t *testing.T) {
 		Name: "test-repo",
 		URL:  srv.URL(),
 	})
-	err = rf.WriteFile(repoFile, 0o644)
+	err = rf.WriteFile(repoFile, fileutil.ReadWriteUserReadOthers)
 	require.NoError(t, err)
 
 	// Create settings with our test repo file
@@ -183,7 +186,7 @@ func TestReadOnlyOperations(t *testing.T) {
 
 	// Create a test chart
 	chartDir := filepath.Join(tmpDir, "test-chart")
-	err = os.MkdirAll(chartDir, 0o750)
+	err = os.MkdirAll(chartDir, fileutil.ReadWriteExecuteUserReadGroup)
 	require.NoError(t, err)
 
 	// Create Chart.yaml
@@ -255,7 +258,7 @@ func TestPluginDiscovery(t *testing.T) {
 	SetFileSystem(mockFs)
 
 	pluginDir := "/plugins"
-	require.NoError(t, mockFs.MkdirAll(pluginDir, 0o750))
+	require.NoError(t, mockFs.MkdirAll(pluginDir, fileutil.ReadWriteExecuteUserReadGroup))
 
 	// Create test plugin files
 	plugins := map[string]struct {
@@ -300,7 +303,7 @@ func TestComplexChartProcessing(t *testing.T) {
 
 	// Create a complex chart structure
 	chartDir := filepath.Join(tmpDir, "kube-prometheus-stack")
-	err = os.MkdirAll(chartDir, 0o750)
+	err = os.MkdirAll(chartDir, fileutil.ReadWriteExecuteUserReadGroup)
 	require.NoError(t, err)
 
 	// Create Chart.yaml with dependencies
@@ -366,7 +369,7 @@ func TestErrorHandling(t *testing.T) {
 		Name: "invalid-repo",
 		URL:  "http://invalid-url",
 	})
-	err = rf.WriteFile(repoFile, 0o644)
+	err = rf.WriteFile(repoFile, fileutil.ReadWriteUserReadOthers)
 	require.NoError(t, err)
 
 	settings.RepositoryConfig = repoFile
@@ -501,4 +504,82 @@ func TestSDKLoader_Load(t *testing.T) {
 
 func TestSDKLoader_LoadChart(t *testing.T) {
 	t.Skip("Skipping test for SDKLoader.LoadChart - implementation pending or requires more setup")
+}
+
+func TestGetIndexFile(t *testing.T) {
+	// Save original filesystem and restore it after test
+	originalFs := fs
+	defer func() { SetFileSystem(originalFs) }()
+
+	// Setup
+	mockFs := afero.NewMemMapFs()
+	SetFileSystem(mockFs)
+
+	repoFile := filepath.Join(os.TempDir(), "repositories.yaml")
+	rf := repo.NewFile()
+	rf.Add(&repo.Entry{
+		Name: "test-repo",
+		URL:  "https://test-repo.example.com",
+	})
+	err := rf.WriteFile(repoFile, fileutil.ReadWriteUserReadOthers)
+	require.NoError(t, err)
+
+	// Initialize Helm environment
+	settings := cli.New()
+	settings.RepositoryConfig = repoFile
+
+	// Verify settings are configured - this is all we can test without running the actual pull
+	assert.Equal(t, repoFile, settings.RepositoryConfig)
+}
+
+func TestIsChartDir(t *testing.T) {
+	// Save original filesystem and restore it after test
+	originalFs := fs
+	defer func() { SetFileSystem(originalFs) }()
+
+	// Setup
+	mockFs := afero.NewMemMapFs()
+	SetFileSystem(mockFs)
+
+	chartDir := testChartDir
+	err := mockFs.MkdirAll(chartDir, fileutil.ReadWriteExecuteUserReadGroup)
+	require.NoError(t, err)
+
+	// Initialize Helm environment
+	settings := cli.New()
+	actionConfig := new(action.Configuration)
+	require.NoError(t, actionConfig.Init(settings.RESTClientGetter(), settings.Namespace(), "", nil))
+
+	// Test cases
+	tests := []struct {
+		name        string
+		releaseName string
+		chartPath   string
+		wantErr     bool
+	}{
+		{
+			name:        "valid chart path",
+			releaseName: "test-release",
+			chartPath:   chartDir,
+			wantErr:     false,
+		},
+		{
+			name:        "non-existent chart path",
+			releaseName: "test-release",
+			chartPath:   "/non-existent",
+			wantErr:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chartPath, err := ResolveChartPath(actionConfig, tt.releaseName, tt.chartPath)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, tt.chartPath, chartPath)
+		})
+	}
 }

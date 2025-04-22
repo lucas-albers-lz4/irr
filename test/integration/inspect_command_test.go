@@ -107,7 +107,7 @@ func TestInspectParentChart(t *testing.T) {
 	subchartDir := filepath.Join(chartDir, "charts", "child")
 
 	// Create parent chart structure
-	require.NoError(t, os.MkdirAll(chartDir, 0o750))
+	require.NoError(t, os.MkdirAll(chartDir, fileutil.ReadWriteExecuteUserReadGroup))
 	parentChartYaml := `apiVersion: v2
 name: parent-chart
 version: 0.1.0
@@ -124,7 +124,7 @@ dependencies:
 	require.NoError(t, os.WriteFile(filepath.Join(chartDir, "values.yaml"), []byte(parentValuesYaml), fileutil.ReadWriteUserPermission))
 
 	// Create subchart structure
-	require.NoError(t, os.MkdirAll(subchartDir, 0o750))
+	require.NoError(t, os.MkdirAll(subchartDir, fileutil.ReadWriteExecuteUserReadGroup))
 	childChartYaml := `apiVersion: v2
 name: child
 version: 0.1.0`
@@ -137,7 +137,7 @@ version: 0.1.0`
 	require.NoError(t, os.WriteFile(filepath.Join(subchartDir, "values.yaml"), []byte(childValuesYaml), fileutil.ReadWriteUserPermission))
 
 	// Create subchart templates directory and deployment file
-	require.NoError(t, os.MkdirAll(filepath.Join(subchartDir, "templates"), 0o750))
+	require.NoError(t, os.MkdirAll(filepath.Join(subchartDir, "templates"), fileutil.ReadWriteExecuteUserReadGroup))
 	childDeploymentYaml := `apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -151,7 +151,7 @@ spec:
 	require.NoError(t, os.WriteFile(filepath.Join(subchartDir, "templates", "deployment.yaml"), []byte(childDeploymentYaml), fileutil.ReadWriteUserPermission))
 
 	// Create parent templates directory and deployment file
-	require.NoError(t, os.MkdirAll(filepath.Join(chartDir, "templates"), 0o750))
+	require.NoError(t, os.MkdirAll(filepath.Join(chartDir, "templates"), fileutil.ReadWriteExecuteUserReadGroup))
 	parentDeploymentYaml := `apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -235,7 +235,7 @@ func TestImagePatternProcessing(t *testing.T) {
 	templatesDir := filepath.Join(chartDir, "templates")
 
 	// Create templates directory
-	err := os.MkdirAll(templatesDir, 0o750)
+	err := os.MkdirAll(templatesDir, fileutil.ReadWriteExecuteUserReadGroup)
 	require.NoError(t, err)
 
 	// Create Chart.yaml
@@ -301,7 +301,7 @@ func TestAdvancedImagePatterns(t *testing.T) {
 	templatesDir := filepath.Join(chartDir, "templates")
 
 	// Create templates directory
-	err := os.MkdirAll(templatesDir, 0o750)
+	err := os.MkdirAll(templatesDir, fileutil.ReadWriteExecuteUserReadGroup)
 	require.NoError(t, err)
 
 	// Create Chart.yaml

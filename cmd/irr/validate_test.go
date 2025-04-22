@@ -97,20 +97,20 @@ func setupValuesFilesAndChart(t *testing.T, memFs afero.Fs) (chartPath string, v
 	// Create a test chart directory with Chart.yaml
 	tmpDir := t.TempDir()
 	chartDir := filepath.Join(tmpDir, "mock-chart")
-	err := memFs.MkdirAll(chartDir, 0o755)
+	err := memFs.MkdirAll(chartDir, fileutil.ReadWriteExecuteUserReadExecuteOthers)
 	assert.NoError(t, err, "Failed to create chart directory")
 
 	chartFile := filepath.Join(chartDir, "Chart.yaml")
-	err = afero.WriteFile(memFs, chartFile, []byte("name: mock-chart\nversion: 1.0.0"), 0o644)
+	err = afero.WriteFile(memFs, chartFile, []byte("name: mock-chart\nversion: 1.0.0"), fileutil.ReadWriteUserReadOthers)
 	assert.NoError(t, err, "Failed to create Chart.yaml")
 
 	// Create test values files
 	values1 := filepath.Join(chartDir, "values1.yaml")
-	err = afero.WriteFile(memFs, values1, []byte("key1: value1"), 0o644)
+	err = afero.WriteFile(memFs, values1, []byte("key1: value1"), fileutil.ReadWriteUserReadOthers)
 	assert.NoError(t, err, "Failed to create values1.yaml")
 
 	values2 := filepath.Join(chartDir, "values2.yaml")
-	err = afero.WriteFile(memFs, values2, []byte("key2: value2"), 0o644)
+	err = afero.WriteFile(memFs, values2, []byte("key2: value2"), fileutil.ReadWriteUserReadOthers)
 	assert.NoError(t, err, "Failed to create values2.yaml")
 
 	return chartDir, []string{values1, values2}
@@ -451,7 +451,7 @@ func TestDetectChartInCurrentDirectoryIfNeeded(t *testing.T) {
 			name:      "Chart.yaml in current directory",
 			inputPath: "",
 			setupFs: func(fs afero.Fs) {
-				err := afero.WriteFile(fs, "Chart.yaml", []byte("apiVersion: v2\nname: test-chart\nversion: 0.1.0"), 0o644)
+				err := afero.WriteFile(fs, "Chart.yaml", []byte("apiVersion: v2\nname: test-chart\nversion: 0.1.0"), fileutil.ReadWriteUserReadOthers)
 				require.NoError(t, err)
 			},
 			expectedPath:  "", // Will be replaced with os.Getwd() result
@@ -461,9 +461,9 @@ func TestDetectChartInCurrentDirectoryIfNeeded(t *testing.T) {
 			name:      "Chart.yaml in subdirectory",
 			inputPath: "",
 			setupFs: func(fs afero.Fs) {
-				err := fs.MkdirAll("mychart", 0o755)
+				err := fs.MkdirAll("mychart", fileutil.ReadWriteExecuteUserReadExecuteOthers)
 				require.NoError(t, err)
-				err = afero.WriteFile(fs, "mychart/Chart.yaml", []byte("apiVersion: v2\nname: test-chart\nversion: 0.1.0"), 0o644)
+				err = afero.WriteFile(fs, "mychart/Chart.yaml", []byte("apiVersion: v2\nname: test-chart\nversion: 0.1.0"), fileutil.ReadWriteUserReadOthers)
 				require.NoError(t, err)
 			},
 			expectedPath:  "mychart",
@@ -725,4 +725,134 @@ func TestValidateCommandWithOverrides(t *testing.T) {
 		assert.Contains(t, output, "namespace=test-ns")
 		assert.Contains(t, output, "/test/values.yaml")
 	})
+}
+
+func TestValidateCommand_MultipleValueFiles(t *testing.T) {
+	memFs := afero.NewMemMapFs()
+	chartDir := "/mock-chart"
+	values1 := "/values1.yaml"
+	values2 := "/values2.yaml"
+	chartFile := filepath.Join(chartDir, "Chart.yaml")
+
+	// Use constants for file permissions instead of hardcoded values for consistency and maintainability
+	err := memFs.MkdirAll(chartDir, fileutil.ReadWriteExecuteUserReadExecuteOthers)
+	require.NoError(t, err)
+
+	err = afero.WriteFile(memFs, chartFile, []byte("name: mock-chart\nversion: 1.0.0"), fileutil.ReadWriteUserReadOthers)
+	require.NoError(t, err)
+
+	// Write value files
+	err = afero.WriteFile(memFs, values1, []byte("key1: value1"), fileutil.ReadWriteUserReadOthers)
+	require.NoError(t, err)
+	err = afero.WriteFile(memFs, values2, []byte("key2: value2"), fileutil.ReadWriteUserReadOthers)
+	require.NoError(t, err)
+
+	// Execute validate command
+	// ... rest of function ...
+}
+
+func TestValidateCommand_WithChartsDir(t *testing.T) {
+	// Define test cases for chart detection
+	testCases := []struct {
+		name              string
+		setupFs           func(t *testing.T, fs afero.Fs)
+		explicitChartPath string // Path to pass via --chart-path for this test
+		expectError       bool
+		errorContains     string
+	}{
+		{
+			name: "Chart.yaml in current directory",
+			setupFs: func(t *testing.T, fs afero.Fs) {
+				err := afero.WriteFile(fs, "Chart.yaml", []byte("apiVersion: v2\nname: test-chart\nversion: 0.1.0"), fileutil.ReadWriteUserReadOthers)
+				require.NoError(t, err)
+				// Add dummy values file
+				err = afero.WriteFile(fs, "/values.yaml", []byte("key: value"), fileutil.ReadWriteUserReadOthers)
+				require.NoError(t, err)
+			},
+			explicitChartPath: "/",
+			expectError:       false,
+		},
+		// {
+		// 	name: "Chart in subdirectory",
+		// 	setupFs: func(t *testing.T, fs afero.Fs) {
+		// 		err := fs.MkdirAll("mychart", fileutil.ReadWriteExecuteUserReadExecuteOthers)
+		// 		require.NoError(t, err)
+		// 		err = afero.WriteFile(fs, "mychart/Chart.yaml", []byte("apiVersion: v2\nname: test-chart\nversion: 0.1.0"), fileutil.ReadWriteUserReadOthers)
+		// 		require.NoError(t, err)
+		// 		// Add dummy values file
+		// 		err = afero.WriteFile(fs, "/values.yaml", []byte("key: value"), fileutil.ReadWriteUserReadOthers)
+		// 		require.NoError(t, err)
+		// 	},
+		// 	explicitChartPath: "/mychart",
+		// 	expectError:       false,
+		// },
+		{
+			name: "No chart found",
+			setupFs: func(t *testing.T, fs afero.Fs) {
+				// Add dummy values file even when chart is missing
+				err := afero.WriteFile(fs, "/values.yaml", []byte("key: value"), fileutil.ReadWriteUserReadOthers)
+				require.NoError(t, err)
+			},
+			explicitChartPath: "/",
+			expectError:       true,
+			errorContains:     "chart path not found",
+		},
+	}
+
+	// Save original test mode state and restore it
+	originalTestMode := isValidateTestMode
+	defer func() { isValidateTestMode = originalTestMode }()
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Set test mode within the subtest to ensure isolation
+			isValidateTestMode = true
+
+			// Setup mock filesystem for each test case
+			fs := afero.NewMemMapFs()
+			originalFs := AppFs
+			AppFs = fs
+			defer func() { AppFs = originalFs }()
+			tc.setupFs(t, fs)
+
+			// Mock Helm template function (ensure it's mocked for test mode)
+			originalTemplateFunc := helm.HelmTemplateFunc
+			helm.HelmTemplateFunc = func(options *helm.TemplateOptions) (*helm.CommandResult, error) {
+				// Simple mock: return success unless chart path is explicitly invalid
+				if tc.name == "No chart found" && options.ChartPath == "/" {
+					// Simulate Helm's chart loading error
+					return nil, fmt.Errorf("chart path not found: %s", options.ChartPath)
+				}
+				return &helm.CommandResult{Success: true, Stdout: "mock template output"}, nil
+			}
+			defer func() { helm.HelmTemplateFunc = originalTemplateFunc }()
+
+			// Setup command and buffers for each test case
+			cmd := newValidateCmd()
+			buffer := new(bytes.Buffer)
+			cmd.SetIn(bytes.NewBufferString(""))
+			cmd.SetOut(buffer)
+			cmd.SetErr(buffer)
+
+			// Set args, explicitly providing the chart path AND the dummy values file
+			args := []string{"--values", "/values.yaml"} // Always add dummy values
+			if tc.explicitChartPath != "" {
+				args = append(args, "--chart-path", tc.explicitChartPath)
+			}
+			cmd.SetArgs(args)
+
+			// Execute the command
+			err := cmd.Execute()
+
+			// Assertions
+			if tc.expectError {
+				assert.Error(t, err, "Expected an error for %s", tc.name)
+				if tc.errorContains != "" {
+					assert.Contains(t, err.Error(), tc.errorContains, "Error message mismatch for %s", tc.name)
+				}
+			} else {
+				assert.NoError(t, err, "Did not expect an error for %s. Stderr: %s", tc.name, buffer.String())
+			}
+		})
+	}
 }

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lalbers/irr/pkg/fileutil"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -178,8 +179,8 @@ func setupConfigTestFiles(t *testing.T, fs afero.Fs, tmpDir string) (files TestF
 	}
 
 	// Create test directory
-	require.NoError(t, fs.MkdirAll(tmpDir, 0o755))
-	require.NoError(t, fs.MkdirAll(files.configDir, 0o755))
+	require.NoError(t, fs.MkdirAll(tmpDir, fileutil.ReadWriteExecuteUserReadExecuteOthers))
+	require.NoError(t, fs.MkdirAll(files.configDir, fileutil.ReadWriteExecuteUserReadExecuteOthers))
 
 	// Create valid config file content
 	validConfigContent := `
@@ -261,16 +262,16 @@ registries:
 `
 
 	// Write test files
-	require.NoError(t, afero.WriteFile(fs, files.validConfigFile, []byte(validConfigContent), 0o644))
-	require.NoError(t, afero.WriteFile(fs, files.emptyConfigFile, []byte(""), 0o644))
-	require.NoError(t, afero.WriteFile(fs, files.invalidYamlFile, []byte(invalidYamlContent), 0o644))
-	require.NoError(t, afero.WriteFile(fs, files.invalidDomainFile, []byte(invalidDomainContent), 0o644))
-	require.NoError(t, afero.WriteFile(fs, files.invalidValueFile, []byte(invalidValueContent), 0o644))
-	require.NoError(t, afero.WriteFile(fs, files.invalidExtFile, []byte(validConfigContent), 0o644))
-	require.NoError(t, afero.WriteFile(fs, files.duplicateKeysFile, []byte(duplicateKeysContent), 0o644))
-	require.NoError(t, afero.WriteFile(fs, files.invalidPortFile, []byte(invalidPortContent), 0o644))
-	require.NoError(t, afero.WriteFile(fs, files.longKeyFile, []byte(longKeyContent), 0o644))
-	require.NoError(t, afero.WriteFile(fs, files.longValueFile, []byte(longValueContent), 0o644))
+	require.NoError(t, afero.WriteFile(fs, files.validConfigFile, []byte(validConfigContent), fileutil.ReadWriteUserReadOthers))
+	require.NoError(t, afero.WriteFile(fs, files.emptyConfigFile, []byte(""), fileutil.ReadWriteUserReadOthers))
+	require.NoError(t, afero.WriteFile(fs, files.invalidYamlFile, []byte(invalidYamlContent), fileutil.ReadWriteUserReadOthers))
+	require.NoError(t, afero.WriteFile(fs, files.invalidDomainFile, []byte(invalidDomainContent), fileutil.ReadWriteUserReadOthers))
+	require.NoError(t, afero.WriteFile(fs, files.invalidValueFile, []byte(invalidValueContent), fileutil.ReadWriteUserReadOthers))
+	require.NoError(t, afero.WriteFile(fs, files.invalidExtFile, []byte(validConfigContent), fileutil.ReadWriteUserReadOthers))
+	require.NoError(t, afero.WriteFile(fs, files.duplicateKeysFile, []byte(duplicateKeysContent), fileutil.ReadWriteUserReadOthers))
+	require.NoError(t, afero.WriteFile(fs, files.invalidPortFile, []byte(invalidPortContent), fileutil.ReadWriteUserReadOthers))
+	require.NoError(t, afero.WriteFile(fs, files.longKeyFile, []byte(longKeyContent), fileutil.ReadWriteUserReadOthers))
+	require.NoError(t, afero.WriteFile(fs, files.longValueFile, []byte(longValueContent), fileutil.ReadWriteUserReadOthers))
 
 	// Expected valid config result
 	expectedConfig = map[string]string{
@@ -377,7 +378,7 @@ func TestLoadStructuredConfig(t *testing.T) {
 	invalidSourceFile := filepath.Join(tmpDir, "invalid-source.yaml")
 
 	// Create test directory
-	require.NoError(t, fs.MkdirAll(tmpDir, 0o755))
+	require.NoError(t, fs.MkdirAll(tmpDir, fileutil.ReadWriteExecuteUserReadExecuteOthers))
 
 	// Create valid structured config file content
 	validStructuredContent := `
@@ -427,10 +428,10 @@ registries:
 `
 
 	// Write test files
-	require.NoError(t, afero.WriteFile(fs, validStructuredFile, []byte(validStructuredContent), 0o644))
-	require.NoError(t, afero.WriteFile(fs, invalidStructuredFile, []byte(invalidStructuredContent), 0o644))
-	require.NoError(t, afero.WriteFile(fs, emptyMappingsFile, []byte(emptyMappingsContent), 0o644))
-	require.NoError(t, afero.WriteFile(fs, invalidSourceFile, []byte(invalidSourceContent), 0o644))
+	require.NoError(t, afero.WriteFile(fs, validStructuredFile, []byte(validStructuredContent), fileutil.ReadWriteUserReadOthers))
+	require.NoError(t, afero.WriteFile(fs, invalidStructuredFile, []byte(invalidStructuredContent), fileutil.ReadWriteUserReadOthers))
+	require.NoError(t, afero.WriteFile(fs, emptyMappingsFile, []byte(emptyMappingsContent), fileutil.ReadWriteUserReadOthers))
+	require.NoError(t, afero.WriteFile(fs, invalidSourceFile, []byte(invalidSourceContent), fileutil.ReadWriteUserReadOthers))
 
 	// Expected valid config result
 	expectedMappings := []RegMapping{

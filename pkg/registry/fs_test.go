@@ -48,8 +48,8 @@ func TestLoadMappingsWithFS(t *testing.T) {
 `
 
 	// Set up the mock filesystem
-	require.NoError(t, memFs.MkdirAll(tmpDir, 0o755))
-	require.NoError(t, afero.WriteFile(memFs, mappingsFile, []byte(content), 0o644))
+	require.NoError(t, memFs.MkdirAll(tmpDir, fileutil.ReadWriteExecuteUserReadExecuteOthers))
+	require.NoError(t, afero.WriteFile(memFs, mappingsFile, []byte(content), fileutil.ReadWriteUserReadOthers))
 
 	// Now our GetAferoFS works correctly with the mock filesystem
 	// So LoadMappingsWithFS should succeed
@@ -88,8 +88,8 @@ func TestLoadConfigWithFS(t *testing.T) {
 `
 
 	// Set up the mock filesystem
-	require.NoError(t, memFs.MkdirAll(tmpDir, 0o755))
-	require.NoError(t, afero.WriteFile(memFs, configFile, []byte(content), 0o644))
+	require.NoError(t, memFs.MkdirAll(tmpDir, fileutil.ReadWriteExecuteUserReadExecuteOthers))
+	require.NoError(t, afero.WriteFile(memFs, configFile, []byte(content), fileutil.ReadWriteUserReadOthers))
 
 	// Now our GetAferoFS works correctly with the mock filesystem
 	// So LoadStructuredConfigWithFS should succeed
@@ -123,6 +123,6 @@ func TestGetAferoFS(t *testing.T) {
 	assert.NotNil(t, fs, "Should return a non-nil filesystem with fileutil.FS input")
 
 	// Basic functionality test - memory filesystem should work fine for this
-	err := fs.MkdirAll("/test", 0o755)
+	err := fs.MkdirAll("/test", fileutil.ReadWriteExecuteUserReadExecuteOthers)
 	assert.NoError(t, err, "Should be able to create directory")
 }

@@ -10,6 +10,7 @@ import (
 	"helm.sh/helm/v3/pkg/repo"
 	"helm.sh/helm/v3/pkg/repo/repotest"
 
+	"github.com/lalbers/irr/pkg/fileutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -32,7 +33,7 @@ func setupTestRepo(t *testing.T) (tmpDir string, srv *repotest.Server, settings 
 		Name: "test-repo",
 		URL:  srv.URL(),
 	})
-	err = rf.WriteFile(repoFile, 0o644)
+	err = rf.WriteFile(repoFile, fileutil.ReadWriteUserReadOthers)
 	require.NoError(t, err)
 
 	// Create settings with our test repo file

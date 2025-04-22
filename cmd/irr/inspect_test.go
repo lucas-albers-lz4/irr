@@ -9,6 +9,7 @@ import (
 	"github.com/lalbers/irr/internal/helm"
 	"github.com/lalbers/irr/pkg/analyzer"
 	"github.com/lalbers/irr/pkg/exitcodes"
+	"github.com/lalbers/irr/pkg/fileutil"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -31,7 +32,7 @@ func TestDetectChartInCurrentDirectory(t *testing.T) {
 		{
 			name: "Chart.yaml in current directory",
 			setupFs: func(fs afero.Fs) {
-				err := afero.WriteFile(fs, "Chart.yaml", []byte("apiVersion: v2\nname: test-chart\nversion: 0.1.0"), 0o644)
+				err := afero.WriteFile(fs, "Chart.yaml", []byte("apiVersion: v2\nname: test-chart\nversion: 0.1.0"), fileutil.ReadWriteUserReadOthers)
 				require.NoError(t, err)
 			},
 			expectedPath:  ".",
@@ -41,9 +42,9 @@ func TestDetectChartInCurrentDirectory(t *testing.T) {
 		{
 			name: "Chart.yaml in subdirectory",
 			setupFs: func(fs afero.Fs) {
-				err := fs.MkdirAll("mychart", 0o755)
+				err := fs.MkdirAll("mychart", fileutil.ReadWriteExecuteUserReadExecuteOthers)
 				require.NoError(t, err)
-				err = afero.WriteFile(fs, "mychart/Chart.yaml", []byte("apiVersion: v2\nname: test-chart\nversion: 0.1.0"), 0o644)
+				err = afero.WriteFile(fs, "mychart/Chart.yaml", []byte("apiVersion: v2\nname: test-chart\nversion: 0.1.0"), fileutil.ReadWriteUserReadOthers)
 				require.NoError(t, err)
 			},
 			expectedPath:  "mychart",
@@ -197,7 +198,7 @@ func TestWriteOutput(t *testing.T) {
 			tmpDir := t.TempDir()
 
 			// Ensure the temporary directory exists in the mock filesystem
-			err := mockFs.MkdirAll(tmpDir, 0o755)
+			err := mockFs.MkdirAll(tmpDir, fileutil.ReadWriteExecuteUserReadExecuteOthers)
 			require.NoError(t, err)
 
 			// Create dummy command for stdout capture
@@ -259,13 +260,13 @@ func runYamlOutputTest(t *testing.T, chartPath, chartName, chartVersion, imageVa
 	mockFs := afero.NewMemMapFs()
 	AppFs = mockFs
 
-	if err := mockFs.MkdirAll(filepath.Join(chartPath, "templates"), 0o755); err != nil {
+	if err := mockFs.MkdirAll(filepath.Join(chartPath, "templates"), fileutil.ReadWriteExecuteUserReadExecuteOthers); err != nil {
 		t.Fatalf("Failed to create mock templates dir: %v", err)
 	}
-	if err := afero.WriteFile(mockFs, filepath.Join(chartPath, "Chart.yaml"), []byte(fmt.Sprintf("apiVersion: v2\nname: %s\nversion: %s", chartName, chartVersion)), 0o644); err != nil {
+	if err := afero.WriteFile(mockFs, filepath.Join(chartPath, "Chart.yaml"), []byte(fmt.Sprintf("apiVersion: v2\nname: %s\nversion: %s", chartName, chartVersion)), fileutil.ReadWriteUserReadOthers); err != nil {
 		t.Fatalf("Failed to write mock Chart.yaml: %v", err)
 	}
-	if err := afero.WriteFile(mockFs, filepath.Join(chartPath, "values.yaml"), []byte(fmt.Sprintf("image: %s", imageValue)), 0o644); err != nil {
+	if err := afero.WriteFile(mockFs, filepath.Join(chartPath, "values.yaml"), []byte(fmt.Sprintf("image: %s", imageValue)), fileutil.ReadWriteUserReadOthers); err != nil {
 		t.Fatalf("Failed to write mock values.yaml: %v", err)
 	}
 
@@ -335,16 +336,16 @@ func TestRunInspect(t *testing.T) {
 		// Create a dummy chart
 		chartPath := "test/chart-json"
 		outputFilePath := "output/result.json"
-		if err := mockFs.MkdirAll(filepath.Dir(outputFilePath), 0o755); err != nil { // Ensure output dir exists
+		if err := mockFs.MkdirAll(filepath.Dir(outputFilePath), fileutil.ReadWriteExecuteUserReadExecuteOthers); err != nil { // Ensure output dir exists
 			t.Fatalf("Failed to create mock output dir: %v", err)
 		}
-		if err := mockFs.MkdirAll(filepath.Join(chartPath, "templates"), 0o755); err != nil {
+		if err := mockFs.MkdirAll(filepath.Join(chartPath, "templates"), fileutil.ReadWriteExecuteUserReadExecuteOthers); err != nil { // Replaced 0o755
 			t.Fatalf("Failed to create mock templates dir: %v", err)
 		}
-		if err := afero.WriteFile(mockFs, filepath.Join(chartPath, "Chart.yaml"), []byte("apiVersion: v2\nname: jsonchart\nversion: 0.0.1"), 0o644); err != nil {
+		if err := afero.WriteFile(mockFs, filepath.Join(chartPath, "Chart.yaml"), []byte("apiVersion: v2\nname: jsonchart\nversion: 0.0.1"), fileutil.ReadWriteUserReadOthers); err != nil { // Replaced 0o644
 			t.Fatalf("Failed to write mock Chart.yaml: %v", err)
 		}
-		if err := afero.WriteFile(mockFs, filepath.Join(chartPath, "values.yaml"), []byte("app:\n  image: redis:alpine"), 0o644); err != nil {
+		if err := afero.WriteFile(mockFs, filepath.Join(chartPath, "values.yaml"), []byte("app:\n  image: redis:alpine"), fileutil.ReadWriteUserReadOthers); err != nil { // Replaced 0o644
 			t.Fatalf("Failed to write mock values.yaml: %v", err)
 		}
 
@@ -497,13 +498,13 @@ func TestRunInspect(t *testing.T) {
 		AppFs = mockFs
 
 		chartPath := "test/chart-invalidfmt"
-		if err := mockFs.MkdirAll(filepath.Join(chartPath, "templates"), 0o755); err != nil {
+		if err := mockFs.MkdirAll(filepath.Join(chartPath, "templates"), fileutil.ReadWriteExecuteUserReadExecuteOthers); err != nil {
 			t.Fatalf("Failed to create mock templates dir: %v", err)
 		}
-		if err := afero.WriteFile(mockFs, filepath.Join(chartPath, "Chart.yaml"), []byte("apiVersion: v2\nname: badfmt\nversion: 3.0.0"), 0o644); err != nil {
+		if err := afero.WriteFile(mockFs, filepath.Join(chartPath, "Chart.yaml"), []byte("apiVersion: v2\nname: badfmt\nversion: 3.0.0"), fileutil.ReadWriteUserReadOthers); err != nil {
 			t.Fatalf("Failed to write mock Chart.yaml: %v", err)
 		}
-		if err := afero.WriteFile(mockFs, filepath.Join(chartPath, "values.yaml"), []byte("image: alpine:latest"), 0o644); err != nil {
+		if err := afero.WriteFile(mockFs, filepath.Join(chartPath, "values.yaml"), []byte("image: alpine:latest"), fileutil.ReadWriteUserReadOthers); err != nil {
 			t.Fatalf("Failed to write mock values.yaml: %v", err)
 		}
 

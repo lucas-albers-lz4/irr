@@ -20,7 +20,7 @@ func createTempChartDir(t *testing.T, name, chartYaml, valuesYaml string) string
 	tempDir := t.TempDir()
 
 	chartPath := filepath.Join(tempDir, name)
-	err := os.MkdirAll(filepath.Join(chartPath, "templates"), 0o750)
+	err := os.MkdirAll(filepath.Join(chartPath, "templates"), fileutil.ReadWriteExecuteUserReadGroup)
 	require.NoError(t, err, "Failed to create chart dir structure")
 
 	err = os.WriteFile(filepath.Join(chartPath, "Chart.yaml"), []byte(chartYaml), FilePermissions)
@@ -43,7 +43,7 @@ func createMockChartDir(t *testing.T, fs afero.Fs, name, chartYaml, valuesYaml s
 	// Use a non-absolute path for the mock filesystem
 	chartPath := filepath.Join("temp", name)
 
-	err := fs.MkdirAll(filepath.Join(chartPath, "templates"), 0o750)
+	err := fs.MkdirAll(filepath.Join(chartPath, "templates"), fileutil.ReadWriteExecuteUserReadGroup)
 	require.NoError(t, err, "Failed to create chart dir structure in mock filesystem")
 
 	err = afero.WriteFile(fs, filepath.Join(chartPath, "Chart.yaml"), []byte(chartYaml), FilePermissions)
@@ -186,7 +186,7 @@ image:
 
 func setupTestChart(t *testing.T, chartPath string) {
 	// Create templates directory
-	err := os.MkdirAll(filepath.Join(chartPath, "templates"), 0o750)
+	err := os.MkdirAll(filepath.Join(chartPath, "templates"), fileutil.ReadWriteExecuteUserReadGroup)
 	require.NoErrorf(t, err, "failed to create templates directory in %s", chartPath)
 
 	// Create Chart.yaml

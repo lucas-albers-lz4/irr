@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lalbers/irr/pkg/fileutil"
 	"github.com/lalbers/irr/pkg/testutil"
 
 	"github.com/lalbers/irr/pkg/exitcodes"
@@ -634,7 +635,7 @@ func TestMinimalGitImageOverride(t *testing.T) {
 
 func setupMinimalTestChart(t *testing.T, h *TestHarness) {
 	chartDir := filepath.Join(h.tempDir, "minimal-chart")
-	require.NoError(t, os.MkdirAll(chartDir, 0o750))
+	require.NoError(t, os.MkdirAll(chartDir, fileutil.ReadWriteExecuteUserReadGroup))
 
 	chartYaml := `apiVersion: v2
 name: minimal-chart
@@ -646,7 +647,7 @@ version: 0.1.0`
   tag: "1.23"`
 	require.NoError(t, os.WriteFile(filepath.Join(chartDir, "values.yaml"), []byte(valuesYaml), defaultFilePerm))
 
-	require.NoError(t, os.MkdirAll(filepath.Join(chartDir, "templates"), 0o750))
+	require.NoError(t, os.MkdirAll(filepath.Join(chartDir, "templates"), fileutil.ReadWriteExecuteUserReadGroup))
 
 	deploymentYaml := `apiVersion: apps/v1
 kind: Deployment

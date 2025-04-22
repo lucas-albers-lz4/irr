@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/lalbers/irr/internal/helm"
+	"github.com/lalbers/irr/pkg/fileutil"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -130,30 +131,6 @@ func TestOverrideDryRun(_ *testing.T) {
 	// ... existing test code ...
 }
 
-// createMockChartForTest creates a minimal chart structure in the mock filesystem.
-func createMockChartForTest(t *testing.T, fs afero.Fs, chartDir, version string) {
-	t.Helper()
-
-	templatesDir := filepath.Join(chartDir, "templates")
-	err := fs.MkdirAll(templatesDir, 0o750)
-	require.NoError(t, err, "Failed to create mock templates dir")
-
-	chartYamlPath := filepath.Join(chartDir, "Chart.yaml")
-	chartYamlContent := fmt.Sprintf("apiVersion: v2\nname: %s\nversion: %s", filepath.Base(chartDir), version)
-	err = afero.WriteFile(fs, chartYamlPath, []byte(chartYamlContent), 0o644)
-	require.NoError(t, err, "Failed to write mock Chart.yaml")
-
-	valuesYamlPath := filepath.Join(chartDir, "values.yaml")
-	valuesYamlContent := "replicaCount: 1\nimage:\n  repository: nginx\n  tag: latest"
-	err = afero.WriteFile(fs, valuesYamlPath, []byte(valuesYamlContent), 0o644)
-	require.NoError(t, err, "Failed to write mock values.yaml")
-
-	// Add a dummy template file
-	dummyTemplatePath := filepath.Join(templatesDir, "dummy.yaml")
-	err = afero.WriteFile(fs, dummyTemplatePath, []byte("kind: Deployment"), 0o644)
-	require.NoError(t, err, "Failed to write mock dummy template")
-}
-
 // TestOverrideRelease verifies the override command when operating on a release
 // TODO: This test currently needs mocking for Helm interactions
 func TestOverrideRelease(t *testing.T) {
@@ -192,7 +169,7 @@ func TestOverrideRelease(t *testing.T) {
 	}
 
 	chartDir := "test/chart"
-	createMockChartForTest(t, fs, chartDir, "1.0.0") // Use local helper function
+	setupMockChart(t, fs, chartDir, "1.0.0") // UPDATED: Use setupMockChart instead of createMockChartForTest
 
 	// Setup command arguments for release mode
 	args := []string{
@@ -249,4 +226,67 @@ func TestHandleTestModeOverride_DryRun(_ *testing.T) {
 // TestHandleTestModeOverride_NoDryRun tests the test mode override functionality without dry run
 func TestHandleTestModeOverride_NoDryRun(_ *testing.T) {
 	// ... existing test code ...
+}
+
+func TestOverrideCommand_WriteFileError(t *testing.T) {
+	// Setup mock filesystem
+	fs := afero.NewMemMapFs()
+	originalFs := AppFs
+	AppFs = fs
+	defer func() { AppFs = originalFs }()
+
+	// Define chart details (similar to setupMockChart)
+	chartDir := "/test-chart-write-error"
+	templatesDir := filepath.Join(chartDir, "templates")
+	version := "1.0.0"
+	chartYamlPath := filepath.Join(chartDir, "Chart.yaml")
+	chartYamlContent := fmt.Sprintf("apiVersion: v2\nname: %s\nversion: %s", filepath.Base(chartDir), version)
+	valuesYamlPath := filepath.Join(chartDir, "values.yaml")
+	valuesYamlContent := "replicaCount: 1\nimage:\n  repository: nginx\n  tag: latest"
+	dummyTemplatePath := filepath.Join(templatesDir, "dummy.yaml")
+
+	// Use constants for file permissions instead of hardcoded values for consistency and maintainability
+	err := fs.MkdirAll(templatesDir, fileutil.ReadWriteExecuteUserReadGroup) // Use constant for 0o750
+	require.NoError(t, err)
+
+	err = afero.WriteFile(fs, chartYamlPath, []byte(chartYamlContent), fileutil.ReadWriteUserReadOthers) // Use constant for 0o644
+	require.NoError(t, err)
+
+	err = afero.WriteFile(fs, valuesYamlPath, []byte(valuesYamlContent), fileutil.ReadWriteUserReadOthers) // Use constant for 0o644
+	require.NoError(t, err)
+
+	err = afero.WriteFile(fs, dummyTemplatePath, []byte("kind: Deployment"), fileutil.ReadWriteUserReadOthers) // Use constant for 0o644
+	require.NoError(t, err)
+
+	// Simulate WriteFile error - This part needs to be implemented based on what error is being tested.
+	// For now, the setup is corrected.
+	t.Skip("Test implementation for simulating WriteFile error is needed")
+	// ... existing code to trigger the write error and assert ...
+}
+
+// setupMockChart creates a basic chart structure in the provided afero filesystem.
+func setupMockChart(t *testing.T, fs afero.Fs, chartDir, version string) {
+	t.Helper()
+
+	const defaultValuesContent = "replicaCount: 1\nimage:\n  repository: nginx\n  tag: latest" // Defined constant
+
+	templatesDir := filepath.Join(chartDir, "templates")
+	// Use constants for file permissions instead of hardcoded values for consistency and maintainability
+	err := fs.MkdirAll(templatesDir, fileutil.ReadWriteExecuteUserReadGroup) // Replaced 0o750
+	require.NoError(t, err, "Failed to create mock templates dir")
+
+	chartYamlPath := filepath.Join(chartDir, "Chart.yaml")
+	chartYamlContent := fmt.Sprintf("apiVersion: v2\nname: %s\nversion: %s", filepath.Base(chartDir), version)
+	err = afero.WriteFile(fs, chartYamlPath, []byte(chartYamlContent), fileutil.ReadWriteUserReadOthers) // Replaced 0o644
+	require.NoError(t, err, "Failed to write mock Chart.yaml")
+
+	valuesYamlPath := filepath.Join(chartDir, "values.yaml")
+	// Use the defined constant
+	err = afero.WriteFile(fs, valuesYamlPath, []byte(defaultValuesContent), fileutil.ReadWriteUserReadOthers) // Replaced 0o644
+	require.NoError(t, err, "Failed to write mock values.yaml")
+
+	// Add a dummy template file
+	dummyTemplatePath := filepath.Join(templatesDir, "dummy.yaml")
+	err = afero.WriteFile(fs, dummyTemplatePath, []byte("kind: Deployment"), fileutil.ReadWriteUserReadOthers) // Replaced 0o644
+	require.NoError(t, err, "Failed to write mock dummy template")
 }

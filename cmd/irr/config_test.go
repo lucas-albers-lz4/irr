@@ -3,6 +3,7 @@ package main
 import (
 	"testing"
 
+	"github.com/lalbers/irr/pkg/fileutil"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -32,7 +33,7 @@ func TestConfigCommand_List(t *testing.T) {
 - source: quay.io
   target: registry.local/quay
 `)
-	err := afero.WriteFile(memFs, testMappingsFile, testData, 0o644)
+	err := afero.WriteFile(memFs, testMappingsFile, testData, fileutil.ReadWriteUserReadOthers)
 	require.NoError(t, err)
 
 	// Verify the file exists in the mock filesystem
@@ -100,7 +101,7 @@ func TestConfigCommand_UpdateMapping(t *testing.T) {
 - source: quay.io
   target: registry.old/quay
 `)
-	err := afero.WriteFile(memFs, updateMappingsFile, testData, 0o644)
+	err := afero.WriteFile(memFs, updateMappingsFile, testData, fileutil.ReadWriteUserReadOthers)
 	require.NoError(t, err)
 
 	// Set the global variables used by the command
@@ -156,7 +157,7 @@ func TestConfigCommand_RemoveMapping(t *testing.T) {
 - source: quay.io
   target: registry.local/quay
 `)
-	err := afero.WriteFile(memFs, removeMappingsFile, testData, 0o644)
+	err := afero.WriteFile(memFs, removeMappingsFile, testData, fileutil.ReadWriteUserReadOthers)
 	require.NoError(t, err)
 
 	// Set the global variables used by the command

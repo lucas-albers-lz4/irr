@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/lalbers/irr/pkg/chart"
+	"github.com/lalbers/irr/pkg/fileutil"
 	"github.com/lalbers/irr/pkg/image"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
@@ -400,7 +401,7 @@ image:
 service:
   type: ClusterIP
   port: 80
-`), 0o644)
+`), fileutil.ReadWriteUserReadOthers)
 				require.NoError(t, err)
 				return filename
 			},
@@ -451,7 +452,7 @@ image:
   repository: nginx
   tag: latest
   invalid: - this is not valid YAML
-`), 0o644)
+`), fileutil.ReadWriteUserReadOthers)
 				require.NoError(t, err)
 				return filename
 			},
@@ -462,7 +463,7 @@ image:
 			fileContent: "",
 			setupFunc: func() string {
 				filename := "/tmp/empty.yaml"
-				err := afero.WriteFile(fs, filename, []byte(""), 0o644)
+				err := afero.WriteFile(fs, filename, []byte(""), fileutil.ReadWriteUserReadOthers)
 				require.NoError(t, err)
 				return filename
 			},

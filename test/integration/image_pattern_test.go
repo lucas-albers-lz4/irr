@@ -298,6 +298,108 @@ image:
 	}
 }
 
+// Helper function to run a single image pattern test case
+func runImagePatternTest(t *testing.T, h *TestHarness, testName, valuesContent string, expectedImages []string, outputFilePrefix string) {
+	t.Helper() // Mark as test helper
+
+	// Create a test chart with the specified values
+	chartDir := createTestChartWithValues(t, h, valuesContent)
+	h.SetupChart(chartDir)
+	h.SetRegistries("test.registry.io", []string{"docker.io"}) // Assuming docker.io is always a source for these tests
+
+	// Create output file path
+	outputFile := filepath.Join(h.tempDir, outputFilePrefix+"-"+testName+"-overrides.yaml")
+
+	// Execute the override command with debug output
+	output, stderr, err := h.ExecuteIRRWithStderr(
+		"override",
+		"--chart-path", h.chartPath,
+		"--target-registry", h.targetReg,
+		"--source-registries", strings.Join(h.sourceRegs, ","),
+		"--output-file", outputFile,
+		"--debug",
+	)
+	require.NoError(t, err, "override command should succeed. Output: %s\nStderr: %s", output, stderr)
+
+	// Verify that the override file was created
+	require.FileExists(t, outputFile, "Override file should be created")
+
+	// Read the generated override file
+	// #nosec G304 -- outputFile is generated in a secure test temp directory, not user-controlled
+	overrideBytes, err := os.ReadFile(outputFile)
+	require.NoError(t, err, "Should be able to read generated override file")
+
+	// Log the content for debugging
+	t.Logf("Override content for %s: %s", testName, string(overrideBytes))
+
+	// Parse the YAML
+	var overrides map[string]interface{}
+	err = yaml.Unmarshal(overrideBytes, &overrides)
+	require.NoError(t, err, "Should be able to parse the override YAML")
+
+	// Extract the image repositories
+	foundImages := make(map[string]bool)
+	h.WalkImageFields(overrides, func(_ []string, imageValue interface{}) {
+		t.Logf("Found image value: %v", imageValue)
+
+		switch v := imageValue.(type) {
+		case map[string]interface{}:
+			if repo, ok := v["repository"].(string); ok {
+				foundImages[repo] = true
+
+				// Also add the path without the registry prefix for easier matching
+				parts := strings.Split(repo, "/")
+				if len(parts) > 1 {
+					nonPrefixedRepo := strings.Join(parts[1:], "/")
+					foundImages[nonPrefixedRepo] = true
+				}
+			}
+		case string:
+			// Handle plain image strings if necessary, might need adjustment based on WalkImageFields
+			// Example: Check if it looks like a valid image reference before adding
+			if strings.Contains(v, "/") { // Simple check
+				foundImages[v] = true
+			}
+		}
+	})
+
+	// Verify that all expected images were found
+	for _, expectedImage := range expectedImages {
+		found := false
+		expectedRepo := strings.Split(expectedImage, ":")[0] // Strip any tag
+
+		// Try different variations of the repository name for matching
+		variations := []string{
+			expectedRepo, // Full path: docker.io/nginx
+			strings.TrimPrefix(expectedRepo, "docker.io/"), // Without registry: nginx
+		}
+
+		// For docker.io images, also check with library/ prefix
+		if strings.HasPrefix(expectedRepo, "docker.io/") && !strings.Contains(strings.TrimPrefix(expectedRepo, "docker.io/"), "/") {
+			variations = append(variations, "library/"+strings.TrimPrefix(expectedRepo, "docker.io/"))
+		}
+
+		for _, variation := range variations {
+			for foundImage := range foundImages {
+				// Use HasSuffix for partial matches, Contains for full path or substring matches
+				if strings.HasSuffix(foundImage, variation) || strings.Contains(foundImage, variation) {
+					found = true
+					t.Logf("Found expected repository %s as %s", expectedRepo, foundImage)
+					break
+				}
+			}
+			if found {
+				break
+			}
+		}
+
+		assert.True(t, found, "Expected image %s should be found in overrides", expectedImage)
+		if !found {
+			t.Logf("Expected image %s not found. Found images: %v", expectedImage, foundImages)
+		}
+	}
+}
+
 // TestInitContainerPatterns specifically tests the detection of initContainer image patterns
 // This is important as initContainers often have different structures than regular containers
 func TestInitContainerPatterns(t *testing.T) {
@@ -354,98 +456,47 @@ admissionWebhooks:
 		t.Run(tt.name, func(t *testing.T) {
 			h := NewTestHarness(t)
 			defer h.Cleanup()
+			// Call the helper function
+			runImagePatternTest(t, h, tt.name, tt.values, tt.expectedImages, "init")
+		})
+	}
+}
 
-			// Create a test chart with the specified values
-			chartDir := createTestChartWithValues(t, h, tt.values)
-			h.SetupChart(chartDir)
-			h.SetRegistries("test.registry.io", []string{"docker.io"})
+// TestMixedHelmAndKubernetesPatterns specifically tests the detection of mixed Helm and Kubernetes patterns
+func TestMixedHelmAndKubernetesPatterns(t *testing.T) {
+	tests := []struct {
+		name           string
+		values         string
+		expectedImages []string
+	}{
+		{
+			name: "helm_chart_with_kubernetes_pattern",
+			values: `
+image:
+  registry: docker.io
+  repository: nginx
+  tag: 1.23.0
+`,
+			expectedImages: []string{"docker.io/nginx"},
+		},
+		{
+			name: "kubernetes_pattern_with_helm_chart",
+			values: `
+image:
+  registry: docker.io
+  repository: nginx
+  tag: 1.23.0
+`,
+			expectedImages: []string{"docker.io/nginx"},
+		},
+	}
 
-			// Create output file path
-			outputFile := filepath.Join(h.tempDir, "init-"+tt.name+"-overrides.yaml")
-
-			// Execute the override command with debug output
-			output, stderr, err := h.ExecuteIRRWithStderr(
-				"override",
-				"--chart-path", h.chartPath,
-				"--target-registry", h.targetReg,
-				"--source-registries", strings.Join(h.sourceRegs, ","),
-				"--output-file", outputFile,
-				"--debug",
-			)
-			require.NoError(t, err, "override command should succeed. Output: %s\nStderr: %s", output, stderr)
-
-			// Verify that the override file was created
-			require.FileExists(t, outputFile, "Override file should be created")
-
-			// Read the generated override file
-			// #nosec G304 -- outputFile is generated in a secure test temp directory, not user-controlled
-			overrideBytes, err := os.ReadFile(outputFile)
-			require.NoError(t, err, "Should be able to read generated override file")
-
-			// Log the content for debugging
-			t.Logf("Override content for %s: %s", tt.name, string(overrideBytes))
-
-			// Parse the YAML
-			var overrides map[string]interface{}
-			err = yaml.Unmarshal(overrideBytes, &overrides)
-			require.NoError(t, err, "Should be able to parse the override YAML")
-
-			// Extract the image repositories
-			foundImages := make(map[string]bool)
-			h.WalkImageFields(overrides, func(_ []string, imageValue interface{}) {
-				t.Logf("Found image value: %v", imageValue)
-
-				switch v := imageValue.(type) {
-				case map[string]interface{}:
-					if repo, ok := v["repository"].(string); ok {
-						foundImages[repo] = true
-
-						// Also add the path without the registry prefix for easier matching
-						parts := strings.Split(repo, "/")
-						if len(parts) > 1 {
-							nonPrefixedRepo := strings.Join(parts[1:], "/")
-							foundImages[nonPrefixedRepo] = true
-						}
-					}
-				case string:
-					foundImages[v] = true
-				}
-			})
-
-			// Verify that all expected images were found
-			for _, expectedImage := range tt.expectedImages {
-				found := false
-				expectedRepo := strings.Split(expectedImage, ":")[0] // Strip any tag
-
-				// Try different variations of the repository name for matching
-				variations := []string{
-					expectedRepo, // Full path: docker.io/nginx
-					strings.TrimPrefix(expectedRepo, "docker.io/"), // Without registry: nginx
-				}
-
-				// For docker.io images, also check with library/ prefix
-				if strings.HasPrefix(expectedRepo, "docker.io/") && !strings.Contains(strings.TrimPrefix(expectedRepo, "docker.io/"), "/") {
-					variations = append(variations, "library/"+strings.TrimPrefix(expectedRepo, "docker.io/"))
-				}
-
-				for _, variation := range variations {
-					for foundImage := range foundImages {
-						if strings.HasSuffix(foundImage, variation) || strings.Contains(foundImage, variation) {
-							found = true
-							t.Logf("Found expected repository %s as %s", expectedRepo, foundImage)
-							break
-						}
-					}
-					if found {
-						break
-					}
-				}
-
-				assert.True(t, found, "Expected image %s should be found in overrides", expectedImage)
-				if !found {
-					t.Logf("Expected image %s not found. Found images: %v", expectedImage, foundImages)
-				}
-			}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := NewTestHarness(t)
+			defer h.Cleanup()
+			// Call the helper function
+			runImagePatternTest(t, h, tt.name, tt.values, tt.expectedImages, "mixed")
 		})
 	}
 }
@@ -454,7 +505,7 @@ admissionWebhooks:
 func createTestChartWithValues(t *testing.T, h *TestHarness, valuesContent string) string {
 	t.Helper()
 	chartDir := filepath.Join(h.tempDir, "test-chart")
-	require.NoError(t, os.MkdirAll(chartDir, 0o750))
+	require.NoError(t, os.MkdirAll(chartDir, fileutil.ReadWriteExecuteUserReadGroup))
 
 	// Create Chart.yaml
 	chartYaml := `apiVersion: v2
@@ -470,7 +521,7 @@ version: 0.1.0
 
 	// Create templates directory and a simple deployment.yaml
 	templateDir := filepath.Join(chartDir, "templates")
-	require.NoError(t, os.MkdirAll(templateDir, 0o750))
+	require.NoError(t, os.MkdirAll(templateDir, fileutil.ReadWriteExecuteUserReadGroup))
 
 	deploymentYaml := `apiVersion: apps/v1
 kind: Deployment

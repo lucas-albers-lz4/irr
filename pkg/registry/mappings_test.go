@@ -7,6 +7,7 @@ import (
 
 	"errors"
 
+	"github.com/lalbers/irr/pkg/fileutil"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -36,15 +37,15 @@ func TestLoadMappings(t *testing.T) {
 	invalidYAMLContent := `mappings: [invalid yaml`
 
 	// Set up the memory filesystem
-	require.NoError(t, fs.MkdirAll(tmpDir, 0o755))
-	require.NoError(t, fs.MkdirAll(tmpSubDir, 0o755))
+	require.NoError(t, fs.MkdirAll(tmpDir, fileutil.ReadWriteExecuteUserReadExecuteOthers))
+	require.NoError(t, fs.MkdirAll(tmpSubDir, fileutil.ReadWriteExecuteUserReadExecuteOthers))
 
 	// Write test files
-	require.NoError(t, afero.WriteFile(fs, newFormatFile, []byte(newFormatContent), 0o644))
-	require.NoError(t, afero.WriteFile(fs, emptyTmpFile, []byte(""), 0o644))
-	require.NoError(t, afero.WriteFile(fs, invalidTmpFile, []byte(invalidYAMLContent), 0o644))
-	require.NoError(t, afero.WriteFile(fs, invalidExtTmpFile, []byte(""), 0o644))
-	require.NoError(t, afero.WriteFile(fs, tmpDirFile, []byte(""), 0o644))
+	require.NoError(t, afero.WriteFile(fs, newFormatFile, []byte(newFormatContent), fileutil.ReadWriteUserReadOthers))
+	require.NoError(t, afero.WriteFile(fs, emptyTmpFile, []byte(""), fileutil.ReadWriteUserReadOthers))
+	require.NoError(t, afero.WriteFile(fs, invalidTmpFile, []byte(invalidYAMLContent), fileutil.ReadWriteUserReadOthers))
+	require.NoError(t, afero.WriteFile(fs, invalidExtTmpFile, []byte(""), fileutil.ReadWriteUserReadOthers))
+	require.NoError(t, afero.WriteFile(fs, tmpDirFile, []byte(""), fileutil.ReadWriteUserReadOthers))
 
 	expectedMappings := &Mappings{
 		Entries: []Mapping{

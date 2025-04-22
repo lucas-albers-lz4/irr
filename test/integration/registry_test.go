@@ -206,7 +206,7 @@ func TestCreateRegistryMappingsFile(t *testing.T) {
 
 // Helper function to create a test chart with a specific image
 func createTestChartWithImage(chartDir, registry, repository string) error {
-	if err := os.MkdirAll(chartDir, 0o750); err != nil {
+	if err := os.MkdirAll(chartDir, fileutil.ReadWriteExecuteUserReadGroup); err != nil {
 		return fmt.Errorf("failed to create chart directory: %w", err)
 	}
 
@@ -226,7 +226,7 @@ version: 0.1.0`
 		return fmt.Errorf("failed to write values.yaml: %w", err)
 	}
 
-	if err := os.MkdirAll(filepath.Join(chartDir, "templates"), 0o750); err != nil {
+	if err := os.MkdirAll(filepath.Join(chartDir, "templates"), fileutil.ReadWriteExecuteUserReadGroup); err != nil {
 		return fmt.Errorf("failed to create templates directory: %w", err)
 	}
 

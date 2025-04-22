@@ -150,21 +150,21 @@ func TestHandleTestModeOverride(t *testing.T) {
 // setupTestFs creates a basic mock filesystem structure for testing.
 // func setupTestFs(fs afero.Fs, chartDir string) {
 //      // Create base directories
-//      _ = fs.MkdirAll(filepath.Join(chartDir, "templates"), 0o750)
+//      _ = fs.MkdirAll(filepath.Join(chartDir, "templates"), fileutil.ReadWriteExecuteUserReadGroup) // Replaced 0o750
 //
 //      // Create Chart.yaml
 //      chartContent := `apiVersion: v2
 // name: test-chart
 // version: 0.1.0
 // `
-//      _ = afero.WriteFile(fs, filepath.Join(chartDir, "Chart.yaml"), []byte(chartContent), 0o644)
+//      _ = afero.WriteFile(fs, filepath.Join(chartDir, "Chart.yaml"), []byte(chartContent), fileutil.ReadWriteUserReadOthers) // Replaced 0o644
 //
 //      // Create values.yaml
 //      valuesContent := `image:
 // repository: docker.io/library/nginx
 // tag: latest
 // `
-//      _ = afero.WriteFile(fs, filepath.Join(chartDir, "values.yaml"), []byte(valuesContent), 0o644)
+//      _ = afero.WriteFile(fs, filepath.Join(chartDir, "values.yaml"), []byte(valuesContent), fileutil.ReadWriteUserReadOthers) // Replaced 0o644
 //
 //      // Create template files
 //      templateContent := `apiVersion: apps/v1
@@ -175,7 +175,7 @@ func TestHandleTestModeOverride(t *testing.T) {
 //    containers:
 //    - image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
 // `
-//      _ = afero.WriteFile(fs, filepath.Join(chartDir, "templates", "deployment.yaml"), []byte(templateContent), 0o644)
+//      _ = afero.WriteFile(fs, filepath.Join(chartDir, "templates", "deployment.yaml"), []byte(templateContent), fileutil.ReadWriteUserReadOthers) // Replaced 0o644
 // }
 // executeCommandC captures stdout/stderr for a Cobra command execution and returns the command
 // Credits: Adapted from https://github.com/spf13/cobra/blob/main/command_test.go
@@ -194,7 +194,7 @@ func TestHandleTestModeOverride(t *testing.T) {
 // Helper to create a simple mock chart structure in the given FS
 func createMockChartFS(fs afero.Fs, chartPath string) error {
 	// Ensure base directory exists
-	err := fs.MkdirAll(filepath.Join(chartPath, "templates"), 0o755) // Use 0o755
+	err := fs.MkdirAll(filepath.Join(chartPath, "templates"), fileutil.ReadWriteExecuteUserReadExecuteOthers) // Replaced 0o755
 	if err != nil {
 		return fmt.Errorf("failed to create chart directories: %w", err)
 	}
@@ -203,7 +203,7 @@ func createMockChartFS(fs afero.Fs, chartPath string) error {
 name: mockchart
 version: 0.1.0
 description: A mock Helm chart for testing`
-	err = afero.WriteFile(fs, filepath.Join(chartPath, "Chart.yaml"), []byte(chartYaml), 0o644) // Use 0o644
+	err = afero.WriteFile(fs, filepath.Join(chartPath, "Chart.yaml"), []byte(chartYaml), fileutil.ReadWriteUserReadOthers) // Replaced 0o644
 	if err != nil {
 		return fmt.Errorf("failed to write Chart.yaml: %w", err)
 	}
@@ -215,7 +215,7 @@ image:
 service:
   type: ClusterIP
   port: 80`
-	err = afero.WriteFile(fs, filepath.Join(chartPath, "values.yaml"), []byte(valuesYaml), 0o644) // Use 0o644
+	err = afero.WriteFile(fs, filepath.Join(chartPath, "values.yaml"), []byte(valuesYaml), fileutil.ReadWriteUserReadOthers) // Replaced 0o644
 	if err != nil {
 		return fmt.Errorf("failed to write values.yaml: %w", err)
 	}
@@ -231,7 +231,7 @@ spec:
       containers:
       - name: nginx
         image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"`
-	err = afero.WriteFile(fs, filepath.Join(chartPath, "templates", "deployment.yaml"), []byte(deploymentYaml), 0o644) // Use 0o644
+	err = afero.WriteFile(fs, filepath.Join(chartPath, "templates", "deployment.yaml"), []byte(deploymentYaml), fileutil.ReadWriteUserReadOthers) // Replaced 0o644
 	if err != nil {
 		return fmt.Errorf("failed to write deployment.yaml: %w", err)
 	}
