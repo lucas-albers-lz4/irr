@@ -40,16 +40,14 @@ func TestLoadMappingsWithFS(t *testing.T) {
 	mappingsFile := filepath.Join(tmpDir, "mappings.yaml")
 
 	// Create test content
-	content := `mappings:
-  - source: quay.io
-    target: registry.example.com/quay-mirror
-  - source: docker.io
-    target: registry.example.com/docker-mirror
+	content := `
+quay.io: registry.example.com/quay-mirror
+docker.io: registry.example.com/docker-mirror
 `
 
 	// Set up the mock filesystem
 	require.NoError(t, memFs.MkdirAll(tmpDir, fileutil.ReadWriteExecuteUserReadExecuteOthers))
-	require.NoError(t, afero.WriteFile(memFs, mappingsFile, []byte(content), fileutil.ReadWriteUserReadOthers))
+	require.NoError(t, afero.WriteFile(memFs, mappingsFile, []byte(content), 0o644))
 
 	// Now our GetAferoFS works correctly with the mock filesystem
 	// So LoadMappingsWithFS should succeed
@@ -57,8 +55,12 @@ func TestLoadMappingsWithFS(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, mappings)
 	assert.Len(t, mappings.Entries, 2)
-	assert.Equal(t, "quay.io", mappings.Entries[0].Source)
-	assert.Equal(t, "registry.example.com/quay-mirror", mappings.Entries[0].Target)
+	// Use ElementsMatch as map iteration order isn't guaranteed
+	expectedEntries := []Mapping{
+		{Source: "quay.io", Target: "registry.example.com/quay-mirror"},
+		{Source: "docker.io", Target: "registry.example.com/docker-mirror"},
+	}
+	assert.ElementsMatch(t, expectedEntries, mappings.Entries)
 
 	// Also test the original LoadMappings to ensure compatibility
 	mappingsViaOriginal, err := LoadMappings(memFs, mappingsFile, true)

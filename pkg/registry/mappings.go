@@ -67,63 +67,96 @@ func LoadMappings(fs afero.Fs, path string, skipCWDRestriction bool) (*Mappings,
 		return nil, WrapMappingFileRead(path, err)
 	}
 
-	// Check for empty file content
+	// Check for empty file content BEFORE parsing attempts
 	if len(data) == 0 {
 		return nil, WrapMappingFileEmpty(path)
 	}
 
 	log.Debug("LoadMappings: Attempting to parse file content:\n%s", string(data))
 
-	// Try the new format (with mappings key)
-	var mappings Mappings
-	var newFormat struct {
-		Mappings []Mapping `yaml:"mappings"`
-	}
-	if err := yaml.Unmarshal(data, &newFormat); err != nil {
-		log.Debug("LoadMappings: Failed to parse as structured format: %v", err)
+	// --- Attempt 1: Structured Format ---
+	var config Config
+	var structuredParseErr error
+	var structuredValidationErr error
 
-		// Try parsing legacy format (simple key-value pairs)
-		var legacyFormat map[string]string
-		if err := yaml.Unmarshal(data, &legacyFormat); err != nil {
-			log.Debug("LoadMappings: Also failed to parse as legacy format: %v", err)
-			return nil, WrapMappingFileParse(path, err)
+	structuredParseErr = yaml.Unmarshal(data, &config)
+	if structuredParseErr == nil {
+		// Parsing succeeded, now validate
+		structuredValidationErr = validateStructuredConfig(&config, path)
+		if structuredValidationErr == nil {
+			// Validation also succeeded, check if mappings exist
+			if len(config.Registries.Mappings) == 0 {
+				// Valid structure but no mappings is treated as empty
+				log.Debug("LoadMappings: Structured config parsed and validated, but contains no mapping entries")
+				// We might still want to try legacy here if structured is valid but empty?
+				// For now, treat as empty and proceed to legacy check.
+				structuredValidationErr = WrapMappingFileEmpty(path)
+			} else {
+				// Success! Convert and return.
+				log.Debug("LoadMappings: Successfully loaded %d mappings from structured format in %s", len(config.Registries.Mappings), path)
+				return config.ToMappings(), nil
+			}
+		} else {
+			log.Debug("LoadMappings: Structured config parsed but failed validation: %v", structuredValidationErr)
+			// Fall through to legacy attempt
+		}
+	} else {
+		log.Debug("LoadMappings: Failed to parse as structured format: %v", structuredParseErr)
+		// Fall through to legacy attempt
+	}
+
+	// --- Attempt 2: Legacy Format (Key-Value) ---
+	log.Debug("LoadMappings: Attempting to parse as legacy key-value format")
+	var legacyFormat map[string]string
+	legacyErr := yaml.Unmarshal(data, &legacyFormat)
+	if legacyErr != nil {
+		log.Debug("LoadMappings: Also failed to parse as legacy format: %v", legacyErr)
+		// Both attempts failed. Prioritize structured error if available.
+		finalErr := structuredParseErr // Start with the parse error
+		if finalErr == nil {
+			finalErr = structuredValidationErr // If parse ok, use validation error
+		}
+		if finalErr == nil {
+			// If somehow both structured errors are nil, use legacy error
+			finalErr = legacyErr
 		}
 
-		// Check if legacy format contains any entries
-		if len(legacyFormat) == 0 {
-			log.Debug("LoadMappings: Legacy format was parsed but contains no entries")
+		// Ensure we always return a parse error if both failed
+		// Handle specific case where structured failed validation due to empty, but legacy also failed.
+		if finalErr != nil && strings.Contains(finalErr.Error(), "mappings file is empty") {
+			return nil, WrapMappingFileParse(path, fmt.Errorf("failed structured parse (%w) and legacy parse (%w)", finalErr, legacyErr))
+		} else if finalErr != nil {
+			return nil, WrapMappingFileParse(path, fmt.Errorf("failed structured parse/validation (%w) and legacy parse (%w)", finalErr, legacyErr))
+		}
+		// If we reached here, both structured and legacy parsing failed, but finalErr somehow ended up nil (should be unreachable).
+		// Outdent this return as per revive suggestion (removed the wrapping else).
+		return nil, WrapMappingFileParse(path, fmt.Errorf("failed to parse as structured or legacy format: %w", legacyErr))
+	}
+
+	// Check if legacy format contains any entries
+	if len(legacyFormat) == 0 {
+		log.Debug("LoadMappings: Legacy format was parsed but contains no entries")
+		// If structured parse failed validation because it was empty, and legacy is also empty, report empty.
+		if structuredValidationErr != nil && strings.Contains(structuredValidationErr.Error(), "mappings file is empty") {
 			return nil, WrapMappingFileEmpty(path)
 		}
-
-		// Convert legacy format to mappings structure
-		log.Debug("LoadMappings: Successfully parsed legacy key-value format, found %d entries", len(legacyFormat))
-		mappings.Entries = make([]Mapping, 0, len(legacyFormat))
-		for source, target := range legacyFormat {
-			mappings.Entries = append(mappings.Entries, Mapping{
-				Source: strings.TrimSpace(source),
-				Target: strings.TrimSpace(target),
-			})
-		}
-
-		log.Debug("LoadMappings: Successfully loaded %d mappings from legacy format in %s", len(mappings.Entries), path)
-		return &mappings, nil
-	}
-
-	if len(newFormat.Mappings) == 0 {
-		log.Debug("LoadMappings: No valid entries found after parsing")
+		// Otherwise, if structured failed for other reasons and legacy is empty, report legacy empty.
 		return nil, WrapMappingFileEmpty(path)
 	}
 
-	log.Debug("LoadMappings: Successfully parsed structured format, found %d entries", len(newFormat.Mappings))
-	mappings.Entries = make([]Mapping, len(newFormat.Mappings))
-	for i, m := range newFormat.Mappings {
-		mappings.Entries[i] = Mapping{
-			Source: strings.TrimSpace(m.Source),
-			Target: strings.TrimSpace(m.Target),
-		}
+	// Convert legacy format to mappings structure
+	log.Debug("LoadMappings: Successfully parsed legacy key-value format, found %d entries", len(legacyFormat))
+	mappings := Mappings{
+		Entries: make([]Mapping, 0, len(legacyFormat)),
+	}
+	for source, target := range legacyFormat {
+		mappings.Entries = append(mappings.Entries, Mapping{
+			Source: strings.TrimSpace(source),
+			Target: strings.TrimSpace(target),
+		})
 	}
 
-	log.Debug("LoadMappings: Successfully loaded %d mappings from %s", len(mappings.Entries), path)
+	log.Debug("LoadMappings: Successfully loaded %d mappings from legacy format in %s", len(mappings.Entries), path)
 	return &mappings, nil
 }
 
@@ -177,6 +210,16 @@ func validateConfigFilePath(fs afero.Fs, path string, skipCWDRestriction bool) e
 	if err != nil {
 		return fmt.Errorf("failed to get working directory: %w", err)
 	}
+
+	// --- DEBUGGING: Log path validation values ---
+	log.Debug("Validating config file path",
+		"path", path,
+		"absPath", absPath,
+		"workDir", wd,
+		"skipCWDRestriction", skipCWDRestriction,
+		"isPrefix", strings.HasPrefix(absPath, wd),
+	)
+	// --- END DEBUGGING ---
 
 	// Only skip path traversal check if explicitly allowed in test or via parameter
 	if !skipCWDRestriction {
