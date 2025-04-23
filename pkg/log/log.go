@@ -22,9 +22,10 @@ const (
 )
 
 var (
-	logger       *slog.Logger
-	currentLevel           = slog.LevelInfo
-	outputWriter io.Writer = os.Stderr
+	logger *slog.Logger
+	// currentLevel           = slog.LevelInfo // Replaced by globalLeveler
+	globalLeveler           = &slog.LevelVar{} // Use LevelVar for dynamic level changes
+	outputWriter  io.Writer = os.Stderr
 	// ErrInvalidLogLevel indicates an invalid log level string was provided.
 	ErrInvalidLogLevel = fmt.Errorf("invalid log level")
 	// includeTimestampsForTest is a flag used by test helpers (like testutil.CaptureJSONLogs)
@@ -32,37 +33,28 @@ var (
 	includeTimestampsForTest bool // Defaults to false
 )
 
-// init initializes the logging package based on environment variables.
+// init initializes the logging package with a default level.
+// The final level is determined later in cmd/irr/root.go based on flags/env vars.
 func init() {
-	// Determine initial log level from environment
-	initialLevel := slog.LevelInfo // Default
-	if levelStr := os.Getenv("LOG_LEVEL"); levelStr != "" {
-		switch strings.ToUpper(levelStr) {
-		case levelDebugStr:
-			initialLevel = slog.LevelDebug
-		case levelInfoStr:
-			initialLevel = slog.LevelInfo
-		case levelWarnStr, "WARNING": // Accept both forms
-			initialLevel = slog.LevelWarn
-		case levelErrorStr:
-			initialLevel = slog.LevelError
-		}
-	}
-	currentLevel = initialLevel // Set the global level determined by environment
+	// Start with a sensible default (INFO).
+	// The actual level will be set definitively by PersistentPreRunE in root.go
+	// before any significant command logic runs.
+	initialLevel := slog.LevelInfo
+	globalLeveler.Set(initialLevel)
 
-	// Configure the logger with initial settings
+	// Configure the logger with initial settings (using the default level)
 	configureLogger()
 }
 
 // configureLogger sets up the logger using the current global state
-// (currentLevel and outputWriter). It does not read environment variables itself.
+// (outputWriter and globalLeveler). It does not read environment variables itself.
 func configureLogger() {
 	// Determine log format
 	format := strings.ToLower(os.Getenv("LOG_FORMAT"))
 	var handler slog.Handler
 
-	// Prepare common options, level is always needed
-	opts := &slog.HandlerOptions{Level: currentLevel}
+	// Prepare common options, using the dynamic LevelVar for the level
+	opts := &slog.HandlerOptions{Level: globalLeveler}
 
 	// Default to JSON unless LOG_FORMAT is explicitly "text"
 	if format == "text" {
@@ -121,22 +113,25 @@ func Logger() *slog.Logger {
 	return logger
 }
 
-// SetLevel allows changing the log level at runtime
+// SetLevel allows changing the log level at runtime using the global LevelVar.
 func SetLevel(level interface{}) {
+	var targetSlogLevel slog.Level
 	switch v := level.(type) {
 	case slog.Level:
-		currentLevel = v
+		targetSlogLevel = v
 	case Level:
-		currentLevel = slog.Level(v)
+		targetSlogLevel = slog.Level(v)
 	default:
 		panic(fmt.Sprintf("SetLevel: unsupported level type %T", level))
 	}
-	configureLogger() // Re-configure logger with the new level
+	// Update the dynamic level
+	globalLeveler.Set(targetSlogLevel)
+	// DO NOT call configureLogger() here anymore
 }
 
-// CurrentLevel returns the current slog.Level
+// CurrentLevel returns the current slog.Level from the LevelVar
 func CurrentLevel() slog.Level {
-	return currentLevel
+	return globalLeveler.Level()
 }
 
 // Level is a log level type compatible with slog.Level, for test and testutil compatibility
