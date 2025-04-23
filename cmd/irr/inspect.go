@@ -83,13 +83,13 @@ This command analyzes the chart's values.yaml and templates to find image refere
 
 	cmd.Flags().String("chart-path", "", "Path to the Helm chart")
 	cmd.Flags().String("output-file", "", "Write output to file instead of stdout")
-	cmd.Flags().String("output-format", outputFormatYAML, "Output format (yaml or json)")
+	cmd.Flags().String("output-format", outputFormatYAML, "Output format (yaml or json) (default \"yaml\")")
 	cmd.Flags().Bool("generate-config-skeleton", false, "Generate a config skeleton based on found images")
 	cmd.Flags().StringSlice("include-pattern", nil, "Glob patterns for values paths to include during analysis")
 	cmd.Flags().StringSlice("exclude-pattern", nil, "Glob patterns for values paths to exclude during analysis")
 	cmd.Flags().StringSliceP("source-registries", "r", nil, "Source registries to filter results (optional)")
 	cmd.Flags().String("release-name", "", "Release name for Helm plugin mode")
-	cmd.Flags().String("namespace", "", "Kubernetes namespace for the release")
+	cmd.Flags().String("namespace", "", "Kubernetes namespace for the release (defaults to \"default\")")
 
 	return cmd
 }

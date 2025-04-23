@@ -24,7 +24,7 @@ func addReleaseFlag(cmd *cobra.Command) {
 // addNamespaceFlag adds a --namespace flag to the given command if it doesn't already exist
 func addNamespaceFlag(cmd *cobra.Command) {
 	if cmd.PersistentFlags().Lookup("namespace") == nil {
-		cmd.PersistentFlags().String("namespace", "", "Namespace for the Helm release (overrides the namespace from Helm environment)")
+		cmd.PersistentFlags().String("namespace", "", "Namespace for the Helm release (overrides Helm env, defaults to \"default\")")
 	}
 }
 

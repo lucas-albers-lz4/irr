@@ -26,7 +26,6 @@ import (
 	"github.com/lalbers/irr/pkg/strategy"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
-	helmchart "helm.sh/helm/v3/pkg/chart"
 	"sigs.k8s.io/yaml"
 	// Helm SDK imports
 )
@@ -75,7 +74,7 @@ type GeneratorConfig struct {
 }
 
 // For testing purposes - allows overriding in tests
-var chartLoader = loadChart
+// var chartLoader = loadChart
 
 // OverrideFlags defines the flags used by the override command
 type OverrideFlags struct {
@@ -246,10 +245,8 @@ func setupOverrideFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("no-rules", false, "Disable chart parameter rules system")
 	cmd.Flags().Bool("dry-run", false, "Show what would be generated without writing to file")
 	cmd.Flags().StringSliceP("exclude-registries", "e", []string{}, "Registry URLs to exclude from relocation")
-	cmd.Flags().Bool("no-validate", false, "Skip validation of generated overrides")
+	cmd.Flags().Bool("no-validate", false, "Skip validation of generated overrides (validation runs by default)")
 	cmd.Flags().String("kube-version", "", "Kubernetes version to use for validation (defaults to current client version)")
-	cmd.Flags().Bool("validate", true, "Validate generated overrides (use --validate=false to skip)")
-	cmd.Flags().String("registry-file", "", "Path to legacy registry mapping file (deprecated, use --config instead)")
 	cmd.Flags().StringP("namespace", "n", "default", "Namespace to use (default: default)")
 	cmd.Flags().StringP("release-name", "r", "", "Release name to use (only in Helm plugin mode)")
 
@@ -567,7 +564,10 @@ func loadRegistryMappings(cmd *cobra.Command, config *GeneratorConfig) error {
 	}
 	if configFile != "" {
 		log.Info("Loading registry mappings from config file", "file", configFile)
-		mappings, err := registry.LoadMappings(AppFs, configFile, skipCWDCheck())
+		// Pass the result of skipCWDCheck() here to control path validation
+		shouldSkipCheck := skipCWDCheck()
+		log.Debug("Calling registry.LoadMappings", "configFile", configFile, "skipCWDRestriction", shouldSkipCheck)
+		mappings, err := registry.LoadMappings(AppFs, configFile, shouldSkipCheck)
 		if err != nil {
 			if os.IsNotExist(err) {
 				return &exitcodes.ExitCodeError{
@@ -575,36 +575,14 @@ func loadRegistryMappings(cmd *cobra.Command, config *GeneratorConfig) error {
 					Err:  fmt.Errorf("config file not found: %s", configFile),
 				}
 			}
+			// Wrap the error from LoadMappings
 			return &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitInputConfigurationError,
-				Err:  fmt.Errorf("failed to load config file: %w", err),
+				Err:  fmt.Errorf("failed to load config file '%s': %w", configFile, err),
 			}
 		}
 		config.Mappings = mappings
-	}
-	registryFile, err := cmd.Flags().GetString("registry-file")
-	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get registry-file flag: %w", err),
-		}
-	}
-	if registryFile != "" {
-		log.Info("Loading registry mappings from registry file", "file", registryFile)
-		configMap, err := registry.LoadConfig(AppFs, registryFile, skipCWDCheck())
-		if err != nil {
-			if os.IsNotExist(err) {
-				return &exitcodes.ExitCodeError{
-					Code: exitcodes.ExitInputConfigurationError,
-					Err:  fmt.Errorf("registry file not found: %s", registryFile),
-				}
-			}
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitInputConfigurationError,
-				Err:  fmt.Errorf("failed to load registry file: %w", err),
-			}
-		}
-		config.ConfigMappings = configMap
+		log.Debug("Successfully loaded mappings from file", "count", len(mappings.Entries))
 	}
 	return nil
 }
@@ -794,35 +772,6 @@ func createGenerator(_ *ChartSource, config *GeneratorConfig) (GeneratorInterfac
 	return generator, nil
 }
 
-// loadChart loads a Helm chart from the configured source
-func loadChart(cs *ChartSource) (*helmchart.Chart, error) {
-	if cs == nil {
-		return nil, fmt.Errorf("chart source is nil")
-	}
-
-	// Check if the file exists when using a physical chart path
-	if cs.SourceType == chartSourceTypeChart {
-		// Check if the file exists
-		if _, err := os.Stat(cs.ChartPath); os.IsNotExist(err) {
-			log.Error("Chart not found at path", "path", cs.ChartPath)
-			return nil, fmt.Errorf("chart not found: %w", err)
-		}
-	}
-
-	// Create loader using the package function
-	loader := chart.NewLoader()
-
-	// Load the chart
-	log.Debug("Loading chart from source", "source", cs.Message)
-	c, err := loader.Load(cs.ChartPath)
-	if err != nil {
-		log.Error("Failed to load chart", "error", err)
-		return nil, fmt.Errorf("failed to load chart: %w", err)
-	}
-
-	return c, nil
-}
-
 // runOverridePluginMode handles the logic when override is run in plugin mode.
 func runOverridePluginMode(cmd *cobra.Command, releaseName, namespace, outputFile string, dryRun bool) error {
 	log.Debug("Plugin mode detected", "releaseName", releaseName)
@@ -944,17 +893,13 @@ func runOverrideStandaloneMode(cmd *cobra.Command, outputFile string, dryRun boo
 	}
 
 	// Validate the generated overrides
-	validateOverrides, valErr := getBoolFlag(cmd, "validate")
-	if valErr != nil {
-		log.Warn("Failed to get validate flag, defaulting to true", "error", valErr)
-		validateOverrides = true
-	}
 	noValidate, noValErr := getBoolFlag(cmd, "no-validate")
 	if noValErr != nil {
-		log.Warn("Failed to get no-validate flag, defaulting to false", "error", noValErr)
-		noValidate = false
+		log.Warn("Failed to get no-validate flag, defaulting to false (validation will run)", "error", noValErr)
+		noValidate = false // Default to running validation if flag access fails
 	}
-	if validateOverrides && !noValidate {
+	// If no-validate is false, run validation
+	if !noValidate {
 		if err := validateChart(cmd, yamlBytes, &config, true, false, "", ""); err != nil {
 			return err
 		}
@@ -1099,8 +1044,15 @@ func handlePluginOverrideOutput(cmd *cobra.Command, overrideFile, outputFile str
 
 // validatePluginOverrides validates the generated overrides
 func validatePluginOverrides(cmd *cobra.Command, overrideFile, outputFile string, dryRun bool, releaseName, namespace string, config *GeneratorConfig) error {
-	shouldValidate, err := cmd.Flags().GetBool("validate")
-	if err == nil && shouldValidate {
+	// Check the --no-validate flag instead of the old --validate flag
+	noValidate, err := cmd.Flags().GetBool("no-validate")
+	if err != nil {
+		log.Warn("Failed to get no-validate flag, defaulting to false (validation will run)", "error", err)
+		noValidate = false // Default to running validation if flag access fails
+	}
+
+	// Run validation only if no-validate is false
+	if !noValidate {
 		// Add nil check for config here as well, though it might be redundant
 		if config == nil {
 			return &exitcodes.ExitCodeError{
@@ -1201,14 +1153,15 @@ func handleTestModeOverride(cmd *cobra.Command, releaseName string) error {
 		log.Info("Using chart path", "path", chartPath)
 	}
 
-	// Get validation flag
-	shouldValidate, err := cmd.Flags().GetBool("validate")
+	// Get validation flag status based on --no-validate
+	noValidate, err := cmd.Flags().GetBool("no-validate")
 	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get validate flag: %w", err),
-		}
+		// Log error but assume validation should run if flag access fails in test mode?
+		// Or maybe assume validation is skipped? Let's assume skipped for safety in test helper.
+		log.Warn("Failed to get no-validate flag in test mode, assuming validation is skipped", "error", err)
+		noValidate = true
 	}
+	shouldValidate := !noValidate // Determine if validation should happen
 
 	// Create mock output
 	yamlContent := "mock: true\ngenerated: true\n"
@@ -1275,7 +1228,7 @@ func handleTestModeOverride(cmd *cobra.Command, releaseName string) error {
 		}
 
 		// Add validation output to dry run if requested
-		if shouldValidate {
+		if shouldValidate { // Check the derived validation status
 			if _, err := fmt.Fprintln(cmd.OutOrStdout(), "Validation successful! Chart renders correctly with overrides."); err != nil {
 				return &exitcodes.ExitCodeError{
 					Code: exitcodes.ExitGeneralRuntimeError,

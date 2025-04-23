@@ -60,7 +60,7 @@ IMPORTANT NOTES:
 	// Add config-specific flags
 	configCmd.Flags().StringVar(&configSource, "source", "", "Source registry to map from (e.g., docker.io, quay.io)")
 	configCmd.Flags().StringVar(&configTarget, "target", "", "Target registry to map to (e.g., harbor.example.com/docker)")
-	configCmd.Flags().StringVar(&configFile, "file", "registry-mappings.yaml", "Path to the registry mappings file")
+	configCmd.Flags().StringVar(&configFile, "file", "registry-mappings.yaml", "Path to the registry mappings file (default \"registry-mappings.yaml\")")
 	configCmd.Flags().BoolVar(&configListOnly, "list", false, "List all configured mappings")
 	configCmd.Flags().BoolVar(&configRemoveOnly, "remove", false, "Remove the specified source mapping")
 

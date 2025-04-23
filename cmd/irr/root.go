@@ -6,11 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	log "github.com/lalbers/irr/pkg/log"
-
-	"log/slog"
 
 	"github.com/lalbers/irr/pkg/analysis"
 	"github.com/lalbers/irr/pkg/helm"
@@ -23,7 +20,7 @@ import (
 
 // Constants
 const (
-	expectedEnvVarParts = 2
+// expectedEnvVarParts = 2 // Removed as unused
 )
 
 // Global flag variables
@@ -136,68 +133,74 @@ that redirect container image references from public registries to a private reg
 It can analyze Helm charts to identify image references and generate override values 
 files compatible with Helm, pointing images to a new registry according to specified strategies.
 It also supports linting image references for potential issues.`,
-	PersistentPreRunE: func(_ *cobra.Command, _ []string) error {
-		// --- Early Debug Logging (Before Main Slog Init) ---
-		if debugEnabled {
-			// Create a temporary, basic JSON logger to stderr for early debug info
-			// This won't interfere with the main logger configured later by pkg/log
-			tempLogger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
-				Level: slog.LevelDebug, // Ensure debug messages are logged
-			}))
+	PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+		// --- Determine Final Log Level Based on Precedence --- START ---
+		logLevelFlagStr := logLevel              // Value from --log-level flag
+		debugFlagEnabled := debugEnabled         // Value from --debug flag
+		envLogLevelStr := os.Getenv("LOG_LEVEL") // Value from env var
 
-			// Log environment variables (consider logging only specific ones if needed)
-			envVars := make(map[string]string)
-			for _, e := range os.Environ() {
-				pair := strings.SplitN(e, "=", expectedEnvVarParts)
-				if len(pair) == expectedEnvVarParts {
-					envVars[pair[0]] = pair[1]
+		// +++ Raw Debugging Output +++
+		fmt.Fprintf(os.Stderr, "[DEBUG PRE-RUN] Raw inputs: --debug=%t, --log-level='%s' (Changed: %t), LOG_LEVEL='%s'\n",
+			debugFlagEnabled, logLevelFlagStr, cmd.Flags().Changed("log-level"), envLogLevelStr)
+
+		var finalLevel log.Level
+		levelSource := "default"
+
+		// 1. --debug flag has highest precedence
+		if debugFlagEnabled {
+			finalLevel = log.LevelDebug
+			levelSource = "--debug flag"
+		} else {
+			// 2. --log-level flag is next, ONLY if it was explicitly set
+			if cmd.Flags().Changed("log-level") && logLevelFlagStr != "" { // Check cmd.Flags().Changed()
+				parsedLevel, err := log.ParseLevel(logLevelFlagStr)
+				if err == nil {
+					finalLevel = log.Level(parsedLevel)
+					levelSource = "--log-level flag"
+				} else {
+					// Invalid flag, log warning later, proceed to check env var
+					fmt.Fprintf(os.Stderr, "[DEBUG PRE-RUN WARN] Invalid --log-level flag value: %s\n", logLevelFlagStr)
 				}
 			}
-			tempLogger.Debug("Early debug info", slog.Any("environment", envVars))
 
-			// Log arguments
-			tempLogger.Debug("Early debug info", slog.Any("arguments", os.Args))
-
-			// Log plugin status
-			tempLogger.Debug("Early debug info", slog.Bool("isHelmPlugin", isRunningAsHelmPlugin()))
-		}
-		// --- End Early Debug Logging ---
-
-		// --- Setup main logging using pkg/log ---
-		logLevelStr := logLevel          // From --log-level flag
-		debugFlagEnabled := debugEnabled // From --debug flag
-
-		// Determine the target level based on flags and env vars
-		var targetLevel log.Level
-		var parseErr error
-
-		if debugFlagEnabled { // --debug flag takes highest precedence
-			targetLevel = log.LevelDebug
-		} else if logLevelStr != "" { // Then --log-level flag
-			targetLevel, parseErr = log.ParseLevel(logLevelStr)
-			if parseErr != nil {
-				if integrationTestMode { // Only warn in test mode
-					// Use slog for warnings, assuming it might be configured by now (or default)
-					log.Warn("Invalid log level specified via flag. Using default.", "input", logLevelStr, "default", log.LevelInfo)
+			// 3. LOG_LEVEL env var is next (if flags didn't set a valid level)
+			if levelSource == "default" && envLogLevelStr != "" {
+				parsedLevel, err := log.ParseLevel(envLogLevelStr)
+				if err == nil {
+					finalLevel = log.Level(parsedLevel)
+					levelSource = "LOG_LEVEL env var"
+				} else {
+					// Invalid env var, log warning later, proceed to default
+					fmt.Fprintf(os.Stderr, "[DEBUG PRE-RUN WARN] Invalid LOG_LEVEL env var value: %s\n", envLogLevelStr)
 				}
-				targetLevel = log.LevelInfo // Default to Info on parse error
-			} // If no parse error, targetLevel is set correctly
-		} else {
-			// If neither --debug nor --log-level is set, the level is determined
-			// solely by pkg/log/init based on LOG_LEVEL env vars.
-			// We don't need to call SetLevel here in that case, but we can retrieve the
-			// current level for logging purposes if needed.
-			targetLevel = log.Level(log.CurrentLevel()) // Reflect the level set by init()
+			}
+
+			// 4. Default level if nothing else set it
+			if levelSource == "default" {
+				isTestRun := integrationTestMode || TestAnalyzeMode
+				if isTestRun {
+					finalLevel = log.LevelInfo // Default to Info for test runs
+				} else {
+					finalLevel = log.LevelError // Default to Error for normal/plugin runs
+				}
+				levelSource = "mode default"
+			}
 		}
 
-		// Use the determined level. This takes precedence over environment vars
-		// which are handled solely by pkg/log/init based on LOG_LEVEL env vars.
-		log.SetLevel(targetLevel)
+		// +++ Raw Debugging Output +++
+		fmt.Fprintf(os.Stderr, "[DEBUG PRE-RUN] Determined finalLevel=%s from source='%s'\n", finalLevel.String(), levelSource)
 
-		// --- End Logging Setup ---
+		// --- Apply Final Log Level --- START ---
+		log.SetLevel(finalLevel)
+		// Log the final effective level and its source *at debug level* for clarity
+		log.Debug("Effective log level set", "level", finalLevel.String(), "source", levelSource)
+		// --- Apply Final Log Level --- END ---
 
-		// Integration test mode check
+		// --- Remaining PreRun Setup ---
+
+		// Integration test mode warning (still useful to know it's active)
 		if integrationTestMode {
+			// This warning should respect the final log level set above
 			log.Warn("Integration test mode enabled.")
 		}
 
@@ -217,10 +220,17 @@ It also supports linting image references for potential issues.`,
 				log.Debug("Preserving in-memory filesystem for testing")
 			}
 			log.Debug("Root command: Attempting to load mappings", "file", registryFile)
-			_, err := registry.LoadMappings(AppFs, registryFile, integrationTestMode)
+			// Load structured config first, fall back to legacy
+			_, err := registry.LoadStructuredConfigDefault(registryFile, integrationTestMode)
 			if err != nil {
-				log.Debug("Root command: Failed to load mappings", "error", err)
-				log.Debug("Warning: Failed to load registry mappings. Proceeding without mappings.", "file", registryFile, "error", err)
+				log.Debug("Failed loading structured config, trying legacy LoadMappings", "error", err)
+				_, legacyErr := registry.LoadMappings(AppFs, registryFile, integrationTestMode)
+				if legacyErr != nil {
+					// Log as debug because this happens early, might not be fatal
+					log.Debug("Failed to load registry mappings (both formats). Proceeding without mappings.", "file", registryFile, "structured_error", err, "legacy_error", legacyErr)
+				}
+			} else {
+				log.Debug("Successfully loaded structured registry config", "file", registryFile)
 			}
 		}
 
@@ -264,7 +274,7 @@ func init() {
 	// Add global flags
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.irr.yaml)")
 	rootCmd.PersistentFlags().BoolVar(&debugEnabled, "debug", false, "enable debug logging")
-	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "set log level (debug, info, warn, error)")
+	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "set log level (debug, info, warn, error) (default \"info\")")
 	rootCmd.PersistentFlags().BoolVar(&integrationTestMode, "integration-test", false, "enable integration test mode")
 	// For testing purposes
 	rootCmd.PersistentFlags().BoolVar(&TestAnalyzeMode, "test-analyze", false, "enable test mode (originally for analyze command, now for inspect)")
@@ -412,4 +422,25 @@ func initConfig() {
 
 	// Mark config as read to prevent re-running
 	viper.Set("config.read", true)
+}
+
+// setupLogging configures the logger based on the provided flags.
+func setupLogging(v *viper.Viper) error {
+	// Retrieve log level from Viper, which should be bound correctly by PersistentPreRunE
+	currentLogLevel := v.GetString("logLevel")
+	logFormat := "text" // Default format, can be made configurable if needed
+
+	// Use the log package's exported SetLevel function
+	slogLevel, err := log.ParseLevel(currentLogLevel)
+	if err != nil {
+		// Handle error parsing level string - maybe log a warning and use default?
+		log.Warn("Invalid log level provided, using default", "level", currentLogLevel, "error", err)
+		log.SetLevel(log.LevelInfo) // Use default level from pkg/log
+	} else {
+		log.SetLevel(slogLevel) // Set the parsed level
+	}
+
+	log.Debug("Logger initialized", "level", currentLogLevel, "format", logFormat)
+
+	return nil
 }
