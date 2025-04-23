@@ -14,7 +14,6 @@ import (
 
 	"github.com/lalbers/irr/pkg/fileutil"
 	"github.com/lalbers/irr/pkg/image"
-	irrliblog "github.com/lalbers/irr/pkg/log"
 	"github.com/lalbers/irr/pkg/registry"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
@@ -268,7 +267,7 @@ func (h *TestHarness) GenerateOverrides(extraArgs ...string) error {
 	}
 	args = append(args, extraArgs...)
 
-	out, err := h.ExecuteIRR(args...)
+	out, err := h.ExecuteIRR(nil, args...)
 	if err != nil {
 		return fmt.Errorf("irr override command failed: %w\nOutput:\n%s", err, out)
 	}
@@ -553,99 +552,101 @@ func (h *TestHarness) walkImageFieldsRecursive(data interface{}, currentPath []s
 	}
 }
 
-// ExecuteIRR runs the 'irr' binary with the given arguments and returns its output.
-func (h *TestHarness) ExecuteIRR(args ...string) (output string, err error) {
-	path := h.getBinaryPath()
-
-	h.logger.Printf("Running: %s %s", path, strings.Join(args, " "))
-
-	// For integration tests, we need to enable debug warning messages to help with diagnostics
-	irrliblog.SetLevel(irrliblog.LevelDebug)
-
-	// Always include the integration-test flag to allow loading registry files from temp directories
-	args = append([]string{"--integration-test"}, args...)
-
-	// #nosec G204 -- This is test code and args are controlled by tests
-	cmd := exec.Command(path, args...)
-	cmd.Dir = h.rootDir // Run from project root
-
-	// Capture combined output
-	var out bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &stderr
-
-	// errcheck: Capture error, but test might focus on stderr content, so don't require.NoError here.
-	err = cmd.Run()
-	outputStr := out.String()
-	stderrStr := stderr.String()
-
-	// ALWAYS log the full output for debugging purposes
-	if outputStr != "" {
-		h.logger.Printf("[HARNESS EXECUTE_IRR] Stdout:\n%s", outputStr)
+// buildEnv creates the environment slice for the command, applying overrides.
+func (h *TestHarness) buildEnv(envOverrides map[string]string) []string {
+	// Start with current environment
+	baseEnv := os.Environ()
+	envMap := make(map[string]string)
+	for _, envVar := range baseEnv {
+		parts := strings.SplitN(envVar, "=", 2)
+		if len(parts) == 2 {
+			envMap[parts[0]] = parts[1]
+		} else {
+			envMap[parts[0]] = "" // Handle variables without values
+		}
 	}
 
-	if stderrStr != "" {
-		h.logger.Printf("[HARNESS EXECUTE_IRR] Stderr:\n%s", stderrStr)
+	// Apply overrides
+	if envOverrides != nil {
+		for key, value := range envOverrides {
+			envMap[key] = value
+		}
 	}
 
-	if err != nil {
-		// Return error along with the combined output for context
-		combinedOutput := outputStr + stderrStr
-		return combinedOutput, fmt.Errorf(
-			"irr command execution failed: %w\nOutput:\n%s",
-			err,
-			combinedOutput,
-		)
+	// Ensure IRR_TESTING is set
+	envMap["IRR_TESTING"] = "true"
+
+	// Convert map back to slice
+	finalEnv := make([]string, 0, len(envMap))
+	for key, value := range envMap {
+		finalEnv = append(finalEnv, fmt.Sprintf("%s=%s", key, value))
 	}
 
-	return outputStr, nil
+	// Log the effective environment for debugging (optional)
+	// h.logger.Printf("Effective Subprocess Environment: %v", finalEnv)
+
+	return finalEnv
 }
 
-// ExecuteIRRWithStderr runs the 'irr' binary with the given arguments and returns both stdout and stderr separately.
-func (h *TestHarness) ExecuteIRRWithStderr(args ...string) (stdout, stderr string, err error) {
-	path := h.getBinaryPath()
+// ExecuteIRR executes the irr binary with the given arguments and returns the combined stdout/stderr.
+// It allows overriding environment variables for the subprocess.
+func (h *TestHarness) ExecuteIRR(envOverrides map[string]string, args ...string) (output string, err error) {
+	// Prepend the --integration-test flag
+	cmdArgs := append([]string{"--integration-test"}, args...)
 
-	h.logger.Printf("Running: %s %s", path, strings.Join(args, " "))
+	cmd := exec.Command(h.getBinaryPath(), cmdArgs...)
+	cmd.Dir = h.tempDir // Run in the harness's temp directory
 
-	// For integration tests, we need to enable debug warning messages to help with diagnostics
-	irrliblog.SetLevel(irrliblog.LevelDebug)
+	// Build environment, applying overrides
+	cmd.Env = h.buildEnv(envOverrides)
 
-	// Always include the integration-test flag to allow loading registry files from temp directories
-	args = append([]string{"--integration-test"}, args...)
-
-	// #nosec G204 -- This is test code and args are controlled by tests
-	cmd := exec.Command(path, args...)
-	cmd.Dir = h.rootDir // Run from project root
-
-	// Capture stdout and stderr separately
-	var outBuf bytes.Buffer
-	var stderrBuf bytes.Buffer
-	cmd.Stdout = &outBuf
-	cmd.Stderr = &stderrBuf
-
-	// Run the command
-	err = cmd.Run()
-	stdout = outBuf.String()
-	stderr = stderrBuf.String()
-
-	// ALWAYS log the full output for debugging purposes
-	if stdout != "" {
-		h.logger.Printf("[HARNESS EXECUTE_IRR_WITH_STDERR] Stdout:\n%s", stdout)
-	}
-
-	if stderr != "" {
-		h.logger.Printf("[HARNESS EXECUTE_IRR_WITH_STDERR] Stderr:\n%s", stderr)
-	}
+	h.logger.Printf("Executing IRR (combined output): %s %v", h.getBinaryPath(), cmdArgs)
+	outputBytes, err := cmd.CombinedOutput()
+	output = string(outputBytes)
 
 	if err != nil {
-		// Return error along with stdout and stderr
-		return stdout, stderr, fmt.Errorf(
-			"irr command execution failed: %w",
-			err,
-		)
+		h.logger.Printf("IRR execution failed (combined): %v\nOutput:\n%s", err, output)
+		// Wrap error with exit code if possible
+		if exitError, ok := err.(*exec.ExitError); ok {
+			err = fmt.Errorf("exit code %d: %w", exitError.ExitCode(), err)
+		}
+		return output, err // Return output even on error for inspection
+	}
+	h.logger.Printf("IRR execution successful (combined). Output:\n%s", output)
+	return output, nil
+}
+
+// ExecuteIRRWithStderr executes the irr binary, returning separate stdout and stderr.
+// It allows overriding environment variables for the subprocess.
+func (h *TestHarness) ExecuteIRRWithStderr(envOverrides map[string]string, args ...string) (stdout, stderr string, err error) {
+	// Prepend the --integration-test flag
+	cmdArgs := append([]string{"--integration-test"}, args...)
+
+	cmd := exec.Command(h.getBinaryPath(), cmdArgs...)
+	cmd.Dir = h.tempDir
+
+	// Build environment
+	cmd.Env = h.buildEnv(envOverrides)
+
+	var stdoutBuf, stderrBuf bytes.Buffer
+	cmd.Stdout = &stdoutBuf
+	cmd.Stderr = &stderrBuf
+
+	h.logger.Printf("Executing IRR (separate streams): %s %v", h.getBinaryPath(), cmdArgs)
+	err = cmd.Run()
+	stdout = stdoutBuf.String()
+	stderr = stderrBuf.String()
+
+	if err != nil {
+		h.logger.Printf("IRR execution failed (separate): %v\nStdout:\n%s\nStderr:\n%s", err, stdout, stderr)
+		// Wrap error with exit code if possible
+		if exitError, ok := err.(*exec.ExitError); ok {
+			err = fmt.Errorf("exit code %d: %w", exitError.ExitCode(), err)
+		}
+		return stdout, stderr, err // Return output even on error
 	}
 
+	h.logger.Printf("IRR execution successful (separate). Stdout:\n%s\nStderr:\n%s", stdout, stderr)
 	return stdout, stderr, nil
 }
 
@@ -751,6 +752,7 @@ func (h *TestHarness) AssertExitCode(expected int, args ...string) {
 	// G204: Subprocess launched with variable - Acceptable in test code.
 	cmd := exec.Command(binPath, args...) // #nosec G204
 	cmd.Dir = h.tempDir                   // Run from the temp directory
+	cmd.Env = h.buildEnv(nil)             // Use default env (includes IRR_TESTING=true)
 	outputBytes, runErr := cmd.CombinedOutput()
 	outputStr := string(outputBytes)
 
@@ -816,6 +818,7 @@ func (h *TestHarness) AssertErrorContains(substring string, args ...string) {
 	// G204: Subprocess launched with variable - Acceptable in test code.
 	cmd := exec.Command(binPath, args...) // #nosec G204
 	cmd.Dir = h.tempDir                   // Run from the temp directory
+	cmd.Env = h.buildEnv(nil)             // Use default env (includes IRR_TESTING=true)
 	var stderr bytes.Buffer
 	var stdout bytes.Buffer // Keep capturing stdout for context if needed, but don't check it
 	cmd.Stderr = &stderr
