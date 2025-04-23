@@ -24,14 +24,14 @@ Logs are written to **standard error (stderr)**.
 
 ## Controlling Log Level (`LOG_LEVEL`)
 
-The minimum log level displayed is controlled by the `LOG_LEVEL` environment variable. Set it to one of `DEBUG`, `INFO`, `WARN`, or `ERROR` (case-insensitive). The default level is `INFO`.
+The minimum log level displayed is controlled by a combination of flags and environment variables.
 
 The effective log level is determined by the following precedence (highest to lowest):
 
 1.  **`--debug` flag:** If present, forces the log level to `DEBUG`, overriding all other settings.
-2.  **`--log-level <level>` flag:** If present and `<level>` is not the default `"info"`, sets the log level to `<level>`. Overrides `LOG_LEVEL` environment variable and the default level.
-3.  **`LOG_LEVEL=<LEVEL>` environment variable:** If set to a valid level, sets the log level to `<LEVEL>`. Overrides the default level.
-4.  **Default Level:**
+2.  **`--log-level <level>` flag:** If explicitly set by the user (not just using its default value) and `<level>` is valid, sets the log level to `<level>`. This overrides the `LOG_LEVEL` environment variable and the default level.
+3.  **`LOG_LEVEL=<LEVEL>` environment variable:** If the `--log-level` flag was *not* explicitly set, and this environment variable is set to a valid level (`DEBUG`, `INFO`, `WARN`, `ERROR`), it sets the log level to `<LEVEL>`. This overrides the default level.
+4.  **Default Level:** If no flags or environment variables set the level:
     *   **Error (`ERROR`):** Used during normal execution (standalone or Helm plugin mode). This provides a cleaner output for users, showing only warnings and errors by default.
     *   **Info (`INFO`):** Used when IRR detects it's running in a test mode (e.g., via hidden flags like `--integration-test` or `--test-analyze`). This ensures tests that rely on INFO-level logs continue to function.
 
