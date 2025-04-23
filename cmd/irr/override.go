@@ -546,7 +546,17 @@ func setupPathStrategy(cmd *cobra.Command, config *GeneratorConfig) error {
 
 // skipCWDCheck returns true if we should skip the cwd check for registry files
 func skipCWDCheck() bool {
-	return isTestMode || integrationTestMode
+	// Get the flag value (using the global variable populated by Cobra)
+	itFlag := integrationTestMode
+
+	// Check the environment variable
+	irrTestingEnv := os.Getenv("IRR_TESTING") == "true"
+
+	// Log the check results (optional but helpful for debugging)
+	// Note: Cannot use slog here easily as logger isn't passed in. Use fmt for temporary debug if needed.
+	// fmt.Fprintf(os.Stderr, "[DEBUG skipCWDCheck] integrationTestFlag=%t, irrTestingEnv=%t\n", itFlag, irrTestingEnv)
+
+	return itFlag || irrTestingEnv
 }
 
 // loadRegistryMappings loads registry mappings from config and registry files

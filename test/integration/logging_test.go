@@ -13,12 +13,14 @@ func runLogLevelTest(
 	t *testing.T,
 	name string,
 	baseArgs []string,
-	harness *TestHarness,
 	envOverrides map[string]string,
 	extraArgs, contains, notContains []string,
 ) {
 	t.Run(name, func(t *testing.T) {
 		t.Parallel()
+		harness := NewTestHarness(t)
+		defer harness.Cleanup()
+
 		setupMinimalTestChart(t, harness)
 		args := baseArgs
 		args = append(args, "--chart-path", harness.chartPath, "--output-file", harness.GeneratedOverridesFile())
@@ -42,63 +44,61 @@ func TestDefaultLogLevels(t *testing.T) {
 		"--source-registries", "docker.io",
 	}
 
-	harness := NewTestHarness(t)
-	defer harness.Cleanup()
-
 	runLogLevelTest(
-		t, "Normal_Default_(ERROR)", baseArgs, harness, nil,
+		t, "Normal_Default_(ERROR)", baseArgs, nil,
 		[]string{"--log-level=error"},
 		nil,
 		[]string{"\"level\":\"INFO\"", "\"level\":\"WARN\"", "\"level\":\"DEBUG\""},
 	)
 	runLogLevelTest(
-		t, "Test_Mode_Default_(INFO)", baseArgs, harness, nil,
+		t, "Test_Mode_Default_(INFO)", baseArgs,
+		map[string]string{"LOG_LEVEL": ""},
 		nil,
 		[]string{"\"level\":\"INFO\""},
 		[]string{"\"level\":\"DEBUG\""},
 	)
 	runLogLevelTest(
-		t, "Flag_Override_(--log-level_warn)", baseArgs, harness,
+		t, "Flag_Override_(--log-level_warn)", baseArgs,
 		map[string]string{"LOG_LEVEL": ""},
 		[]string{"--log-level=warn"},
 		[]string{"\"level\":\"WARN\""},
 		[]string{"\"level\":\"INFO\"", "\"level\":\"DEBUG\""},
 	)
 	runLogLevelTest(
-		t, "--debug_Flag_Override", baseArgs, harness, nil,
+		t, "--debug_Flag_Override", baseArgs, nil,
 		[]string{"--debug"},
 		[]string{"\"level\":\"DEBUG\""},
 		nil,
 	)
 	runLogLevelTest(
-		t, "Env_Var_Override_(LOG_LEVEL=debug)", baseArgs, harness,
+		t, "Env_Var_Override_(LOG_LEVEL=debug)", baseArgs,
 		map[string]string{"LOG_LEVEL": "debug"},
 		nil,
 		[]string{"\"level\":\"DEBUG\""},
 		nil,
 	)
 	runLogLevelTest(
-		t, "Flag_warn_overrides_Env_debug", baseArgs, harness,
+		t, "Flag_warn_overrides_Env_debug", baseArgs,
 		map[string]string{"LOG_LEVEL": "debug"},
 		[]string{"--log-level=warn"},
 		[]string{"\"level\":\"WARN\""},
 		[]string{"\"level\":\"INFO\"", "\"level\":\"DEBUG\""},
 	)
 	runLogLevelTest(
-		t, "Flag_debug_overrides_Env_info", baseArgs, harness,
+		t, "Flag_debug_overrides_Env_info", baseArgs,
 		map[string]string{"LOG_LEVEL": "info"},
 		[]string{"--debug"},
 		[]string{"\"level\":\"DEBUG\""},
 		nil,
 	)
 	runLogLevelTest(
-		t, "Flag_debug_overrides_Flag_error", baseArgs, harness, nil,
+		t, "Flag_debug_overrides_Flag_error", baseArgs, nil,
 		[]string{"--debug", "--log-level=error"},
 		[]string{"\"level\":\"DEBUG\""},
 		nil,
 	)
 	runLogLevelTest(
-		t, "Env_error_overrides_Default_info", baseArgs, harness,
+		t, "Env_error_overrides_Default_info", baseArgs,
 		map[string]string{"LOG_LEVEL": "error"},
 		nil,
 		nil,

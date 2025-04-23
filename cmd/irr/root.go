@@ -175,7 +175,8 @@ It also supports linting image references for potential issues.`,
 
 			// 4. Default level if nothing else set it
 			if levelSource == validateTestNamespace {
-				isTestRun := integrationTestMode || TestAnalyzeMode
+				// Check flags AND the environment variable set by the test harness
+				isTestRun := integrationTestMode || TestAnalyzeMode || (os.Getenv("IRR_TESTING") == "true")
 				if isTestRun {
 					finalLevel = log.LevelInfo // Default to Info for test runs
 				} else {
@@ -217,12 +218,17 @@ It also supports linting image references for potential issues.`,
 			} else {
 				log.Debug("Preserving in-memory filesystem for testing")
 			}
-			log.Debug("Root command: Attempting to load mappings", "file", registryFile)
+
+			// Determine if we should skip CWD check based on flags OR env var
+			shouldSkipCWDRestriction := integrationTestMode || (os.Getenv("IRR_TESTING") == "true") // <-- Use combined check
+
+			log.Debug("Root command: Attempting to load mappings", "file", registryFile, "skipCWDRestriction", shouldSkipCWDRestriction)
 			// Load structured config first, fall back to legacy
-			_, err := registry.LoadStructuredConfigDefault(registryFile, integrationTestMode)
+			_, err := registry.LoadStructuredConfigDefault(registryFile, shouldSkipCWDRestriction) // <-- Pass the combined check result
 			if err != nil {
 				log.Debug("Failed loading structured config, trying legacy LoadMappings", "error", err)
-				_, legacyErr := registry.LoadMappings(AppFs, registryFile, integrationTestMode)
+				// We need to load the legacy Mappings object to proceed
+				_, legacyErr := registry.LoadMappings(AppFs, registryFile, shouldSkipCWDRestriction) // <-- Pass the combined check result here too
 				if legacyErr != nil {
 					// Log as debug because this happens early, might not be fatal
 					log.Debug("Failed to load registry mappings (both formats). Proceeding without mappings.", "file", registryFile, "structured_error", err, "legacy_error", legacyErr)
