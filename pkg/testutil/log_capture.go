@@ -74,35 +74,35 @@ func ContainsLog(output, message string) bool {
 func CaptureJSONLogs(logLevel log.Level, testFunc func()) (logOutput string, parsedLogs []map[string]interface{}, err error) {
 	// --- Environment Variable Handling ---
 	originalLogFormat := os.Getenv("LOG_FORMAT")
-	// Set LOG_FORMAT=json for the duration of this capture
 	if setErr := os.Setenv("LOG_FORMAT", "json"); setErr != nil {
 		err = fmt.Errorf("failed to set LOG_FORMAT=json: %w", setErr)
 		return
 	}
 	defer func() {
-		// Restore original LOG_FORMAT
 		if restoreErr := os.Setenv("LOG_FORMAT", originalLogFormat); restoreErr != nil {
-			// Log an error if restoring fails, but don't fail the test here
 			log.Error("failed to restore original LOG_FORMAT environment variable", "originalValue", originalLogFormat, "error", restoreErr)
 		}
 	}()
 
-	// --- Capture Logic (similar to CaptureLogOutput) ---
+	// --- Enable Timestamps for Test Capture ---
+	log.SetTestModeWithTimestamps(true)
+	// Ensure the test mode is disabled AFTER the capture setup is restored
+	defer log.SetTestModeWithTimestamps(false)
+
+	// --- Capture Logic (Original Version + Level Setting) ---
 	originalLevel := log.CurrentLevel()
 	var logBuf bytes.Buffer
+
+	// SetOutput will trigger configureLogger, which now respects the test mode flag
 	restoreLog := log.SetOutput(&logBuf)
+	// restoreLog (returned by SetOutput) restores the original writer and reconfigures.
+	// The defer below ensures test mode is off AFTER restoreLog runs.
 	defer restoreLog()
 
+	// SetLevel also triggers configureLogger, ensuring level is set correctly with test mode active.
 	log.SetLevel(logLevel)
+	// Restore original level AFTER test func runs and AFTER restoreLog runs.
 	defer log.SetLevel(originalLevel)
-
-	// Re-initialize logger to pick up LOG_FORMAT change *after* setting env var
-	// NOTE: This assumes log.Initialize (or similar) reads env vars.
-	// If the logger setup is more complex, this might need adjustment.
-	// We might need an explicit re-initialization function in pkg/log.
-	// For now, we assume setting output implicitly handles reconfig or that
-	// the logger reads the env var each time it creates a handler.
-	// If tests fail due to wrong format, revisit this.
 
 	// Execute the test function, recovering from panics.
 	var panicErr error
@@ -120,40 +120,30 @@ func CaptureJSONLogs(logLevel log.Level, testFunc func()) (logOutput string, par
 
 	// If the test function panicked, return the panic error immediately.
 	if panicErr != nil {
-		// Assign panicErr to the named return `err`
 		err = panicErr
-		// parsedLogs is already initialized to nil, logOutput is set
 		return
 	}
 
 	// --- JSON Parsing ---
-	// parsedLogs is the named return value, initialized to a nil slice.
-
-	// Handle empty output gracefully
 	if strings.TrimSpace(logOutput) == "" {
-		// parsedLogs is nil, err is nil, logOutput is set
 		return
 	}
 
 	lines := strings.Split(strings.TrimSpace(logOutput), "\n")
 	var parseErr error
 	for i, line := range lines {
-		// Skip empty lines which might result from extra newlines
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
 		var entry map[string]interface{}
 		if unmarshalErr := json.Unmarshal([]byte(line), &entry); unmarshalErr != nil {
-			// Store the first parsing error encountered and stop processing
 			parseErr = fmt.Errorf("failed to unmarshal log line %d as JSON: %w\nLine content: %s", i+1, unmarshalErr, line)
-			break // Stop parsing on the first error
+			break
 		}
 		parsedLogs = append(parsedLogs, entry)
 	}
 
-	// Assign the local parseErr to the named return `err`
 	err = parseErr
-	// logOutput and parsedLogs are already populated
 	return
 }
 
