@@ -32,6 +32,8 @@ const (
 	TestDirPermissions = 0o750 // Restrict to owner + group
 )
 
+const envSplitCount = 2
+
 const legacyMappingContent = `docker.io: registry.example.com/docker
 quay.io: registry.example.com/quay
 `
@@ -558,8 +560,8 @@ func (h *TestHarness) buildEnv(envOverrides map[string]string) []string {
 	baseEnv := os.Environ()
 	envMap := make(map[string]string)
 	for _, envVar := range baseEnv {
-		parts := strings.SplitN(envVar, "=", 2)
-		if len(parts) == 2 {
+		parts := strings.SplitN(envVar, "=", envSplitCount)
+		if len(parts) == envSplitCount {
 			envMap[parts[0]] = parts[1]
 		} else {
 			envMap[parts[0]] = "" // Handle variables without values
@@ -567,10 +569,8 @@ func (h *TestHarness) buildEnv(envOverrides map[string]string) []string {
 	}
 
 	// Apply overrides
-	if envOverrides != nil {
-		for key, value := range envOverrides {
-			envMap[key] = value
-		}
+	for key, value := range envOverrides {
+		envMap[key] = value
 	}
 
 	// Ensure IRR_TESTING is set
@@ -588,65 +588,71 @@ func (h *TestHarness) buildEnv(envOverrides map[string]string) []string {
 	return finalEnv
 }
 
-// ExecuteIRR executes the irr binary with the given arguments and returns the combined stdout/stderr.
-// It allows overriding environment variables for the subprocess.
+// ExecuteIRR runs the irr command with the given arguments and returns its stdout. #nosec G204 -- Arguments are controlled by test harness, not user input
 func (h *TestHarness) ExecuteIRR(envOverrides map[string]string, args ...string) (output string, err error) {
-	// Prepend the --integration-test flag
-	cmdArgs := append([]string{"--integration-test"}, args...)
-
+	cmdArgs := args
+	// #nosec G204 -- Arguments are controlled by test harness, not user input
 	cmd := exec.Command(h.getBinaryPath(), cmdArgs...)
-	cmd.Dir = h.tempDir // Run in the harness's temp directory
-
-	// Build environment, applying overrides
 	cmd.Env = h.buildEnv(envOverrides)
 
-	h.logger.Printf("Executing IRR (combined output): %s %v", h.getBinaryPath(), cmdArgs)
-	outputBytes, err := cmd.CombinedOutput()
-	output = string(outputBytes)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	h.logger.Printf("Executing command: %s %v (env: %v)", cmd.Path, cmd.Args, cmd.Env)
+	err = cmd.Run()
+
+	stdoutStr := stdout.String()
+	stderrStr := stderr.String()
 
 	if err != nil {
-		h.logger.Printf("IRR execution failed (combined): %v\nOutput:\n%s", err, output)
-		// Wrap error with exit code if possible
-		if exitError, ok := err.(*exec.ExitError); ok {
-			err = fmt.Errorf("exit code %d: %w", exitError.ExitCode(), err)
+		// Log stderr for debugging failed commands
+		h.logger.Printf("Command failed: %v\nStderr:\n%s", err, stderrStr)
+
+		// Check if it's an ExitError to provide more context
+		var exitError *exec.ExitError
+		if errors.As(err, &exitError) {
+			// Return a more specific error including the exit code and stderr
+			return stdoutStr, fmt.Errorf("command exited with status %d: %w\nstderr: %s", exitError.ExitCode(), err, stderrStr)
 		}
-		return output, err // Return output even on error for inspection
+		// Return the original error if it's not an ExitError
+		return stdoutStr, fmt.Errorf("command execution failed: %w\nstderr: %s", err, stderrStr)
 	}
-	h.logger.Printf("IRR execution successful (combined). Output:\n%s", output)
-	return output, nil
+
+	return stdoutStr, nil
 }
 
-// ExecuteIRRWithStderr executes the irr binary, returning separate stdout and stderr.
-// It allows overriding environment variables for the subprocess.
+// ExecuteIRRWithStderr runs the irr command and returns both stdout and stderr. #nosec G204 -- Arguments are controlled by test harness, not user input
 func (h *TestHarness) ExecuteIRRWithStderr(envOverrides map[string]string, args ...string) (stdout, stderr string, err error) {
-	// Prepend the --integration-test flag
-	cmdArgs := append([]string{"--integration-test"}, args...)
-
+	cmdArgs := args
+	// #nosec G204 -- Arguments are controlled by test harness, not user input
 	cmd := exec.Command(h.getBinaryPath(), cmdArgs...)
-	cmd.Dir = h.tempDir
-
-	// Build environment
 	cmd.Env = h.buildEnv(envOverrides)
 
 	var stdoutBuf, stderrBuf bytes.Buffer
 	cmd.Stdout = &stdoutBuf
 	cmd.Stderr = &stderrBuf
 
-	h.logger.Printf("Executing IRR (separate streams): %s %v", h.getBinaryPath(), cmdArgs)
+	h.logger.Printf("Executing command (capturing stderr): %s %v (env: %v)", cmd.Path, cmd.Args, cmd.Env)
 	err = cmd.Run()
+
 	stdout = stdoutBuf.String()
 	stderr = stderrBuf.String()
 
 	if err != nil {
-		h.logger.Printf("IRR execution failed (separate): %v\nStdout:\n%s\nStderr:\n%s", err, stdout, stderr)
-		// Wrap error with exit code if possible
-		if exitError, ok := err.(*exec.ExitError); ok {
-			err = fmt.Errorf("exit code %d: %w", exitError.ExitCode(), err)
+		// Log the error, but return stderr separately
+		h.logger.Printf("Command failed: %v\nStderr:\n%s", err, stderr)
+
+		// Check if it's an ExitError to potentially wrap it
+		var exitError *exec.ExitError
+		if errors.As(err, &exitError) {
+			// Return a wrapped error including the exit code, keeping original error info
+			return stdout, stderr, fmt.Errorf("command exited with status %d: %w", exitError.ExitCode(), err)
 		}
-		return stdout, stderr, err // Return output even on error
+		// Return the original error if it's not an ExitError
+		return stdout, stderr, fmt.Errorf("command execution failed: %w", err)
 	}
 
-	h.logger.Printf("IRR execution successful (separate). Stdout:\n%s\nStderr:\n%s", stdout, stderr)
 	return stdout, stderr, nil
 }
 

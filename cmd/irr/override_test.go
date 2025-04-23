@@ -298,8 +298,3 @@ func setupTestFsOverride(t *testing.T) (afero.Fs, func()) {
 	return fs, reset
 }
 */
-
-// Test helper to check if a file exists and has content
-func checkFileContent(t *testing.T, fs afero.Fs, filepath string, expectedContent string) {
-	// ... existing code ...
-}

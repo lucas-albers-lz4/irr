@@ -158,10 +158,10 @@ docker.io: my-registry.example.com/docker-mirror
 				// Or cases where the file content is implicitly handled (like the old top-level mappings test)
 				// Also correct the empty string check here:
 				if tt.errorContains == "" && tt.wantMappings == nil && !tt.wantErr {
-					// This case might indicate a test setup issue or a test that doesn't need a file
 					// For safety, maybe write an empty file if path exists?
 					if tt.path != "" && tt.path != "../../../etc/passwd.yaml" { // Avoid writing outside tmp
-						_ = afero.WriteFile(fs, tt.path, []byte{}, 0o644) // Ignore error
+						err := afero.WriteFile(fs, tt.path, []byte{}, 0o644) // Check error now
+						require.NoError(t, err, "Failed to write temporary empty file for test setup")
 					}
 				}
 			}

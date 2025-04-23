@@ -31,7 +31,6 @@ func TestInspectCommand(t *testing.T) {
 	}
 	output, _ /*stderr*/, err := harness.ExecuteIRRWithStderr(nil, args...)
 	require.NoError(t, err)
-	// require.Empty(t, stderr) // Removed: Allow debug stderr output
 
 	// Verify the output contains expected sections
 	assert.Contains(t, output, "chart:", "Output should include chart section")
@@ -63,7 +62,6 @@ func TestInspectWithSourceRegistryFilter(t *testing.T) {
 	}
 	output, _ /*stderr*/, err := harness.ExecuteIRRWithStderr(nil, args...)
 	require.NoError(t, err)
-	// require.Empty(t, stderr) // Removed: Allow debug stderr output
 
 	// Verify output - should detect the nginx image whether it has a docker.io prefix or not
 	assert.True(t,
@@ -93,7 +91,6 @@ func TestInspectOutputToFile(t *testing.T) {
 	}
 	_, _ /*stderr*/, err := harness.ExecuteIRRWithStderr(nil, args...)
 	require.NoError(t, err)
-	// require.Empty(t, stderr) // Removed: Allow debug stderr output
 
 	// Verify the file exists and has content
 	require.FileExists(t, outputFile, "Output file should exist")
@@ -185,7 +182,6 @@ spec:
 	}
 	output, _ /*stderr*/, err := harness.ExecuteIRRWithStderr(nil, args...)
 	require.NoError(t, err)
-	// require.Empty(t, stderr) // Removed: Allow debug stderr output
 
 	// Verify the output contains parent chart information (should find the nginx image)
 	assert.Contains(t, output, "parent-chart", "Output should include parent chart name")
@@ -220,7 +216,6 @@ func TestInspectGenerateConfigSkeleton(t *testing.T) {
 	}
 	_, _ /*stderr*/, err := harness.ExecuteIRRWithStderr(nil, args...)
 	require.NoError(t, err)
-	// require.Empty(t, stderr) // Removed: Allow debug stderr output
 
 	// Check that the file exists
 	require.FileExists(t, skeletonFile, "Config skeleton file should exist")

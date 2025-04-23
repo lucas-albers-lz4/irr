@@ -12,7 +12,7 @@ import (
 
 // assertHelpDefault checks if the help output for a given subcommand and flag
 // contains the expected default value string.
-func assertHelpDefault(t *testing.T, subcommand string, flagName string, expectedDefault string) {
+func assertHelpDefault(t *testing.T, subcommand, flagName, expectedDefault string) {
 	t.Helper()
 
 	h := NewTestHarness(t) // Create a harness for execution context
@@ -22,7 +22,7 @@ func assertHelpDefault(t *testing.T, subcommand string, flagName string, expecte
 	require.NoError(t, err, "Executing --help for %s should succeed. Stderr: %s", subcommand, stderr)
 
 	// Construct the expected default value string
-	expectedDefaultText := fmt.Sprintf(`(default "%s")`, expectedDefault)
+	expectedDefaultText := fmt.Sprintf(`(default %q)`, expectedDefault)
 	// Construct the string to find the flag (e.g., "--log-level" or "-n, --namespace")
 	// We are less strict here, just need to find the flag name itself.
 	flagIdentifier := fmt.Sprintf("--%s", flagName)

@@ -10,8 +10,6 @@ import (
 
 // Constants for repeated test values in validate tests - reserved for future use
 // These are available for tests that need common values
-//
-//nolint:unused // These constants are available for future test usage
 /*
 const (
 	validateTestChartPath = "../../test/testdata/charts/minimal-test"
@@ -20,8 +18,6 @@ const (
 */
 
 // Mock the helm.Template function via the exported variable
-//
-//nolint:unused // This variable is used in some tests to override the template function
 /*
 var mockHelmTemplate = func(_ string, _ *helm.TemplateOptions) (string, error) {
 	return "---\napiVersion: v1\nkind: Pod\nmetadata:\n  name: test-pod", nil

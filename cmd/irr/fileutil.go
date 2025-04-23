@@ -77,7 +77,7 @@ func getReleaseNameAndNamespaceCommon(cmd *cobra.Command, args []string) (releas
 	// --- Helm Plugin Namespace Correction ---
 	// If running as a plugin and the namespace flag is still the default,
 	// try getting the namespace from the HELM_NAMESPACE env var.
-	if isRunningAsHelmPlugin() && namespace == "default" {
+	if isRunningAsHelmPlugin() && namespace == validateTestNamespace {
 		envNamespace := os.Getenv("HELM_NAMESPACE")
 		if envNamespace != "" {
 			log.Debug("Namespace flag was default in plugin mode, using HELM_NAMESPACE env var instead", "env_namespace", envNamespace)

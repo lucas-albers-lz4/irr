@@ -19,9 +19,7 @@ import (
 )
 
 // Constants
-const (
-// expectedEnvVarParts = 2 // Removed as unused
-)
+// // expectedEnvVarParts = 2 // Removed as unused
 
 // Global flag variables
 var (
@@ -144,7 +142,7 @@ It also supports linting image references for potential issues.`,
 			debugFlagEnabled, logLevelFlagStr, cmd.Flags().Changed("log-level"), envLogLevelStr)
 
 		var finalLevel log.Level
-		levelSource := "default"
+		levelSource := validateTestNamespace
 
 		// 1. --debug flag has highest precedence
 		if debugFlagEnabled {
@@ -164,7 +162,7 @@ It also supports linting image references for potential issues.`,
 			}
 
 			// 3. LOG_LEVEL env var is next (if flags didn't set a valid level)
-			if levelSource == "default" && envLogLevelStr != "" {
+			if levelSource == validateTestNamespace && envLogLevelStr != "" {
 				parsedLevel, err := log.ParseLevel(envLogLevelStr)
 				if err == nil {
 					finalLevel = log.Level(parsedLevel)
@@ -176,7 +174,7 @@ It also supports linting image references for potential issues.`,
 			}
 
 			// 4. Default level if nothing else set it
-			if levelSource == "default" {
+			if levelSource == validateTestNamespace {
 				isTestRun := integrationTestMode || TestAnalyzeMode
 				if isTestRun {
 					finalLevel = log.LevelInfo // Default to Info for test runs
@@ -424,23 +422,25 @@ func initConfig() {
 	viper.Set("config.read", true)
 }
 
-// setupLogging configures the logger based on the provided flags.
+// setupLogging configures the logger based on settings in Viper.
+// Note: This function is currently unused as logging setup is handled in PersistentPreRunE.
+/*
 func setupLogging(v *viper.Viper) error {
-	// Retrieve log level from Viper, which should be bound correctly by PersistentPreRunE
-	currentLogLevel := v.GetString("logLevel")
-	logFormat := "text" // Default format, can be made configurable if needed
+	logLevelStr := v.GetString("logLevel")
+	logFormat := v.GetString("logFormat")
 
-	// Use the log package's exported SetLevel function
-	slogLevel, err := log.ParseLevel(currentLogLevel)
+	logLevel, err := log.ParseLevel(logLevelStr)
 	if err != nil {
-		// Handle error parsing level string - maybe log a warning and use default?
-		log.Warn("Invalid log level provided, using default", "level", currentLogLevel, "error", err)
-		log.SetLevel(log.LevelInfo) // Use default level from pkg/log
-	} else {
-		log.SetLevel(slogLevel) // Set the parsed level
+		log.Error("Invalid log level specified", "level", logLevelStr, "error", err)
+		// Default to info if invalid
+		logLevel = log.LevelInfo
+		fmt.Fprintf(os.Stderr, "Warning: Invalid log level '%s'. Defaulting to %s.\n", logLevelStr, logLevel.String())
 	}
 
-	log.Debug("Logger initialized", "level", currentLogLevel, "format", logFormat)
+	log.SetLevel(logLevel)
+	log.SetFormat(logFormat) // Assumes SetFormat exists in your log package
 
+	log.Debug("Logging configured", "level", logLevel.String(), "format", logFormat)
 	return nil
 }
+*/
