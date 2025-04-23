@@ -118,3 +118,4 @@ registry-mappings.yaml *.tgz
 test/overrides/*.yaml
 test/pull-logs
 irr.code-workspace
+test/integration/irr-integration-test-*/*.yaml
