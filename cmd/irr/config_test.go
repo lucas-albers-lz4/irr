@@ -3,7 +3,6 @@ package main
 import (
 	"testing"
 
-	"github.com/lalbers/irr/pkg/fileutil"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,24 +25,23 @@ func TestConfigCommand_List(t *testing.T) {
 	AppFs = memFs
 	defer func() { AppFs = oldFs }()
 
-	// Create a test mapping file
-	testData := []byte(`mappings:
-- source: docker.io
-  target: registry.local/docker
-- source: quay.io
-  target: registry.local/quay
-`)
-	err := afero.WriteFile(memFs, testMappingsFile, testData, fileutil.ReadWriteUserReadOthers)
+	// Use legacy key-value format for simplicity in command tests
+	initialContent := `
+first.registry.com: first.target.com/repo
+second.registry.com: second.target.com/repo
+`
+	filePath := "test-mappings.yaml"
+	err := afero.WriteFile(memFs, filePath, []byte(initialContent), 0o644)
 	require.NoError(t, err)
 
 	// Verify the file exists in the mock filesystem
-	exists, err := afero.Exists(memFs, testMappingsFile)
+	exists, err := afero.Exists(memFs, filePath)
 	require.NoError(t, err)
 	require.True(t, exists, "Test mapping file should exist in mock filesystem")
 
 	// Run the list command with a command that directly accesses the file
 	// Instead of using executeCommand, we'll call the function directly
-	configFile = testMappingsFile // Set the global variable
+	configFile = filePath // Set the global variable
 	err = listMappings()
 	require.NoError(t, err)
 
@@ -94,27 +92,26 @@ func TestConfigCommand_UpdateMapping(t *testing.T) {
 	AppFs = memFs
 	defer func() { AppFs = oldFs }()
 
-	// Create an existing mappings file
-	testData := []byte(`mappings:
-- source: docker.io
-  target: registry.old/docker
-- source: quay.io
-  target: registry.old/quay
-`)
-	err := afero.WriteFile(memFs, updateMappingsFile, testData, fileutil.ReadWriteUserReadOthers)
+	// Use legacy key-value format
+	initialContent := `
+docker.io: old-target.example.com/docker
+quay.io: quay-target.example.com/quay
+`
+	filePath := "update-mappings.yaml"
+	err := afero.WriteFile(memFs, filePath, []byte(initialContent), 0o644)
 	require.NoError(t, err)
 
 	// Set the global variables used by the command
 	configSource = dockerIO
 	configTarget = "registry.new/docker"
-	configFile = updateMappingsFile
+	configFile = filePath
 
 	// Call the function directly
 	err = addUpdateMapping()
 	require.NoError(t, err)
 
 	// Verify file was updated with correct content
-	fileContent, err := afero.ReadFile(memFs, updateMappingsFile)
+	fileContent, err := afero.ReadFile(memFs, filePath)
 	require.NoError(t, err)
 
 	// Parse and verify YAML
@@ -137,7 +134,7 @@ func TestConfigCommand_UpdateMapping(t *testing.T) {
 			assert.Equal(t, "registry.new/docker", m.Target)
 			foundUpdated = true
 		case quayIO:
-			assert.Equal(t, "registry.old/quay", m.Target)
+			assert.Equal(t, "quay-target.example.com/quay", m.Target)
 		}
 	}
 	assert.True(t, foundUpdated, "Updated mapping should be found")
@@ -150,20 +147,20 @@ func TestConfigCommand_RemoveMapping(t *testing.T) {
 	AppFs = memFs
 	defer func() { AppFs = oldFs }()
 
-	// Create an existing mappings file
-	testData := []byte(`mappings:
-- source: docker.io
-  target: registry.local/docker
-- source: quay.io
-  target: registry.local/quay
-`)
-	err := afero.WriteFile(memFs, removeMappingsFile, testData, fileutil.ReadWriteUserReadOthers)
+	// Use legacy key-value format
+	initialContent := `
+docker.io: target.example.com/docker
+quay.io: target.example.com/quay
+registry.to.remove: target.example.com/remove
+`
+	filePath := "remove-mappings.yaml"
+	err := afero.WriteFile(memFs, filePath, []byte(initialContent), 0o644)
 	require.NoError(t, err)
 
 	// Set the global variables used by the command
 	configSource = dockerIO
 	configRemoveOnly = true
-	configFile = removeMappingsFile
+	configFile = filePath
 
 	// Call the function directly
 	err = removeMapping()
@@ -173,7 +170,7 @@ func TestConfigCommand_RemoveMapping(t *testing.T) {
 	configRemoveOnly = false
 
 	// Verify file was updated with correct content
-	fileContent, err := afero.ReadFile(memFs, removeMappingsFile)
+	fileContent, err := afero.ReadFile(memFs, filePath)
 	require.NoError(t, err)
 
 	// Parse and verify YAML
@@ -186,8 +183,16 @@ func TestConfigCommand_RemoveMapping(t *testing.T) {
 	err = yaml.Unmarshal(fileContent, &mappings)
 	require.NoError(t, err)
 
-	require.Len(t, mappings.Mappings, 1)
-	assert.Equal(t, quayIO, mappings.Mappings[0].Source)
+	require.Len(t, mappings.Mappings, 2) // Expect 2 items remaining
+	// Use ElementsMatch as order isn't guaranteed after removal/rewrite
+	expectedRemaining := []struct {
+		Source string `yaml:"source"`
+		Target string `yaml:"target"`
+	}{
+		{Source: quayIO, Target: "target.example.com/quay"},
+		{Source: "registry.to.remove", Target: "target.example.com/remove"},
+	}
+	assert.ElementsMatch(t, expectedRemaining, mappings.Mappings)
 }
 
 func TestConfigCommand_NoSourceWithRemove(t *testing.T) {
