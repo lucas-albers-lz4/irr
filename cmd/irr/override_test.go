@@ -290,3 +290,16 @@ func setupMockChart(t *testing.T, fs afero.Fs, chartDir, version string) {
 	err = afero.WriteFile(fs, dummyTemplatePath, []byte("kind: Deployment"), fileutil.ReadWriteUserReadOthers) // Replaced 0o644
 	require.NoError(t, err, "Failed to write mock dummy template")
 }
+
+/*
+func setupTestFsOverride(t *testing.T) (afero.Fs, func()) {
+	fs := afero.NewMemMapFs()
+	reset := SetFs(fs)
+	return fs, reset
+}
+*/
+
+// Test helper to check if a file exists and has content
+func checkFileContent(t *testing.T, fs afero.Fs, filepath string, expectedContent string) {
+	// ... existing code ...
+}

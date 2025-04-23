@@ -14,38 +14,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// setupMemoryFSContext sets up an in-memory filesystem with a temporary directory
-//
-//nolint:unused // This function is available for future tests requiring an in-memory filesystem with cleanup
-func setupMemoryFSContext(t *testing.T) (fs afero.Fs, tempDir string, cleanup func()) {
-	// Save original state
-	originalFS := AppFs
-	originalDebug := os.Getenv("DEBUG")
-
-	// Set up test environment
-	err := os.Setenv("DEBUG", "1")
-	require.NoError(t, err, "Failed to set DEBUG environment variable")
-
-	fs = afero.NewMemMapFs()
-	tempDir = "/test/chart"
-	err = fs.MkdirAll(tempDir, fileutil.ReadWriteExecuteUserReadExecuteOthers)
-	require.NoError(t, err, "Failed to create test chart directory")
-
-	// Replace global AppFs
-	AppFs = fs
-
-	// Create cleanup function
-	cleanup = func() {
-		// Restore original state
-		AppFs = originalFS
-		err := os.Setenv("DEBUG", originalDebug)
-		if err != nil {
-			t.Logf("Warning: Failed to restore DEBUG environment variable: %v", err)
-		}
-	}
-
-	return fs, tempDir, cleanup
+/*
+// setupMemoryFSContext creates a new memory filesystem and sets it as the AppFs.
+// It returns the filesystem instance and a cleanup function to restore the original AppFs.
+func setupMemoryFSContext(t *testing.T) (afero.Fs, func()) {
+	t.Helper()
+	fs := afero.NewMemMapFs()
+	reset := SetFs(fs) // SetFs is assumed to be defined in the main package
+	return fs, reset
 }
+*/
 
 // TestHandleTestModeOverride is a more focused test that directly tests the function
 // designed for test mode
