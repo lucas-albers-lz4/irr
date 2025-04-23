@@ -13,23 +13,19 @@ The `irr` tool analyzes Helm charts and automatically generates `values.yaml` ov
 
 ## Installation
 
-### Binary Installation (not available yet)
+### Helm Plugin Installation
 
-Download the latest release for your platform from the [releases page](https://github.com/lalbers/irr/releases).
+The recommended way to install and use `irr` is as a Helm plugin:
 
 ```bash
-# Linux
-curl -LO https://github.com/lalbers/irr/releases/latest/download/irr-linux-amd64
-chmod +x irr-linux-amd64
-mv irr-linux-amd64 /usr/local/bin/irr
-
-# macOS
-curl -LO https://github.com/lalbers/irr/releases/latest/download/irr-darwin-amd64
-chmod +x irr-darwin-amd64
-mv irr-darwin-amd64 /usr/local/bin/irr
+helm plugin install https://github.com/lucas-albers-lz4/irr
 ```
 
-### Building from Source
+Binary distribution via a brew tap is planned but not yet available.
+
+### Building from Source (for development)
+
+If you need to build the tool locally for development purposes:
 
 1. Clone the repository:
 ```bash
@@ -42,12 +38,7 @@ cd irr
 make build
 ```
 
-The binary will be created at `bin/irr`. You can optionally add it to your PATH:
-
-```bash
-# Optional: Install to /usr/local/bin
-sudo cp bin/irr /usr/local/bin/
-```
+The binary will be created at `bin/irr`.
 
 ## Usage
 
