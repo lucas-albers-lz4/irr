@@ -86,7 +86,7 @@ registries:
   strictMode: false
 `,
 			shouldSucceed:  false,
-			errorSubstring: "failed to parse config file",
+			errorSubstring: "failed to parse mappings file", // Updated expected substring
 		},
 	}
 
@@ -113,11 +113,11 @@ registries:
 				"--chart-path", h.chartPath,
 				"--target-registry", targetReg,
 				"--source-registries", strings.Join(sourceRegs, ","),
-				"--registry-file", mappingFile,
+				"--config", mappingFile,
 				"--output-file", outputFile,
 			}
 
-			output, stderr, err := h.ExecuteIRRWithStderr(args...)
+			output, stderr, err := h.ExecuteIRRWithStderr(nil, args...)
 
 			// Check if the command succeeded or failed as expected
 			if tc.shouldSucceed {
@@ -304,7 +304,7 @@ func TestRegistryPrefixTransformation(t *testing.T) {
 				"--output-file", outputFile,
 			}
 
-			output, stderr, err := h.ExecuteIRRWithStderr(args...)
+			output, stderr, err := h.ExecuteIRRWithStderr(nil, args...)
 			require.NoError(t, err, "override command should succeed: %s", stderr)
 			t.Logf("Override output: %s", output)
 			t.Logf("Stderr: %s", stderr)

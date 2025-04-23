@@ -47,13 +47,6 @@ func TestLoadMappings(t *testing.T) {
 	require.NoError(t, afero.WriteFile(fs, invalidExtTmpFile, []byte(""), fileutil.ReadWriteUserReadOthers))
 	require.NoError(t, afero.WriteFile(fs, tmpDirFile, []byte(""), fileutil.ReadWriteUserReadOthers))
 
-	expectedMappings := &Mappings{
-		Entries: []Mapping{
-			{Source: "quay.io", Target: "my-registry.example.com/quay-mirror"},
-			{Source: "docker.io", Target: "my-registry.example.com/docker-mirror"},
-		},
-	}
-
 	tests := []struct {
 		name          string
 		path          string
@@ -61,13 +54,6 @@ func TestLoadMappings(t *testing.T) {
 		wantErr       bool
 		errorContains string
 	}{
-		{
-			name:          "valid_mappings_file_(new_format)",
-			path:          newFormatFile,
-			wantMappings:  expectedMappings,
-			wantErr:       false,
-			errorContains: "",
-		},
 		{
 			name:          "nonexistent_file",
 			path:          "/path/does/not/exist.yaml",
@@ -111,6 +97,17 @@ func TestLoadMappings(t *testing.T) {
 			wantErr:       true,
 			errorContains: "mappings file path is empty",
 		},
+		{
+			name: "valid mappings file (structured format)",
+			path: "/tmp/valid-structured.yaml",
+			wantMappings: &Mappings{
+				Entries: []Mapping{
+					{Source: "quay.io", Target: "my-registry.example.com/quay-mirror"},
+					{Source: "docker.io", Target: "my-registry.example.com/docker-mirror"},
+				},
+			},
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -127,8 +124,50 @@ func TestLoadMappings(t *testing.T) {
 			// Only the 'invalid path traversal' test needs the check active (skip=false).
 			skipCheck := tt.name != "invalid path traversal"
 
-			// Call the consolidated LoadMappings function with the test filesystem
+			// Create the file content for this test case using a switch statement
+			switch tt.name {
+			case "valid mappings file (structured format)":
+				content := `
+version: "1.0"
+registries:
+  mappings:
+    - source: quay.io
+      target: my-registry.example.com/quay-mirror
+    - source: docker.io
+      target: my-registry.example.com/docker-mirror
+`
+				err := afero.WriteFile(fs, tt.path, []byte(content), 0o644)
+				require.NoError(t, err)
+			case "valid mappings file (legacy format)": // Assuming this test case exists or will be added
+				content := `
+quay.io: my-registry.example.com/quay-mirror
+docker.io: my-registry.example.com/docker-mirror
+`
+				err := afero.WriteFile(fs, tt.path, []byte(content), 0o644)
+				require.NoError(t, err)
+			case "invalid yaml format":
+				content := "mappings: [invalid yaml"
+				err := afero.WriteFile(fs, tt.path, []byte(content), 0o644)
+				require.NoError(t, err)
+			case "empty file":
+				err := afero.WriteFile(fs, tt.path, []byte(""), 0o644)
+				require.NoError(t, err)
+			// Add other cases for tests that need specific content written
+			default:
+				// Handle cases that don't need specific content (e.g., file not found, directory path)
+				// Or cases where the file content is implicitly handled (like the old top-level mappings test)
+				// Also correct the empty string check here:
+				if tt.errorContains == "" && tt.wantMappings == nil && !tt.wantErr {
+					// This case might indicate a test setup issue or a test that doesn't need a file
+					// For safety, maybe write an empty file if path exists?
+					if tt.path != "" && tt.path != "../../../etc/passwd.yaml" { // Avoid writing outside tmp
+						_ = afero.WriteFile(fs, tt.path, []byte{}, 0o644) // Ignore error
+					}
+				}
+			}
+
 			got, err := LoadMappings(fs, tt.path, skipCheck)
+
 			if tt.wantErr {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tt.errorContains)

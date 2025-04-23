@@ -19,8 +19,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Exported debug flag variable
-var DebugEnabled bool
+// Exported debug flag variable for test runner
+var testRunnerDebug bool
 
 func TestMinimalChart(t *testing.T) {
 	h := NewTestHarness(t)
@@ -34,7 +34,7 @@ func TestMinimalChart(t *testing.T) {
 	outputFile := filepath.Join(h.tempDir, "minimal-chart-overrides.yaml")
 
 	// Execute the override command
-	output, stderr, err := h.ExecuteIRRWithStderr(
+	output, stderr, err := h.ExecuteIRRWithStderr(nil,
 		"override",
 		"--chart-path", h.chartPath,
 		"--target-registry", h.targetReg,
@@ -81,7 +81,7 @@ func TestParentChart(t *testing.T) {
 	outputFile := filepath.Join(h.tempDir, "parent-chart-overrides.yaml")
 
 	// Execute the override command
-	output, stderr, err := h.ExecuteIRRWithStderr(
+	output, stderr, err := h.ExecuteIRRWithStderr(nil,
 		"override",
 		"--chart-path", h.chartPath,
 		"--target-registry", h.targetReg,
@@ -134,7 +134,7 @@ func TestKubePrometheusStack(t *testing.T) {
 	outputFile := filepath.Join(h.tempDir, "kube-prometheus-stack-overrides.yaml")
 
 	// Execute the override command
-	output, stderr, err := h.ExecuteIRRWithStderr(
+	output, stderr, err := h.ExecuteIRRWithStderr(nil,
 		"override",
 		"--chart-path", h.chartPath,
 		"--target-registry", h.targetReg,
@@ -303,7 +303,7 @@ func TestComplexChartFeatures(t *testing.T) {
 				copy(explicitArgs, args)
 				explicitArgs = append(explicitArgs, "--output-file", explicitOutputFile)
 
-				explicitOutput, err := harness.ExecuteIRR(explicitArgs...)
+				explicitOutput, err := harness.ExecuteIRR(nil, explicitArgs...)
 				require.NoError(t, err, "Explicit ExecuteIRR failed for ingress-nginx. Output:\n%s", explicitOutput)
 
 				// #nosec G304
@@ -358,7 +358,7 @@ func TestComplexChartFeatures(t *testing.T) {
 			}
 
 			// #nosec G204 -- Test harness executes irr binary with test-controlled arguments.
-			output, err := harness.ExecuteIRR(args...)
+			output, err := harness.ExecuteIRR(nil, args...)
 			if err != nil {
 				t.Fatalf("Failed to execute irr override command: %v\nOutput:\n%s", err, output)
 			}
@@ -464,12 +464,12 @@ compatibility:
 	mappingFile := h.CreateRegistryMappingsFile(mappingContent)
 
 	// Run the override command with the mappings file
-	output, stderr, err := h.ExecuteIRRWithStderr(
+	output, stderr, err := h.ExecuteIRRWithStderr(nil,
 		"override",
 		"--chart-path", h.chartPath,
 		"--target-registry", targetReg,
 		"--source-registries", strings.Join(sourceRegs, ","),
-		"--registry-file", mappingFile,
+		"--config", mappingFile,
 		"--output-file", h.overridePath,
 	)
 	require.NoError(t, err, "override command should succeed with registry mappings file")
@@ -512,12 +512,12 @@ quay.io: registry.example.com/quay
 	outputFile := filepath.Join(h.tempDir, "config-test-overrides.yaml")
 
 	// Execute the override command
-	output, stderr, err := h.ExecuteIRRWithStderr(
+	output, stderr, err := h.ExecuteIRRWithStderr(nil,
 		"override",
 		"--chart-path", h.chartPath,
 		"--target-registry", "registry.example.com",
 		"--source-registries", "docker.io",
-		"--registry-file", configPath,
+		"--config", configPath,
 		"--output-file", outputFile,
 	)
 	require.NoError(t, err, "override command should succeed with config file")
@@ -557,7 +557,7 @@ func TestClickhouseOperator(t *testing.T) {
 	outputFile := filepath.Join(h.tempDir, "clickhouse-operator-overrides.yaml")
 
 	// Execute the override command
-	output, stderr, err := h.ExecuteIRRWithStderr(
+	output, stderr, err := h.ExecuteIRRWithStderr(nil,
 		"override",
 		"--chart-path", h.chartPath,
 		"--target-registry", h.targetReg,
@@ -599,7 +599,7 @@ func TestMinimalGitImageOverride(t *testing.T) {
 		"--output-file", harness.overridePath,
 		"--debug",
 	}
-	output, err := harness.ExecuteIRR(args...)
+	output, err := harness.ExecuteIRR(nil, args...)
 	require.NoError(t, err, "irr override failed for minimal-git-image chart. Output: %s", output)
 
 	overrides, err := harness.getOverrides()
@@ -673,7 +673,7 @@ func TestReadOverridesFromStdout(t *testing.T) {
 	tempOutputFile := filepath.Join(h.tempDir, "stdout-test-override.yaml")
 
 	// Execute the override command with output file
-	output, stderr, err := h.ExecuteIRRWithStderr(
+	output, stderr, err := h.ExecuteIRRWithStderr(nil,
 		"override",
 		"--chart-path", h.chartPath,
 		"--target-registry", h.targetReg,
@@ -707,9 +707,9 @@ func TestReadOverridesFromStdout(t *testing.T) {
 
 // TestMain sets up the integration test environment.
 func TestMain(m *testing.M) {
-	// Define the debug flag
-	flag.BoolVar(&DebugEnabled, "debug", false, "Enable debug logging")
-	flag.Parse() // Parse flags
+	// Define the debug flag for the test runner, distinct from app's --debug
+	flag.BoolVar(&testRunnerDebug, "test-debug", false, "Enable extra debug logging FROM THE TEST RUNNER ITSELF")
+	flag.Parse() // Parse flags passed to `go test`
 
 	// Build the binary once before running tests.
 	fmt.Println("Building irr binary for integration tests...")
@@ -742,7 +742,7 @@ func TestNoArgs(t *testing.T) {
 func TestUnknownFlag(t *testing.T) {
 	t.Parallel()
 	h := NewTestHarness(t)
-	_, err := h.ExecuteIRR("override", "--unknown-flag")
+	_, err := h.ExecuteIRR(nil, "override", "--unknown-flag")
 	assert.Error(t, err, "should error on unknown flag")
 	t.Cleanup(h.Cleanup)
 }
@@ -751,7 +751,7 @@ func TestInvalidStrategy(t *testing.T) {
 	t.Parallel()
 	h := NewTestHarness(t)
 	h.SetChartPath(h.GetTestdataPath("simple"))
-	_, err := h.ExecuteIRR("override", "--strategy", "invalid-strategy")
+	_, err := h.ExecuteIRR(nil, "override", "--strategy", "invalid-strategy")
 	assert.Error(t, err, "should error on invalid strategy")
 	t.Cleanup(h.Cleanup)
 }
@@ -759,7 +759,7 @@ func TestInvalidStrategy(t *testing.T) {
 func TestMissingChartPath(t *testing.T) {
 	t.Parallel()
 	h := NewTestHarness(t)
-	_, err := h.ExecuteIRR("override") // Missing --chart-path
+	_, err := h.ExecuteIRR(nil, "override") // Missing --chart-path
 	assert.Error(t, err, "should error when chart path is missing")
 	t.Cleanup(h.Cleanup)
 }
@@ -767,7 +767,7 @@ func TestMissingChartPath(t *testing.T) {
 func TestNonExistentChartPath(t *testing.T) {
 	t.Parallel()
 	h := NewTestHarness(t)
-	_, err := h.ExecuteIRR("override", "--chart-path", "/path/does/not/exist")
+	_, err := h.ExecuteIRR(nil, "override", "--chart-path", "/path/does/not/exist")
 	assert.Error(t, err, "should error when chart path does not exist")
 	t.Cleanup(h.Cleanup)
 }
@@ -804,7 +804,7 @@ func TestInvalidChartPath(t *testing.T) {
 	t.Parallel()
 	h := NewTestHarness(t)
 	h.SetChartPath("/invalid/path/does/not/exist")
-	_, err := h.ExecuteIRR("override")
+	_, err := h.ExecuteIRR(nil, "override")
 	assert.Error(t, err, "should error when chart path does not exist")
 	t.Cleanup(h.Cleanup)
 }
@@ -813,7 +813,7 @@ func TestInvalidRegistryMappingFile(t *testing.T) {
 	t.Parallel()
 	h := NewTestHarness(t)
 	h.SetChartPath(h.GetTestdataPath("simple"))
-	_, err := h.ExecuteIRR("override", "--registry-mappings", "/invalid/path/does/not/exist.yaml")
+	_, err := h.ExecuteIRR(nil, "override", "--registry-mappings", "/invalid/path/does/not/exist.yaml")
 	assert.Error(t, err, "should error when registry mappings file does not exist")
 	t.Cleanup(h.Cleanup)
 }
