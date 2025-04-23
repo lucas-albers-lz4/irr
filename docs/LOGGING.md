@@ -26,14 +26,36 @@ Logs are written to **standard error (stderr)**.
 
 The minimum log level displayed is controlled by the `LOG_LEVEL` environment variable. Set it to one of `DEBUG`, `INFO`, `WARN`, or `ERROR` (case-insensitive). The default level is `INFO`.
 
-```bash
-# Show only INFO, WARN, and ERROR logs (default)
-irr <command>
+The effective log level is determined by the following precedence (highest to lowest):
 
-# Show DEBUG, INFO, WARN, and ERROR logs
+1.  **`--debug` flag:** If present, forces the log level to `DEBUG`, overriding all other settings.
+2.  **`--log-level <level>` flag:** If present and `<level>` is not the default `"info"`, sets the log level to `<level>`. Overrides `LOG_LEVEL` environment variable and the default level.
+3.  **`LOG_LEVEL=<LEVEL>` environment variable:** If set to a valid level, sets the log level to `<LEVEL>`. Overrides the default level.
+4.  **Default Level:**
+    *   **Error (`ERROR`):** Used during normal execution (standalone or Helm plugin mode). This provides a cleaner output for users, showing only warnings and errors by default.
+    *   **Info (`INFO`):** Used when IRR detects it's running in a test mode (e.g., via hidden flags like `--integration-test` or `--test-analyze`). This ensures tests that rely on INFO-level logs continue to function.
+
+**Example Scenarios:**
+
+```bash
+# Normal run: Shows only WARN and ERROR logs (default behavior)
+irr <command>
+# Or explicitly (same as default):
+LOG_LEVEL=ERROR irr <command>
+
+# See INFO, WARN, ERROR logs
+irr <command> --log-level info
+# Or:
+LOG_LEVEL=INFO irr <command>
+
+# See DEBUG, INFO, WARN, ERROR logs
+irr <command> --debug
+# Or:
+irr <command> --log-level debug
+# Or:
 LOG_LEVEL=DEBUG irr <command>
 
-# Show only WARN and ERROR logs
+# See only WARN and ERROR logs (overrides default)
 LOG_LEVEL=WARN irr <command>
 ```
 
