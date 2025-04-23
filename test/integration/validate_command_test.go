@@ -21,7 +21,7 @@ func TestValidateCommand(t *testing.T) {
 	overridesPath := filepath.Join(harness.tempDir, "overrides.yaml") // Define path for generated overrides
 
 	// First, generate overrides using the override command
-	_, _, err := harness.ExecuteIRRWithStderr(
+	_, _, err := harness.ExecuteIRRWithStderr(nil,
 		"override",
 		"--chart-path", chartPath,
 		"--target-registry", "test-registry.local",
@@ -31,7 +31,7 @@ func TestValidateCommand(t *testing.T) {
 	require.NoError(t, err, "override command should succeed")
 
 	// Run the validate command
-	_, stderr, err := harness.ExecuteIRRWithStderr(
+	_, stderr, err := harness.ExecuteIRRWithStderr(nil,
 		"validate",
 		"--chart-path", chartPath,
 		"--values", valuesPath,
@@ -63,7 +63,7 @@ image:
 	require.NoError(t, err, "Should be able to create invalid values file")
 
 	// Run the validate command with invalid values
-	_, stderr, err := harness.ExecuteIRRWithStderr(
+	_, stderr, err := harness.ExecuteIRRWithStderr(nil,
 		"validate",
 		"--chart-path", chartPath,
 		"--values", invalidValuesFile,
@@ -92,7 +92,7 @@ func TestValidateWithMultipleValuesFiles(t *testing.T) {
 	require.NoError(t, err, "Should be able to create second values file")
 
 	// Run the validate command with multiple values files
-	_, stderr, err := harness.ExecuteIRRWithStderr(
+	_, stderr, err := harness.ExecuteIRRWithStderr(nil,
 		"validate",
 		"--chart-path", chartPath,
 		"--values", valuesFile1,
@@ -114,7 +114,7 @@ func TestValidateWithOutputFile(t *testing.T) {
 	overridesPath := filepath.Join(harness.tempDir, "overrides.yaml") // Define path for generated overrides
 
 	// First, generate overrides using the override command
-	_, _, err := harness.ExecuteIRRWithStderr(
+	_, _, err := harness.ExecuteIRRWithStderr(nil,
 		"override",
 		"--chart-path", chartPath,
 		"--target-registry", "test-registry.local",
@@ -127,7 +127,7 @@ func TestValidateWithOutputFile(t *testing.T) {
 	outputFile := filepath.Join(harness.tempDir, "validate-output.txt")
 
 	// Run the validate command with output file
-	_, _, err = harness.ExecuteIRRWithStderr(
+	_, _, err = harness.ExecuteIRRWithStderr(nil,
 		"validate",
 		"--chart-path", chartPath,
 		"--values", valuesPath,
@@ -157,7 +157,7 @@ func TestValidateWithNonExistentChart(t *testing.T) {
 	chartPath := filepath.Join(harness.tempDir, "non-existent-chart")
 
 	// Run the validate command with a non-existent chart
-	_, stderr, err := harness.ExecuteIRRWithStderr(
+	_, stderr, err := harness.ExecuteIRRWithStderr(nil,
 		"validate",
 		"--chart-path", chartPath,
 	)
@@ -178,7 +178,7 @@ func TestValidateWithMissingValuesFile(t *testing.T) {
 	valuesFile := filepath.Join(harness.tempDir, "non-existent-values.yaml")
 
 	// Run the validate command with a missing values file
-	_, stderr, err := harness.ExecuteIRRWithStderr(
+	_, stderr, err := harness.ExecuteIRRWithStderr(nil,
 		"validate",
 		"--chart-path", chartPath,
 		"--values", valuesFile,
@@ -200,7 +200,7 @@ func TestValidateWithStrictFlag(t *testing.T) {
 	chartPath := harness.GetTestdataPath("charts/unsupported-test")
 
 	// First, generate overrides using the override command
-	_, _, err := harness.ExecuteIRRWithStderr(
+	_, _, err := harness.ExecuteIRRWithStderr(nil,
 		"override",
 		"--chart-path", chartPath,
 		"--target-registry", "test-registry.local",

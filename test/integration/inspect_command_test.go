@@ -23,12 +23,15 @@ func TestInspectCommand(t *testing.T) {
 	chartPath := harness.chartPath
 
 	// Run the inspect command on the minimal-test chart
-	output, stderr, err := harness.ExecuteIRRWithStderr(
+	args := []string{
 		"inspect",
 		"--chart-path", chartPath,
 		"--output-format", "yaml",
-	)
-	require.NoError(t, err, "Inspect command should succeed: %s", stderr)
+		"--log-level=error",
+	}
+	output, _ /*stderr*/, err := harness.ExecuteIRRWithStderr(nil, args...)
+	require.NoError(t, err)
+	// require.Empty(t, stderr) // Removed: Allow debug stderr output
 
 	// Verify the output contains expected sections
 	assert.Contains(t, output, "chart:", "Output should include chart section")
@@ -51,13 +54,16 @@ func TestInspectWithSourceRegistryFilter(t *testing.T) {
 	chartPath := harness.chartPath
 
 	// Run the inspect command with a specific source registry filter
-	output, stderr, err := harness.ExecuteIRRWithStderr(
+	args := []string{
 		"inspect",
 		"--chart-path", chartPath,
 		"--source-registries", "docker.io",
 		"--output-format", "yaml",
-	)
-	require.NoError(t, err, "Inspect command should succeed with source registry filter: %s", stderr)
+		"--log-level=error",
+	}
+	output, _ /*stderr*/, err := harness.ExecuteIRRWithStderr(nil, args...)
+	require.NoError(t, err)
+	// require.Empty(t, stderr) // Removed: Allow debug stderr output
 
 	// Verify output - should detect the nginx image whether it has a docker.io prefix or not
 	assert.True(t,
@@ -78,13 +84,16 @@ func TestInspectOutputToFile(t *testing.T) {
 
 	outputFile := filepath.Join(harness.tempDir, "inspect-output.yaml")
 
-	_, stderr, err := harness.ExecuteIRRWithStderr(
+	args := []string{
 		"inspect",
 		"--chart-path", chartPath,
 		"--output-file", outputFile,
 		"--output-format", "yaml",
-	)
-	require.NoError(t, err, "Inspect command should succeed with output to file: %s", stderr)
+		"--log-level=error",
+	}
+	_, _ /*stderr*/, err := harness.ExecuteIRRWithStderr(nil, args...)
+	require.NoError(t, err)
+	// require.Empty(t, stderr) // Removed: Allow debug stderr output
 
 	// Verify the file exists and has content
 	require.FileExists(t, outputFile, "Output file should exist")
@@ -168,12 +177,15 @@ spec:
 	harness.chartPath = chartDir
 
 	// Run the inspect command on the parent chart
-	output, stderr, err := harness.ExecuteIRRWithStderr(
+	args := []string{
 		"inspect",
 		"--chart-path", chartDir,
 		"--output-format", "yaml",
-	)
-	require.NoError(t, err, "Inspect command should succeed with parent chart: %s", stderr)
+		"--log-level=error",
+	}
+	output, _ /*stderr*/, err := harness.ExecuteIRRWithStderr(nil, args...)
+	require.NoError(t, err)
+	// require.Empty(t, stderr) // Removed: Allow debug stderr output
 
 	// Verify the output contains parent chart information (should find the nginx image)
 	assert.Contains(t, output, "parent-chart", "Output should include parent chart name")
@@ -198,14 +210,17 @@ func TestInspectGenerateConfigSkeleton(t *testing.T) {
 	skeletonFile := filepath.Join(harness.tempDir, "irr-config.yaml")
 
 	// Run the inspect command with generate-config-skeleton option
-	_, stderr, err := harness.ExecuteIRRWithStderr(
+	args := []string{
 		"inspect",
 		"--chart-path", harness.chartPath,
 		"--generate-config-skeleton",
 		"--output-file", skeletonFile,
 		"--output-format", "yaml",
-	)
-	require.NoError(t, err, "Inspect command should succeed with generate-config-skeleton option: %s", stderr)
+		"--log-level=error",
+	}
+	_, _ /*stderr*/, err := harness.ExecuteIRRWithStderr(nil, args...)
+	require.NoError(t, err)
+	// require.Empty(t, stderr) // Removed: Allow debug stderr output
 
 	// Check that the file exists
 	require.FileExists(t, skeletonFile, "Config skeleton file should exist")
@@ -278,7 +293,7 @@ spec:
 
 	t.Run("image_with_digest", func(t *testing.T) {
 		// Run inspect command on chart
-		stdout, _, err := h.ExecuteIRRWithStderr("inspect", "--chart-path", chartDir, "--output-format", "yaml")
+		stdout, _, err := h.ExecuteIRRWithStderr(nil, "inspect", "--chart-path", chartDir, "--output-format", "yaml")
 		require.NoError(t, err, "Inspect command should succeed for image with digest")
 
 		// Check general content
@@ -349,7 +364,7 @@ spec:
 
 	t.Run("template_string_image_references", func(t *testing.T) {
 		// Run inspect command on chart
-		stdout, _, err := h.ExecuteIRRWithStderr("inspect", "--chart-path", chartDir, "--output-format", "yaml")
+		stdout, _, err := h.ExecuteIRRWithStderr(nil, "inspect", "--chart-path", chartDir, "--output-format", "yaml")
 		require.NoError(t, err, "Inspect command should succeed for template string image references")
 
 		// Check general content

@@ -54,7 +54,7 @@ func TestRulesSystemIntegration(t *testing.T) {
 		// Run the override command with rules disabled and no validation
 		// Note: We need to add --no-validate because Bitnami charts have validation
 		// checks that will fail without the security rule being applied
-		output, stderr, err := h.ExecuteIRRWithStderr(
+		output, stderr, err := h.ExecuteIRRWithStderr(nil,
 			"override",
 			"--chart-path", h.chartPath,
 			"--target-registry", h.targetReg,
@@ -120,7 +120,7 @@ func TestRulesSystemIntegration(t *testing.T) {
 				outputFile := filepath.Join(h.tempDir, chartInfo.chartName+"-validation-overrides.yaml")
 
 				// Run the override command with rules enabled
-				output, stderr, err := h.ExecuteIRRWithStderr(
+				output, stderr, err := h.ExecuteIRRWithStderr(nil,
 					"override",
 					"--chart-path", h.chartPath,
 					"--target-registry", h.targetReg,
@@ -166,7 +166,7 @@ func runRulesTest(t *testing.T, chartPath, outputFile string, expectBypass bool)
 	h.SetupChart(chartPath)
 	h.SetRegistries("harbor.test.local", []string{"docker.io"})
 
-	output, stderr, err := h.ExecuteIRRWithStderr(
+	output, stderr, err := h.ExecuteIRRWithStderr(nil,
 		"override",
 		"--chart-path", h.chartPath,
 		"--target-registry", h.targetReg,

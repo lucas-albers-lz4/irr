@@ -27,7 +27,7 @@ func TestOverrideCommand(t *testing.T) {
 	outputFile := filepath.Join(harness.tempDir, "overrides.yaml")
 
 	// Run the override command
-	_, stderr, err := harness.ExecuteIRRWithStderr(
+	_, stderr, err := harness.ExecuteIRRWithStderr(nil,
 		"override",
 		"--chart-path", chartPath,
 		"--target-registry", "test-registry.local",
@@ -69,7 +69,7 @@ func TestOverrideWithDifferentPathStrategy(t *testing.T) {
 	outputFile := filepath.Join(harness.tempDir, "overrides.yaml")
 
 	// Run the override command with explicit path strategy
-	_, stderr, err := harness.ExecuteIRRWithStderr(
+	_, stderr, err := harness.ExecuteIRRWithStderr(nil,
 		"override",
 		"--chart-path", chartPath,
 		"--target-registry", "test-registry.local",
@@ -108,7 +108,7 @@ func TestOverrideWithStrictMode(t *testing.T) {
 	outputFile := filepath.Join(harness.tempDir, "overrides.yaml")
 
 	// Run the override command with strict mode
-	_, stderr, err := harness.ExecuteIRRWithStderr(
+	_, stderr, err := harness.ExecuteIRRWithStderr(nil,
 		"override",
 		"--chart-path", chartPath,
 		"--target-registry", "test-registry.local",
@@ -138,7 +138,7 @@ func TestOverrideDryRun(t *testing.T) {
 	outputFile := filepath.Join(harness.tempDir, "overrides.yaml")
 
 	// Run the override command with dry-run
-	_, stderr, err := harness.ExecuteIRRWithStderr(
+	_, stderr, err := harness.ExecuteIRRWithStderr(nil,
 		"override",
 		"--chart-path", chartPath,
 		"--target-registry", "test-registry.local",
@@ -154,9 +154,20 @@ func TestOverrideDryRun(t *testing.T) {
 	require.Error(t, err, "Output file should not exist in dry-run mode")
 	require.True(t, os.IsNotExist(err), "Error should be 'file not exists'")
 
-	// The output should contain the overrides (in the stderr with the new format)
-	assert.Contains(t, stderr, "test-registry.local", "Command output should include the target registry")
-	assert.Contains(t, stderr, "dockerio/", "Command output should include the transformed repository")
+	// In dry-run mode, the output is printed to STDOUT.
+	stdout, _, err := harness.ExecuteIRRWithStderr(nil,
+		"override",
+		"--chart-path", chartPath,
+		"--target-registry", "test-registry.local",
+		"--source-registries", "docker.io",
+		"--output-file", outputFile,
+		"--dry-run",
+	)
+	require.NoError(t, err, "override command with dry-run should succeed")
+
+	// The output should contain the overrides (in the stdout)
+	assert.Contains(t, stdout, "test-registry.local", "Command output (stdout) should include the target registry")
+	assert.Contains(t, stdout, "dockerio/", "Command output (stdout) should include the transformed repository")
 }
 
 func TestOverrideParentChart(t *testing.T) {
@@ -170,7 +181,7 @@ func TestOverrideParentChart(t *testing.T) {
 	outputFile := filepath.Join(harness.tempDir, "overrides.yaml")
 
 	// Run the override command
-	_, _, err := harness.ExecuteIRRWithStderr(
+	_, _, err := harness.ExecuteIRRWithStderr(nil,
 		"override",
 		"--chart-path", chartPath,
 		"--target-registry", "test-registry.local",
@@ -202,7 +213,7 @@ func TestOverrideWithRegistry(t *testing.T) {
 	outputFile := filepath.Join(harness.tempDir, "overrides.yaml")
 
 	// Run the override command targeting only quay.io images
-	_, _, err := harness.ExecuteIRRWithStderr(
+	_, _, err := harness.ExecuteIRRWithStderr(nil,
 		"override",
 		"--chart-path", chartPath,
 		"--target-registry", "test-registry.local",
@@ -233,7 +244,7 @@ func TestOverrideWithExcludeRegistry(t *testing.T) {
 	outputFile := filepath.Join(harness.tempDir, "overrides.yaml")
 
 	// Run the override command with exclude-registries
-	_, _, err := harness.ExecuteIRRWithStderr(
+	_, _, err := harness.ExecuteIRRWithStderr(nil,
 		"override",
 		"--chart-path", chartPath,
 		"--target-registry", "test-registry.local",

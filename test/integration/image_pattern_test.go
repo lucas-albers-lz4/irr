@@ -245,13 +245,14 @@ image:
 			outputFile := filepath.Join(h.tempDir, "edge-"+tt.name+"-overrides.yaml")
 
 			// Execute the override command
-			output, stderr, err := h.ExecuteIRRWithStderr(
+			output, stderr, err := h.ExecuteIRRWithStderr(nil,
 				"override",
 				"--chart-path", h.chartPath,
 				"--target-registry", h.targetReg,
 				"--source-registries", strings.Join(h.sourceRegs, ","),
 				"--output-file", outputFile,
 				"--debug", // Enable debug output for better diagnostics
+				"--output-format", "yaml",
 			)
 
 			// We allow errors in edge cases, but we want to see what happened
@@ -311,7 +312,7 @@ func runImagePatternTest(t *testing.T, h *TestHarness, testName, valuesContent s
 	outputFile := filepath.Join(h.tempDir, outputFilePrefix+"-"+testName+"-overrides.yaml")
 
 	// Execute the override command with debug output
-	output, stderr, err := h.ExecuteIRRWithStderr(
+	output, stderr, err := h.ExecuteIRRWithStderr(nil,
 		"override",
 		"--chart-path", h.chartPath,
 		"--target-registry", h.targetReg,
