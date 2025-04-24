@@ -109,7 +109,7 @@ func newOverrideCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "override [release-name]",
 		Short: "Analyzes a Helm chart and generates image override values",
-		Long: "Analyzes a Helm chart to find all container image references (both direct string values " +
+		Long: `Analyzes a Helm chart to find all container image references (both direct string values " +
 			"and map-based structures like 'image.repository', 'image.tag'). It then generates a " +
 			"Helm-compatible values file that overrides these references to point to a specified " +
 			"target registry, using a defined path strategy.\n\n" +
@@ -118,7 +118,7 @@ func newOverrideCmd() *cobra.Command {
 			"IMPORTANT NOTES:\n" +
 			"- This command can run without a config file, but image redirection correctness depends on your configuration.\n" +
 			"- Use 'irr inspect' to identify registries in your chart and 'irr config' to configure mappings.\n" +
-			"- When using Harbor as a pull-through cache, ensure your target paths match your Harbor project configuration.",
+			"- When using Harbor as a pull-through cache, ensure your target paths match your Harbor project configuration.`,
 		Args: cobra.MaximumNArgs(1),
 		PreRunE: func(cmd *cobra.Command, args []string) error {
 			// --- DEBUGGING ---
@@ -1058,94 +1058,57 @@ func handlePluginOverrideOutput(cmd *cobra.Command, overrideFile, outputFile str
 	return validatePluginOverrides(cmd, overrideFile, outputFile, dryRun, releaseName, namespace, config)
 }
 
-// validatePluginOverrides validates the generated overrides
+// validatePluginOverrides validates the generated overrides using Helm template.
 func validatePluginOverrides(cmd *cobra.Command, overrideFile, outputFile string, dryRun bool, releaseName, namespace string, config *GeneratorConfig) error {
-	// Check the --no-validate flag instead of the old --validate flag
+	log.Debug("Entering validatePluginOverrides", "overrideFile", overrideFile, "outputFile", outputFile, "dryRun", dryRun)
+
+	// Get the --no-validate flag value
 	noValidate, err := cmd.Flags().GetBool("no-validate")
 	if err != nil {
-		log.Warn("Failed to get no-validate flag, defaulting to false (validation will run)", "error", err)
-		noValidate = false // Default to running validation if flag access fails
+		log.Error("Failed to read --no-validate flag", "error", err)
+		noValidate = false // Default to validating if flag access fails
 	}
 
-	// Run validation only if no-validate is false
-	if !noValidate {
-		// Add nil check for config here as well, though it might be redundant
-		if config == nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitGeneralRuntimeError,
-				Err:  errors.New("internal error: generator config is nil during plugin validation"),
-			}
-		}
-		// If we've created an override file, use that directly
-		var overrideFiles []string
-		if outputFile != "" && !dryRun {
-			overrideFiles = append(overrideFiles, outputFile)
-		} else {
-			// For dry-run or stdout output, write to a temporary file
-			tempFile, err := afero.TempFile(AppFs, "", "irr-override-*.yaml")
-			if err != nil {
-				return &exitcodes.ExitCodeError{
-					Code: exitcodes.ExitIOError,
-					Err:  fmt.Errorf("failed to create temp file for validation: %w", err),
-				}
-			}
-			defer func() {
-				if err := tempFile.Close(); err != nil {
-					log.Warn("Failed to close temporary file", "error", err)
-				}
-				if err := AppFs.Remove(tempFile.Name()); err != nil {
-					log.Warn("Failed to remove temporary file", "error", err)
-				}
-			}()
-
-			if _, err := tempFile.WriteString(overrideFile); err != nil {
-				return &exitcodes.ExitCodeError{
-					Code: exitcodes.ExitIOError,
-					Err:  fmt.Errorf("failed to write override file: %w", err),
-				}
-			}
-
-			overrideFiles = append(overrideFiles, tempFile.Name())
-		}
-
-		// Get Helm version flag
-		kubeVersion, err := cmd.Flags().GetString("kube-version")
-		if err != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitInputConfigurationError,
-				Err:  fmt.Errorf("failed to get kube-version flag: %w", err),
-			}
-		}
-		// If not specified, use default
-		if kubeVersion == "" {
-			kubeVersion = DefaultKubernetesVersion
-		}
-
-		// Create a new Helm client and adapter
-		adapter, err := createHelmAdapter()
-		if err != nil {
-			return err
-		}
-
-		// Get command context
-		ctx := getCommandContext(cmd)
-
-		err = adapter.ValidateRelease(ctx, releaseName, namespace, overrideFiles, kubeVersion)
-		if err != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitHelmCommandFailed,
-				Err:  fmt.Errorf("failed to validate release: %w", err),
-			}
-		}
-
-		log.Info("Validation successful! Chart renders correctly with overrides.")
-		log.Info("To apply these changes, run", "command", fmt.Sprintf("helm upgrade %s -n %s -f %s", releaseName, namespace, outputFile))
+	// Skip validation if --no-validate is set
+	if noValidate {
+		log.Info("Skipping validation due to --no-validate flag.")
+		return nil
 	}
 
+	// If dry-run, validation should still conceptually happen, but we don't read a file.
+	// The overrideFile variable in dry-run mode should contain the YAML content directly.
+	var yamlBytes []byte
+	if dryRun {
+		// In dry-run, overrideFile argument holds the content, not a path
+		yamlBytes = []byte(overrideFile)
+		log.Debug("Dry-run mode: Using override content directly for validation")
+	} else {
+		// Read the generated override file content if not dry-run
+		yamlBytes, err = os.ReadFile(overrideFile)
+		if err != nil {
+			log.Error("Failed to read generated override file for validation", "file", overrideFile, "error", err)
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitHelmCommandFailed, // Use existing code for validation failure
+				Err:  fmt.Errorf("failed to read generated override file '%s': %w", overrideFile, err),
+			}
+		}
+	}
+
+	// Perform the validation using the common validateChart function
+	log.Info("Validating generated overrides with Helm template...")
+	if err := validateChart(cmd, yamlBytes, config, false, true, releaseName, namespace); err != nil {
+		log.Error("Validation failed: Chart could not be rendered with generated overrides.", "error", err)
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitHelmCommandFailed, // Use existing code for validation failure
+			Err:  fmt.Errorf("validation failed: %w", err),
+		}
+	}
+
+	log.Info("Validation successful.")
 	return nil
 }
 
-// handleTestModeOverride handles the override logic when IRR_TESTING is set.
+// handleTestModeOverride handles the override logic when running in test mode.
 func handleTestModeOverride(cmd *cobra.Command, releaseName string) error {
 	// Get output flags
 	outputFile, dryRun, err := getOutputFlags(cmd, releaseName)

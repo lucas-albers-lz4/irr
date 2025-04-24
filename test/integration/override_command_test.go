@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 func TestOverrideCommand(t *testing.T) {
@@ -260,4 +261,82 @@ func TestOverrideWithExcludeRegistry(t *testing.T) {
 
 	// Since we excluded docker.io, the output should be empty or minimal
 	assert.NotContains(t, string(content), "test-registry.local/dockerio", "Output should not include any relocated docker.io images")
+}
+
+// Test case for --no-validate flag where validation would normally fail
+func TestOverrideNoValidateSuccessOnValidationFailure(t *testing.T) {
+	harness := NewTestHarness(t)
+	defer harness.Cleanup()
+
+	// Use the chart specifically designed to fail validation without specific values
+	chartPath := harness.GetTestdataPath("charts/validation-fail-test")
+	if chartPath == "" {
+		t.Skip("validation-fail-test chart not found, skipping test")
+	}
+
+	outputFile := filepath.Join(harness.tempDir, "overrides-no-validate.yaml")
+
+	chartPath = harness.GetTestdataPath("charts/validation-fail-test")
+	_, stderr, err := harness.ExecuteIRRWithStderr(nil,
+		"override",
+		"--chart-path", chartPath,
+		"--target-registry", "test-registry.local",
+		"--source-registries", "docker.io", // Target the image in values.yaml
+		"--output-file", outputFile,
+		"--no-validate", // The key flag for this test
+	)
+
+	// Expect success because validation is skipped
+	require.NoError(t, err, "override command with --no-validate should succeed even if validation would fail: %s", stderr)
+	require.FileExists(t, outputFile, "Output file should be created when --no-validate is used")
+
+	// Basic check on content
+	content, err := os.ReadFile(outputFile)
+	require.NoError(t, err)
+	// Parse the YAML content
+	var overrides map[string]interface{}
+	err = yaml.Unmarshal(content, &overrides)
+	require.NoError(t, err, "Failed to parse generated override YAML")
+
+	// Check the structure and values
+	imgOverride, ok := overrides["image"].(map[string]interface{})
+	require.True(t, ok, "Overrides should contain an 'image' map")
+	assert.Equal(t, "test-registry.local", imgOverride["registry"], "Image registry should be the target registry")
+	assert.Equal(t, "dockerio/library/nginx", imgOverride["repository"], "Image repository should be the transformed path")
+	assert.Equal(t, "latest", imgOverride["tag"], "Image tag should be preserved")
+}
+
+// Test case for the default behavior (validation runs and potentially fails)
+func TestOverrideDefaultValidationFailure(t *testing.T) {
+	harness := NewTestHarness(t)
+	defer harness.Cleanup()
+
+	// Use the chart specifically designed to fail validation without specific values
+	chartPath := harness.GetTestdataPath("charts/validation-fail-test")
+	if chartPath == "" {
+		t.Skip("validation-fail-test chart not found, skipping test")
+	}
+
+	outputFile := filepath.Join(harness.tempDir, "overrides-default-validate.yaml")
+
+	chartPath = harness.GetTestdataPath("charts/validation-fail-test")
+	_, stderr, err := harness.ExecuteIRRWithStderr(nil,
+		"override",
+		"--chart-path", chartPath,
+		"--target-registry", "test-registry.local",
+		"--source-registries", "docker.io", // Target the image in values.yaml
+		"--output-file", outputFile,
+		// No --no-validate flag here
+	)
+
+	// Expect failure because validation runs by default and the chart requires .Values.missingValue
+	require.Error(t, err, "override command without --no-validate should fail if validation fails")
+	// Check stderr for indication of validation/template failure
+	assert.Contains(t, stderr, "validation failed", "Stderr should indicate validation failure")
+	assert.Contains(t, stderr, "template failed", "Stderr should indicate template failure")          // Broaden check
+	assert.Contains(t, stderr, "exit code 16", "Stderr should indicate validation failure exit code") // Check for specific exit code
+
+	// File should likely not exist if the command fails before writing
+	_, statErr := os.Stat(outputFile)
+	assert.True(t, os.IsNotExist(statErr), "Output file should not exist if validation fails early")
 }
