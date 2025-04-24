@@ -84,22 +84,25 @@ func LoadMappings(fs afero.Fs, path string, skipCWDRestriction bool) (*Mappings,
 		// Parsing succeeded, now validate
 		structuredValidationErr = validateStructuredConfig(&config, path)
 		if structuredValidationErr == nil {
-			// Validation also succeeded, check if mappings exist
+			// Validation also succeeded, check if mappings exist (this check is technically redundant now due to validation)
 			if len(config.Registries.Mappings) == 0 {
-				// Valid structure but no mappings is treated as empty
+				// This case should ideally not be hit if validation passed, but handle defensively.
 				log.Debug("LoadMappings: Structured config parsed and validated, but contains no mapping entries")
-				// We might still want to try legacy here if structured is valid but empty?
-				// For now, treat as empty and proceed to legacy check.
-				structuredValidationErr = WrapMappingFileEmpty(path)
-			} else {
-				// Success! Convert and return.
-				log.Debug("LoadMappings: Successfully loaded %d mappings from structured format in %s", len(config.Registries.Mappings), path)
-				return config.ToMappings(), nil
+				return &Mappings{Entries: []Mapping{}}, nil
 			}
-		} else {
-			log.Debug("LoadMappings: Structured config parsed but failed validation: %v", structuredValidationErr)
-			// Fall through to legacy attempt
+			// Success! Convert and return.
+			log.Debug("LoadMappings: Successfully loaded %d mappings from structured format in %s", len(config.Registries.Mappings), path)
+			return config.ToMappings(), nil
 		}
+		log.Debug("LoadMappings: Structured config parsed but failed validation: %v", structuredValidationErr)
+		// Check if the validation error is SPECIFICALLY the empty mapping error
+		var emptyErr *ErrMappingFileEmpty
+		if errors.As(structuredValidationErr, &emptyErr) {
+			log.Debug("LoadMappings: Structured validation indicated mappings list is empty. Returning empty result.")
+			return &Mappings{Entries: []Mapping{}}, nil // Return success (empty mappings)
+		}
+		// For other validation errors (like missing 'mappings' key), fall through to legacy attempt.
+		// We store the validation error to potentially return later if legacy also fails.
 	} else {
 		log.Debug("LoadMappings: Failed to parse as structured format: %v", structuredParseErr)
 		// Fall through to legacy attempt
@@ -112,35 +115,26 @@ func LoadMappings(fs afero.Fs, path string, skipCWDRestriction bool) (*Mappings,
 	if legacyErr != nil {
 		log.Debug("LoadMappings: Also failed to parse as legacy format: %v", legacyErr)
 		// Both attempts failed. Prioritize structured error if available.
-		finalErr := structuredParseErr // Start with the parse error
+		finalErr := structuredParseErr // Start with the structured parse error
 		if finalErr == nil {
-			finalErr = structuredValidationErr // If parse ok, use validation error
+			// If structured parse was ok, but validation failed (and wasn't ErrMappingFileEmpty)
+			finalErr = structuredValidationErr
 		}
 		if finalErr == nil {
-			// If somehow both structured errors are nil, use legacy error
+			// If somehow both structured errors are nil (e.g., structured was valid but empty - handled above), use legacy error
 			finalErr = legacyErr
 		}
 
-		// Ensure we always return a parse error if both failed
-		// Handle specific case where structured failed validation due to empty, but legacy also failed.
-		if finalErr != nil && strings.Contains(finalErr.Error(), "mappings file is empty") {
-			return nil, WrapMappingFileParse(path, fmt.Errorf("failed structured parse (%w) and legacy parse (%w)", finalErr, legacyErr))
-		} else if finalErr != nil {
-			return nil, WrapMappingFileParse(path, fmt.Errorf("failed structured parse/validation (%w) and legacy parse (%w)", finalErr, legacyErr))
-		}
-		// If we reached here, both structured and legacy parsing failed, but finalErr somehow ended up nil (should be unreachable).
-		// Outdent this return as per revive suggestion (removed the wrapping else).
-		return nil, WrapMappingFileParse(path, fmt.Errorf("failed to parse as structured or legacy format: %w", legacyErr))
+		// Construct a meaningful final error message
+		return nil, WrapMappingFileParse(path, fmt.Errorf("failed structured parse/validation (%w) and legacy parse (%w)", finalErr, legacyErr))
+		// Removed previous complex error checking logic for clarity
 	}
 
 	// Check if legacy format contains any entries
 	if len(legacyFormat) == 0 {
 		log.Debug("LoadMappings: Legacy format was parsed but contains no entries")
-		// If structured parse failed validation because it was empty, and legacy is also empty, report empty.
-		if structuredValidationErr != nil && strings.Contains(structuredValidationErr.Error(), "mappings file is empty") {
-			return nil, WrapMappingFileEmpty(path)
-		}
-		// Otherwise, if structured failed for other reasons and legacy is empty, report legacy empty.
+		// If we got here, it means structured parse/validation failed (and wasn't ErrMappingFileEmpty),
+		// but legacy parse succeeded and was empty. Report as empty file.
 		return nil, WrapMappingFileEmpty(path)
 	}
 
