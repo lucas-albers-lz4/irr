@@ -248,10 +248,10 @@ func setupOverrideFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("strict", false, "Enable strict mode (fails on unsupported structures)")
 	cmd.Flags().StringSlice("include-pattern", []string{}, "Glob patterns for values paths to include (comma-separated)")
 	cmd.Flags().StringSlice("exclude-pattern", []string{}, "Glob patterns for values paths to exclude (comma-separated)")
-	cmd.Flags().Bool("no-rules", false, "Disable chart parameter rules system")
-	cmd.Flags().Bool("dry-run", false, "Show what would be generated without writing to file")
+	cmd.Flags().Bool("disable-rules", false, "Disable the chart parameter rules system")
+	cmd.Flags().Bool("dry-run", false, "Perform a dry run (show changes without writing files)")
 	cmd.Flags().StringSliceP("exclude-registries", "e", []string{}, "Registry URLs to exclude from relocation")
-	cmd.Flags().Bool("no-validate", false, "Skip validation of generated overrides (validation runs by default)")
+	cmd.Flags().Bool("no-validate", false, "Skip the internal Helm template validation check after generating overrides")
 	cmd.Flags().String("kube-version", "", "Kubernetes version to use for validation (defaults to current client version)")
 	cmd.Flags().StringP("namespace", "n", "default", "Namespace to use (default: default)")
 	cmd.Flags().StringP("release-name", "r", "", "Release name to use (only in Helm plugin mode)")
@@ -501,7 +501,7 @@ func setupGeneratorConfig(cmd *cobra.Command, _ string) (config GeneratorConfig,
 	config.IncludePatterns = includePatterns
 	config.ExcludePatterns = excludePatterns
 
-	disableRules, err := getBoolFlag(cmd, "no-rules")
+	disableRules, err := getBoolFlag(cmd, "disable-rules")
 	if err != nil {
 		return config, err // Return zero config on error
 	}
@@ -838,7 +838,7 @@ func runOverridePluginMode(cmd *cobra.Command, releaseName, namespace, outputFil
 	config.IncludePatterns = includePatterns
 	config.ExcludePatterns = excludePatterns
 
-	disableRules, err := getBoolFlag(cmd, "no-rules")
+	disableRules, err := getBoolFlag(cmd, "disable-rules")
 	if err != nil {
 		return err
 	}
@@ -914,8 +914,13 @@ func runOverrideStandaloneMode(cmd *cobra.Command, outputFile string, dryRun boo
 		log.Warn("Failed to get no-validate flag, defaulting to false (validation will run)", "error", noValErr)
 		noValidate = false // Default to running validation if flag access fails
 	}
+
+	log.Debug("Standalone Mode Validation Check", "noValidateFlag", noValidate)
+
 	// If no-validate is false, run validation
 	if !noValidate {
+		log.Debug("Standalone Mode: Running internal validation.")
+
 		if err := validateChart(cmd, yamlBytes, &config, true, false, "", ""); err != nil {
 			return err
 		}
@@ -1069,14 +1074,20 @@ func validatePluginOverrides(cmd *cobra.Command, overrideFile, outputFile string
 		noValidate = false // Default to validating if flag access fails
 	}
 
+	log.Debug("Plugin Mode Validation Check", "noValidateFlag", noValidate)
+
 	// Skip validation if --no-validate is set
 	if noValidate {
 		log.Info("Skipping validation due to --no-validate flag.")
 		return nil
 	}
 
+	// If we reach here, validation should run.
+	log.Debug("Plugin Mode: Proceeding with internal validation.")
+
 	// If dry-run, validation should still conceptually happen, but we don't read a file.
 	// The overrideFile variable in dry-run mode should contain the YAML content directly.
+
 	var yamlBytes []byte
 	if dryRun {
 		// In dry-run, overrideFile argument holds the content, not a path

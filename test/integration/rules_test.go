@@ -59,7 +59,7 @@ func TestRulesSystemIntegration(t *testing.T) {
 			"--chart-path", h.chartPath,
 			"--target-registry", h.targetReg,
 			"--source-registries", strings.Join(h.sourceRegs, ","),
-			"--no-rules",
+			"--disable-rules",
 			"--no-validate", // Skip validation as it will fail without the rule
 			"--output-file", outputFile,
 		)
