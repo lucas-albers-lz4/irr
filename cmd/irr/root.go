@@ -183,7 +183,8 @@ It also supports linting image references for potential issues.`,
 				if isTestRun {
 					finalLevel = log.LevelInfo // Default to Info for test runs
 				} else {
-					finalLevel = log.LevelError // Default to Error for normal/plugin runs
+					// Change default for normal runs to Info
+					finalLevel = log.LevelInfo // Default to Info for normal/plugin runs
 				}
 				levelSource = "mode default"
 			}
