@@ -5,15 +5,17 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"log/slog"
+
 	"github.com/lalbers/irr/pkg/fileutil"
 	"github.com/lalbers/irr/pkg/image"
+	"github.com/lalbers/irr/pkg/log"
 	"github.com/lalbers/irr/pkg/registry"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
@@ -52,7 +54,7 @@ type TestHarness struct {
 	chartName    string
 	rootDir      string
 	outputPath   string
-	logger       *log.Logger
+	logger       *slog.Logger
 	cleanupFuncs []func()
 }
 
@@ -86,9 +88,9 @@ func NewTestHarness(t *testing.T) *TestHarness {
 		tempDir:      tempDir,
 		rootDir:      rootDir, // Initialize rootDir field
 		overridePath: filepath.Join(tempDir, "generated-overrides.yaml"),
-		mappingsPath: "", // No mappings by default
-		outputPath:   "", // No explicit output by default
-		logger:       log.New(os.Stdout, fmt.Sprintf("[HARNESS %s] ", t.Name()), log.LstdFlags),
+		mappingsPath: "",           // No mappings by default
+		outputPath:   "",           // No explicit output by default
+		logger:       log.Logger(), // <-- Use custom logger instance getter
 	}
 
 	// Setup testing environment variable
@@ -100,7 +102,7 @@ func NewTestHarness(t *testing.T) *TestHarness {
 	require.NoError(t, err, "Failed to create default registry mapping file")
 	h.mappingsPath = mappingsPath
 
-	h.logger.Printf("Initialized harness in temp dir: %s", tempDir)
+	h.logger.Info(fmt.Sprintf("Initialized harness in temp dir: %s", tempDir))
 	return h
 }
 
@@ -147,26 +149,31 @@ func (h *TestHarness) createDefaultRegistryMappingFile() (mappingsPath string, e
 	return mappingsPath, nil
 }
 
-// getProjectRoot finds the project root directory by searching upwards for go.mod
-func getProjectRoot() (rootDir string, err error) {
-	wd, err := os.Getwd()
+// getProjectRoot finds the project root directory by looking for go.mod
+func getProjectRoot() (string, error) {
+	// Keep existing debug logging
+	initialWd, err := os.Getwd()
 	if err != nil {
-		return "", fmt.Errorf("failed to get working directory: %w", err)
+		return "", fmt.Errorf("failed to get initial working directory: %w", err)
 	}
+	log.Debug("[DEBUG getProjectRoot] Initial os.Getwd()", "wd", initialWd)
 
-	dir := wd
+	dir := initialWd
 	for {
 		goModPath := filepath.Join(dir, "go.mod")
 		if _, err := os.Stat(goModPath); err == nil {
 			// Found go.mod, this is the root
+			// Temporary Debug Logging
+			log.Debug("[DEBUG getProjectRoot] Found go.mod", "path", dir)
 			return dir, nil
 		}
 
-		// Move up one directory
 		parent := filepath.Dir(dir)
 		if parent == dir {
 			// Reached the filesystem root without finding go.mod
-			return "", fmt.Errorf("failed to find project root (go.mod) starting from %s", wd)
+			// Temporary Debug Logging
+			log.Error("[DEBUG getProjectRoot] Failed to find go.mod", "startDir", initialWd)
+			return "", fmt.Errorf("failed to find project root (go.mod) starting from %s", initialWd)
 		}
 		dir = parent
 	}
@@ -175,12 +182,12 @@ func getProjectRoot() (rootDir string, err error) {
 // setTestingEnv sets an environment variable to indicate testing is active
 // and returns a cleanup function to unset it.
 func (h *TestHarness) setTestingEnv() func() {
-	h.logger.Printf("Setting IRR_TESTING=true")
+	h.logger.Info("Setting IRR_TESTING=true")
 	if err := os.Setenv("IRR_TESTING", "true"); err != nil {
 		h.t.Errorf("Failed to set IRR_TESTING env var: %v", err)
 	}
 	return func() {
-		h.logger.Printf("Unsetting IRR_TESTING")
+		h.logger.Info("Unsetting IRR_TESTING")
 		if err := os.Unsetenv("IRR_TESTING"); err != nil {
 			h.t.Errorf("Failed to unset IRR_TESTING env var: %v", err)
 		}
@@ -279,7 +286,7 @@ func (h *TestHarness) GenerateOverrides(extraArgs ...string) error {
 // ValidateOverrides checks the generated overrides against expected values.
 // This function performs comprehensive validation of the override file structure.
 func (h *TestHarness) ValidateOverrides() error {
-	h.logger.Printf("Validating overrides for chart: %s", h.chartPath)
+	h.logger.Info(fmt.Sprintf("Validating overrides for chart: %s", h.chartPath))
 
 	mappings, err := h.loadMappings()
 	if err != nil {
@@ -287,7 +294,7 @@ func (h *TestHarness) ValidateOverrides() error {
 	}
 
 	expectedTargets := h.determineExpectedTargets(mappings)
-	h.logger.Printf("Expecting images to use target registries: %v", expectedTargets)
+	h.logger.Info(fmt.Sprintf("Expecting images to use target registries: %v", expectedTargets))
 
 	tempValidationOverridesPath, err := h.readAndWriteOverrides()
 	if err != nil {
@@ -326,25 +333,25 @@ func (h *TestHarness) loadMappings() (*registry.Mappings, error) {
 			structConfig, loadErr := registry.LoadStructuredConfigDefault(h.mappingsPath, true)
 			if loadErr != nil {
 				// Fall back to legacy format if structured format fails
-				h.logger.Printf("Failed to load as structured format, trying legacy format: %v", loadErr)
+				h.logger.Info(fmt.Sprintf("Failed to load as structured format, trying legacy format: %v", loadErr))
 				loadedMappings, legacyErr := registry.LoadMappings(afero.NewOsFs(), h.mappingsPath, true)
 				if legacyErr != nil {
 					return nil, fmt.Errorf("failed to load mappings file %s for validation: %w", h.mappingsPath, legacyErr)
 				}
 				mappings = loadedMappings
-				h.logger.Printf("Successfully loaded mappings (legacy format) from %s", h.mappingsPath)
+				h.logger.Info(fmt.Sprintf("Successfully loaded mappings (legacy format) from %s", h.mappingsPath))
 			} else {
 				// Convert structured config to mappings format
 				mappings = structConfig.ToMappings()
-				h.logger.Printf("Successfully loaded mappings (structured format) from %s", h.mappingsPath)
+				h.logger.Info(fmt.Sprintf("Successfully loaded mappings (structured format) from %s", h.mappingsPath))
 			}
 		case os.IsNotExist(statErr):
-			h.logger.Printf("Mappings file %s does not exist, proceeding without mappings.", h.mappingsPath)
+			h.logger.Info(fmt.Sprintf("Mappings file %s does not exist, proceeding without mappings.", h.mappingsPath))
 		default:
-			h.logger.Printf("Warning: Error stating mappings file %s: %v", h.mappingsPath, statErr)
+			h.logger.Info(fmt.Sprintf("Warning: Error stating mappings file %s: %v", h.mappingsPath, statErr))
 		}
 	} else {
-		h.logger.Printf("No mappings file path specified for harness.")
+		h.logger.Info("No mappings file path specified for harness.")
 	}
 	return mappings, nil
 }
@@ -364,7 +371,7 @@ func (h *TestHarness) determineExpectedTargets(mappings *registry.Mappings) []st
 			}
 		}
 		if len(expectedTargets) == 0 {
-			h.logger.Printf("Mappings file loaded but contains no target registries. Falling back to default.")
+			h.logger.Info("Mappings file loaded but contains no target registries. Falling back to default.")
 			expectedTargets = append(expectedTargets, image.NormalizeRegistry(h.targetReg))
 		}
 	default:
@@ -402,7 +409,7 @@ func (h *TestHarness) buildHelmArgs(tempValidationOverridesPath string) []string
 	args := []string{"template", "test-release", h.chartPath, "-f", tempValidationOverridesPath}
 	if h.chartName == "ingress-nginx" {
 		args = append(args, "--set", "global.security.allowInsecureImages=true")
-		h.logger.Printf("Detected ingress-nginx chart, adding --set global.security.allowInsecureImages=true for validation")
+		h.logger.Info("Detected ingress-nginx chart, adding --set global.security.allowInsecureImages=true for validation")
 	}
 	return args
 }
@@ -605,7 +612,7 @@ func (h *TestHarness) ExecuteIRR(envOverrides map[string]string, args ...string)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	h.logger.Printf("Executing command: %s %v (env: %v)", cmd.Path, cmd.Args, cmd.Env)
+	h.logger.Info(fmt.Sprintf("Executing command: %s %v (env: %v)", cmd.Path, cmd.Args, cmd.Env))
 	err = cmd.Run()
 
 	stdoutStr := stdout.String()
@@ -613,7 +620,7 @@ func (h *TestHarness) ExecuteIRR(envOverrides map[string]string, args ...string)
 
 	if err != nil {
 		// Log stderr for debugging failed commands
-		h.logger.Printf("Command failed: %v\nStderr:\n%s", err, stderrStr)
+		h.logger.Info(fmt.Sprintf("Command failed: %v\nStderr:\n%s", err, stderrStr))
 
 		// Check if it's an ExitError to provide more context
 		var exitError *exec.ExitError
@@ -640,7 +647,7 @@ func (h *TestHarness) ExecuteIRRWithStderr(envOverrides map[string]string, args 
 	cmd.Stdout = &stdoutBuf
 	cmd.Stderr = &stderrBuf
 
-	h.logger.Printf("Executing command (capturing stderr): %s %v (env: %v)", cmd.Path, cmd.Args, cmd.Env)
+	h.logger.Info(fmt.Sprintf("Executing command (capturing stderr): %s %v (env: %v)", cmd.Path, cmd.Args, cmd.Env))
 	err = cmd.Run()
 
 	stdout = stdoutBuf.String()
@@ -648,7 +655,7 @@ func (h *TestHarness) ExecuteIRRWithStderr(envOverrides map[string]string, args 
 
 	if err != nil {
 		// Log the error, but return stderr separately
-		h.logger.Printf("Command failed: %v\nStderr:\n%s", err, stderr)
+		h.logger.Info(fmt.Sprintf("Command failed: %v\nStderr:\n%s", err, stderr))
 
 		// Check if it's an ExitError to potentially wrap it
 		var exitError *exec.ExitError
@@ -671,8 +678,8 @@ func (h *TestHarness) ExecuteHelm(args ...string) (output string, err error) {
 	outputBytes, err := cmd.CombinedOutput()
 	outputStr := string(outputBytes)
 
-	h.logger.Printf("[HARNESS EXECUTE_HELM] Command: helm %s", strings.Join(args, " "))
-	h.logger.Printf("[HARNESS EXECUTE_HELM] Full Output:\n%s", outputStr)
+	h.logger.Info(fmt.Sprintf("[HARNESS EXECUTE_HELM] Command: helm %s", strings.Join(args, " ")))
+	h.logger.Info(fmt.Sprintf("[HARNESS EXECUTE_HELM] Full Output:\n%s", outputStr))
 
 	if err != nil {
 		return outputStr, fmt.Errorf("helm command execution failed: %w", err)
@@ -692,22 +699,21 @@ func (h *TestHarness) SetChartPath(path string) {
 
 // GetTestdataPath returns the absolute path to a test chart directory.
 func (h *TestHarness) GetTestdataPath(relPath string) string {
-	// First try to find the test data relative to the project root
-	rootRelPath := filepath.Join(h.rootDir, "test", "testdata", relPath)
-	if _, err := os.Stat(rootRelPath); err == nil {
-		absPath, err := filepath.Abs(rootRelPath)
-		if err != nil {
-			h.t.Fatalf("Failed to get absolute path for %s: %v", rootRelPath, err)
+	// Construct path relative to the project root
+	projectRootPath := filepath.Join(h.rootDir, "test-data", relPath) // <-- Use "test-data" directly from root
+
+	// Check if the path exists
+	if _, err := os.Stat(projectRootPath); err == nil {
+		absPath, absErr := filepath.Abs(projectRootPath)
+		if absErr != nil {
+			h.t.Fatalf("Failed to get absolute path for %s: %v", projectRootPath, absErr)
 		}
 		return absPath
 	}
 
-	// Fall back to the relative path directly
-	absPath, err := filepath.Abs(filepath.Join("test", "testdata", relPath))
-	if err != nil {
-		h.t.Fatalf("Failed to get absolute path for %s: %v", relPath, err)
-	}
-	return absPath
+	// If not found relative to root, log a fatal error as the fallback logic was likely incorrect
+	h.t.Fatalf("Test data path not found at %s. Original relative path: %s", projectRootPath, relPath)
+	return "" // Unreachable, but satisfies compiler
 }
 
 // GetTestOverridePath returns the path to a test override values file.
@@ -757,10 +763,10 @@ func (h *TestHarness) AssertExitCode(expected int, args ...string) {
 	cwd, err := os.Getwd() // Check error now
 	if err != nil {
 		// Log the error but don't fail the test just for this
-		h.logger.Printf("[ASSERT_EXIT_CODE WARNING] Failed to get current working directory: %v", err)
+		h.logger.Info(fmt.Sprintf("[ASSERT_EXIT_CODE WARNING] Failed to get current working directory: %v", err))
 		cwd = "(unknown)" // Use placeholder
 	}
-	h.logger.Printf("[ASSERT_EXIT_CODE DEBUG] binPath: %s, CWD: %s", binPath, cwd)
+	h.logger.Info(fmt.Sprintf("[ASSERT_EXIT_CODE DEBUG] binPath: %s, CWD: %s", binPath, cwd))
 
 	// G204: Subprocess launched with variable - Acceptable in test code.
 	cmd := exec.Command(binPath, args...) // #nosec G204
@@ -823,10 +829,10 @@ func (h *TestHarness) AssertErrorContains(substring string, args ...string) {
 	cwd, err := os.Getwd() // Check error now
 	if err != nil {
 		// Log the error but don't fail the test just for this
-		h.logger.Printf("[ASSERT_ERROR_CONTAINS WARNING] Failed to get current working directory: %v", err)
+		h.logger.Info(fmt.Sprintf("[ASSERT_ERROR_CONTAINS WARNING] Failed to get current working directory: %v", err))
 		cwd = "(unknown)" // Use placeholder
 	}
-	h.logger.Printf("[ASSERT_ERROR_CONTAINS DEBUG] binPath: %s, CWD: %s", binPath, cwd)
+	h.logger.Info(fmt.Sprintf("[ASSERT_ERROR_CONTAINS DEBUG] binPath: %s, CWD: %s", binPath, cwd))
 
 	// G204: Subprocess launched with variable - Acceptable in test code.
 	cmd := exec.Command(binPath, args...) // #nosec G204
@@ -843,9 +849,9 @@ func (h *TestHarness) AssertErrorContains(substring string, args ...string) {
 	stderrStr := stderr.String()
 	stdoutStr := stdout.String() // Log stdout too for debugging context
 
-	h.logger.Printf("[ASSERT_ERROR_CONTAINS] Stderr:\n%s", stderrStr)
+	h.logger.Info(fmt.Sprintf("[ASSERT_ERROR_CONTAINS] Stderr:\n%s", stderrStr))
 	if stdoutStr != "" {
-		h.logger.Printf("[ASSERT_ERROR_CONTAINS] Stdout:\n%s", stdoutStr)
+		h.logger.Info(fmt.Sprintf("[ASSERT_ERROR_CONTAINS] Stdout:\n%s", stdoutStr))
 	}
 
 	assert.Contains(
@@ -1015,8 +1021,8 @@ registries:
 		}
 	}
 
-	h.logger.Printf("Writing %s format registry mappings file", mappingType)
-	h.logger.Printf("Registry mappings file content verification:\n%s", content)
+	h.logger.Info(fmt.Sprintf("Writing %s format registry mappings file", mappingType))
+	h.logger.Info(fmt.Sprintf("Registry mappings file content verification:\n%s", content))
 
 	mappingsPath := filepath.Join(h.tempDir, "registry-mappings.yaml")
 	err := os.WriteFile(mappingsPath, []byte(content), fileutil.ReadWriteUserPermission)
@@ -1074,4 +1080,34 @@ func (h *TestHarness) ValidateOverridesWithQualifiers(expectedQualifiers []strin
 	}
 
 	return nil
+}
+
+// RunIrrCommandWithOutput runs the irr command with specific arguments and returns its output.
+func (h *TestHarness) RunIrrCommandWithOutput(cmdArgs []string) (string, error) {
+	h.t.Helper()
+
+	// Add logging here
+	originalWd, _ := os.Getwd()
+	log.Debug("[HARNESS RunIrrCommand] Test process WD before running command", "wd", originalWd)
+	log.Debug("[HARNESS RunIrrCommand] Preparing command", "args", cmdArgs)
+
+	cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
+	cmd.Dir = h.tempDir // Set the working directory for the command being run
+
+	log.Debug("[HARNESS RunIrrCommand] Setting cmd.Dir for child process", "dir", cmd.Dir)
+
+	outputBytes, err := cmd.CombinedOutput() // Capture stdout and stderr
+
+	log.Debug("[HARNESS RunIrrCommand] Command finished", "output", string(outputBytes), "err", err)
+
+	if err != nil {
+		// Improve error reporting for exit errors
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return string(outputBytes), fmt.Errorf("command %v exited with error: %w, output:\\n%s", cmdArgs, err, string(outputBytes))
+		}
+		return string(outputBytes), fmt.Errorf("failed to run command %v: %w, output:\\n%s", cmdArgs, err, string(outputBytes))
+	}
+
+	return string(outputBytes), nil
 }
