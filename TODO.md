@@ -508,3 +508,54 @@ Enhance the analyzer to correctly process Helm charts with subcharts by replicat
 3.  **Test-Driven Development (TDD):** Write tests *before* or *alongside* implementing each piece of subchart functionality. Start with unit tests for core logic (analyzer, generator) and then add integration tests as components are connected. This ensures each part works correctly before moving to the next.
 4.  **Feature Flag (Optional but Recommended):** Consider introducing subchart support behind a feature flag initially. This allows merging incremental progress into `main` without exposing potentially unstable functionality to users until it's complete and well-tested.
 
+## Phase 11: Decouple Override Validation (P1: Testing Enablement)
+
+### Overview
+Introduce a `--no-validate` flag to the `irr override` command. This allows users to generate the image override file without triggering the internal Helm template validation check that `override` currently performs.
+
+### Motivation
+- The current `irr override` command implicitly runs a validation step (similar to `helm template`) using only the chart's default values and the generated overrides. This causes failures for many charts that require additional mandatory values to render successfully.
+- This internal validation prevents effective testing scenarios (e.g., in `test-charts.py`) where the goal is purely to generate the override file first, and then validate it externally using a more complete set of values (like those determined by chart classification).
+- Decoupling allows `override` to focus solely on generating the override structure based on detected images, making its behavior more predictable and testable in isolation.
+
+### Implementation Steps
+- [x] **[P1]** Add `--no-validate` flag to `override` command:
+    - [x] Modify `cmd/irr/override.go` to define a new boolean flag `--no-validate` (default `false`) using Cobra.
+- [x] **[P1]** Make internal validation conditional:
+    - [x] Locate the code block within the `override` command's execution logic responsible for performing the Helm template validation check.
+    - [x] Wrap this block in a conditional statement: `if !cmd.Flags().GetBool("no-validate") { /* existing validation code */ }`.
+- [x] **[P1]** Update command help text:
+    - [x] Ensure the `--no-validate` flag and its purpose are clearly documented in the `irr override` help output (Done via Cobra flag definition).
+- [x] **[P1]** Add/Update integration tests:
+    - [x] Review existing integration tests for the `override` command in `test/integration/override_command_test.go`.
+    - [x] Add specific test cases to verify:
+        - [x] The default behavior (validation runs) when the flag is absent (`TestOverrideDefaultValidationFailure`).
+        - [x] The behavior when `--no-validate` is present (validation is skipped, command potentially succeeds even if validation would fail) (`TestOverrideNoValidateSuccessOnValidationFailure`).
+    - [x] Create dedicated test chart (`validation-fail-test`) to reliably trigger validation failures.
+    - [x] Debug and fix issues related to test harness path resolution (`GetTestdataPath`).
+    - [x] Debug and fix issues related to registry path sanitization (`SanitizeRegistryForPath`).
+    - [x] Refine test assertions for robustness.
+- [ ] **[P1]** Update documentation:
+    - [ ] Modify `docs/CLI-REFERENCE.md` to include the new flag for the `override` command.
+    - [ ] Consider adding notes to `docs/TROUBLESHOOTING.md` or relevant sections explaining when to use this flag, especially in scripting or testing contexts.
+
+### Acceptance Criteria
+- [x] Running `irr override` without the flag performs validation as before.
+- [x] Running `irr override --no-validate` successfully generates the override file but skips the internal Helm validation, potentially allowing it to complete for charts that would otherwise fail due to missing required values during the internal check.
+- [x] Integration tests confirm the correct behavior of the flag.
+- [ ] CLI help text and user documentation accurately reflect the new flag. (Help text done, user docs pending).
+
+### Files Requiring Changes
+- `cmd/irr/override.go`
+- `test/integration/override_command_test.go`
+- `test/integration/harness.go`
+- `pkg/image/normalization.go`
+- `test/testdata/charts/validation-fail-test/*` (New chart)
+- `docs/CLI-REFERENCE.md` (Pending)
+- Potentially `docs/TROUBLESHOOTING.md` or other guides. (Pending)
+
+### Testing Strategy
+- [x] Unit/Integration tests focusing on the conditional execution of the validation logic based on the flag.
+- [ ] Manual testing using charts known to fail validation without specific required values (e.g., charts identified in the previous bulk test analysis). (Pending)
+- [ ] Subsequent testing via `test-charts.py` (after it's updated to use this flag) to confirm the reduction in validation-related failures during the 'override' phase. (Pending)
+
