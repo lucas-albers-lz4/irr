@@ -416,6 +416,7 @@ async def test_chart_override(chart_info, target_registry, irr_binary, session, 
             target_registry,
             "--source-registries",
             args.source_registries,
+            "--no-validate",
         ]
 
         # Add optional parameters if specified
@@ -550,6 +551,233 @@ async def test_chart_override(chart_info, target_registry, irr_binary, session, 
             "UNKNOWN_ERROR",
             error_msg,
             0,
+            0,
+        )
+
+    finally:
+        # Close debug log file
+        debug_log.close()
+
+
+# Define the new function based on test_chart_override
+async def test_chart_override_with_internal_validate(chart_info, target_registry, irr_binary, session, args):
+    """Test chart override generation, *including* internal validation."""
+    chart_name, chart_path = chart_info
+    # Use a slightly different output file name for clarity, though it might be overwritten
+    output_file = TEST_OUTPUT_DIR / f"{chart_name}-values-internal-validate.yaml"
+    # Use a different debug log file name
+    debug_log_file = TEST_OUTPUT_DIR / f"{chart_name}-override-internal-validate-debug.log"
+
+    # --- Clean up any existing output YAML file for this chart --- #
+    if output_file.exists():
+        output_file.unlink()
+
+    # --- Initialize variables --- #
+    classification = "UNKNOWN" # Will be determined later if needed
+    override_duration = 0
+    result = None
+
+    # Create debug log file
+    debug_log_file.parent.mkdir(parents=True, exist_ok=True)
+    debug_log = open(debug_log_file, "w")
+
+    def log_debug(msg):
+        """Helper to log debug messages selectively."""
+        debug_log.write(f"{msg}\n")
+        debug_log.flush()
+        if args.debug:
+            if len(msg) > 200 and ("JSON" in msg or "YAML" in msg):
+                truncated = msg[:197] + "..."
+                print(f"  DEBUG: {truncated} (full content in log file)")
+            else:
+                print(f"  DEBUG: {msg}")
+
+    try:
+        log_debug(f"Generating overrides WITH internal validation for chart {chart_name} from {chart_path}")
+
+        # --- Chart Path Handling --- #
+        chart_path = Path(chart_path)
+        if not chart_path.exists():
+            raise FileNotFoundError(f"Chart path does not exist: {chart_path}")
+
+        if chart_path.suffix == ".tgz":
+            log_debug(f"Using chart archive: {chart_path}")
+        else:
+            if not (chart_path / "Chart.yaml").exists():
+                raise ValueError(
+                    f"Invalid chart directory: {chart_path} - Chart.yaml not found"
+                )
+            log_debug(f"Using chart directory: {chart_path}")
+
+        # --- Override Generation --- #
+        log_debug(f"Generating overrides for {chart_name} (internal validation enabled)...")
+        start_time = time.time()
+        # --- Command Construction (NO --no-validate flag) --- #
+        override_cmd = [
+            str(irr_binary),
+            "override",
+            "--chart-path",
+            str(chart_path),
+            "--output-file",
+            str(output_file),
+            "--target-registry",
+            target_registry,
+            "--source-registries",
+            args.source_registries,
+            # NO "--no-validate" flag here
+        ]
+
+        if hasattr(args, "target_tag") and args.target_tag:
+            override_cmd.extend(["--target-tag", args.target_tag])
+        if hasattr(args, "target_repository") and args.target_repository:
+            override_cmd.extend(["--target-repository", args.target_repository])
+        # Add debug flag if specified in script args
+        if args.debug:
+            override_cmd.append("--debug")
+
+        log_debug(f"Running command: {' '.join(override_cmd)}")
+
+        # --- Execute Command --- #
+        try:
+            result = subprocess.run(
+                override_cmd,
+                capture_output=True,
+                text=True,
+                timeout=args.timeout, # Use configured timeout
+            )
+            override_duration = time.time() - start_time
+            # --- IMPORTANT: Handle expected validation failures --- #
+            # If the command fails (non-zero exit code), categorize the error.
+            # We EXPECT failures here due to internal validation.
+            if result.returncode != 0:
+                # Use stderr first, then stdout if stderr is empty
+                error_msg_detail = result.stderr.strip() or result.stdout.strip()
+                full_error_msg = f"Command failed with exit code {result.returncode}: {error_msg_detail}"
+                error_category = categorize_error(error_msg_detail)
+                log_debug(f"Expected failure (Internal Validation): Code {result.returncode}, Category: {error_category}, Msg: {full_error_msg[:200]}...")
+
+                # Return a specific status indicating internal validation failure
+                return TestResult(
+                    chart_name,
+                    chart_path,
+                    classification,
+                    "OVERRIDE_INTERNAL_VALIDATION_FAILURE", # Specific status
+                    error_category, # Categorize the underlying Helm error
+                    full_error_msg,
+                    override_duration,
+                    0, # No separate validation duration for this op
+                )
+            # If return code is 0, it means override AND internal validation succeeded
+            else:
+                 log_debug(f"Override and internal validation SUCCEEDED unexpectedly for {chart_name} (Code {result.returncode}).")
+                 # Fall through to check output file existence etc.
+
+        except subprocess.TimeoutExpired:
+            override_duration = time.time() - start_time
+            error_msg = f"Command (with internal validation) timed out after {args.timeout} seconds"
+            log_debug(f"Error: {error_msg}")
+            return TestResult(
+                chart_name,
+                chart_path,
+                classification,
+                "TIMEOUT_ERROR",
+                "TIMEOUT_ERROR",
+                error_msg,
+                override_duration,
+                0,
+            )
+        except Exception as e:
+            override_duration = time.time() - start_time
+            error_msg = f"Error executing command (with internal validation): {e}"
+            log_debug(f"Error: {error_msg}")
+            return TestResult(
+                chart_name,
+                chart_path,
+                classification,
+                "OVERRIDE_ERROR", # Generic override error for unexpected exceptions
+                "OVERRIDE_ERROR",
+                error_msg,
+                override_duration,
+                0,
+            )
+
+        # --- Verify Output File (even on unexpected success) --- #
+        if not output_file.exists():
+            # This could happen if the command succeeded (code 0) but somehow didn't write the file
+            error_msg = f"Command SUCCEEDED (Code 0) but expected output file not found: {output_file}"
+            log_debug(f"Error: {error_msg}")
+            return TestResult(
+                chart_name,
+                chart_path,
+                classification,
+                "OVERRIDE_ERROR", # Treat as an error
+                "OVERRIDE_ERROR",
+                error_msg,
+                override_duration,
+                0,
+            )
+
+        # --- Parse Output (only if command succeeded, which is rare/unexpected here) --- #
+        try:
+            with open(output_file) as f:
+                override_yaml = yaml.safe_load(f)
+            log_debug(f"Override YAML content (Internal Validation Success): {json.dumps(override_yaml, indent=2)}")
+        except Exception as e:
+            error_msg = f"Command SUCCEEDED (Code 0) but error parsing override YAML: {e}"
+            log_debug(f"Error: {error_msg}")
+            return TestResult(
+                chart_name,
+                chart_path,
+                classification,
+                "YAML_ERROR", # Categorize as YAML error
+                "YAML_ERROR",
+                error_msg,
+                override_duration,
+                0,
+            )
+
+        # --- Validate Output Structure (only if command succeeded) --- #
+        if not isinstance(override_yaml, dict):
+            error_msg = "Command SUCCEEDED (Code 0) but override YAML is not a dictionary"
+            log_debug(f"Error: {error_msg}")
+            return TestResult(
+                chart_name,
+                chart_path,
+                classification,
+                "YAML_ERROR",
+                "YAML_ERROR",
+                error_msg,
+                override_duration,
+                0,
+            )
+
+        # --- Unexpected Success --- #
+        # If we reach here, the override AND the internal validation passed.
+        # This is unusual but technically a success for this specific operation.
+        return TestResult(
+            chart_name,
+            chart_path,
+            classification,
+            "SUCCESS", # Mark as success for this specific test run
+            "SUCCESS",
+            "Override generated and internal validation passed successfully",
+            override_duration,
+            0,
+        )
+
+    except Exception as e:
+        error_msg = f"Unexpected error processing chart {chart_name} (with internal validation): {str(e)}"
+        log_debug(f"Error: {error_msg}")
+        import traceback
+        traceback.print_exc(file=debug_log)
+        return TestResult(
+            chart_name,
+            chart_path,
+            classification,
+            "UNKNOWN_ERROR",
+            "UNKNOWN_ERROR",
+            error_msg,
+            0, # Duration might be unknown here
             0,
         )
 
@@ -1242,9 +1470,9 @@ async def main():
     )
     parser.add_argument(
         "--operation",
-        choices=["override", "validate", "both"],
+        choices=["override", "validate", "both", "override-with-internal-validate"],
         default="both",
-        help="Operation to test: override, validate, or both",
+        help="Operation to test: override (no internal validation), validate (external), both, or override-with-internal-validate",
     )
     parser.add_argument(
         "--debug", action="store_true", help="Enable debug output to console"
@@ -1372,29 +1600,49 @@ async def main():
 
     # --- Test Execution ---
     all_results = []
+    executed_operation = None # Track which operation ran
 
-    if args.operation in ["override", "both"]:
-        print(
-            f"\n--- Starting Override Generation for {len(charts_to_process_info)} charts ---"
-        )
-        tasks = []
-        limiter = asyncio.Semaphore(args.max_workers)
-
-        async def run_override_with_limit(chart_info):
-            async with limiter:
-                return await test_chart_override(
-                    chart_info, args.target_registry, irr_binary, None, args
-                )
-
-        for chart_name, chart_path in charts_to_process_info:
-            task = asyncio.create_task(
-                run_override_with_limit((chart_name, chart_path))
+    if args.operation in ["override", "both", "override-with-internal-validate"]:
+        operation_to_run = None
+        if args.operation == "override":
+            print(
+                f"\n--- Starting Override Generation (No Internal Validation) for {len(charts_to_process_info)} charts ---"
             )
-            tasks.append(task)
+            operation_to_run = test_chart_override
+            executed_operation = "override"
+        elif args.operation == "override-with-internal-validate":
+            print(
+                f"\n--- Starting Override Generation (With Internal Validation) for {len(charts_to_process_info)} charts ---"
+            )
+            operation_to_run = test_chart_override_with_internal_validate # Call the new function
+            executed_operation = "override-with-internal-validate"
+        elif args.operation == "both": # 'both' still runs the standard override first
+            print(
+                f"\n--- Starting Override Generation (No Internal Validation) for {len(charts_to_process_info)} charts (part of 'both') ---"
+            )
+            operation_to_run = test_chart_override
+            executed_operation = "override" # Track that override ran first
 
-        override_results = await asyncio.gather(*tasks, return_exceptions=True)
-        all_results.extend([r for r in override_results if isinstance(r, TestResult)])
+        if operation_to_run:
+            tasks = []
+            limiter = asyncio.Semaphore(args.max_workers)
 
+            async def run_override_task_with_limit(chart_info):
+                async with limiter:
+                    return await operation_to_run( # Use the selected function
+                        chart_info, args.target_registry, irr_binary, None, args
+                    )
+
+            for chart_name, chart_path in charts_to_process_info:
+                task = asyncio.create_task(
+                    run_override_task_with_limit((chart_name, chart_path))
+                )
+                tasks.append(task)
+
+            override_results = await asyncio.gather(*tasks, return_exceptions=True)
+            all_results.extend([r for r in override_results if isinstance(r, TestResult)])
+
+    # --- Validation Step (Only if 'validate' or 'both' is chosen) ---
     if args.operation in ["validate", "both"]:
         # For validate operation, only test charts that have override files
         charts_to_validate = []
@@ -1489,9 +1737,26 @@ async def main():
             error_patterns[result.details.strip()] += 1
             update_classification_stats(result.chart_name, result.classification, False)
 
+    # --- Determine Output Filenames Based on Operation --- #
+    output_prefix = ""
+    if executed_operation == "override-with-internal-validate":
+        output_prefix = "override_with_internal_validate_"
+    elif executed_operation == "validate" or args.operation == "both": # 'validate' or 'both' write to default files
+        output_prefix = ""
+    elif executed_operation == "override": # Only 'override' writes to default if not part of 'both'
+        output_prefix = ""
+    # If executed_operation is None (e.g., only validate was run), use default prefix
+
+    error_details_file = TEST_OUTPUT_DIR / f"{output_prefix}error_details.csv"
+    error_patterns_file = TEST_OUTPUT_DIR / f"{output_prefix}error_patterns.txt"
+    error_summary_file = TEST_OUTPUT_DIR / f"{output_prefix}error_summary.txt"
+    # Classification stats always go to the same file
+    classification_stats_file = CLASSIFICATION_STATS_FILE
+
     # Save detailed error CSV
-    error_details_file = TEST_OUTPUT_DIR / "error_details.csv"
+    # error_details_file = TEST_OUTPUT_DIR / "error_details.csv"
     if error_details_rows:
+        print(f"  - Writing error details to: {error_details_file}") # Log filename
         with open(error_details_file, "w", newline="", encoding="utf-8") as csvfile:
             fieldnames = [
                 "Timestamp",
@@ -1504,13 +1769,15 @@ async def main():
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(error_details_rows)
-        print(f"  - Error details: {error_details_file}")
     else:
-        print("  - No errors to write to details file.")
+        # Create empty file if no errors, so downstream checks don't fail
+        print(f"  - No errors to write to details file: {error_details_file}")
+        error_details_file.touch()
 
     # Save error patterns
-    error_patterns_file = TEST_OUTPUT_DIR / "error_patterns.txt"
+    # error_patterns_file = TEST_OUTPUT_DIR / "error_patterns.txt"
     if error_patterns:
+        print(f"  - Writing error patterns to: {error_patterns_file}") # Log filename
         with open(error_patterns_file, "w", encoding="utf-8") as f:
             f.write("Error Message Patterns and Counts:\n")
             f.write("=" * 40 + "\n")
@@ -1522,25 +1789,30 @@ async def main():
                 f.write(f"Count: {count}\n")
                 f.write(f"Pattern:\n{pattern}\n")
                 f.write("-" * 40 + "\n")
-        print(f"  - Error patterns: {error_patterns_file}")
     else:
-        print("  - No error patterns to write.")
+        print(f"  - No error patterns to write: {error_patterns_file}")
+        error_patterns_file.touch() # Create empty file
 
     # Save summary counts
-    error_summary_file = TEST_OUTPUT_DIR / "error_summary.txt"
-    with open(error_summary_file, "w", encoding="utf-8") as f:
-        f.write("Error Summary by Status Code:\n")
-        f.write("=" * 40 + "\n")
-        for status, count in error_summary.items():
-            f.write(f"{status}: {count}\n")
-    print(f"  - Error summary: {error_summary_file}")
+    # error_summary_file = TEST_OUTPUT_DIR / "error_summary.txt"
+    if error_summary:
+        print(f"  - Writing error summary to: {error_summary_file}") # Log filename
+        with open(error_summary_file, "w", encoding="utf-8") as f:
+            f.write("Error Summary by Status Code:\n")
+            f.write("=" * 40 + "\n")
+            for status, count in error_summary.items():
+                f.write(f"{status}: {count}\n")
+    else:
+        print(f"  - No error summary to write: {error_summary_file}")
+        error_summary_file.touch() # Create empty file
 
     # Save classification stats
     save_classification_stats()
-    print(f"  - Classification stats: {CLASSIFICATION_STATS_FILE}")
+    print(f"  - Classification stats: {classification_stats_file}")
 
     # Final summary
     print("\n--- Summary ---")
+    print(f"Operation Tested: {args.operation}") # Report which operation ran
     print(f"Total charts targeted: {len(charts_to_process_info)}")
     print(f"Total charts tested: {total_tested}")
     success_percentage = (success_count / total_tested * 100) if total_tested > 0 else 0
