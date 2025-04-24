@@ -138,8 +138,11 @@ It also supports linting image references for potential issues.`,
 		envLogLevelStr := os.Getenv("LOG_LEVEL") // Value from env var
 
 		// +++ Raw Debugging Output +++
-		fmt.Fprintf(os.Stderr, "[DEBUG PRE-RUN] Raw inputs: --debug=%t, --log-level='%s' (Changed: %t), LOG_LEVEL='%s'\n",
-			debugFlagEnabled, logLevelFlagStr, cmd.Flags().Changed("log-level"), envLogLevelStr)
+		log.Debug("[PRE-RUN] Raw inputs",
+			"debug", debugFlagEnabled,
+			"log_level", logLevelFlagStr,
+			"log_level_changed", cmd.Flags().Changed("log-level"),
+			"env_log_level", envLogLevelStr)
 
 		var finalLevel log.Level
 		levelSource := validateTestNamespace
@@ -157,7 +160,7 @@ It also supports linting image references for potential issues.`,
 					levelSource = "--log-level flag"
 				} else {
 					// Invalid flag, log warning later, proceed to check env var
-					fmt.Fprintf(os.Stderr, "[DEBUG PRE-RUN WARN] Invalid --log-level flag value: %s\n", logLevelFlagStr)
+					log.Debug("[PRE-RUN WARN] Invalid log level flag", "value", logLevelFlagStr)
 				}
 			}
 
@@ -169,7 +172,7 @@ It also supports linting image references for potential issues.`,
 					levelSource = "LOG_LEVEL env var"
 				} else {
 					// Invalid env var, log warning later, proceed to default
-					fmt.Fprintf(os.Stderr, "[DEBUG PRE-RUN WARN] Invalid LOG_LEVEL env var value: %s\n", envLogLevelStr)
+					log.Debug("[PRE-RUN WARN] Invalid LOG_LEVEL env var", "value", envLogLevelStr)
 				}
 			}
 
@@ -187,7 +190,9 @@ It also supports linting image references for potential issues.`,
 		}
 
 		// +++ Raw Debugging Output +++
-		fmt.Fprintf(os.Stderr, "[DEBUG PRE-RUN] Determined finalLevel=%s from source='%s'\n", finalLevel.String(), levelSource)
+		log.Debug("[PRE-RUN] Determined final level",
+			"level", finalLevel.String(),
+			"source", levelSource)
 
 		// --- Apply Final Log Level --- START ---
 		log.SetLevel(finalLevel)
