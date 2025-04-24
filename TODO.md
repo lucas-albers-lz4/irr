@@ -534,7 +534,8 @@ Introduce a `--no-validate` flag to the `irr override` command. This allows user
     - [x] Create dedicated test chart (`validation-fail-test`) to reliably trigger validation failures.
     - [x] Debug and fix issues related to test harness path resolution (`GetTestdataPath`).
     - [x] Debug and fix issues related to registry path sanitization (`SanitizeRegistryForPath`).
-    - [x] Refine test assertions for robustness.
+    - [x] Refine test assertions for robustness (Including workarounds for current command behavior).
+    - [x] Added tests for new `simple` chart (`TestOverrideSimpleChart`) and validation failure (`TestValidateValidationFailChart`).
 - [ ] **[P1]** Update documentation:
     - [ ] Modify `docs/CLI-REFERENCE.md` to include the new flag for the `override` command.
     - [ ] Consider adding notes to `docs/TROUBLESHOOTING.md` or relevant sections explaining when to use this flag, especially in scripting or testing contexts.
@@ -548,9 +549,12 @@ Introduce a `--no-validate` flag to the `irr override` command. This allows user
 ### Files Requiring Changes
 - `cmd/irr/override.go`
 - `test/integration/override_command_test.go`
+- `test/integration/validate_command_test.go`
+- `test/integration/integration_test.go`
 - `test/integration/harness.go`
 - `pkg/image/normalization.go`
 - `test/testdata/charts/validation-fail-test/*` (New chart)
+- `test/testdata/charts/simple/*` (New chart)
 - `docs/CLI-REFERENCE.md` (Pending)
 - Potentially `docs/TROUBLESHOOTING.md` or other guides. (Pending)
 
