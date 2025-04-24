@@ -634,6 +634,7 @@ func (h *TestHarness) ExecuteIRRWithStderr(envOverrides map[string]string, args 
 	// #nosec G204 -- Arguments are controlled by test harness, not user input
 	cmd := exec.Command(h.getBinaryPath(), cmdArgs...)
 	cmd.Env = h.buildEnv(envOverrides)
+	cmd.Dir = h.rootDir // Set the working directory to the project root
 
 	var stdoutBuf, stderrBuf bytes.Buffer
 	cmd.Stdout = &stdoutBuf
@@ -692,7 +693,7 @@ func (h *TestHarness) SetChartPath(path string) {
 // GetTestdataPath returns the absolute path to a test chart directory.
 func (h *TestHarness) GetTestdataPath(relPath string) string {
 	// First try to find the test data relative to the project root
-	rootRelPath := filepath.Join(h.rootDir, "test-data", relPath)
+	rootRelPath := filepath.Join(h.rootDir, "test", "testdata", relPath)
 	if _, err := os.Stat(rootRelPath); err == nil {
 		absPath, err := filepath.Abs(rootRelPath)
 		if err != nil {
@@ -702,7 +703,7 @@ func (h *TestHarness) GetTestdataPath(relPath string) string {
 	}
 
 	// Fall back to the relative path directly
-	absPath, err := filepath.Abs(filepath.Join("test-data", relPath))
+	absPath, err := filepath.Abs(filepath.Join("test", "testdata", relPath))
 	if err != nil {
 		h.t.Fatalf("Failed to get absolute path for %s: %v", relPath, err)
 	}
