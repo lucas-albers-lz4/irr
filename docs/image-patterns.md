@@ -140,7 +140,9 @@ image: example.com/dockerio/library/nginx:1.23
 
 - `docker.io` = `index.docker.io`
 - Port numbers are preserved
-- Registry names are sanitized for path components
+- Registry names are sanitized for path components when used with the `prefix-source-registry` path strategy (the default). 
+    - **Special Case:** `docker.io` retains its dot (e.g., leading to paths like `target.com/docker.io/library/nginx`).
+    - **Other Registries:** Dots are removed from other registry names (e.g., `quay.io` becomes `quayio`, leading to paths like `target.com/quayio/prometheus/node-exporter`).
 
 ### Registry Precedence
 

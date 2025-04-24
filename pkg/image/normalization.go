@@ -65,7 +65,9 @@ func NormalizeRegistry(registry string) string {
 func SanitizeRegistryForPath(registry string) string {
 	// Normalize docker.io variants first
 	if registry == defaultRegistry || registry == "index.docker.io" || registry == "" {
-		return "dockerio"
+		// Return the canonical name, don't sanitize further for path compatibility yet
+		// Let downstream path joining handle slashes correctly.
+		return defaultRegistry
 	}
 
 	// Strip port number if present

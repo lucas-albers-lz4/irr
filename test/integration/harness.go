@@ -520,37 +520,43 @@ func (h *TestHarness) WalkImageFields(data interface{}, visitor func(path []stri
 // walkImageFieldsRecursive traverses the data structure and calls the visitor function when it finds
 // elements that appear to be image references or image configuration maps.
 func (h *TestHarness) walkImageFieldsRecursive(data interface{}, currentPath []string, visitor func(path []string, value interface{})) {
-	switch v := data.(type) {
+	switch val := data.(type) {
 	case map[string]interface{}:
-		// Check if this map potentially represents an image override.
-		// Presence of "repository" is a strong indicator.
-		if _, repoOk := v["repository"]; repoOk {
-			// Consider it an image map if repository is present.
-			// We might also check for tag/digest, but repository is key.
-			visitor(currentPath, v)
-			return // Don't recurse further into this identified image map structure.
+		// Check if this map *itself* looks like an image structure
+		_, hasRepo := val["repository"]
+		// Decide if this map as a whole should be visited
+		if hasRepo { // Or use a more robust check if needed
+			visitor(currentPath, val) // Visit the map node
 		}
-		// Not identified as an image map structure based on keys, recurse into its values.
-		for key, value := range v {
-			newPath := append(append([]string{}, currentPath...), key)
-			h.walkImageFieldsRecursive(value, newPath, visitor)
+		// ALWAYS recurse into map values, regardless of whether the map itself was visited
+		for k, v := range val {
+			h.walkImageFieldsRecursive(v, append(currentPath, k), visitor)
 		}
 	case []interface{}:
-		for i, item := range v {
-			newPath := append(append([]string{}, currentPath...), fmt.Sprintf("[%d]", i))
-			h.walkImageFieldsRecursive(item, newPath, visitor)
+		// Recurse into slice elements
+		for i, item := range val {
+			// Create path segment for slice index
+			indexedPath := append(currentPath, fmt.Sprintf("[%d]", i)) //nolint:gocritic // Intentional new slice for recursion
+			h.walkImageFieldsRecursive(item, indexedPath, visitor)
 		}
 	case string:
-		// Check if the path itself suggests this string is an image.
-		// This is more reliable than guessing based on string content.
+		// Check if this string value itself should be visited
+		// Heuristic: Is the key likely an image key? (Need key context here, difficult)
+		// Simpler: Does the string value *look* like an image reference?
+		if (strings.Contains(val, ":") || strings.Contains(val, "@")) && strings.Contains(val, "/") {
+			visitor(currentPath, val) // Visit the string node
+		}
+		// Potentially add check for key names if path context implies image
+		// e.g., if currentPath ends with "image" or "repository"
 		if len(currentPath) > 0 {
 			lastKey := currentPath[len(currentPath)-1]
-			// Simple check: if the key is "image" or ends with "Image", treat the string as an image override.
-			if lastKey == "image" || strings.HasSuffix(lastKey, "Image") {
-				visitor(currentPath, v)
+			if strings.Contains(strings.ToLower(lastKey), "image") {
+				// If the key suggests it's an image, visit the string value
+				// This might double-visit if the string also looked like an image, visitor must handle
+				visitor(currentPath, val)
 			}
 		}
-		// Path-based checking is preferred for overrides
+		// default: // Ignore other types like bool, int, float, nil
 	}
 }
 

@@ -133,6 +133,7 @@ func (s *FlatStrategy) GeneratePath(originalRef *image.Reference, targetRegistry
 	// Add registry prefix for better organization (optional but recommended)
 	registryPrefix := image.SanitizeRegistryForPath(originalRef.Registry)
 	finalRepoPathPart := registryPrefix + "-" + baseRepoPath
+
 	log.Debug("FlatStrategy: Final flattened path", "finalRepoPathPart", finalRepoPathPart)
 
 	return finalRepoPathPart, nil

@@ -263,7 +263,7 @@ func TestSanitizeRegistryForPath(t *testing.T) {
 		registry string
 		expected string
 	}{
-		{"docker.io", "dockerio"},
+		{"docker.io", "docker.io"},
 		{"quay.io", "quayio"},
 		{"k8s.gcr.io", "k8sgcrio"},
 		{"registry:5000", "registry"},

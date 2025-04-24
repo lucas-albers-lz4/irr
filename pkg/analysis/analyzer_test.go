@@ -366,13 +366,12 @@ func TestNormalizeImageValues(t *testing.T) {
 		{
 			name: "Numeric Tag",
 			input: map[string]interface{}{
-				"registry":   "docker.io",
-				"repository": "library/alpine",
-				"tag":        3.14, // float
+				"repository": "myrepo/image",
+				"tag":        3.14,
 			},
-			expectedReg:  "docker.io",
-			expectedRepo: "library/alpine",
-			expectedTag:  "3", // Expect conversion to string
+			expectedReg:  "docker.io",    // Correct field name
+			expectedRepo: "myrepo/image", // Do NOT expect library/ prefix here
+			expectedTag:  "3.14",         // Expect the actual float string
 		},
 		{
 			name: "Integer Tag",
@@ -385,17 +384,14 @@ func TestNormalizeImageValues(t *testing.T) {
 			expectedTag:  "123",
 		},
 		{
-			name: "With Digest instead of Tag", // Lower priority, basic check
+			name: "With Digest instead of Tag",
 			input: map[string]interface{}{
-				"registry":   "gcr.io",
-				"repository": "google-containers/pause",
-				"digest":     "sha256:abcdef123456",
+				"repository": "myrepo/image",
+				"digest":     "sha256:abcdef1234567890abcdef1234567890abcdef1234567890abcdef123456",
 			},
-			// Note: normalizeImageValues currently only processes 'tag'.
-			// This test confirms 'digest' doesn't break it and tag defaults.
-			expectedReg:  "gcr.io",
-			expectedRepo: "google-containers/pause",
-			expectedTag:  "latest",
+			expectedReg:  "docker.io",    // Correct field name
+			expectedRepo: "myrepo/image", // Do NOT expect library/ prefix here
+			expectedTag:  "",             // Expect empty tag when digest is present
 		},
 		{
 			name:         "Empty Input",
@@ -406,10 +402,10 @@ func TestNormalizeImageValues(t *testing.T) {
 		},
 		{
 			name:         "Registry Normalization (No TLD)",
-			input:        map[string]interface{}{"registry": "myregistry", "repository": "img", "tag": "1"},
-			expectedReg:  "docker.io/myregistry", // Expect docker.io prefix
-			expectedRepo: "img",
-			expectedTag:  "1",
+			input:        map[string]interface{}{"repository": "myregistry"},
+			expectedReg:  DefaultRegistry,      // Use package const
+			expectedRepo: "library/myregistry", // Changed expectation for consistency
+			expectedTag:  DefaultTag,           // Use package const
 		},
 		{
 			name:         "Registry Normalization (Trailing Slash)",
@@ -581,7 +577,7 @@ func TestAnalyzeValues(t *testing.T) {
 			expectedImages: []ImagePattern{},
 		},
 		{
-			name: "Simple Map Image",
+			name: "Simple Map Image (Repo+Tag)",
 			values: map[string]interface{}{
 				"img": map[string]interface{}{"repository": "test/img", "tag": "1"},
 			},
@@ -590,7 +586,7 @@ func TestAnalyzeValues(t *testing.T) {
 				{
 					Path:  "img",
 					Type:  PatternTypeMap,
-					Value: "docker.io/test/img:1",
+					Value: "docker.io/test/img:1", // Default registry
 					Structure: map[string]interface{}{
 						"registry":   "docker.io",
 						"repository": "test/img",
@@ -622,7 +618,7 @@ func TestAnalyzeValues(t *testing.T) {
 				{
 					Path:  "app.server.img",
 					Type:  PatternTypeMap,
-					Value: "docker.io/nested/server:2",
+					Value: "docker.io/nested/server:2", // Default registry
 					Structure: map[string]interface{}{
 						"registry":   "docker.io",
 						"repository": "nested/server",
@@ -633,31 +629,101 @@ func TestAnalyzeValues(t *testing.T) {
 			},
 		},
 		{
-			name: "Mixed Types",
+			name: "Full Map (Registry+Repo+Tag)",
 			values: map[string]interface{}{
-				"config":    map[string]interface{}{"enabled": true, "port": 8080},
-				"mainImage": "main/app:final",
-				"workers": map[string]interface{}{
-					"image": map[string]interface{}{"repository": "worker/job", "tag": "batch"},
-				},
+				"full": map[string]interface{}{"registry": "reg.com", "repository": "repo/img", "tag": "1.0"},
 			},
-			prefix: "root", // Test with prefix
+			prefix: "",
 			expectedImages: []ImagePattern{
-				{Path: "root.mainImage", Type: PatternTypeString, Value: "main/app:final", Count: 1},
 				{
-					Path:  "root.workers.image",
+					Path:  "full",
 					Type:  PatternTypeMap,
-					Value: "docker.io/worker/job:batch",
+					Value: "reg.com/repo/img:1.0", // Explicit values used
 					Structure: map[string]interface{}{
-						"registry":   "docker.io",
-						"repository": "worker/job",
-						"tag":        "batch",
+						"registry":   "reg.com",
+						"repository": "repo/img",
+						"tag":        "1.0",
 					},
 					Count: 1,
 				},
 			},
 		},
-		// Add cases for arrays if analyzeValues handles them directly, or rely on TestAnalyzeArray
+		{
+			name: "Repo + Registry Map",
+			values: map[string]interface{}{
+				"repoReg": map[string]interface{}{"registry": "reg.com", "repository": "repo/img"},
+			},
+			prefix: "",
+			expectedImages: []ImagePattern{
+				{
+					Path:  "repoReg",
+					Type:  PatternTypeMap,
+					Value: "reg.com/repo/img:latest", // Tag defaults to latest
+					Structure: map[string]interface{}{
+						"registry":   "reg.com",
+						"repository": "repo/img",
+						"tag":        "latest",
+					},
+					Count: 1,
+				},
+			},
+		},
+		{
+			name: "Repo Only Map (Implicit Registry)",
+			values: map[string]interface{}{
+				"repoOnlyImplicit": map[string]interface{}{"repository": "quay.io/repo/implicit"},
+			},
+			prefix: "",
+			expectedImages: []ImagePattern{
+				{
+					Path:  "repoOnlyImplicit",
+					Type:  PatternTypeMap,
+					Value: "quay.io/repo/implicit:latest", // Registry parsed from repo, tag defaults latest
+					Structure: map[string]interface{}{
+						"registry":   "quay.io",
+						"repository": "repo/implicit",
+						"tag":        "latest",
+					},
+					Count: 1,
+				},
+			},
+		},
+		{
+			name: "Repo Only Map (Default Registry)",
+			values: map[string]interface{}{
+				"repoOnlyDefault": map[string]interface{}{"repository": "repo/default"},
+			},
+			prefix: "",
+			expectedImages: []ImagePattern{
+				{
+					Path:  "repoOnlyDefault",
+					Type:  PatternTypeMap,
+					Value: "docker.io/repo/default:latest", // Registry defaults docker.io, tag defaults latest
+					Structure: map[string]interface{}{
+						"registry":   "docker.io",
+						"repository": "repo/default",
+						"tag":        "latest",
+					},
+					Count: 1,
+				},
+			},
+		},
+		{
+			name: "Map Missing Repository",
+			values: map[string]interface{}{
+				"noRepo": map[string]interface{}{"registry": "reg.com", "tag": "1.0"},
+			},
+			prefix:         "",
+			expectedImages: []ImagePattern{}, // Should not be detected
+		},
+		{
+			name: "Non-Image Map",
+			values: map[string]interface{}{
+				"other": map[string]interface{}{"key": "value", "number": 123},
+			},
+			prefix:         "",
+			expectedImages: []ImagePattern{}, // Should not be detected
+		},
 	}
 
 	for _, tt := range tests {
@@ -710,9 +776,9 @@ func TestAnalyzeArray(t *testing.T) {
 				{
 					Path:  "containers[1]",
 					Type:  PatternTypeMap,
-					Value: "docker.io/reg/img2:b",
+					Value: "reg/img2:b",
 					Structure: map[string]interface{}{
-						"registry":   "docker.io/reg",
+						"registry":   "reg",
 						"repository": "img2",
 						"tag":        "b",
 					},

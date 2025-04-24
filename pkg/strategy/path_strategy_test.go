@@ -27,7 +27,7 @@ func TestPrefixSourceRegistryStrategy(t *testing.T) {
 				Tag:        "latest",
 			},
 			targetRegistry: "",
-			expected:       "dockerio/library/nginx",
+			expected:       "docker.io/library/nginx",
 		},
 		{
 			name: "nested path",
@@ -188,7 +188,7 @@ func TestPrefixSourceRegistryStrategy_GeneratePath_InputVariations(t *testing.T)
 				Repository: "library/nginx",
 				Tag:        "latest",
 			},
-			want: "dockerio/library/nginx",
+			want: "docker.io/library/nginx",
 		},
 		{
 			name:           "dockerhub_official_repo_no_library_prefix",
@@ -198,7 +198,7 @@ func TestPrefixSourceRegistryStrategy_GeneratePath_InputVariations(t *testing.T)
 				Repository: "nginx", // Implicitly library/nginx
 				Tag:        "stable",
 			},
-			want: "dockerio/library/nginx", // Expect library/ to be added
+			want: "docker.io/library/nginx", // Expect library/ to be added
 		},
 		{
 			name:           "repo_with_digest",
@@ -208,7 +208,7 @@ func TestPrefixSourceRegistryStrategy_GeneratePath_InputVariations(t *testing.T)
 				Repository: "library/nginx",
 				Digest:     "sha256:abcdef123456",
 			},
-			want: "dockerio/library/nginx",
+			want: "docker.io/library/nginx",
 		},
 		{
 			name:           "registry_with_port_and_dots",
@@ -256,10 +256,10 @@ func TestFlatStrategy_GeneratePath(t *testing.T) {
 			targetRegistry: "",
 			imgRef: &image.Reference{
 				Registry:   "docker.io",
-				Repository: "library/nginx/stable",
-				Tag:        "1.21",
+				Repository: "library/nginx",
+				Tag:        "stable",
 			},
-			want: "dockerio-library-nginx-stable",
+			want: "docker.io-library-nginx",
 		},
 		{
 			name:           "docker_hub_official_image",
@@ -269,7 +269,7 @@ func TestFlatStrategy_GeneratePath(t *testing.T) {
 				Repository: "nginx",
 				Tag:        "latest",
 			},
-			want: "dockerio-library-nginx",
+			want: "docker.io-library-nginx",
 		},
 		{
 			name:           "repository_with_dots",

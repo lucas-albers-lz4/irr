@@ -261,145 +261,48 @@ func (g *Generator) findUnsupportedPatterns(patterns []analysis.ImagePattern) []
 	return unsupported
 }
 
-// filterEligibleImages filters the detected image patterns based on source and exclude registries.
+// filterEligibleImages identifies which detected image patterns should be processed based on source/exclude lists.
 func (g *Generator) filterEligibleImages(detectedImages []analysis.ImagePattern) []analysis.ImagePattern {
-	log.Debug("Filtering detected image patterns", "count", len(detectedImages))
-	eligibleImages := make([]analysis.ImagePattern, 0, len(detectedImages))
-	processedSources := make(map[string]bool) // Track processed source paths
+	log.Debug("Enter filterEligibleImages")
+	defer log.Debug("Exit filterEligibleImages")
+
+	var eligibleImages []analysis.ImagePattern
+	log.Debug("Filtering eligible images", "total_detected", len(detectedImages))
+
+	// Pre-normalize source and exclude registries for efficiency
+	normalizedSources := make(map[string]bool)
+	for _, source := range g.sourceRegistries {
+		normalizedSources[image.NormalizeRegistry(source)] = true
+	}
+	normalizedExcludes := make(map[string]bool)
+	for _, exclude := range g.excludeRegistries {
+		normalizedExcludes[image.NormalizeRegistry(exclude)] = true
+	}
+	log.Debug("Pre-normalized registries", "sources", normalizedSources, "excludes", normalizedExcludes)
 
 	for _, pattern := range detectedImages {
-		// Avoid processing the same source path multiple times if duplicates exist
-		if processedSources[pattern.Path] {
-			log.Debug("Skipping duplicate pattern path", "path", pattern.Path)
-			continue
-		}
-
-		// Perform filtering based *only* on registry rules. We need the registry.
-		// Simplistic extraction for filtering: Try parsing, but ignore errors here.
-		// The goal is just to get *a* registry string for filtering.
-		// Full error handling happens later in the Generate loop.
-		imgRefForFilter, err := image.ParseImageReference(pattern.Value) // Check error
+		// Handle potential errors during parsing more gracefully
+		imgRef, err := g.processImagePattern(pattern)
 		if err != nil {
-			// Log the error at debug level if parsing fails during filtering
-			log.Debug("Failed to parse image reference during filtering, proceeding with caution", "path", pattern.Path, "value", pattern.Value, "error", err)
-		}
-		// NOTE: This might be imperfect if parsing fails badly, but better than skipping.
-		// Consider a simpler regex for registry extraction if this proves problematic.
-
-		// If the image has no registry, assume docker.io (default behavior)
-		// This reference is only used for filtering eligibility here.
-		effectiveRegistry := ""
-		if imgRefForFilter != nil {
-			effectiveRegistry = imgRefForFilter.Registry
-		}
-		if effectiveRegistry == "" {
-			effectiveRegistry = image.DefaultRegistry // "docker.io"
-			log.Debug("Pattern has no explicit registry, assuming default for filtering", "path", pattern.Path, "default", effectiveRegistry)
-		}
-
-		// Check if the effective registry should be excluded
-		if g.isExcluded(effectiveRegistry) {
-			log.Debug("Image is not eligible (excluded registry)", "path", pattern.Path, "value", pattern.Value, "registry", effectiveRegistry)
 			continue
 		}
 
-		// Check if the effective registry is in the source list (or if source list is empty)
-		if g.isSourceRegistry(effectiveRegistry) {
-			log.Debug("Image is eligible", "path", pattern.Path, "value", pattern.Value, "registry", effectiveRegistry)
+		if imgRef == nil {
+			continue
+		}
+
+		// Perform checks using the pre-normalized maps
+		normalizedReg := image.NormalizeRegistry(imgRef.Registry)
+		isSource := normalizedSources[normalizedReg]
+		isExcluded := normalizedExcludes[normalizedReg]
+
+		if isSource && !isExcluded {
 			eligibleImages = append(eligibleImages, pattern)
-			processedSources[pattern.Path] = true // Mark this path as processed
-		} else {
-			log.Debug("Image is not eligible (registry not in source list)", "path", pattern.Path, "value", pattern.Value, "registry", effectiveRegistry)
 		}
 	}
-	log.Debug("Filtering complete", "eligible_count", len(eligibleImages))
+
+	log.Debug("Finished filtering images", "eligible_count", len(eligibleImages))
 	return eligibleImages
-}
-
-// Determines the appropriate override structure based on the original pattern type.
-// For maps, it merges into the existing map. For strings, it creates a map.
-func (g *Generator) createOverride(pattern analysis.ImagePattern, imgRef *image.Reference, targetReg, newPath string) interface{} {
-	log.Debug("Creating override for path %v, original type %T", pattern.Path, pattern.Value)
-
-	overrideValue := map[string]interface{}{
-		"registry":   targetReg,
-		"repository": newPath,
-	}
-	if imgRef.Digest != "" {
-		overrideValue["digest"] = imgRef.Digest
-	} else {
-		overrideValue["tag"] = imgRef.Tag
-	}
-
-	// Always return the map structure now. setOverridePath handles insertion.
-	return overrideValue
-}
-
-// setOverridePath adds the override value to the map at the specified path, creating nested maps as needed
-func (g *Generator) setOverridePath(overrides map[string]interface{}, pattern analysis.ImagePattern, overrideValue interface{}) error {
-	log.Debug("setOverridePath: Setting override for path '%s' with value type '%T'", pattern.Path, overrideValue)
-	pathParts := strings.Split(pattern.Path, ".")
-	if len(pathParts) == 0 {
-		return fmt.Errorf("invalid empty path provided for pattern: %+v", pattern)
-	}
-	// Use true for overwrite, as we always want IRR's override to take precedence
-	if err := override.SetValueAtPath(overrides, pathParts, overrideValue); err != nil {
-		return fmt.Errorf("failed to set override path %v: %w", pathParts, err)
-	}
-	return nil
-}
-
-// processImagePattern attempts to parse an image string identified by the analysis.
-// It handles potential complexity like missing tags or digests.
-func (g *Generator) processImagePattern(pattern analysis.ImagePattern) (*image.Reference, error) {
-	log.Debug("Processing image pattern", "path", pattern.Path, "value", pattern.Value)
-
-	// Initial parsing attempt
-	imgRef, err := image.ParseImageReference(pattern.Value)
-	if err == nil {
-		log.Debug("Successfully parsed image reference", "ref", imgRef.String())
-		return imgRef, nil // Success
-	}
-
-	// Handle parsing errors, potentially trying again if it looks like a missing tag/digest issue
-	log.Warn("Initial image parse failed, checking for potential missing tag/digest",
-		"path", pattern.Path, "value", pattern.Value, "error", err)
-
-	// Heuristic: If the error suggests an invalid reference format AND the string contains ':',
-	// it might be because a port number was mistaken for a tag separator. Let's try splitting.
-	// Example: myregistry:5000/myimage -> interpreted as registry='myregistry', image='5000/myimage' (no tag)
-	// Correct: Split by '/', handle potential port in the registry part.
-	// Simpler heuristic for now: if it contains ':' but not '/', assume it's registry:port/image
-	// if strings.Contains(pattern.Value, ":") && !strings.Contains(pattern.Value, "/") {
-	// If the error is specifically about invalid reference format, try assuming default tag.
-	// This is a common case where templates might omit ':latest'.
-	if errors.Is(err, image.ErrInvalidImageRefFormat) {
-		// Check if adding ':latest' helps - This is a very basic heuristic.
-		// A more robust approach might involve more complex regex or parsing logic.
-		imgRefWithLatest := pattern.Value + ":latest"
-		imgRefRetry, errRetry := image.ParseImageReference(imgRefWithLatest)
-		if errRetry == nil {
-			log.Debug("Successfully parsed image reference by adding ':latest'", "ref", imgRefRetry.String())
-			return imgRefRetry, nil
-		}
-		log.Warn("Adding ':latest' did not resolve parsing error", "path", pattern.Path, "value", pattern.Value, "retry_error", errRetry)
-
-		// Another heuristic: Helm might template registry and repo separately, leading to values like 'myrepo:mytag'
-		// where the registry is missing. image.ParseReference often fails here.
-		// If it looks like `repo:tag` or `repo@digest`, try splitting.
-		// Use defined constant for the split limit.
-		parts := strings.SplitN(pattern.Value, ":", maxErrorParts)
-		if len(parts) == maxErrorParts && !strings.Contains(parts[0], "/") { // Likely 'repo:tag' or similar
-			// We can't definitively parse this without context (like a default registry).
-			// For IRR's purpose, we often only care about the registry part if present.
-			// Since it seems missing here, log it and return the original error.
-			log.Warn("Image pattern appears to be missing a registry", "path", pattern.Path, "value", pattern.Value)
-			// Fall through to return the original error
-		}
-	}
-
-	// If retries/heuristics didn't work, return the original parsing error wrapped.
-	return nil, fmt.Errorf("failed to parse image reference at path '%s' for value '%s': %w", pattern.Path, pattern.Value, err)
 }
 
 // determineTargetPathAndRegistry calculates the target registry and new path for an image reference.
@@ -752,30 +655,6 @@ func (g *Generator) initRulesRegistry() {
 	}
 }
 
-// isSourceRegistry checks if the given registry string matches any of the configured source registries
-func (g *Generator) isSourceRegistry(regStr string) bool {
-	// If the source list is empty, consider all registries as source registries.
-	if len(g.sourceRegistries) == 0 {
-		return true
-	}
-	for _, source := range g.sourceRegistries {
-		if regStr == source {
-			return true
-		}
-	}
-	return false
-}
-
-// isExcluded checks if a registry string matches any configured exclude patterns.
-func (g *Generator) isExcluded(regStr string) bool {
-	for _, ex := range g.excludeRegistries {
-		if regStr == ex {
-			return true
-		}
-	}
-	return false
-}
-
 // ValidateHelmTemplate checks if a chart can be rendered with given overrides.
 func ValidateHelmTemplate(chartPath string, overrides []byte) error {
 	log.Info("Validating Helm template with generated overrides", "chartPath", chartPath)
@@ -978,4 +857,149 @@ func (e *ProcessingError) Error() string {
 	}
 	// Provide a more informative summary message
 	return fmt.Sprintf("strict mode: %d processing errors occurred for paths: %s", e.Count, strings.Join(errStrings, "; "))
+}
+
+// --- Override Generation Logic ---
+
+// Corrected createOverride function - using map access for Structure
+func (g *Generator) createOverride(pattern analysis.ImagePattern, imgRef *image.Reference, targetReg, newPath string) interface{} {
+	if imgRef == nil {
+		log.Error("[createOverride Internal Error] imgRef is nil", "pattern_path", pattern.Path) // pattern.Path is likely string here
+		return nil
+	}
+
+	// Assuming pattern.Path is string based on later errors, log it directly
+	log.Debug("[DEBUG IRR OVERRIDE CREATE] Creating override for path", "path", pattern.Path, "type", pattern.Type)
+	switch pattern.Type {
+	case "map": // Assuming "map" is the type string for map structures
+		log.Debug("[DEBUG IRR OVERRIDE CREATE MAP DETECTED] Creating map override for path", "path", pattern.Path)
+		overrideMap := map[string]interface{}{
+			"registry":   targetReg,
+			"repository": newPath,
+		}
+		if imgRef.Digest != "" {
+			overrideMap["digest"] = imgRef.Digest
+		} else {
+			originalTag := imgRef.Tag // Default to parsed tag
+			// Access tag from Structure map, checking existence and type
+			if pattern.Structure != nil {
+				if tagVal, ok := pattern.Structure["tag"]; ok { // Check if "tag" key exists
+					if tagStr, ok := tagVal.(string); ok && tagStr != "" { // Check if it's a non-empty string
+						originalTag = tagStr
+					}
+				}
+			}
+			overrideMap["tag"] = originalTag
+		}
+		log.Debug("[DEBUG IRR OVERRIDE CREATE MAP RESULT] Override map generated", "path", pattern.Path, "map", overrideMap)
+		return overrideMap
+	case "string": // Assuming "string" is the type string for string structures
+		log.Debug("[DEBUG IRR OVERRIDE CREATE STRING DETECTED] Creating string override for path", "path", pattern.Path)
+		var overrideStr string
+		if imgRef.Digest != "" {
+			overrideStr = fmt.Sprintf("%s/%s@%s", targetReg, newPath, imgRef.Digest)
+		} else {
+			overrideStr = fmt.Sprintf("%s/%s:%s", targetReg, newPath, imgRef.Tag)
+		}
+		log.Debug("[DEBUG IRR OVERRIDE CREATE STRING RESULT] Override string generated", "path", pattern.Path, "string", overrideStr)
+		return overrideStr
+	default:
+		log.Error("Unknown image pattern type during override creation", "type", pattern.Type, "path", pattern.Path)
+		return nil
+	}
+}
+
+// Corrected setOverridePath function - splitting path string
+func (g *Generator) setOverridePath(overrides map[string]interface{}, pattern analysis.ImagePattern, overrideValue interface{}) error {
+	// Split the path string into components
+	pathParts := strings.Split(pattern.Path, ".")                                            // Assume dot notation based on previous usage
+	log.Debug("[DEBUG IRR OVERRIDE SET] Setting override value for path", "path", pathParts) // Log the slice now
+
+	if len(pathParts) == 0 || (len(pathParts) == 1 && pathParts[0] == "") {
+		log.Error("[DEBUG IRR OVERRIDE SET] Received pattern with empty or invalid path", "originalPath", pattern.Path, "value", pattern.Value)
+		return fmt.Errorf("invalid pattern with empty or invalid path received: %s", pattern.Path)
+	}
+
+	current := overrides
+	for i, key := range pathParts { // Iterate over the []string pathParts
+		if i == len(pathParts)-1 {
+			log.Debug("[DEBUG IRR OVERRIDE SET FINAL] Setting value at final key", "key", key, "value", overrideValue)
+			current[key] = overrideValue // key is now string
+			break
+		}
+
+		var next map[string]interface{}
+		existing, ok := current[key] // key is now string
+		if !ok {
+			log.Debug("[DEBUG IRR OVERRIDE SET CREATE NESTED] Creating nested map for key", "key", key)
+			next = make(map[string]interface{})
+			current[key] = next // key is now string
+		} else {
+			next, ok = existing.(map[string]interface{})
+			if !ok {
+				// Use pathParts for Join
+				conflictPath := strings.Join(pathParts[:i+1], ".")
+				log.Error("[DEBUG IRR OVERRIDE SET CONFLICT] Path conflict: Expected map but found different type", "path", conflictPath, "key", key)
+				return fmt.Errorf("path conflict at %s: expected map structure for key '%s'", conflictPath, key)
+			}
+		}
+		current = next
+	}
+	return nil
+}
+
+// processImagePattern parses the image reference string from an ImagePattern.
+// It uses the image package's parser and includes heuristics for common issues.
+// Renamed from previous processImagePattern to avoid confusion with processImage loop function.
+// func processImagePattern(pattern analysis.ImagePattern) (*image.Reference, error) { // Original definition
+// Added g *Generator receiver to access logging and potentially config later if needed
+func (g *Generator) processImagePattern(pattern analysis.ImagePattern) (*image.Reference, error) {
+	log.Debug("Processing image pattern", "path", pattern.Path, "value", pattern.Value)
+
+	// Initial parsing attempt
+	imgRef, err := image.ParseImageReference(pattern.Value)
+	if err == nil {
+		log.Debug("Successfully parsed image reference", "ref", imgRef.String())
+		return imgRef, nil // Success
+	}
+
+	// Handle parsing errors, potentially trying again if it looks like a missing tag/digest issue
+	log.Warn("Initial image parse failed, checking for potential missing tag/digest",
+		"path", pattern.Path, "value", pattern.Value, "error", err)
+
+	// Heuristic: If the error suggests an invalid reference format AND the string contains ':',
+	// it might be because a port number was mistaken for a tag separator. Let's try splitting.
+	// Example: myregistry:5000/myimage -> interpreted as registry='myregistry', image='5000/myimage' (no tag)
+	// Correct: Split by '/', handle potential port in the registry part.
+	// Simpler heuristic for now: if it contains ':' but not '/', assume it's registry:port/image
+	// if strings.Contains(pattern.Value, ":") && !strings.Contains(pattern.Value, "/") {
+	// If the error is specifically about invalid reference format, try assuming default tag.
+	// This is a common case where templates might omit ':latest'.
+	if errors.Is(err, image.ErrInvalidImageRefFormat) {
+		// Check if adding ':latest' helps - This is a very basic heuristic.
+		// A more robust approach might involve more complex regex or parsing logic.
+		imgRefWithLatest := pattern.Value + ":latest"
+		imgRefRetry, errRetry := image.ParseImageReference(imgRefWithLatest)
+		if errRetry == nil {
+			log.Debug("Successfully parsed image reference by adding ':latest'", "ref", imgRefRetry.String())
+			return imgRefRetry, nil
+		}
+		log.Warn("Adding ':latest' did not resolve parsing error", "path", pattern.Path, "value", pattern.Value, "retry_error", errRetry)
+
+		// Another heuristic: Helm might template registry and repo separately, leading to values like 'myrepo:mytag'
+		// where the registry is missing. image.ParseReference often fails here.
+		// If it looks like `repo:tag` or `repo@digest`, try splitting.
+		// Use defined constant for the split limit.
+		parts := strings.SplitN(pattern.Value, ":", maxErrorParts)
+		if len(parts) == maxErrorParts && !strings.Contains(parts[0], "/") { // Likely 'repo:tag' or similar
+			// We can't definitively parse this without context (like a default registry).
+			// For IRR's purpose, we often only care about the registry part if present.
+			// Since it seems missing here, log it and return the original error.
+			log.Warn("Image pattern appears to be missing a registry", "path", pattern.Path, "value", pattern.Value)
+			// Fall through to return the original error
+		}
+	}
+
+	// If retries/heuristics didn't work, return the original parsing error wrapped.
+	return nil, fmt.Errorf("failed to parse image reference at path '%s' for value '%s': %w", pattern.Path, pattern.Value, err)
 }

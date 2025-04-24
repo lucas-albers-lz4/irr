@@ -167,7 +167,7 @@ func TestOverrideDryRun(t *testing.T) {
 
 	// The output should contain the overrides (in the stdout)
 	assert.Contains(t, stdout, "test-registry.local", "Command output (stdout) should include the target registry")
-	assert.Contains(t, stdout, "dockerio/", "Command output (stdout) should include the transformed repository")
+	assert.Contains(t, stdout, "docker.io/", "Command output (stdout) should include the transformed repository")
 }
 
 func TestOverrideParentChart(t *testing.T) {
@@ -195,8 +195,8 @@ func TestOverrideParentChart(t *testing.T) {
 	require.NoError(t, err, "Should be able to read output file")
 
 	// Verify the output contains overrides for both parent and child charts
-	assert.Contains(t, string(content), "repository: dockerio/bitnami/nginx", "Output should include the relocated nginx image")
-	assert.Contains(t, string(content), "repository: dockerio/parent/app", "Output should include the relocated app image from parent chart")
+	assert.Contains(t, string(content), "repository: docker.io/bitnami/nginx", "Output should include the relocated nginx image")
+	assert.Contains(t, string(content), "repository: docker.io/parent/app", "Output should include the relocated app image from parent chart")
 }
 
 func TestOverrideWithRegistry(t *testing.T) {
@@ -230,7 +230,7 @@ func TestOverrideWithRegistry(t *testing.T) {
 	assert.Contains(t, string(content), "repository: quayio/", "Output should include the relocated quay.io images")
 
 	// Docker.io images should not be relocated since we only targeted quay.io
-	assert.NotContains(t, string(content), "repository: dockerio/", "Output should not include docker.io images")
+	assert.NotContains(t, string(content), "repository: docker.io/", "Output should not include docker.io images")
 }
 
 func TestOverrideWithExcludeRegistry(t *testing.T) {

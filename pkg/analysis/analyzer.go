@@ -6,13 +6,38 @@ package analysis
 
 import (
 	"fmt"
+	"path"
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 
-	"github.com/lalbers/irr/pkg/log"
+	log "github.com/lalbers/irr/pkg/log"
 	helmchart "helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
+)
+
+// Constants
+const (
+	// --- Defaults ---
+	// DefaultRegistry defines the default Docker registry.
+	DefaultRegistry = "docker.io"
+	// DefaultTag defines the default image tag.
+	DefaultTag = "latest"
+	// DefaultLibraryRepoPrefix is the prefix used for official Docker Hub images.
+	DefaultLibraryRepoPrefix = "library"
+
+	// --- Parsing Helpers ---
+	// maxSplitTwo is used when splitting strings into at most two parts
+	maxSplitTwo = 2
+	// sha256Prefix is the prefix for SHA256 digests.
+	// sha256Prefix = "sha256:" // Removed: unused
+	// maxPathSegments limits path segment checks (heuristic).
+	// maxPathSegments = 5 // Removed: unused
+	// colonSplitParts is used for splitting image strings by colon.
+	colonSplitParts = 2
+	// minimumSplitParts defines the minimum number of parts expected when checking if a string looks like repo/name:tag
+	minimumSplitParts = 2
 )
 
 // ChartLoader defines the interface for loading Helm charts.
@@ -30,11 +55,11 @@ type HelmChartLoader struct{}
 // Load uses the Helm library to load a chart.
 // It returns the loaded chart object or an error if loading fails.
 // The path can point to a packaged chart (.tgz) or an unpackaged chart directory.
-func (h *HelmChartLoader) Load(path string) (*helmchart.Chart, error) {
-	chartData, err := loader.Load(path)
+func (h *HelmChartLoader) Load(chartPath string) (*helmchart.Chart, error) {
+	chartData, err := loader.Load(chartPath)
 	if err != nil {
 		// Wrap the error from the external loader package
-		return nil, fmt.Errorf("failed to load chart from path '%s': %w", path, err)
+		return nil, fmt.Errorf("failed to load chart from path '%s': %w", chartPath, err)
 	}
 	return chartData, nil
 }
@@ -117,59 +142,76 @@ func (a *Analyzer) Analyze() (*ChartAnalysis, error) {
 // Returns:
 //   - Normalized registry, repository, and tag strings
 func (a *Analyzer) normalizeImageValues(val map[string]interface{}) (registry, repository, tag string) {
-	// Extract values, handling potential nil cases
-	registryVal, hasRegistry := val["registry"].(string)
-	repositoryVal, hasRepository := val["repository"].(string)
-	if !hasRepository {
-		repository = ""
+	// Extract map values with type checks
+	registryVal, hasRegistry := ensureString(val["registry"])
+	repositoryVal, hasRepository := ensureString(val["repository"])
+	tagVal, hasTag := ensureString(val["tag"])
+	digestVal, hasDigest := ensureString(val["digest"])
+
+	log.Debug(
+		"normalizeImageValues: Extracted map values",
+		"hasRegistry", hasRegistry, "registryVal", registryVal,
+		"hasRepository", hasRepository, "repositoryVal", repositoryVal,
+		"hasTag", hasTag, "tagVal", tagVal,
+		"hasDigest", hasDigest, "digestVal", digestVal,
+	)
+
+	// --- Initial Setup ---
+	finalRegistry := DefaultRegistry // Start with default registry
+	finalRepository := ""
+	finalTag := "" // Start with empty tag, apply default later if needed
+	finalDigest := ""
+
+	// --- Determine Repository ---
+	if hasRepository && repositoryVal != "" {
+		finalRepository = repositoryVal
 	} else {
-		repository = repositoryVal
+		log.Warn("normalizeImageValues: No repository found in map", "mapValue", val)
+		return DefaultRegistry, "", DefaultTag // Return defaults on critical failure
 	}
 
-	// Handle tag with type assertion and conversion
-	switch t := val["tag"].(type) {
-	case string:
-		tag = t
-	case float64:
-		tag = fmt.Sprintf("%.0f", t)
-	case int:
-		tag = fmt.Sprintf("%d", t)
-	case nil:
-		tag = DefaultTag
-	default:
-		tag = DefaultTag
-	}
-
-	// Default to docker.io if registry is missing or empty
-	isDockerRegistry := false
-
-	switch registryVal {
-	case "":
-		if !hasRegistry {
-			registry = DefaultRegistry
-			isDockerRegistry = true
+	// --- Determine Registry ---
+	if hasRegistry && registryVal != "" {
+		finalRegistry = registryVal
+	} else {
+		// If no explicit registry, try to parse from repo string
+		parts := splitRepoPath(finalRepository)
+		if len(parts) > 1 && (strings.Contains(parts[0], ".") || strings.Contains(parts[0], ":")) {
+			finalRegistry = parts[0]
+			finalRepository = parts[1] // Update repository to exclude parsed registry
 		}
-	case DefaultRegistry:
-		registry = registryVal
-		isDockerRegistry = true
+		// Otherwise, keep the DefaultRegistry assigned initially
+	}
+
+	// --- Determine Tag/Digest ---
+	switch {
+	case hasDigest && digestVal != "":
+		finalDigest = digestVal
+		finalTag = "" // Clear tag if digest is used
+		log.Debug("normalizeImageValues: Using digest from map", "digest", finalDigest)
+	case hasTag && tagVal != "":
+		// Use tag from map if it exists and isn't empty
+		finalTag = tagVal
+		log.Debug("normalizeImageValues: Using tag from map", "tag", finalTag)
 	default:
-		registry = registryVal
+		// Neither explicit tag nor digest found, set default tag.
+		finalTag = DefaultTag
+		log.Debug("normalizeImageValues: Using default tag", "tag", finalTag)
 	}
 
-	// Add library/ prefix ONLY if registry is docker.io and repo is simple (no /)
-	if isDockerRegistry && hasRepository && !strings.Contains(repository, "/") {
-		repository = "library/" + repository
+	// --- Final Normalizations ---
+
+	// Add library/ prefix if it's a Docker Hub official image pattern
+	if finalRegistry == DefaultRegistry && !strings.Contains(finalRepository, "/") {
+		finalRepository = path.Join(DefaultLibraryRepoPrefix, finalRepository)
+		log.Debug("normalizeImageValues: Prepended library/ prefix", "finalRepository", finalRepository)
 	}
 
-	// Normalize registry format (trim slash)
-	registry = strings.TrimSuffix(registry, "/")
+	// Trim trailing slash from registry
+	finalRegistry = strings.TrimSuffix(finalRegistry, "/")
 
-	// Handle registries specified without a TLD (e.g., "myregistry")
-	if !isDockerRegistry && !strings.Contains(registry, ".") && !strings.Contains(registry, ":") {
-		registry = "docker.io/" + registry
-	}
-
-	return // Named return values are assigned implicitly
+	// Return the final values (digest is handled internally but not returned by this signature)
+	return finalRegistry, finalRepository, finalTag
 }
 
 // analyzeValues recursively analyzes a map of values to find image patterns.
@@ -187,22 +229,22 @@ func (a *Analyzer) analyzeValues(values map[string]interface{}, prefix string, a
 	defer log.Debug("analyzeValues EXIT", "prefix", prefix)
 
 	for k, v := range values {
-		path := k
+		currentPath := k
 		if prefix != "" {
-			path = prefix + "." + k
+			currentPath = prefix + "." + k
 		}
 
-		log.Debug("analyzeValues LOOP", "path", path, "type", fmt.Sprintf("%T", v))
-		if err := a.analyzeSingleValue(k, v, path, analysis); err != nil {
+		log.Debug("analyzeValues LOOP", "path", currentPath, "type", fmt.Sprintf("%T", v))
+		if err := a.analyzeSingleValue(k, v, currentPath, analysis); err != nil {
 			// If analyzing a single value fails, wrap the error with context
-			return fmt.Errorf("error analyzing path '%s': %w", path, err)
+			return fmt.Errorf("error analyzing path '%s': %w", currentPath, err)
 		}
 
 		// Check for global patterns (registry configurations)
 		if k == "global" || strings.HasPrefix(k, "global.") {
 			pattern := GlobalPattern{
 				Type: PatternTypeGlobal,
-				Path: path,
+				Path: currentPath,
 			}
 			analysis.GlobalPatterns = append(analysis.GlobalPatterns, pattern)
 		}
@@ -217,24 +259,24 @@ func (a *Analyzer) analyzeValues(values map[string]interface{}, prefix string, a
 // Parameters:
 //   - key: The key name, which may provide context clues for image detection
 //   - value: Value to analyze (can be a string, map, slice, or other type)
-//   - path: Current path for context
+//   - currentPath: Current path for context
 //   - analysis: ChartAnalysis object to store detected patterns
 //
 // Returns:
 //   - Error if analysis fails
-func (a *Analyzer) analyzeSingleValue(key string, value interface{}, path string, analysis *ChartAnalysis) error {
-	log.Debug("analyzeSingleValue ENTER", "path", path, "type", fmt.Sprintf("%T", value))
+func (a *Analyzer) analyzeSingleValue(key string, value interface{}, currentPath string, analysis *ChartAnalysis) error {
+	log.Debug("analyzeSingleValue ENTER", "path", currentPath, "type", fmt.Sprintf("%T", value))
 	defer func() {
-		log.Debug("analyzeSingleValue EXIT", "path", path, "imagePatternsCount", len(analysis.ImagePatterns))
+		log.Debug("analyzeSingleValue EXIT", "path", currentPath, "imagePatternsCount", len(analysis.ImagePatterns))
 	}()
 
 	switch val := value.(type) {
 	case map[string]interface{}:
-		return a.analyzeMapValue(val, path, analysis)
+		return a.analyzeMapValue(val, currentPath, analysis)
 	case string:
-		return a.analyzeStringValue(key, val, path, analysis)
+		return a.analyzeStringValue(key, val, currentPath, analysis)
 	case []interface{}:
-		return a.analyzeArray(val, path, analysis) // Keep calling analyzeArray for slices
+		return a.analyzeArray(val, currentPath, analysis) // Keep calling analyzeArray for slices
 	default:
 		// Ignore other types (bool, int, float, nil, etc.)
 		return nil
@@ -246,25 +288,25 @@ func (a *Analyzer) analyzeSingleValue(key string, value interface{}, path string
 //
 // Parameters:
 //   - val: Map to analyze
-//   - path: Current path for context
+//   - currentPath: Current path for context
 //   - analysis: ChartAnalysis object to store detected patterns
 //
 // Returns:
 //   - Error if analysis fails
-func (a *Analyzer) analyzeMapValue(val map[string]interface{}, path string, analysis *ChartAnalysis) error {
-	log.Debug("analyzeMapValue ENTER", "path", path, "value", fmt.Sprintf("%#v", val))
+func (a *Analyzer) analyzeMapValue(val map[string]interface{}, currentPath string, analysis *ChartAnalysis) error {
+	log.Debug("analyzeMapValue ENTER", "path", currentPath, "value", fmt.Sprintf("%#v", val))
 	defer func() {
-		log.Debug("analyzeMapValue EXIT", "path", path, "imagePatternsCount", len(analysis.ImagePatterns))
+		log.Debug("analyzeMapValue EXIT", "path", currentPath, "imagePatternsCount", len(analysis.ImagePatterns))
 	}()
 
 	// Check if this is an image map pattern
 	isMap := a.isImageMap(val)
-	log.Debug("analyzeMapValue: isImageMap check", "path", path, "isImageMap", isMap)
+	log.Debug("analyzeMapValue: isImageMap check", "path", currentPath, "isImageMap", isMap)
 	if isMap {
 		registry, repository, tag := a.normalizeImageValues(val)
 		if repository != "" {
 			pattern := ImagePattern{
-				Path: path,
+				Path: currentPath,
 				Type: PatternTypeMap,
 				Structure: map[string]interface{}{
 					"registry":   registry,
@@ -281,7 +323,7 @@ func (a *Analyzer) analyzeMapValue(val map[string]interface{}, path string, anal
 	}
 
 	// If it's not an image map itself, recurse into its keys/values.
-	return a.analyzeValues(val, path, analysis)
+	return a.analyzeValues(val, currentPath, analysis)
 }
 
 // analyzeStringValue handles string values that might be image references.
@@ -290,15 +332,15 @@ func (a *Analyzer) analyzeMapValue(val map[string]interface{}, path string, anal
 // Parameters:
 //   - key: Key that maps to this value
 //   - val: String value to analyze
-//   - path: Current path for context
+//   - currentPath: Current path for context
 //   - analysis: ChartAnalysis object to store detected patterns
 //
 // Returns:
 //   - Error if analysis fails
-func (a *Analyzer) analyzeStringValue(key, val, path string, analysis *ChartAnalysis) error {
-	log.Debug("analyzeStringValue ENTER", "path", path, "key", key, "value", val)
+func (a *Analyzer) analyzeStringValue(key, val, currentPath string, analysis *ChartAnalysis) error {
+	log.Debug("analyzeStringValue ENTER", "path", currentPath, "key", key, "value", val)
 	defer func() {
-		log.Debug("analyzeStringValue EXIT", "path", path, "imagePatternsCount", len(analysis.ImagePatterns))
+		log.Debug("analyzeStringValue EXIT", "path", currentPath, "imagePatternsCount", len(analysis.ImagePatterns))
 	}()
 
 	// Check if the value is a Go template first
@@ -312,7 +354,7 @@ func (a *Analyzer) analyzeStringValue(key, val, path string, analysis *ChartAnal
 	// Always check if the key contains "image" - strong signal
 	keyHasImage := strings.Contains(strings.ToLower(key), "image")
 	// Path ends with "image" is also a strong signal
-	pathEndsWithImage := strings.HasSuffix(strings.ToLower(path), "image")
+	pathEndsWithImage := strings.HasSuffix(strings.ToLower(currentPath), "image")
 
 	// Look for image format: has registry/repo:tag pattern
 	hasSlash := strings.Contains(val, "/")
@@ -324,12 +366,12 @@ func (a *Analyzer) analyzeStringValue(key, val, path string, analysis *ChartAnal
 		// Special case for obvious image strings
 		(hasSlash && (hasColon || hasDigest))
 
-	log.Debug("analyzeStringValue: Heuristic checks", "path", path, "isHeuristicMatch", isHeuristicMatch, "isTemplate", isTemplate)
+	log.Debug("analyzeStringValue: Heuristic checks", "path", currentPath, "isHeuristicMatch", isHeuristicMatch, "isTemplate", isTemplate)
 
 	// For test coverage purposes, always consider direct image keys and paths as image patterns
 	if keyHasImage || pathEndsWithImage || isHeuristicMatch || isTemplate {
 		pattern := ImagePattern{
-			Path:  path,
+			Path:  currentPath,
 			Type:  PatternTypeString,
 			Value: val, // Store the raw value, including templates
 			Count: 1,
@@ -346,24 +388,24 @@ func (a *Analyzer) analyzeStringValue(key, val, path string, analysis *ChartAnal
 //
 // Parameters:
 //   - val: Array to analyze
-//   - path: Current path for context
+//   - currentPath: Current path for context
 //   - analysis: ChartAnalysis object to store detected patterns
 //
 // Returns:
 //   - Error if analysis fails
-func (a *Analyzer) analyzeArray(val []interface{}, path string, analysis *ChartAnalysis) error {
-	log.Debug("analyzeArray ENTER", "path", path, "arrayLen", len(val))
+func (a *Analyzer) analyzeArray(val []interface{}, currentPath string, analysis *ChartAnalysis) error {
+	log.Debug("analyzeArray ENTER", "path", currentPath, "arrayLen", len(val))
 	// Check if this looks like a container array (common path names)
-	isContainerArray := strings.Contains(strings.ToLower(path), "container") ||
-		path == "initContainers" || path == "containers" || strings.HasSuffix(path, ".initContainers") ||
-		strings.HasSuffix(path, ".containers") || strings.HasSuffix(path, ".sidecars")
+	isContainerArray := strings.Contains(strings.ToLower(currentPath), "container") ||
+		currentPath == "initContainers" || currentPath == "containers" || strings.HasSuffix(currentPath, ".initContainers") ||
+		strings.HasSuffix(currentPath, ".containers") || strings.HasSuffix(currentPath, ".sidecars")
 
 	if isContainerArray {
-		log.Debug("analyzeArray: Potential container array identified", "path", path)
+		log.Debug("analyzeArray: Potential container array identified", "path", currentPath)
 	}
 
 	for i, item := range val {
-		itemPath := fmt.Sprintf("%s[%d]", path, i)
+		itemPath := fmt.Sprintf("%s[%d]", currentPath, i)
 		log.Debug("analyzeArray: ITEM", "path", itemPath, "type", fmt.Sprintf("%T", item))
 
 		switch v := item.(type) {
@@ -381,7 +423,7 @@ func (a *Analyzer) analyzeArray(val []interface{}, path string, analysis *ChartA
 			// Check if the string itself might be an image reference
 
 			// First, check if the array name itself has "image" in it - strong signal
-			isImageArray := strings.Contains(strings.ToLower(path), "image")
+			isImageArray := strings.Contains(strings.ToLower(currentPath), "image")
 
 			// Detect if string looks like image reference
 			hasSlash := strings.Contains(v, "/")
@@ -399,7 +441,7 @@ func (a *Analyzer) analyzeArray(val []interface{}, path string, analysis *ChartA
 		}
 	}
 
-	log.Debug("analyzeArray EXIT", "path", path, "imagePatternsFound", len(analysis.ImagePatterns))
+	log.Debug("analyzeArray EXIT", "path", currentPath, "imagePatternsFound", len(analysis.ImagePatterns))
 	return nil
 }
 
@@ -472,20 +514,17 @@ func (a *Analyzer) analyzeMapItemInArray(v map[string]interface{}, itemPath stri
 // Returns:
 //   - true if the map appears to define a container image
 func (a *Analyzer) isImageMap(val map[string]interface{}) bool {
-	// Must have repository and either registry or tag
-	hasRepository := false
-	hasRegistryOrTag := false
-
-	for k := range val {
-		switch k {
-		case "repository":
-			hasRepository = true
-		case "registry", "tag":
-			hasRegistryOrTag = true
+	// Must have repository. Registry and Tag are optional.
+	if repoVal, ok := val["repository"]; ok {
+		if _, isString := repoVal.(string); isString {
+			// Found a 'repository' key with a string value.
+			// Consider this sufficient for it to be a potential image map.
+			// Further validation (e.g., checking tag/digest presence or defaulting)
+			// can happen during the image reference parsing stage.
+			return true
 		}
 	}
-
-	return hasRepository && hasRegistryOrTag
+	return false
 }
 
 // IsGlobalRegistry checks if a map represents a global registry configuration.
@@ -671,11 +710,29 @@ type Result struct {
 	// ... existing code ...
 }
 
-// Constants for common image strings
-const (
-	DefaultTag      = "latest"
-	DefaultRegistry = "docker.io"
-	// minimumSplitParts defines the minimum number of parts expected when checking if a string looks like repo/name:tag
-	minimumSplitParts = 2
-	colonSplitParts   = 2 // Used for splitting image strings by colon
-)
+// ensureString converts an interface{} to a string if possible.
+// Handles strings directly and attempts to convert numbers (int, float64).
+func ensureString(v interface{}) (string, bool) {
+	switch val := v.(type) {
+	case string:
+		return val, true
+	case int:
+		return strconv.Itoa(val), true
+	case float64:
+		// Check if float represents an integer
+		if val == float64(int(val)) {
+			return strconv.Itoa(int(val)), true // Format as int
+		}
+		// Otherwise format as float (using 'g' might still be okay, or choose specific format)
+		return strconv.FormatFloat(val, 'g', -1, 64), true
+	default:
+		// Add other numeric types if needed (e.g., int64, float32)
+		log.Warn("ensureString: Cannot convert value to string", "type", fmt.Sprintf("%T", v))
+		return "", false
+	}
+}
+
+// Split repo path into max two parts
+func splitRepoPath(repo string) []string {
+	return strings.SplitN(repo, "/", maxSplitTwo)
+}
