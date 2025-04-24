@@ -2,9 +2,11 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/lalbers/irr/pkg/log"
@@ -270,3 +272,213 @@ func TestDebugFlagLowerPrecedence(t *testing.T) {
 		// Optionally assert on the mode: "mode": "Standalone"
 	})
 }
+
+// Helper function to reset Cobra flags and Viper state between tests if necessary
+func resetRootCmdState() {
+	// Reset flags to default values
+	// Note: This assumes global vars like debugEnabled, logLevel are used.
+	// A better approach might involve creating a new root command instance for each test,
+	// but we'll work with the existing structure for now.
+	cfgFile = ""
+	debugEnabled = false
+	logLevel = "info" // Default log level
+	integrationTestMode = false
+	TestAnalyzeMode = false
+	registryFile = ""
+
+	// If viper is used directly for flags, might need viper reset too
+	// viper.Reset() // Use with caution if viper state is shared across tests
+
+	// Clear potentially set environment variables if Setenv isn't used
+	os.Unsetenv("LOG_LEVEL")
+}
+
+func TestRootCmdExecution(t *testing.T) {
+	// Existing tests... keep them here
+	// ...
+
+	// Example Test using executeCommand (modify as needed for actual tests)
+	t.Run("HelpCommand", func(t *testing.T) {
+		cmd := getRootCmd() // Get the root command instance
+		output, err := executeCommand(cmd, "--help")
+
+		assert.NoError(t, err, "Executing --help should not produce an error")
+		assert.Contains(t, output, "Usage:", "Help output should contain Usage information")
+	})
+
+}
+
+// New Test Function for PreRun Logging
+func TestRootCmdPreRunLogging(t *testing.T) {
+	// Expected message strings for debug logs
+	preRunInputMsg := "[PRE-RUN] Raw inputs"
+	preRunLevelMsg := "[PRE-RUN] Determined final level"
+
+	tests := []struct {
+		name            string
+		args            []string
+		envVars         map[string]string
+		expectDebugLogs bool
+	}{
+		{
+			name:            "Default log level (INFO), no debug logs",
+			args:            []string{"help"},
+			envVars:         map[string]string{},
+			expectDebugLogs: false,
+		},
+		{
+			name:            "Explicit INFO log level, no debug logs",
+			args:            []string{"--log-level", "info", "help"},
+			envVars:         map[string]string{},
+			expectDebugLogs: false,
+		},
+		{
+			name:            "Debug flag enabled, expect debug logs",
+			args:            []string{"--debug", "help"},
+			envVars:         map[string]string{},
+			expectDebugLogs: true,
+		},
+		{
+			name:            "LOG_LEVEL=debug env var, expect debug logs",
+			args:            []string{"help"},
+			envVars:         map[string]string{"LOG_LEVEL": "debug"},
+			expectDebugLogs: true,
+		},
+		{
+			name:            "Debug flag overrides LOG_LEVEL=info, expect debug logs",
+			args:            []string{"--debug", "help"},
+			envVars:         map[string]string{"LOG_LEVEL": "info"},
+			expectDebugLogs: true,
+		},
+		{
+			name:            "log-level=debug overrides LOG_LEVEL=info, expect debug logs",
+			args:            []string{"--log-level", "debug", "help"},
+			envVars:         map[string]string{"LOG_LEVEL": "info"},
+			expectDebugLogs: true,
+		},
+		{
+			name:            "No flags/env vars (defaults to Error level), no debug logs",
+			args:            []string{"help"},
+			envVars:         map[string]string{},
+			expectDebugLogs: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			resetRootCmdState()
+
+			for key, val := range tc.envVars {
+				originalValue, wasSet := os.LookupEnv(key)
+				os.Setenv(key, val)
+				t.Cleanup(func() {
+					if wasSet {
+						os.Setenv(key, originalValue)
+					} else {
+						os.Unsetenv(key)
+					}
+				})
+			}
+
+			// Determine the capture level based on whether we expect debug logs
+			captureLevel := log.LevelInfo // Default capture level
+			if tc.expectDebugLogs {
+				captureLevel = log.LevelDebug
+			}
+
+			// Capture logs using the determined level
+			_, logs, err := testutil.CaptureJSONLogs(captureLevel, func() {
+				cmd := newRootCmd()
+				cmd.SetArgs(tc.args)
+				cmd.SetOut(io.Discard)
+				cmd.SetErr(io.Discard)
+				execErr := cmd.Execute()
+				if execErr != nil && !strings.Contains(execErr.Error(), "help requested") {
+					t.Logf("Command execution returned unexpected error: %v", execErr)
+				}
+			})
+			require.NoError(t, err, "Failed to capture logs")
+
+			inputLogMatcher := map[string]interface{}{"msg": preRunInputMsg}
+			levelLogMatcher := map[string]interface{}{"msg": preRunLevelMsg}
+
+			if tc.expectDebugLogs {
+				// When expecting debug logs, they MUST be present (captured at Debug level)
+				testutil.AssertLogContainsJSON(t, logs, inputLogMatcher)
+				testutil.AssertLogContainsJSON(t, logs, levelLogMatcher)
+			} else {
+				// When NOT expecting debug logs, they MUST NOT be present (captured at Info level)
+				testutil.AssertLogDoesNotContainJSON(t, logs, inputLogMatcher)
+				testutil.AssertLogDoesNotContainJSON(t, logs, levelLogMatcher)
+			}
+		})
+	}
+}
+
+// newRootCmd creates a new instance of the root command for isolated testing.
+// This avoids issues with shared global state (flags, etc.) between test runs.
+func newRootCmd() *cobra.Command {
+	// Reset global vars associated with flags *before* creating new command
+	// This is still needed because flags bind to globals in the current setup
+	cfgFile = ""
+	debugEnabled = false
+	logLevel = "info" // Reset to default before flag parsing
+	integrationTestMode = false
+	TestAnalyzeMode = false
+	registryFile = ""
+
+	// Create the command structure (similar to main.go)
+	cmd := &cobra.Command{
+		Use:   "irr",
+		Short: "Image Relocation and Rewrite tool for Helm Charts and K8s YAML",
+		Long: `irr (Image Relocation and Rewrite) is a tool for generating Helm override values
+that redirect container image references from public registries to a private registry.
+
+It can analyze Helm charts to identify image references and generate override values 
+files compatible with Helm, pointing images to a new registry according to specified strategies.
+It also supports linting image references for potential issues.`,
+		PersistentPreRunE: rootCmd.PersistentPreRunE, // Reuse existing PersistentPreRunE
+		RunE: func(_ *cobra.Command, args []string) error { // Simplified RunE for testing root
+			if len(args) == 0 {
+				return errors.New("a subcommand is required")
+			}
+			return nil
+		},
+	}
+
+	// Re-add flags (ensure they bind to potentially reset globals)
+	cmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.irr.yaml)")
+	cmd.PersistentFlags().BoolVar(&debugEnabled, "debug", false, "enable debug logging")
+	cmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "set log level (debug, info, warn, error) (default \"info\")")
+	cmd.PersistentFlags().BoolVar(&integrationTestMode, "integration-test", false, "enable integration test mode")
+	cmd.PersistentFlags().BoolVar(&TestAnalyzeMode, "test-analyze", false, "enable test mode")
+
+	if err := cmd.PersistentFlags().MarkHidden("integration-test"); err != nil {
+		log.Warn("Failed to mark integration-test flag as hidden", "error", err)
+	}
+	if err := cmd.PersistentFlags().MarkHidden("test-analyze"); err != nil {
+		log.Warn("Failed to mark test-analyze flag as hidden", "error", err)
+	}
+
+	// Re-add commands (stubs might be sufficient if only testing root PreRun)
+	// cmd.AddCommand(newOverrideCmd()) // Add real subcommands if needed
+	// cmd.AddCommand(newInspectCmd())
+	// cmd.AddCommand(newValidateCmd())
+	// Add a basic help command if PersistentPreRunE relies on it
+	cmd.AddCommand(&cobra.Command{Use: "help", Run: func(cmd *cobra.Command, args []string) { fmt.Println("Help command stub") }})
+
+	// Add other root flags if necessary
+	addReleaseFlag(cmd)
+	addNamespaceFlag(cmd)
+
+	// Reset potentially parsed flags before returning
+	cmd.ParseFlags([]string{}) // Reset flags state after definition
+
+	return cmd
+}
+
+// Add other tests specific to root command if needed...
+
+// Note: Assumes executeCommand captures both stdout and stderr where logs might appear.
+// If logs go ONLY to stderr and executeCommand merges, these tests should work.
+// If logs go to a specific file or logger needs redirection for testing, setup might be more complex.
