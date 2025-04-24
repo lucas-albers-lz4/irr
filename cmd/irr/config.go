@@ -40,7 +40,7 @@ IMPORTANT NOTES:
 - For best results, first use 'irr inspect --generate-config-skeleton'
   to create a base config with detected registries.`,
 		Example: `  # Add or update a mapping
-  irr config --source quay.io --target harbor.local/quay
+  irr config --source quay.io --target registry.example.com/quay
 
   # List all configured mappings
   irr config --list
@@ -49,7 +49,7 @@ IMPORTANT NOTES:
   irr config --source quay.io --remove
 
   # Specify a custom config file
-  irr config --file ./my-mappings.yaml --source docker.io --target registry.local/docker
+  irr config --file ./my-mappings.yaml --source docker.io --target registry.example.com/docker
 
   # Workflow example
   irr inspect --chart-path ./my-chart --generate-config-skeleton
@@ -60,8 +60,8 @@ IMPORTANT NOTES:
 
 	// Add config-specific flags
 	configCmd.Flags().StringVar(&configSource, "source", "", "Source registry to map from (e.g., docker.io, quay.io)")
-	configCmd.Flags().StringVar(&configTarget, "target", "", "Target registry to map to (e.g., harbor.example.com/docker)")
-	configCmd.Flags().StringVar(&configFile, "file", "registry-mappings.yaml", "Path to the registry mappings file (default \"registry-mappings.yaml\")")
+	configCmd.Flags().StringVar(&configTarget, "target", "", "Target registry to map to (e.g., registry.example.com/docker)")
+	configCmd.Flags().StringVar(&configFile, "file", "registry-mappings.yaml", "Path to the registry mappings file")
 	configCmd.Flags().BoolVar(&configListOnly, "list", false, "List all configured mappings")
 	configCmd.Flags().BoolVar(&configRemoveOnly, "remove", false, "Remove the specified source mapping")
 
