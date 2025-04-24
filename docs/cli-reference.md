@@ -192,6 +192,57 @@ irr validate \
   --values overrides.yaml
 ```
 
+## Configuration File (`registry-mappings.yaml`)
+
+While `irr` commands can be used with command-line flags, using a configuration file (typically `registry-mappings.yaml` and passed via `--config <path>` to commands like `override`) provides more control and persistence.
+
+The configuration file uses a structured YAML format:
+
+```yaml
+version: "1.0" # Optional but recommended
+registries:
+  mappings:
+    - source: "quay.io"
+      target: "harbor.home.arpa/quay"
+      enabled: true # Default is true if omitted
+      description: "Optional description for quay.io"
+    - source: "docker.io"
+      target: "harbor.home.arpa/docker"
+      # enabled: true (implied)
+    # Add more mappings as needed
+
+  # Optional: Fallback target registry
+  defaultTarget: "your-fallback-registry.com/generic-prefix"
+
+  # Optional: Strict mode setting
+  strictMode: false # Default is false
+
+# Optional: Compatibility settings
+compatibility:
+  ignoreEmptyFields: true # Default is typically true or handled gracefully
+```
+
+### Key Configuration Fields
+
+*   **`registries.mappings`**: A list defining specific source-to-target redirections.
+    *   `source`: The original registry domain (e.g., `docker.io`, `quay.io`).
+    *   `target`: The full target registry and path prefix where images from the `source` should be redirected (e.g., `my-harbor.local/dockerhub`).
+    *   `enabled` (Optional): Set to `false` to explicitly disable this specific mapping. Defaults to `true`.
+    *   `description` (Optional): A comment describing the mapping.
+
+*   **`registries.defaultTarget`** (Optional):
+    *   Provides a **fallback target registry URL** used when `strictMode` is `false`.
+    *   If `irr override` processes an image whose registry is listed in `--source-registries` but **lacks** a specific entry in the `mappings` list, it uses `defaultTarget` (if defined) to construct the new image path (using the selected path strategy).
+    *   If `defaultTarget` is also missing, the fallback is usually the target specified by the `--target-registry` CLI flag.
+
+*   **`registries.strictMode`** (Optional, Default: `false`):
+    *   When set to `true`, `strictMode` enforces that **every** source registry specified via the `--source-registries` flag **must** have a corresponding, enabled entry in the `mappings` list.
+    *   If an image's source registry is in `--source-registries` but missing from the config mappings, `irr override` will **fail with an error** instead of using `defaultTarget` or the `--target-registry` flag.
+    *   Use `strictMode: true` to ensure all intended redirections are explicitly configured and prevent accidental fallback behavior.
+
+*   **`version`** (Optional): Specifies the configuration file format version.
+*   **`compatibility`** (Optional): Contains flags for handling potential backward compatibility issues (rarely needed).
+
 ## Exit Codes
 
 | Code | Meaning |
