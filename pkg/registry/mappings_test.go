@@ -136,21 +136,21 @@ registries:
     - source: docker.io
       target: my-registry.example.com/docker-mirror
 `
-				err := afero.WriteFile(fs, tt.path, []byte(content), 0o644)
+				err := afero.WriteFile(fs, tt.path, []byte(content), fileutil.ReadWriteUserPermission)
 				require.NoError(t, err)
 			case "valid mappings file (legacy format)": // Assuming this test case exists or will be added
 				content := `
 quay.io: my-registry.example.com/quay-mirror
 docker.io: my-registry.example.com/docker-mirror
 `
-				err := afero.WriteFile(fs, tt.path, []byte(content), 0o644)
+				err := afero.WriteFile(fs, tt.path, []byte(content), fileutil.ReadWriteUserPermission)
 				require.NoError(t, err)
 			case "invalid yaml format":
 				content := "mappings: [invalid yaml"
-				err := afero.WriteFile(fs, tt.path, []byte(content), 0o644)
+				err := afero.WriteFile(fs, tt.path, []byte(content), fileutil.ReadWriteUserPermission)
 				require.NoError(t, err)
 			case "empty file":
-				err := afero.WriteFile(fs, tt.path, []byte(""), 0o644)
+				err := afero.WriteFile(fs, tt.path, []byte(""), fileutil.ReadWriteUserPermission)
 				require.NoError(t, err)
 			// Add other cases for tests that need specific content written
 			default:
@@ -160,7 +160,7 @@ docker.io: my-registry.example.com/docker-mirror
 				if tt.errorContains == "" && tt.wantMappings == nil && !tt.wantErr {
 					// For safety, maybe write an empty file if path exists?
 					if tt.path != "" && tt.path != "../../../etc/passwd.yaml" { // Avoid writing outside tmp
-						err := afero.WriteFile(fs, tt.path, []byte{}, 0o644) // Check error now
+						err := afero.WriteFile(fs, tt.path, []byte{}, fileutil.ReadWriteUserPermission)
 						require.NoError(t, err, "Failed to write temporary empty file for test setup")
 					}
 				}

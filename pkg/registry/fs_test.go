@@ -47,7 +47,7 @@ docker.io: registry.example.com/docker-mirror
 
 	// Set up the mock filesystem
 	require.NoError(t, memFs.MkdirAll(tmpDir, fileutil.ReadWriteExecuteUserReadExecuteOthers))
-	require.NoError(t, afero.WriteFile(memFs, mappingsFile, []byte(content), 0o644))
+	require.NoError(t, afero.WriteFile(memFs, mappingsFile, []byte(content), fileutil.ReadWriteUserPermission))
 
 	// Now our GetAferoFS works correctly with the mock filesystem
 	// So LoadMappingsWithFS should succeed

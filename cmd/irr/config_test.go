@@ -3,6 +3,7 @@ package main
 import (
 	"testing"
 
+	"github.com/lalbers/irr/pkg/fileutil"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -31,7 +32,7 @@ first.registry.com: first.target.com/repo
 second.registry.com: second.target.com/repo
 `
 	filePath := "test-mappings.yaml"
-	err := afero.WriteFile(memFs, filePath, []byte(initialContent), 0o644)
+	err := afero.WriteFile(memFs, filePath, []byte(initialContent), fileutil.ReadWriteUserPermission)
 	require.NoError(t, err)
 
 	// Verify the file exists in the mock filesystem
@@ -98,7 +99,7 @@ docker.io: old-target.example.com/docker
 quay.io: quay-target.example.com/quay
 `
 	filePath := "update-mappings.yaml"
-	err := afero.WriteFile(memFs, filePath, []byte(initialContent), 0o644)
+	err := afero.WriteFile(memFs, filePath, []byte(initialContent), fileutil.ReadWriteUserPermission)
 	require.NoError(t, err)
 
 	// Set the global variables used by the command
@@ -154,7 +155,7 @@ quay.io: target.example.com/quay
 registry.to.remove: target.example.com/remove
 `
 	filePath := "remove-mappings.yaml"
-	err := afero.WriteFile(memFs, filePath, []byte(initialContent), 0o644)
+	err := afero.WriteFile(memFs, filePath, []byte(initialContent), fileutil.ReadWriteUserPermission)
 	require.NoError(t, err)
 
 	// Set the global variables used by the command
