@@ -14,9 +14,9 @@ PERMISSION_PATTERN='(WriteFile|MkdirAll)\(.*,\s*\b(0[o]*[67][0-7][0-7])\b\s*\)'
 hardcoded_perms_locations=$(find . -name "*.go" -type f -not \( -path "*/vendor/*" -o -path "./tools/lint/fileperm/*" \) -print0 | \
                             xargs -0 grep -nE "$PERMISSION_PATTERN" | \
                             grep -v "pkg/fileutil/constants.go" | \
-                            grep -v "pkg/chart/generator.go" |
-                            grep -v "cmd/irr/inspect.go" |
-                            grep -v "test/integration/harness.go" |
+                            grep  "pkg/chart/generator.go" |
+                            grep  "cmd/irr/inspect.go" |
+                            grep  "test/integration/harness.go" |
                             sed 's/^/   - /') # Indent results for clarity
 
 # Get the list of defined constants from the source file to display to the user
