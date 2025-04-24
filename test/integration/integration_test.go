@@ -761,7 +761,7 @@ func TestUnknownFlag(t *testing.T) {
 func TestInvalidStrategy(t *testing.T) {
 	t.Parallel()
 	h := NewTestHarness(t)
-	h.SetChartPath(h.GetTestdataPath("simple"))
+	h.SetChartPath(h.GetTestdataPath("charts/simple"))
 	_, err := h.ExecuteIRR(nil, "override", "--strategy", "invalid-strategy")
 	assert.Error(t, err, "should error on invalid strategy")
 	t.Cleanup(h.Cleanup)
@@ -823,7 +823,7 @@ func TestInvalidChartPath(t *testing.T) {
 func TestInvalidRegistryMappingFile(t *testing.T) {
 	t.Parallel()
 	h := NewTestHarness(t)
-	h.SetChartPath(h.GetTestdataPath("simple"))
+	h.SetChartPath(h.GetTestdataPath("charts/simple"))
 	_, err := h.ExecuteIRR(nil, "override", "--registry-mappings", "/invalid/path/does/not/exist.yaml")
 	assert.Error(t, err, "should error when registry mappings file does not exist")
 	t.Cleanup(h.Cleanup)

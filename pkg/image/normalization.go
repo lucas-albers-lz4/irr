@@ -63,10 +63,10 @@ func NormalizeRegistry(registry string) string {
 // SanitizeRegistryForPath makes a registry name safe for use in a path component.
 // It primarily removes dots and ports.
 func SanitizeRegistryForPath(registry string) string {
-	// Normalize docker.io variants first - REMOVED SPECIAL CASE
-	// if registry == defaultRegistry || registry == "index.docker.io" || registry == "" {
-	// 	return defaultRegistry
-	// }
+	// Handle docker.io special case first - it retains the dot
+	if registry == defaultRegistry || registry == "index.docker.io" {
+		return defaultRegistry // Return 'docker.io' directly
+	}
 
 	// Strip port number if present
 	if portIndex := strings.LastIndex(registry, ":"); portIndex != -1 {

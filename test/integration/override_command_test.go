@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lalbers/irr/pkg/exitcodes"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
 )
 
 func TestOverrideCommand(t *testing.T) {
@@ -276,12 +276,13 @@ func TestOverrideNoValidateSuccessOnValidationFailure(t *testing.T) {
 
 	outputFile := filepath.Join(harness.tempDir, "overrides-no-validate.yaml")
 
-	chartPath = harness.GetTestdataPath("charts/validation-fail-test")
+	// We need to ensure we use the correct chart path obtained from the harness
+	// chartPath = harness.GetTestdataPath("charts/validation-fail-test") <-- Redundant assignment
 	_, stderr, err := harness.ExecuteIRRWithStderr(nil,
 		"override",
-		"--chart-path", chartPath,
+		"--chart-path", chartPath, // Use the chartPath obtained earlier
 		"--target-registry", "test-registry.local",
-		"--source-registries", "docker.io", // Target the image in values.yaml
+		"--source-registries", "docker.io", // Target an image, although this chart has none
 		"--output-file", outputFile,
 		"--no-validate", // The key flag for this test
 	)
@@ -291,19 +292,11 @@ func TestOverrideNoValidateSuccessOnValidationFailure(t *testing.T) {
 	require.FileExists(t, outputFile, "Output file should be created when --no-validate is used")
 
 	// Basic check on content
-	content, err := os.ReadFile(outputFile)
+	content, err := os.ReadFile(outputFile) // #nosec G304
 	require.NoError(t, err)
-	// Parse the YAML content
-	var overrides map[string]interface{}
-	err = yaml.Unmarshal(content, &overrides)
-	require.NoError(t, err, "Failed to parse generated override YAML")
 
-	// Check the structure and values
-	imgOverride, ok := overrides["image"].(map[string]interface{})
-	require.True(t, ok, "Overrides should contain an 'image' map")
-	assert.Equal(t, "test-registry.local", imgOverride["registry"], "Image registry should be the target registry")
-	assert.Equal(t, "dockerio/library/nginx", imgOverride["repository"], "Image repository should be the transformed path")
-	assert.Equal(t, "latest", imgOverride["tag"], "Image tag should be preserved")
+	// Since validation-fail-test has no values.yaml, override output should be empty map `{}`
+	assert.Equal(t, "{}", strings.TrimSpace(string(content)), "Overrides file should be an empty map '{}' for chart with no values")
 }
 
 // Test case for the default behavior (validation runs and potentially fails)
@@ -319,24 +312,60 @@ func TestOverrideDefaultValidationFailure(t *testing.T) {
 
 	outputFile := filepath.Join(harness.tempDir, "overrides-default-validate.yaml")
 
-	chartPath = harness.GetTestdataPath("charts/validation-fail-test")
+	// Define args for harness assertion helpers
+	args := []string{
+		"override",
+		"--chart-path", chartPath,
+		"--target-registry", "test-registry.local",
+		"--source-registries", "docker.io",
+		"--output-file", outputFile,
+	}
+
+	// Expect failure because validation runs by default and the chart requires .Values.mandatoryValue
+	// Assert that the command fails with the correct Helm error exit code (16)
+	harness.AssertExitCode(exitcodes.ExitHelmCommandFailed, args...)
+
+	// Assert that the error message contains the specific Helm template error
+	harness.AssertErrorContains("mandatoryValue is required for this chart!", args...)
+
+	// File should not exist if the command fails before writing
+	_, statErr := os.Stat(outputFile)
+	assert.True(t, os.IsNotExist(statErr), "Output file should not exist if validation fails early")
+}
+
+// TestOverrideSimpleChart verifies basic override generation for the simple chart.
+func TestOverrideSimpleChart(t *testing.T) {
+	harness := NewTestHarness(t)
+	defer harness.Cleanup()
+
+	// Use the simple chart
+	chartPath := harness.GetTestdataPath("charts/simple")
+	if chartPath == "" {
+		t.Skip("simple chart not found, skipping test")
+	}
+
+	// Create output file path
+	outputFile := filepath.Join(harness.tempDir, "simple-overrides.yaml")
+
+	// Run the override command
 	_, stderr, err := harness.ExecuteIRRWithStderr(nil,
 		"override",
 		"--chart-path", chartPath,
 		"--target-registry", "test-registry.local",
-		"--source-registries", "docker.io", // Target the image in values.yaml
+		"--source-registries", "docker.io",
 		"--output-file", outputFile,
-		// No --no-validate flag here
 	)
+	require.NoError(t, err, "override command should succeed for simple chart: %s", stderr)
 
-	// Expect failure because validation runs by default and the chart requires .Values.missingValue
-	require.Error(t, err, "override command without --no-validate should fail if validation fails")
-	// Check stderr for indication of validation/template failure
-	assert.Contains(t, stderr, "validation failed", "Stderr should indicate validation failure")
-	assert.Contains(t, stderr, "template failed", "Stderr should indicate template failure")          // Broaden check
-	assert.Contains(t, stderr, "exit code 16", "Stderr should indicate validation failure exit code") // Check for specific exit code
+	// Verify the file exists
+	require.FileExists(t, outputFile, "Output file should exist for simple chart")
 
-	// File should likely not exist if the command fails before writing
-	_, statErr := os.Stat(outputFile)
-	assert.True(t, os.IsNotExist(statErr), "Output file should not exist if validation fails early")
+	// Read the file content
+	content, err := os.ReadFile(outputFile) // #nosec G304
+	require.NoError(t, err, "Should be able to read output file for simple chart")
+
+	// Verify the output contains expected overrides
+	assert.Contains(t, string(content), "test-registry.local", "Output should include the target registry")
+	assert.Contains(t, string(content), "docker.io/library/nginx", "Output should include the transformed repository path for docker.io")
+	assert.Contains(t, string(content), "1.21.0", "Output should include the original tag")
 }
