@@ -64,7 +64,7 @@ type InspectFlags struct {
 
 const (
 	// DefaultConfigSkeletonFilename is the default filename for the generated config skeleton
-	DefaultConfigSkeletonFilename = "irr-config.yaml"
+	DefaultConfigSkeletonFilename = "registry-mappings.yaml"
 	outputFormatYAML              = "yaml"
 	outputFormatJSON              = "json"
 	defaultNamespace              = "default" // Added const for default namespace
