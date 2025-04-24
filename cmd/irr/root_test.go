@@ -290,7 +290,12 @@ func resetRootCmdState() {
 	// viper.Reset() // Use with caution if viper state is shared across tests
 
 	// Clear potentially set environment variables if Setenv isn't used
-	os.Unsetenv("LOG_LEVEL")
+	if err := os.Unsetenv("LOG_LEVEL"); err != nil {
+		// Log error, but don't fail the test during cleanup
+		// Need a way to get *testing.T here, or just ignore the error
+		// For simplicity in this helper, let's ignore for now, but ideally log
+		_ = err // Acknowledge error check
+	}
 }
 
 func TestRootCmdExecution(t *testing.T) {
@@ -305,7 +310,6 @@ func TestRootCmdExecution(t *testing.T) {
 		assert.NoError(t, err, "Executing --help should not produce an error")
 		assert.Contains(t, output, "Usage:", "Help output should contain Usage information")
 	})
-
 }
 
 // New Test Function for PreRun Logging
@@ -370,12 +374,18 @@ func TestRootCmdPreRunLogging(t *testing.T) {
 
 			for key, val := range tc.envVars {
 				originalValue, wasSet := os.LookupEnv(key)
-				os.Setenv(key, val)
+				if err := os.Setenv(key, val); err != nil {
+					t.Logf("Warning: failed to set env var %s for test: %v", key, err)
+				}
 				t.Cleanup(func() {
 					if wasSet {
-						os.Setenv(key, originalValue)
+						if err := os.Setenv(key, originalValue); err != nil {
+							t.Logf("Warning: failed to restore env var %s in cleanup: %v", key, err)
+						}
 					} else {
-						os.Unsetenv(key)
+						if err := os.Unsetenv(key); err != nil {
+							t.Logf("Warning: failed to unset env var %s in cleanup: %v", key, err)
+						}
 					}
 				})
 			}
@@ -388,7 +398,7 @@ func TestRootCmdPreRunLogging(t *testing.T) {
 
 			// Capture logs using the determined level
 			_, logs, err := testutil.CaptureJSONLogs(captureLevel, func() {
-				cmd := newRootCmd()
+				cmd := newRootCmd(t)
 				cmd.SetArgs(tc.args)
 				cmd.SetOut(io.Discard)
 				cmd.SetErr(io.Discard)
@@ -417,7 +427,8 @@ func TestRootCmdPreRunLogging(t *testing.T) {
 
 // newRootCmd creates a new instance of the root command for isolated testing.
 // This avoids issues with shared global state (flags, etc.) between test runs.
-func newRootCmd() *cobra.Command {
+func newRootCmd(t *testing.T) *cobra.Command {
+	t.Helper() // Mark as test helper
 	// Reset global vars associated with flags *before* creating new command
 	// This is still needed because flags bind to globals in the current setup
 	cfgFile = ""
@@ -465,14 +476,16 @@ It also supports linting image references for potential issues.`,
 	// cmd.AddCommand(newInspectCmd())
 	// cmd.AddCommand(newValidateCmd())
 	// Add a basic help command if PersistentPreRunE relies on it
-	cmd.AddCommand(&cobra.Command{Use: "help", Run: func(cmd *cobra.Command, args []string) { fmt.Println("Help command stub") }})
+	cmd.AddCommand(&cobra.Command{Use: "help", Run: func(_ *cobra.Command, _ []string) { fmt.Println("Help command stub") }})
 
 	// Add other root flags if necessary
 	addReleaseFlag(cmd)
 	addNamespaceFlag(cmd)
 
 	// Reset potentially parsed flags before returning
-	cmd.ParseFlags([]string{}) // Reset flags state after definition
+	if err := cmd.ParseFlags([]string{}); err != nil { // Reset flags state after definition
+		t.Fatalf("newRootCmd failed during flag parsing reset: %v", err)
+	}
 
 	return cmd
 }
