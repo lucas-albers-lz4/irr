@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+data:
+  # This template requires a value that is not provided by default,
+  # causing validation to fail unless it's set via --set or -f.
+  # Use the 'required' function to enforce the failure.
+  mandatorySetting: {{ required "mandatoryValue is required for this chart!" .Values.mandatoryValue | quote }} 

@@ -1,0 +1,4 @@
+# Default values for simple chart
+image:
+  repository: nginx
+  tag: 1.21.0 

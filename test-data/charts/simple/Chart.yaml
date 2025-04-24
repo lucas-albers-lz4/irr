@@ -1,0 +1,4 @@
+apiVersion: v2
+name: simple
+version: 0.1.0
+description: A very simple Helm chart for testing 

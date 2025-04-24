@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-simple-config
+data:
+  imageUsed: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+  message: "Hello from the simple chart!" 
