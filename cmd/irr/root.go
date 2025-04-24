@@ -283,7 +283,7 @@ func init() {
 	// Add global flags
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.irr.yaml)")
 	rootCmd.PersistentFlags().BoolVar(&debugEnabled, "debug", false, "enable debug logging")
-	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "set log level (debug, info, warn, error) (default \"info\")")
+	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "set log level (debug, info, warn, error)")
 	rootCmd.PersistentFlags().BoolVar(&integrationTestMode, "integration-test", false, "enable integration test mode")
 	// For testing purposes
 	rootCmd.PersistentFlags().BoolVar(&TestAnalyzeMode, "test-analyze", false, "enable test mode (originally for analyze command, now for inspect)")
@@ -335,6 +335,8 @@ func init() {
 
 	// Add build version info
 	rootCmd.Version = BinaryVersion
+
+	viper.SetDefault("logLevel", "info")
 }
 
 // --- Analyze Command Functionality --- Now integrated into inspect command

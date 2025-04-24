@@ -56,7 +56,7 @@ IMPORTANT NOTES:
 	}
 
 	cmd.Flags().StringSliceP("values", "f", []string{}, "Values files to use (can specify multiple)")
-	cmd.Flags().StringP("namespace", "n", "default", "Namespace to use (default: default)")
+	cmd.Flags().StringP("namespace", "n", "default", "Namespace to use")
 	cmd.Flags().StringP("output-file", "o", "", "Write rendering output to file instead of discarding")
 	cmd.Flags().Bool("strict", false, "Fail on any warning, not just errors")
 	cmd.Flags().String("kube-version", "", "Kubernetes version to use for validation (defaults to current client version)")
