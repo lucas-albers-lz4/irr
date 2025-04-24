@@ -32,7 +32,10 @@ const (
 	// TestDirPermissions is used for test directories (more restrictive than TestDirPermissions)
 	// Uses modern Go octal syntax (0o750) for secure directory permissions (rwxr-x---)
 	TestDirPermissions = 0o750 // Restrict to owner + group
-)
+
+	// unknownCWDPlaceholder is used when os.Getwd() fails in logging.
+	unknownCWDPlaceholder = "(unknown)"
+) // <-- Ensure this closing parenthesis is here
 
 const envSplitCount = 2
 
@@ -764,7 +767,7 @@ func (h *TestHarness) AssertExitCode(expected int, args ...string) {
 	if err != nil {
 		// Log the error but don't fail the test just for this
 		h.logger.Info(fmt.Sprintf("[ASSERT_EXIT_CODE WARNING] Failed to get current working directory: %v", err))
-		cwd = "(unknown)" // Use placeholder
+		cwd = unknownCWDPlaceholder // Use placeholder
 	}
 	h.logger.Info(fmt.Sprintf("[ASSERT_EXIT_CODE DEBUG] binPath: %s, CWD: %s", binPath, cwd))
 
@@ -830,7 +833,7 @@ func (h *TestHarness) AssertErrorContains(substring string, args ...string) {
 	if err != nil {
 		// Log the error but don't fail the test just for this
 		h.logger.Info(fmt.Sprintf("[ASSERT_ERROR_CONTAINS WARNING] Failed to get current working directory: %v", err))
-		cwd = "(unknown)" // Use placeholder
+		cwd = unknownCWDPlaceholder // Use placeholder
 	}
 	h.logger.Info(fmt.Sprintf("[ASSERT_ERROR_CONTAINS DEBUG] binPath: %s, CWD: %s", binPath, cwd))
 
@@ -1087,12 +1090,17 @@ func (h *TestHarness) RunIrrCommandWithOutput(cmdArgs []string) (string, error) 
 	h.t.Helper()
 
 	// Add logging here
-	originalWd, _ := os.Getwd()
+	originalWd, wdErr := os.Getwd() // Check error
+	if wdErr != nil {
+		// Log warning but don't fail test
+		h.logger.Warn("Failed to get working directory for logging", "error", wdErr)
+		originalWd = unknownCWDPlaceholder
+	}
 	log.Debug("[HARNESS RunIrrCommand] Test process WD before running command", "wd", originalWd)
 	log.Debug("[HARNESS RunIrrCommand] Preparing command", "args", cmdArgs)
 
-	cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
-	cmd.Dir = h.tempDir // Set the working directory for the command being run
+	cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...) // #nosec G204 - Args are controlled by test code
+	cmd.Dir = h.tempDir                             // Set the working directory for the command being run
 
 	log.Debug("[HARNESS RunIrrCommand] Setting cmd.Dir for child process", "dir", cmd.Dir)
 

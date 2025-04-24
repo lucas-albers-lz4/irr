@@ -230,7 +230,7 @@ func TestValidateValidationFailChart(t *testing.T) {
 
 	// Create an empty temporary values file to satisfy the command's requirement
 	emptyValuesPath := filepath.Join(h.tempDir, "empty-values.yaml")
-	err := os.WriteFile(emptyValuesPath, []byte("{}"), 0600) // Use 0600 permission
+	err := os.WriteFile(emptyValuesPath, []byte("{}"), 0o600) // Use 0o600 permission
 	require.NoError(t, err, "Failed to create empty values file")
 
 	// Define the arguments for the validate command, including the empty values file
