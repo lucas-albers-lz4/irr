@@ -2,7 +2,7 @@
 
 ## Command Overview
 
-The `irr` (Image Relocation and Rewrite) tool provides commands and options for inspecting, overriding, and validating image references in Helm charts.
+The `irr` (Image Relocation and Rewrite) tool provides commands and options for inspecting, overriding, validating, and configuring image references in Helm charts.
 
 ## Global Flags
 
@@ -20,30 +20,74 @@ These flags are available for all commands:
 **Log Format:**
 
 The format of diagnostic logs sent to `stderr` can be controlled using the `LOG_FORMAT` environment variable:
-- `LOG_FORMAT=json`: (Default) Outputs logs in structured JSON format.
-- `LOG_FORMAT=text`: Outputs logs in a human-readable plain text format, useful for local debugging.
+- `LOG_FORMAT=json`: (Default) Outputs logs in structured JSON format. Suitable for machine parsing (e.g., in CI/CD).
+- `LOG_FORMAT=text`: Outputs logs in a human-readable plain text format. Useful for local debugging.
 
 Example:
 ```bash
-LOG_FORMAT=text irr inspect ...
+# Run inspect with text-based logs on stderr
+LOG_FORMAT=text irr inspect --chart-path ./my-chart
 ```
 
 **Output Streams:**
 
 `irr` follows standard Unix conventions for output streams:
-- **`stdout`**: Used for primary command output, such as YAML/JSON results (`inspect`, `override --dry-run`) or rendered templates (`validate` without `-o`).
-- **`stderr`**: Used for diagnostic messages, including logs (INFO, WARN, ERROR, DEBUG), progress updates, and error details.
+- **`stdout`**: Used for primary command output. This can be structured data like YAML/JSON analysis results (e.g., `irr inspect`), generated override files (e.g., `irr override`), or rendered templates (`irr validate` without `-o`). The format of this primary output is sometimes controllable via command-specific flags (e.g., `irr inspect --output-format json`).
+- **`stderr`**: Used for diagnostic messages, including logs (INFO, WARN, ERROR, DEBUG), progress updates, and error details. The format of this output is controlled by the `LOG_FORMAT` environment variable.
 
-This separation allows you to easily redirect command results while still seeing logs, for example:
+This separation allows you to easily redirect primary command results while still seeing diagnostic logs:
 ```bash
-# Save inspect results to a file, logs still go to terminal
-irr inspect --chart-path ./my-chart > analysis.yaml
+# Save inspect analysis (YAML by default) to a file, logs still go to terminal (text format)
+LOG_FORMAT=text irr inspect --chart-path ./my-chart > analysis.yaml
 
-# Pipe override results to another command, logs go to terminal
+# Pipe generated overrides (YAML) to another command, logs go to terminal (default json format)
 irr override --chart-path ./my-chart --dry-run | kubectl apply -f -
 ```
 
+**Important Distinction:** Note that `LOG_FORMAT` controls the format of logs on `stderr`. It does *not* change the format of primary command output on `stdout`. For commands like `irr inspect` that produce structured data, use the command's specific flags (e.g., `--output-format`) to control the `stdout` format.
+
 ## Commands
+
+### config
+
+Configure registry mappings for image redirects. This command allows you to view, add, update, or remove registry mappings stored in a YAML configuration file (`registry-mappings.yaml` by default).
+
+```bash
+irr config [flags]
+```
+
+#### Flags for config
+
+| Flag           | Description                                                  | Default                  | Example                                          |
+| -------------- | ------------------------------------------------------------ | ------------------------ | ------------------------------------------------ |
+| `--source`     | Source registry to map from (e.g., `docker.io`)              |                          | `--source quay.io`                               |
+| `--target`     | Target registry to map to (e.g., `registry.example.com/docker`) |                          | `--target registry.example.com/quay`             |
+| `--file`       | Path to the registry mappings file                           | `registry-mappings.yaml` | `--file ./my-mappings.yaml`                      |
+| `--list`       | List all configured mappings                                 | false                    | `--list`                                         |
+| `--remove`     | Remove the specified source mapping                          | false                    | `--remove`                                       |
+| `-h`, `--help` | Show help for config                                         |                          | `--help`                                         |
+
+#### Examples for config
+
+```bash
+# Add or update a mapping for quay.io
+irr config --source quay.io --target registry.example.com/quay
+
+# List all mappings in the default registry-mappings.yaml file
+irr config --list
+
+# Remove the mapping for quay.io
+irr config --source quay.io --remove
+
+# Add a mapping to a custom file
+irr config --file ./custom-map.yaml --source docker.io --target registry.example.com/docker
+
+# Typical workflow: Generate skeleton, then add mappings
+irr inspect --chart-path ./my-chart --generate-config-skeleton # Creates registry-mappings.yaml
+irr config --source docker.io --target registry.example.com/docker # Adds/updates docker.io mapping
+irr config --source quay.io --target registry.example.com/quay   # Adds/updates quay.io mapping
+irr override --chart-path ./my-chart --registry-file registry-mappings.yaml # Use the config
+```
 
 ### inspect
 
@@ -55,36 +99,44 @@ irr inspect --chart-path CHART_PATH [--source-registries REGISTRIES]
 
 #### Flags for inspect
 
-| Flag | Description | Default | Example |
-|------|-------------|---------|---------|
-| `--chart-path` | Path to the Helm chart (required) | | `--chart-path ./my-chart` |
-| `--generate-config-skeleton` | Generate skeleton config file | | `--generate-config-skeleton config.yaml` |
-| `--output-format` | Output format | yaml | `--output-format yaml` |
-| `--output-file` | Output file path | stdout | `--output-file analysis.yaml` |
-| `--include-pattern` | Glob patterns for values paths to include during analysis | | `--include-pattern "*.image"` |
-| `--exclude-pattern` | Glob patterns for values paths to exclude during analysis | | `--exclude-pattern "*.test.*"` |
-| `--known-image-paths` | Specific dot-notation paths known to contain images | | `--known-image-paths "containers[].image"` |
-| `-r, --source-registries` | Source registries to filter results (optional) | | `--source-registries docker.io,quay.io` |
-| `-h, --help` | Show help for inspect | | `--help` |
+| Flag                         | Description                                                     | Default                  | Example                                     |
+| ---------------------------- | --------------------------------------------------------------- | ------------------------ | ------------------------------------------- |
+| `--chart-path`               | Path to the Helm chart (required if not using release name)     |                          | `--chart-path ./my-chart`                   |
+| `--release-name`             | Release name for Helm plugin mode                               |                          | `--release-name my-release`                 |
+| `--namespace`                | Kubernetes namespace for the release                            | `default`                | `--namespace production`                      |
+| `--generate-config-skeleton` | Generate skeleton config file (`registry-mappings.yaml` default) | false                    | `--generate-config-skeleton`                |
+| `--output-format`            | Output format for analysis data (`stdout`/`--output-file`)       | `yaml`                   | `--output-format json`                      |
+| `--output-file`              | Output file path for analysis or skeleton                       | `stdout`                 | `--output-file analysis.yaml`               |
+| `--include-pattern`          | Glob patterns for values paths to include during analysis       |                          | `--include-pattern "*.image"`               |
+| `--exclude-pattern`          | Glob patterns for values paths to exclude during analysis       |                          | `--exclude-pattern "*.test.*"`              |
+| `--known-image-paths`        | Specific dot-notation paths known to contain images             |                          | `--known-image-paths "containers[].image"` |
+| `-r`, `--source-registries`  | Source registries to filter results (optional)                  |                          | `--source-registries docker.io,quay.io`     |
+| `-h`, `--help`               | Show help for inspect                                           |                          | `--help`                                    |
 
 ### Basic Inspection
+
 ```bash
 irr inspect --chart-path ./nginx
 ```
 
 ### Inspection with Registry Filtering
+
 ```bash
 irr inspect --chart-path ./nginx --source-registries docker.io,quay.io
 ```
 
 ### Generate Config Skeleton
+
+Generates `registry-mappings.yaml` with detected registries.
+
 ```bash
-irr inspect \
-  --chart-path ./my-chart \
-  --generate-config-skeleton my-config.yaml
+irr inspect --chart-path ./my-chart --generate-config-skeleton
+# (Edit registry-mappings.yaml targets)
+# (Use 'irr config' to refine if needed)
 ```
 
 ### Advanced Inspection with Pattern Filters
+
 ```bash
 irr inspect \
   --chart-path ./my-chart \
@@ -95,15 +147,16 @@ irr inspect \
 ```
 
 ### Complex Example with All Options
+
 ```bash
 irr inspect \
   --chart-path ./prometheus \
   --include-pattern "*.image" \
   --exclude-pattern "*.test.*" \
   --known-image-paths "containers[].image" \
-  --generate-config-skeleton config.yaml \
+  --generate-config-skeleton \
   --output-format yaml \
-  --output-file analysis.yaml
+  --output-file analysis.yaml # Note: --generate-config-skeleton overrides analysis output to file
 ```
 
 ### override
@@ -111,47 +164,50 @@ irr inspect \
 Generates override values for redirecting images to the target registry.
 
 ```bash
-irr override --chart-path CHART_PATH --source-registries REGISTRIES --target-registry TARGET_REGISTRY [flags]
+irr override --chart-path CHART_PATH [flags]
 ```
 
 #### Flags for override
 
-| Flag | Description | Default | Example |
-|------|-------------|---------|---------|
-| `-c, --chart-path` | Path to the Helm chart (required) | | `--chart-path ./my-chart` |
-| `--config` | Path to YAML config for registry mappings | | `--config mappings.yaml` |
-| `--dry-run` | Preview without writing | false | `--dry-run` |
-| `--exclude-pattern` | Glob patterns to exclude | | `--exclude-pattern "*.test.*"` |
-| `--exclude-registries` | Registries to exclude | | `--exclude-registries gcr.io` |
-| `-h, --help` | Show help for override | | `--help` |
-| `--include-pattern` | Glob patterns to include | | `--include-pattern "*.image"` |
-| `--known-image-paths` | Specific paths with images | | `--known-image-paths "containers[].image"` |
-| `-o, --output-file` | Output file path | stdout | `--output-file overrides.yaml` |
-| `--registry-file` | YAML file with registry mappings | | `--registry-file mappings.yaml` |
-| `-r, --release-name` | Helm release name to get values from | | `--release-name my-release` |
-| `-s, --source-registries` | Source registries (required) | | `--source-registries docker.io,quay.io` |
-| `-p, --strategy` | Path generation strategy | prefix-source-registry | `--strategy prefix-source-registry` |
-| `--strict` | Fail on any parsing error | false | `--strict` |
-| `-t, --target-registry` | Target registry URL (required) | | `--target-registry harbor.example.com` |
-| `--threshold` | Success percentage required | 0 | `--threshold 90` |
-| `--validate` | Run helm template to validate | false | `--validate` |
-| `--namespace` | Kubernetes namespace for the Helm release | | `--namespace my-namespace` |
+| Flag                     | Description                                              | Default                  | Example                                          |
+| ------------------------ | -------------------------------------------------------- | ------------------------ | ------------------------------------------------ |
+| `-c`, `--chart-path`     | Path to the Helm chart (required if not using release name) |                          | `--chart-path ./my-chart`                        |
+| `-r`, `--release-name`   | Helm release name to get values from                     |                          | `--release-name my-release`                      |
+| `--namespace`            | Kubernetes namespace for the Helm release                | `default`                | `--namespace my-namespace`                       |
+| `--registry-file`        | YAML file with registry mappings                         | `registry-mappings.yaml` | `--registry-file my-mappings.yaml`               |
+| `-t`, `--target-registry`| Target registry URL (fallback if not in registry-file)   |                          | `--target-registry registry.example.com`         |
+| `-s`, `--source-registries`| Comma-separated source registries to rewrite             | (reads from registry-file) | `--source-registries docker.io,quay.io`        |
+| `--config`               | DEPRECATED: Use `--registry-file` instead                 |                          |                                                  |
+| `--dry-run`              | Preview without writing (`stdout`)                       | false                    | `--dry-run`                                      |
+| `-o`, `--output-file`    | Output file path for overrides                           | `stdout`                 | `--output-file overrides.yaml`                   |
+| `-p`, `--strategy`       | Path generation strategy                                 | `prefix-source-registry` | `--strategy prefix-source-registry`              |
+| `--exclude-registries`   | Registries to exclude                                    |                          | `--exclude-registries gcr.io`                    |
+| `--include-pattern`      | Glob patterns to include                                 |                          | `--include-pattern "*.image"`                    |
+| `--exclude-pattern`      | Glob patterns to exclude                                 |                          | `--exclude-pattern "*.test.*"`                   |
+| `--known-image-paths`    | Specific paths with images                               |                          | `--known-image-paths "containers[].image"`      |
+| `--strict`               | Fail on any parsing error                                | false                    | `--strict`                                       |
+| `--threshold`            | Success percentage required                              | 0                        | `--threshold 90`                                 |
+| `--validate`             | Run helm template to validate                            | false                    | `--validate`                                     |
+| `-h`, `--help`           | Show help for override                                   |                          | `--help`                                         |
 
 ### Basic Override Generation
+
+Uses `registry-mappings.yaml` by default.
+
 ```bash
 irr override \
   --chart-path ./nginx \
-  --target-registry harbor.example.com \
-  --source-registries docker.io,quay.io
+  --output-file nginx-overrides.yaml
 ```
 
-### Complex Example with Configuration
+### Override with Specific File and Fallback Target
+
 ```bash
 irr override \
   --chart-path ./prometheus \
-  --config registry-config.yaml \
-  --target-registry harbor.example.com \
-  --source-registries docker.io,quay.io \
+  --registry-file my-mappings.yaml \
+  --target-registry fallback.registry.com \ # Used for sources not in my-mappings.yaml
+  --source-registries docker.io,quay.io,gcr.io \ # Define which sources to consider
   --threshold 90 \
   --output-file overrides.yaml
 ```
@@ -166,18 +222,19 @@ irr validate --chart-path CHART_PATH --values VALUES_FILE
 
 #### Flags for validate
 
-| Flag | Description | Default | Example |
-|------|-------------|---------|---------|
-| `--chart-path` | Path to the Helm chart (required) | | `--chart-path ./my-chart` |
-| `--release-name` | Release name for validation | release | `--release-name my-release` |
-| `--values` | Values files to use (can specify multiple) | | `--values overrides.yaml` |
-| `--set` | Set values on the command line (can specify multiple) | | `--set image.repository=nginx` |
-| `--namespace` | Namespace for validation | default | `--namespace my-namespace` |
-| `--output-file` | Output file for template result | | `--output-file template.yaml` |
-| `--debug-template` | Show full template output | false | `--debug-template` |
-| `-h, --help` | Show help for validate | | `--help` |
+| Flag                 | Description                                            | Default     | Example                        |
+| -------------------- | ------------------------------------------------------ | ----------- | ------------------------------ |
+| `--chart-path`       | Path to the Helm chart (required if not using release name) |             | `--chart-path ./my-chart`      |
+| `--release-name`     | Release name for validation                            | `release`   | `--release-name my-release`    |
+| `--namespace`        | Namespace for validation                               | `default`   | `--namespace my-namespace`     |
+| `--values`           | Values files to use (can specify multiple)             |             | `--values overrides.yaml`      |
+| `--set`              | Set values on the command line (can specify multiple)  |             | `--set image.repository=nginx` |
+| `--output-file`      | Output file for template result                        |             | `--output-file template.yaml`  |
+| `--debug-template`   | Show full template output on `stderr`                  | false       | `--debug-template`             |
+| `-h`, `--help`       | Show help for validate                                 |             | `--help`                       |
 
 ### Validation Example
+
 ```bash
 irr validate \
   --chart-path ./my-chart \
@@ -185,36 +242,38 @@ irr validate \
 ```
 
 ### Using Release Name for Validation
+
 ```bash
 irr validate \
   --release-name my-release \
-  --chart-path ./my-chart \
+  --chart-path ./my-chart \ # Chart path might still be needed depending on implementation
   --values overrides.yaml
 ```
 
 ## Configuration File (`registry-mappings.yaml`)
 
-While `irr` commands can be used with command-line flags, using a configuration file (typically `registry-mappings.yaml` and passed via `--config <path>` to commands like `override`) provides more control and persistence.
+The primary way to configure `irr` is through a YAML configuration file, which defaults to `registry-mappings.yaml` in the current directory. The `irr config` command is used to manage this file. Alternatively, you can specify a custom path using the `--registry-file` flag with the `override` command (or the `--file` flag with `config`).
 
 The configuration file uses a structured YAML format:
 
 ```yaml
+# registry-mappings.yaml
 version: "1.0" # Optional but recommended
 registries:
   mappings:
     - source: "quay.io"
-      target: "harbor.home.arpa/quay"
+      target: "registry.example.com/quay"
       enabled: true # Default is true if omitted
       description: "Optional description for quay.io"
     - source: "docker.io"
-      target: "harbor.home.arpa/docker"
+      target: "registry.example.com/docker"
       # enabled: true (implied)
     # Add more mappings as needed
 
-  # Optional: Fallback target registry
+  # Optional: Fallback target registry for 'override' command
   defaultTarget: "your-fallback-registry.com/generic-prefix"
 
-  # Optional: Strict mode setting
+  # Optional: Strict mode setting for 'override' command
   strictMode: false # Default is false
 
 # Optional: Compatibility settings
@@ -227,16 +286,16 @@ compatibility:
 *   **`registries.mappings`**: A list defining specific source-to-target redirections.
     *   `source`: The original registry domain (e.g., `docker.io`, `quay.io`).
     *   `target`: The full target registry and path prefix where images from the `source` should be redirected (e.g., `my-harbor.local/dockerhub`).
-    *   `enabled` (Optional): Set to `false` to explicitly disable this specific mapping. Defaults to `true`.
-    *   `description` (Optional): A comment describing the mapping.
+    *   `enabled` (Optional): Set to `false` to explicitly disable this specific mapping. Defaults to `true`. Can be managed via `irr config`.
+    *   `description` (Optional): A comment describing the mapping. Can be managed via `irr config`.
 
-*   **`registries.defaultTarget`** (Optional):
+*   **`registries.defaultTarget`** (Optional, Used by `override`):
     *   Provides a **fallback target registry URL** used when `strictMode` is `false`.
-    *   If `irr override` processes an image whose registry is listed in `--source-registries` but **lacks** a specific entry in the `mappings` list, it uses `defaultTarget` (if defined) to construct the new image path (using the selected path strategy).
-    *   If `defaultTarget` is also missing, the fallback is usually the target specified by the `--target-registry` CLI flag.
+    *   If `irr override` processes an image whose registry is listed in `--source-registries` but **lacks** a specific, enabled entry in the `mappings` list, it uses `defaultTarget` (if defined) to construct the new image path (using the selected path strategy).
+    *   If `defaultTarget` is also missing, the fallback is the target specified by the `--target-registry` CLI flag for the `override` command.
 
-*   **`registries.strictMode`** (Optional, Default: `false`):
-    *   When set to `true`, `strictMode` enforces that **every** source registry specified via the `--source-registries` flag **must** have a corresponding, enabled entry in the `mappings` list.
+*   **`registries.strictMode`** (Optional, Used by `override`, Default: `false`):
+    *   When set to `true`, `strictMode` enforces that **every** source registry specified via the `override` command's `--source-registries` flag **must** have a corresponding, enabled entry in the `mappings` list.
     *   If an image's source registry is in `--source-registries` but missing from the config mappings, `irr override` will **fail with an error** instead of using `defaultTarget` or the `--target-registry` flag.
     *   Use `strictMode: true` to ensure all intended redirections are explicitly configured and prevent accidental fallback behavior.
 
@@ -245,19 +304,19 @@ compatibility:
 
 ## Exit Codes
 
-| Code | Meaning |
-|------|---------|
-| 0 | Success |
-| 1 | Missing required flag |
-| 2 | Input/Configuration error |
-| 3 | Invalid strategy |
-| 4 | Chart not found |
-| 10 | Chart parsing error |
-| 11 | Image processing error |
-| 12 | Unsupported structure (strict mode) |
-| 13 | Threshold not met |
-| 14 | Chart load failed |
-| 15 | Chart processing failed |
-| 16 | Helm command failed |
-| 20 | General runtime error |
-| 21 | I/O error |
+| Code | Meaning                   |
+| ---- | ------------------------- |
+| 0    | Success                   |
+| 1    | Missing required flag     |
+| 2    | Input/Configuration error |
+| 3    | Invalid strategy          |
+| 4    | Chart not found           |
+| 10   | Chart parsing error       |
+| 11   | Image processing error    |
+| 12   | Unsupported structure     |
+| 13   | Threshold not met         |
+| 14   | Chart load failed         |
+| 15   | Chart processing failed   |
+| 16   | Helm command failed       |
+| 20   | General runtime error     |
+| 21   | I/O error                 |
