@@ -110,18 +110,17 @@ func newUtilsTestFS() *utilsTestFS {
 // Stat overrides the AferoFS.Stat method to properly handle not-exist errors
 func (f *utilsTestFS) Stat(name string) (os.FileInfo, error) {
 	if f.statFunc != nil {
-		fi, err := f.statFunc(name)
-		if err != nil {
-			return nil, fmt.Errorf("utilsTestFS.Stat: %w", err)
-		}
-		return fi, nil
+		// Return error from statFunc directly without wrapping
+		return f.statFunc(name)
 	}
+	// Fallback, return error directly
 	info, err := f.fs.Stat(name)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, os.ErrNotExist // Return the standard error directly
+			return nil, os.ErrNotExist // Return standard error directly
 		}
-		return nil, fmt.Errorf("utilsTestFS.Stat: %w", err)
+		// Return other errors directly without wrapping
+		return nil, err
 	}
 	return info, nil
 }
@@ -471,14 +470,13 @@ func TestEnsureDirExists_FileExistsError(t *testing.T) {
 	// Create a mock filesystem that returns an error on Stat
 	mockFS := newUtilsTestFS()
 	mockFS.statFunc = func(_ string) (os.FileInfo, error) {
-		// First call should return an error indicating path doesn't exist as directory
-		// to pass the DirExists check and go into the FileExists path
+		// First call should return os.ErrNotExist to pass DirExists
 		if mockFS.statCount == 0 {
 			mockFS.statCount++
 			return nil, os.ErrNotExist
 		}
-		// Second call should return an error for FileExists
-		return nil, fmt.Errorf("mock stat error for FileExists test")
+		// Second call (during FileExists) should return a distinct error
+		return nil, fmt.Errorf("distinct error during FileExists check")
 	}
 
 	// Add a counter to track stat calls
@@ -490,9 +488,12 @@ func TestEnsureDirExists_FileExistsError(t *testing.T) {
 	// Try to EnsureDirExists, should error from FileExists
 	err := EnsureDirExists("test-path")
 
-	// Verify that we got the expected error from FileExists
+	// Verify that we got the expected *unwrapped* error from the FileExists check phase
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "mock stat error")
+	// Check ONLY for the specific underlying error message, as it's not wrapped in this path
+	assert.Contains(t, err.Error(), "distinct error during FileExists check")
+	// Ensure the wrapper message is NOT present
+	assert.NotContains(t, err.Error(), "failed to check if file exists at path")
 }
 
 func TestGetAbsPath_AllPaths(t *testing.T) {

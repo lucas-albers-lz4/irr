@@ -84,6 +84,7 @@ func GetUnderlyingFs(fs afero.Fs) afero.Fs {
 
 // extractSourceFromBasePathFs extracts the source filesystem from a BasePathFs using reflection.
 // This is a test helper and shouldn't be used in production code.
+// Currently returns a new MemMapFs, assuming tests expect that type.
 func extractSourceFromBasePathFs(_ *afero.BasePathFs) afero.Fs {
 	// For testing, since we know BasePathFs in our tests wraps a MemMapFs,
 	// we can simply create a new MemMapFs that the test is expecting.
@@ -92,6 +93,7 @@ func extractSourceFromBasePathFs(_ *afero.BasePathFs) afero.Fs {
 
 // extractSourceFromReadOnlyFs extracts the source filesystem from a ReadOnlyFs using reflection.
 // This is a test helper and shouldn't be used in production code.
+// Currently returns a new MemMapFs, assuming tests expect that type.
 func extractSourceFromReadOnlyFs(_ *afero.ReadOnlyFs) afero.Fs {
 	// For testing, since we know ReadOnlyFs in our tests wraps a MemMapFs,
 	// we can simply create a new MemMapFs that the test is expecting.
