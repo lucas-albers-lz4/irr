@@ -697,19 +697,6 @@ func (a *ChartAnalysis) mergeAnalysis(b *ChartAnalysis) {
 	a.GlobalPatterns = append(a.GlobalPatterns, b.GlobalPatterns...)
 }
 
-// AnalyzerInterface defines the interface for chart analysis.
-// It allows for different implementations of the analysis logic.
-type AnalyzerInterface interface {
-	// ... existing code ...
-}
-
-// Result holds the findings of the Helm chart analysis.
-type Result struct {
-	ChartName    string `json:"chartName" yaml:"chartName"`
-	ChartVersion string `json:"chartVersion" yaml:"chartVersion"`
-	// ... existing code ...
-}
-
 // ensureString converts an interface{} to a string if possible.
 // Handles strings directly and attempts to convert numbers (int, float64).
 func ensureString(v interface{}) (string, bool) {

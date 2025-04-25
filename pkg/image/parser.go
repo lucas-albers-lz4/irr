@@ -63,6 +63,8 @@ var (
 // ParseImageReference parses an image reference string into its components.
 // It attempts to parse using the distribution/reference library first, and falls back
 // to regex-based parsing if needed for better error messages or special cases.
+// The fallback is particularly useful for providing more specific error types
+// (like ErrTagAndDigestPresent) or handling formats not strictly covered by the library.
 //
 // The function handles various image reference formats:
 // - registry/repository:tag (e.g., docker.io/nginx:1.23)

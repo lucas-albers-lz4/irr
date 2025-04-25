@@ -43,6 +43,20 @@ func NewGenerator(
 }
 
 // Generate produces the override values map based on detected images and strategy.
+// It performs the following steps:
+// 1. Creates an image detection context and detector.
+// 2. Calls the detector to find image references in the input values.
+// 3. Checks for unsupported structures if strict mode is enabled.
+// 4. Iterates through detected images:
+//   - Skips images without valid references.
+//   - Determines the target registry using mappings.
+//   - Generates the new repository path using the path strategy.
+//   - Creates the override map structure (registry, repository, tag/digest).
+//   - Sets the override value at the correct path in the results map.
+//
+// 5. Applies special normalization for kube-state-metrics overrides.
+// 6. Returns the generated map of overrides.
+//
 // chartName is currently unused but kept for potential future use (e.g., logging).
 func (g *Generator) Generate(_ string, values map[string]interface{}) (map[string]interface{}, error) {
 	detectionContext := &image.DetectionContext{
@@ -75,14 +89,16 @@ func (g *Generator) Generate(_ string, values map[string]interface{}) (map[strin
 		var mappedRegistry string
 		if g.Mappings != nil {
 			mappedRegistry = g.Mappings.GetTargetRegistry(ref.Registry)
-			log.Debug("Generator.Generate", "Looked up mapping for registry", ref.Registry, "result", mappedRegistry)
+			// Use key-value pairs for logging
+			log.Debug("Looked up mapping for registry", "registry", ref.Registry, "result", mappedRegistry)
 		}
 
 		// Generate the new repository path
 		newRepoPath, pathErr := g.PathStrategy.GeneratePath(ref, mappedRegistry)
 		if pathErr != nil {
 			// Handle error: log, skip, or return error depending on policy
-			log.Debug("Error generating path for", ref.String(), "error", pathErr)
+			// Use key-value pairs for logging
+			log.Debug("Error generating path", "image", ref.String(), "error", pathErr)
 			continue // Skip this image
 		}
 
@@ -101,7 +117,8 @@ func (g *Generator) Generate(_ string, values map[string]interface{}) (map[strin
 		err = override.SetValueAtPath(generatedOverrides, detected.Path, overrideValue)
 		if err != nil {
 			// Handle error: log, skip, or return error
-			log.Debug("Error setting override at path", detected.Path, "error", err)
+			// Use key-value pairs for logging
+			log.Debug("Error setting override", "path", detected.Path, "error", err)
 			continue
 		}
 	}

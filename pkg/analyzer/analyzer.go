@@ -41,19 +41,6 @@ type Config struct {
 	KnownPaths []string
 }
 
-// PatternMatcher wraps a compiled regex for matching paths.
-// This is a placeholder; a real implementation would use regexp.Regexp.
-type PatternMatcher struct {
-	// pattern *regexp.Regexp // Placeholder for actual regex implementation
-}
-
-// Match checks if the given path matches the pattern.
-// Placeholder implementation.
-func (pm *PatternMatcher) Match(_ string) bool {
-	// Placeholder logic - replace with actual regex matching
-	return true // Default to true for now
-}
-
 // AnalyzeHelmValues analyzes Helm values content for image patterns.
 func AnalyzeHelmValues(values map[string]interface{}, config *Config) ([]ImagePattern, error) {
 	log.Debug("Starting Helm values analysis")
@@ -302,15 +289,6 @@ func analyzeInterfaceValue(path string, val reflect.Value, patterns *[]ImagePatt
 		log.Debug("Ignoring nil or invalid interface at path '%s'", path)
 	}
 }
-
-// Helper function (placeholder) to check if a string looks like an image reference
-// In a real scenario, this would involve more robust parsing/validation.
-// func looksLikeImageReference(s string) bool {
-// 	// Basic check: Contains a colon (potentially separating image name and tag)
-// 	// or a slash (potentially separating registry/namespace and image name).
-// 	// This is a very loose heuristic.
-// 	return strings.Contains(s, ":") || strings.Contains(s, "/")
-// }
 
 // Additional helper functions or types related to analysis can be defined below.
 // For example, pattern matching logic implementation.

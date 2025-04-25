@@ -121,6 +121,8 @@ func (l *GeneratorLoader) Load(chartPath string) (*chart.Chart, error) {
 	}
 
 	// Use helm's loader directly
+	// Note: Helm's loader uses the real filesystem, not the injected one.
+	// Future refactoring could adapt the loader to use the FS interface.
 	loadedChart, err := loader.Load(chartPath)
 	if err != nil {
 		// Wrap the error from the helm loader

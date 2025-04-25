@@ -471,30 +471,6 @@ func TestConfigWithIncludeExcludePatterns(t *testing.T) {
 	}
 }
 
-// TestPatternMatcherMatch tests the PatternMatcher.Match function
-func TestPatternMatcherMatch(t *testing.T) {
-	matcher := &PatternMatcher{}
-
-	// The current implementation is a placeholder that returns true for any input
-	// Test that any path string returns true
-	paths := []string{
-		"image",
-		"container.image",
-		"deployment.spec.template.spec.containers[0].image",
-		"", // Even empty string
-		"some.random.path",
-	}
-
-	for _, path := range paths {
-		t.Run(path, func(t *testing.T) {
-			result := matcher.Match(path)
-			if !result {
-				t.Errorf("Match(%q) returned false, expected true", path)
-			}
-		})
-	}
-}
-
 // TestAnalyzeInterfaceValue tests the analyzeInterfaceValue function
 func TestAnalyzeInterfaceValue(t *testing.T) {
 	// TODO: This test requires more sophisticated setup to properly test the analyzeInterfaceValue function
