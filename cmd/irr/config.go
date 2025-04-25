@@ -1,4 +1,4 @@
-// Package main implements the command-line interface for the irr (Image Relocation and Rewrite) tool.
+// Package main contains the implementation for the irr CLI, including subcommands like config.
 package main
 
 import (
@@ -105,7 +105,7 @@ func listMappings() error {
 		var notExistErr *registry.ErrMappingFileNotExist
 		if errors.As(err, &notExistErr) {
 			log.Info("No mappings found (file does not exist)", "file", configFile)
-			return nil // Explicitly return nil, matching test expectation
+			return nil // Return nil as the file not existing isn't an error for listing.
 		}
 		// For other errors during loading, return them wrapped
 		return &exitcodes.ExitCodeError{

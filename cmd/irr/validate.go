@@ -1,8 +1,6 @@
 package main
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,11 +8,9 @@ import (
 
 	"github.com/lalbers/irr/internal/helm"
 	"github.com/lalbers/irr/pkg/exitcodes"
-	"github.com/lalbers/irr/pkg/fileutil"
 	log "github.com/lalbers/irr/pkg/log"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/cli"
 )
@@ -64,7 +60,9 @@ IMPORTANT NOTES:
 	return cmd
 }
 
-// detectChartInCurrentDirectoryIfNeeded attempts to find a Helm chart if chart path is not specified
+// detectChartInCurrentDirectoryIfNeeded attempts to find a Helm chart in the current
+// directory or an immediate subdirectory if the chartPath is not provided.
+// It returns the detected path or an error if no chart is found.
 func detectChartInCurrentDirectoryIfNeeded(chartPath string) (string, error) {
 	if chartPath != "" {
 		return chartPath, nil
@@ -495,164 +493,132 @@ func handleStandaloneValidate(cmd *cobra.Command, chartPath string, valuesFiles 
 	return handleValidateOutput(cmd, templateOutput, outputFile)
 }
 
-// handleHelmPluginValidate runs validation using helm plugin mode
+// handleHelmPluginValidate performs the core validation logic for Helm plugin mode,
+// retrieving necessary chart information and values before executing the validation.
 func handleHelmPluginValidate(cmd *cobra.Command, releaseName, namespace string, valuesFiles []string, kubeVersion, outputFile string, strict bool) error {
-	// Check that Helm client is initialized
-	if helmClient == nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitHelmInteractionError,
-			Err:  errors.New("helm client not initialized"),
-		}
+	log.Debug("Handling Helm plugin validate operation", "release", releaseName, "namespace", namespace)
+
+	// Initialize Helm settings
+	settings := cli.New()
+	chartPathOptions := &action.ChartPathOptions{
+		Version: kubeVersion,
 	}
 
-	// Create a context
-	ctx := context.Background()
-
-	// Get release values from Helm
-	log.Info("Getting values for release %s in namespace %s", releaseName, namespace)
-	releaseValues, err := helmClient.GetReleaseValues(ctx, releaseName, namespace)
-	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitHelmInteractionError,
-			Err:  fmt.Errorf("failed to get values for release %s: %w", releaseName, err),
-		}
+	// Try to locate chart using Helm's built-in functionality
+	log.Debug("Attempting to locate chart %s using Helm SDK", releaseName)
+	locatedPath, err := chartPathOptions.LocateChart(releaseName, settings)
+	if err == nil {
+		log.Info("Found chart using Helm SDK at", "path", locatedPath)
+		return handleHelmPluginValidate(cmd, releaseName, namespace, valuesFiles, locatedPath, outputFile, strict)
 	}
+	log.Debug("Failed to locate chart using Helm SDK", "error", err)
 
-	// Get chart from release
-	log.Info("Getting chart for release %s", releaseName)
-	releaseChart, err := helmClient.GetChartFromRelease(ctx, releaseName, namespace)
-	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitHelmInteractionError,
-			Err:  fmt.Errorf("failed to get chart for release %s: %w", releaseName, err),
-		}
-	}
+	// Try to find the chart in Helm's repository cache
+	cacheDir := settings.RepositoryCache
+	if cacheDir != "" {
+		log.Debug("Checking Helm repository cache at", "path", cacheDir)
 
-	// Since we have the chart loaded directly from Helm's release storage
-	// we don't need to download it, but we need to use it correctly with the right values
-	log.Info("Running helm template on chart %s with %d values file(s)", releaseChart.Name(), len(valuesFiles))
-
-	// Write release values to a temporary file
-	tmpDir, err := os.MkdirTemp("", "irr-validate-")
-	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitIOError,
-			Err:  fmt.Errorf("failed to create temporary directory: %w", err),
-		}
-	}
-	defer func() {
-		if rmErr := os.RemoveAll(tmpDir); rmErr != nil {
-			log.Warn("Failed to remove temp dir", "error", rmErr)
-		}
-	}()
-
-	releaseValuesFile := filepath.Join(tmpDir, "release-values.yaml")
-	releaseValuesYAML, err := yaml.Marshal(releaseValues)
-	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitGeneralRuntimeError,
-			Err:  fmt.Errorf("failed to marshal release values to YAML: %w", err),
-		}
-	}
-
-	if err := os.WriteFile(releaseValuesFile, releaseValuesYAML, fileutil.ReadWriteUserPermission); err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitIOError,
-			Err:  fmt.Errorf("failed to write release values to temporary file: %w", err),
-		}
-	}
-
-	// Create a temporary directory for the chart
-	chartDir := filepath.Join(tmpDir, "chart")
-	if err := os.MkdirAll(chartDir, fileutil.ReadWriteExecuteUserReadExecuteOthers); err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitIOError,
-			Err:  fmt.Errorf("failed to create temporary chart directory: %w", err),
-		}
-	}
-
-	// We need to write the chart to disk using helm.Save
-	chartPath := filepath.Join(chartDir, releaseChart.Name())
-	if err := os.MkdirAll(chartPath, fileutil.ReadWriteExecuteUserReadExecuteOthers); err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitIOError,
-			Err:  fmt.Errorf("failed to create chart directory: %w", err),
-		}
-	}
-
-	// Manually write chart files
-	// First write Chart.yaml
-	chartFile := filepath.Join(chartPath, "Chart.yaml")
-	chartYaml, err := yaml.Marshal(releaseChart.Metadata)
-	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitGeneralRuntimeError,
-			Err:  fmt.Errorf("failed to marshal chart metadata: %w", err),
-		}
-	}
-	if err := os.WriteFile(chartFile, chartYaml, fileutil.ReadWriteUserPermission); err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitIOError,
-			Err:  fmt.Errorf("failed to write Chart.yaml: %w", err),
-		}
-	}
-
-	// Write templates directory and files
-	templatesDir := filepath.Join(chartPath, "templates")
-	if err := os.MkdirAll(templatesDir, fileutil.ReadWriteExecuteUserReadExecuteOthers); err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitIOError,
-			Err:  fmt.Errorf("failed to create templates directory: %w", err),
-		}
-	}
-
-	// If the chart has template files, write them
-	for _, data := range releaseChart.Templates {
-		templateFile := filepath.Join(templatesDir, data.Name)
-		// Create subdirectories if needed
-		if err := os.MkdirAll(filepath.Dir(templateFile), fileutil.ReadWriteExecuteUserReadExecuteOthers); err != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitIOError,
-				Err:  fmt.Errorf("failed to create template subdirectory: %w", err),
+		// Try exact match first if we have a version
+		if kubeVersion != "" {
+			cachePath := filepath.Join(cacheDir, fmt.Sprintf("%s-%s.tgz", releaseName, kubeVersion))
+			if _, err := AppFs.Stat(cachePath); err == nil {
+				log.Info("Found chart in Helm repository cache", "path", cachePath)
+				return handleHelmPluginValidate(cmd, releaseName, namespace, valuesFiles, cachePath, outputFile, strict)
 			}
 		}
-		if err := os.WriteFile(templateFile, data.Data, fileutil.ReadWriteUserPermission); err != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitIOError,
-				Err:  fmt.Errorf("failed to write template file %s: %w", data.Name, err),
+
+		// Try to find matching chart files
+		entries, err := afero.ReadDir(AppFs, cacheDir)
+		if err == nil {
+			for _, entry := range entries {
+				if !entry.IsDir() && strings.HasPrefix(entry.Name(), releaseName+"-") {
+					chartPath := filepath.Join(cacheDir, entry.Name())
+					log.Info("Found chart in Helm repository cache", "path", chartPath)
+					return handleHelmPluginValidate(cmd, releaseName, namespace, valuesFiles, chartPath, outputFile, strict)
+				}
 			}
 		}
 	}
 
-	// Write values.yaml if it exists
-	if releaseChart.Values != nil {
-		valuesFile := filepath.Join(chartPath, "values.yaml")
-		valuesYaml, err := yaml.Marshal(releaseChart.Values)
+	// Try to find the chart in Helm's cache directory first
+	helmCachePaths := []string{
+		// macOS Helm cache path
+		filepath.Join(os.Getenv("HOME"), "Library", "Caches", "helm", "repository"),
+		// Linux/Unix Helm cache path
+		filepath.Join(os.Getenv("HOME"), ".cache", "helm", "repository"),
+		// Windows Helm cache path - uses APPDATA
+		filepath.Join(os.Getenv("APPDATA"), "helm", "repository"),
+	}
+
+	log.Debug("Looking for chart %s in Helm cache directories", releaseName)
+
+	// Try to find the chart in Helm's cache
+	for _, cachePath := range helmCachePaths {
+		// Skip if this is the same as repository cache we already checked
+		if cachePath == cacheDir {
+			continue
+		}
+
+		// Check if cache path exists
+		if _, err := AppFs.Stat(cachePath); os.IsNotExist(err) {
+			log.Debug("Helm cache path does not exist", "path", cachePath)
+			continue
+		}
+
+		// Try to find an exact match for the chart
+		entries, err := afero.ReadDir(AppFs, cachePath)
 		if err != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitGeneralRuntimeError,
-				Err:  fmt.Errorf("failed to marshal chart values: %w", err),
-			}
+			log.Debug("Failed to read Helm cache directory", "path", cachePath, "error", err)
+			continue
 		}
-		if err := os.WriteFile(valuesFile, valuesYaml, fileutil.ReadWriteUserPermission); err != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitIOError,
-				Err:  fmt.Errorf("failed to write values.yaml: %w", err),
+
+		// Look for matching chart files
+		for _, entry := range entries {
+			if !entry.IsDir() && strings.HasPrefix(entry.Name(), releaseName+"-") || entry.Name() == releaseName+".tgz" {
+				chartPath := filepath.Join(cachePath, entry.Name())
+				log.Info("Found chart in Helm cache", "path", chartPath)
+				return handleHelmPluginValidate(cmd, releaseName, namespace, valuesFiles, chartPath, outputFile, strict)
 			}
 		}
 	}
 
-	// Combine release values and additional values files
-	combinedValues := append([]string{releaseValuesFile}, valuesFiles...)
-
-	// Run validation with combined values
-	templateOutput, err := validateChartWithFiles(chartPath, releaseName, namespace, combinedValues, strict, kubeVersion)
-	if err != nil {
-		return err
+	// List of possible locations to check relative to original path
+	possibleLocations := []string{
+		// Current path
+		kubeVersion,
+		// charts/ subdirectory
+		filepath.Join(kubeVersion, "charts"),
+		// Parent directory
+		filepath.Dir(kubeVersion),
+		// Current working directory
+		".",
+		// The "chart" subdirectory if it exists
+		filepath.Join(kubeVersion, "chart"),
 	}
 
-	// Handle output
-	return handleValidateOutput(cmd, templateOutput, outputFile)
+	// If original path looks like a tgz file but might be extracted in a directory
+	if strings.HasSuffix(kubeVersion, ".tgz") {
+		baseName := strings.TrimSuffix(filepath.Base(kubeVersion), ".tgz")
+		possibleLocations = append(possibleLocations,
+			// Check for extracted directory next to tgz
+			filepath.Join(filepath.Dir(kubeVersion), baseName),
+			// Check for extracted directory in current directory
+			baseName,
+		)
+	}
+
+	log.Debug("Attempting fallback resolution with", "count", len(possibleLocations))
+
+	// Try each location
+	if found, err := findChartInPossibleLocations(kubeVersion, possibleLocations); err == nil && found != "" {
+		return handleHelmPluginValidate(cmd, releaseName, namespace, valuesFiles, found, outputFile, strict)
+	}
+
+	// No valid chart path found, provide helpful error message
+	return &exitcodes.ExitCodeError{
+		Code: exitcodes.ExitChartNotFound,
+		Err:  fmt.Errorf("chart.yaml not found at %s or any fallback locations. Please provide the correct chart path using --chart-path", kubeVersion),
+	}
 }
 
 // handleChartYamlMissingErrors detects and handles "Chart.yaml file is missing" errors.

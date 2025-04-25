@@ -9,11 +9,6 @@ import (
 	// Removed cmd import to break cycle
 )
 
-// isHelmPlugin indicates if the application is running as a Helm plugin.
-// This is determined by checking environment variables set by Helm.
-// REMOVED - Declaration moved to root.go
-// var isHelmPlugin bool
-
 // BinaryVersion is replaced during build with the value from plugin.yaml.
 // When you run make build or make dist, Go replaces this value in the compiled binary.
 var BinaryVersion = "0.2.0"
@@ -24,26 +19,9 @@ func main() {
 	// Use stdLog for consistency, check if debug is enabled
 	log.Debug("--- IRR BINARY VERSION:", "version", BinaryVersion)
 
-	// Check if we're running as a Helm plugin
-	// isHelmPlugin = isRunningAsHelmPlugin()
-
 	// Log Helm environment variables when in debug mode
+	// TODO: Re-evaluate if this standalone mode log is always accurate or needed.
 	log.Debug("### DETECTED RUNNING IN STANDALONE MODE ###")
-
-	// Initialize Helm plugin if necessary
-	// if isHelmPlugin {
-	// 	log.Debugf("Running as Helm plugin")
-	// 	// Check Helm version compatibility
-	// 	if err := version.CheckHelmVersion(); err != nil {
-	// 		log.Errorf("Helm version check failed: %v", err)
-	// 		if code, ok := exitcodes.IsExitCodeError(err); ok {
-	// 			os.Exit(code)
-	// 		}
-	// 		os.Exit(1)
-	// 	}
-	// 	log.Debugf("Helm version check passed")
-	// 	// initHelmPlugin will be called in init() of the root.go file
-	// }
 
 	// Execute the root command (defined in root.go, package main)
 	// Cobra's Execute() handles its own error printing. We check the returned
@@ -72,7 +50,7 @@ func logHelmEnvironment() {
 		"HELM_PLUGIN_NAME",
 		"HELM_NAMESPACE",
 		"HELM_BIN",
-		"HELM_DEBUG",
+		"HELM_DEBUG", // Note: This is the Helm binary debug flag, not IRR's
 		"HELM_PLUGINS",
 		"HELM_REGISTRY_CONFIG",
 		"HELM_REPOSITORY_CACHE",
@@ -87,5 +65,3 @@ func logHelmEnvironment() {
 		}
 	}
 }
-
-// MIGRATION NOTE: All legacy log.Debugf and log.IsDebugEnabled calls have been migrated to slog-based logging.

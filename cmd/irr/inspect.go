@@ -1,3 +1,4 @@
+// Package main contains the implementation for the irr CLI, including subcommands like inspect.
 package main
 
 import (
@@ -465,7 +466,6 @@ func filterImagesBySourceRegistries(_ *cobra.Command, flags *InspectFlags, analy
 				filteredPatterns = append(filteredPatterns, pattern)
 			}
 		} else {
-			// If parsing fails, maybe keep the pattern? Or try heuristics?
 			// Keep for now, as it might represent a template or complex structure.
 			// log.Debug("Pattern value parsing failed, keeping pattern during filtering", "path", pattern.Path, "value", pattern.Value, "error", err)
 			// Heuristic: Check if *any* part of the value string matches a source registry? Risky.
@@ -485,22 +485,6 @@ func extractUniqueRegistries(images []ImageInfo) map[string]bool {
 	}
 	return registries
 }
-
-// outputRegistrySuggestions prints suggestions for filtering based on found registries
-// Deprecated: Functionality moved to runInspect and uses logging.
-// func outputRegistrySuggestions(registries map[string]bool) {
-// \tlog.Info(\"Found images from the following registries:\")
-// \tuniqueRegistryList := make([]string, 0, len(registries))
-// \tfor reg := range registries {
-// \t\tuniqueRegistryList = append(uniqueRegistryList, reg)
-// \t}
-// \tsort.Strings(uniqueRegistryList) // Sort for consistent output
-// \tfor _, reg := range uniqueRegistryList {
-// \t\tlog.Info(fmt.Sprintf(\"  - %s\", reg))
-// \t}
-// \tlog.Info(\"Consider using the --source-registries flag to filter results, e.g.:\")
-// \tlog.Info(fmt.Sprintf(\"  irr inspect --source-registries %s ...\", strings.Join(uniqueRegistryList, \",\")))
-// }
 
 // outputRegistryConfigSuggestion prints suggestions for creating a registry mapping file
 func outputRegistryConfigSuggestion(chartPath string, registries map[string]bool) {

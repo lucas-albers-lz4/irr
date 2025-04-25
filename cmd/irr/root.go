@@ -10,7 +10,6 @@ import (
 	log "github.com/lalbers/irr/pkg/log"
 
 	"github.com/lalbers/irr/pkg/analysis"
-	"github.com/lalbers/irr/pkg/helm"
 	"github.com/lalbers/irr/pkg/override"
 	"github.com/lalbers/irr/pkg/registry"
 	"github.com/spf13/afero"
@@ -19,7 +18,10 @@ import (
 )
 
 // Constants
-// // expectedEnvVarParts = 2 // Removed as unused
+const (
+	// unknownLogLevelSource is the initial value for log level source determination.
+	unknownLogLevelSource = "unknown"
+)
 
 // Global flag variables
 var (
@@ -37,9 +39,6 @@ var (
 
 	// TestAnalyzeMode is a global flag to enable test mode (originally for analyze command, now for inspect)
 	TestAnalyzeMode bool
-
-	// Helm client
-	helmClient helm.ClientInterface
 
 	// New variables for initConfig
 	isTestMode bool
@@ -145,7 +144,7 @@ It also supports linting image references for potential issues.`,
 			"env_log_level", envLogLevelStr)
 
 		var finalLevel log.Level
-		levelSource := validateTestNamespace
+		levelSource := unknownLogLevelSource // Initialize level source
 
 		// 1. --debug flag has highest precedence
 		if debugFlagEnabled {
@@ -165,7 +164,7 @@ It also supports linting image references for potential issues.`,
 			}
 
 			// 3. LOG_LEVEL env var is next (if flags didn't set a valid level)
-			if levelSource == validateTestNamespace && envLogLevelStr != "" {
+			if levelSource == unknownLogLevelSource && envLogLevelStr != "" {
 				parsedLevel, err := log.ParseLevel(envLogLevelStr)
 				if err == nil {
 					finalLevel = log.Level(parsedLevel)
@@ -177,7 +176,7 @@ It also supports linting image references for potential issues.`,
 			}
 
 			// 4. Default level if nothing else set it
-			if levelSource == validateTestNamespace {
+			if levelSource == unknownLogLevelSource { // Check against initial value
 				// Check flags AND the environment variable set by the test harness
 				isTestRun := integrationTestMode || TestAnalyzeMode || (os.Getenv("IRR_TESTING") == "true")
 				if isTestRun {
@@ -207,13 +206,6 @@ It also supports linting image references for potential issues.`,
 		if integrationTestMode {
 			// This warning should respect the final log level set above
 			log.Warn("Integration test mode enabled.")
-		}
-
-		// Initialize Helm client if running as a Helm plugin
-		if isRunningAsHelmPlugin() {
-			settings := helm.GetHelmSettings()
-			helmClient = helm.NewRealHelmClient(settings)
-			log.Debug("Initialized Helm client for plugin mode")
 		}
 
 		if registryFile != "" {
@@ -373,28 +365,10 @@ func executeCommand(root *cobra.Command, args ...string) (output string, err err
 	return buf.String(), err
 }
 
-/* // Unused
-// Function to initialize file system (moved from root execution)
-func initFS() afero.Fs {
-	// Example: Initialize based on a flag or environment variable if needed
-	return afero.NewOsFs()
-}
-*/
-
-/* // Unused
-// Function to load mappings (consider moving to a shared location or helper)
-func loadMappingsIfNeeded(fs afero.Fs, registryFile string) (*registry.Mappings, error) {
-	if registryFile == "" {
-		return nil, nil
-	}
-	// Pass false for skipCWDRestriction in normal execution path
-	return registry.LoadMappings(fs, registryFile, false)
-}
-*/
-
 // initConfig reads in config file and ENV variables if set.
+// Called by cobra.OnInitialize in init()
 //
-//nolint:unused // initConfig is called by cobra.OnInitialize in init()
+//nolint:unused // Called by cobra.OnInitialize, but linter doesn't detect it.
 func initConfig() {
 	// Only run initConfig once
 	if viper.IsSet("config.read") {

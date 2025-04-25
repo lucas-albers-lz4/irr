@@ -19,21 +19,9 @@ import (
 
 // Variables to allow mocking for tests
 var (
-	// helmAdapterFactory is a function that creates a Helm adapter, can be replaced in tests
-	helmAdapterFactory = func() (*helm.Adapter, error) {
-		log.Debug("Helm Adapter Factory: ENTER")
-		// Check if running in testing mode
-		if os.Getenv("IRR_TESTING") == trueString {
-			log.Debug("Helm Adapter Factory: IRR_TESTING=true detected")
-			log.Warn("Helm Adapter Factory: Mock support temporarily disabled")
-			// Skip mock client creation since we removed the dependency
-			// This will just return the default implementation in test mode for now
-		}
-
-		log.Debug("Helm Adapter Factory: Calling default factory")
-		// Call the original default factory function
-		return defaultHelmAdapterFactory()
-	}
+	// helmAdapterFactory is a function that creates a Helm adapter.
+	// It can be replaced in tests to inject a mock adapter.
+	helmAdapterFactory = defaultHelmAdapterFactory // Initially point to the real factory
 )
 
 // defaultHelmAdapterFactory is the real implementation of creating a Helm adapter
@@ -93,7 +81,8 @@ func getReleaseNameAndNamespaceCommon(cmd *cobra.Command, args []string) (releas
 	// --- Helm Plugin Namespace Correction ---
 	// If running as a plugin and the namespace flag is still the default,
 	// try getting the namespace from the HELM_NAMESPACE env var.
-	if isRunningAsHelmPlugin() && namespace == validateTestNamespace {
+	// NOTE: Uses the 'defaultNamespace' constant (expected to be "default")
+	if isRunningAsHelmPlugin() && namespace == defaultNamespace {
 		envNamespace := os.Getenv("HELM_NAMESPACE")
 		if envNamespace != "" {
 			log.Debug("Namespace flag was default in plugin mode, using HELM_NAMESPACE env var instead", "env_namespace", envNamespace)
