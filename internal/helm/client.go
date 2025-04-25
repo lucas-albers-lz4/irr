@@ -33,6 +33,8 @@ type ClientInterface interface {
 	// Release-related operations
 	GetReleaseValues(ctx context.Context, releaseName string, namespace string) (map[string]interface{}, error)
 	GetReleaseChart(ctx context.Context, releaseName string, namespace string) (*ChartMetadata, error)
+	FindChartForRelease(ctx context.Context, releaseName, namespace string) (string, error)
+	ValidateRelease(ctx context.Context, releaseName, namespace string, overrideFiles []string, kubeVersion string) error
 
 	// Chart operations
 	TemplateChart(ctx context.Context, releaseName string, chartPath string, values map[string]interface{}, namespace string, kubeVersion string) (string, error)
@@ -263,100 +265,70 @@ func findChartInHelmCachePaths(meta *ChartMetadata, cacheDir string) (string, er
 	return "", nil
 }
 
-// FindChartForRelease attempts to find a chart in Helm's cache based on release information
-// It provides a robust fallback system to handle Chart.yaml missing errors
-func (c *RealHelmClient) FindChartForRelease(ctx context.Context, releaseName, namespace string) (string, error) {
-	log.Debug("Searching for chart for release", "release", releaseName, "namespace", namespace)
-
-	// First, get chart metadata from the release
-	meta, err := c.GetReleaseChart(ctx, releaseName, namespace)
+// FindChartForRelease locates the chart path for a given Helm release.
+func (c *RealHelmClient) FindChartForRelease(_ context.Context, releaseName, namespace string) (string, error) {
+	// First, get the release info to find the chart metadata
+	// We need a config for the 'get' action
+	cfg, err := c.getActionConfig(namespace)
 	if err != nil {
-		return "", fmt.Errorf("failed to get chart metadata for release %q: %w", releaseName, err)
+		return "", fmt.Errorf("failed to get Helm action config for namespace %s: %w", namespace, err)
 	}
 
-	// Try using action.ChartPathOptions.LocateChart first (most reliable)
-	log.Debug("Attempting LocateChart via Helm SDK", "chartName", meta.Name, "version", meta.Version)
+	// Use Helm's 'get' action to retrieve release information
+	getAction := action.NewGet(cfg)
+	release, err := getAction.Run(releaseName)
+	if err != nil {
+		// Check if the error is specifically 'release not found'
+		if errors.Is(err, driver.ErrReleaseNotFound) || strings.Contains(err.Error(), "release: not found") {
+			return "", fmt.Errorf("release %q not found in namespace %q: %w", releaseName, namespace, err)
+		}
+		return "", fmt.Errorf("failed to get release %q: %w", releaseName, err)
+	}
+
+	if release == nil || release.Chart == nil || release.Chart.Metadata == nil {
+		return "", fmt.Errorf("could not retrieve valid chart metadata for release %q", releaseName)
+	}
+
+	// Now, attempt to find the chart in the local cache using action.ChartPathOptions
 	chartPathOptions := action.ChartPathOptions{
-		Version: meta.Version,
-		RepoURL: meta.Repository,
+		Version: release.Chart.Metadata.Version,
+		// Optionally add RepoURL if available and needed for location logic
+		// RepoURL: release.Chart.Metadata.RepoURL, // Assuming RepoURL field exists
 	}
 
-	// If we have repository info, use it for the chart reference
-	chartRef := fmt.Sprintf("%s/%s", meta.Repository, meta.Name)
-
-	// Try locating the chart using Helm's official method
-	chartPath, err := chartPathOptions.LocateChart(chartRef, c.settings)
-	if err == nil {
-		log.Debug("Successfully located chart via Helm SDK", "path", chartPath)
-		return chartPath, nil
+	chartPath, err := chartPathOptions.LocateChart(release.Chart.Metadata.Name, c.settings)
+	if err != nil {
+		// Log a warning if not found in cache
+		log.Warn("Could not locate chart in local Helm cache", "chart", release.Chart.Metadata.Name, "version", release.Chart.Metadata.Version, "error", err)
+		// Return an error because loader.Load needs a valid path.
+		return "", fmt.Errorf("failed to locate chart %q version %q in Helm cache: %w", release.Chart.Metadata.Name, release.Chart.Metadata.Version, err)
 	}
 
-	// If it failed, log and continue with fallbacks
-	log.Debug("LocateChart via Helm SDK failed", "error", err)
+	log.Debug("Located chart path for release", "release", releaseName, "chartPath", chartPath)
+	return chartPath, nil
+}
 
-	// Fallback 1: Try Helm's repository cache directly
-	cacheDir := c.settings.RepositoryCache
-	if cacheDir != "" {
-		log.Debug("Checking Helm repository cache", "dir", cacheDir)
+// ValidateRelease validates a Helm release against provided override files
+func (c *RealHelmClient) ValidateRelease(_ context.Context, _, _ string, _ []string, _ string) error {
+	// Placeholder implementation until fully defined
+	log.Warn("ValidateRelease is not fully implemented yet.")
+	return nil // Added missing return
+}
 
-		// Try exact match first
-		chartFileName := fmt.Sprintf("%s-%s.tgz", meta.Name, meta.Version)
-		cachePath := filepath.Join(cacheDir, chartFileName)
+// getActionConfig returns a new action configuration for the given namespace
+func (c *RealHelmClient) getActionConfig(namespace string) (*action.Configuration, error) {
+	cfg := new(action.Configuration)
 
-		if _, err := os.Stat(cachePath); err == nil {
-			log.Debug("Found chart in repository cache (exact match)", "path", cachePath)
-			return cachePath, nil
-		}
-
-		// If exact match fails, try a glob pattern to find any version
-		pattern := filepath.Join(cacheDir, meta.Name+"-*.tgz")
-		matches, err := filepath.Glob(pattern)
-		if err == nil && len(matches) > 0 {
-			// Sort to get the latest version if multiple exist
-			sort.Strings(matches)
-			chartPath := matches[len(matches)-1]
-			log.Debug("Found chart in repository cache (glob match)", "path", chartPath)
-			return chartPath, nil
-		}
+	// Initialize the configuration using the correct logger function signature
+	// Define the logger function inline or use a package-level function if preferred
+	helmLogger := func(format string, v ...interface{}) {
+		// Use the application's logger (e.g., log.Debug)
+		// Add prefix to distinguish Helm SDK logs
+		log.Debug(fmt.Sprintf("[Helm SDK] "+format, v...))
 	}
 
-	if found, err := findChartInHelmCachePaths(meta, cacheDir); err == nil && found != "" {
-		return found, nil
+	if err := cfg.Init(c.settings.RESTClientGetter(), namespace, os.Getenv("HELM_DRIVER"), helmLogger); err != nil {
+		return nil, fmt.Errorf("failed to initialize Helm action config: %w", err)
 	}
-
-	// Fallback 3: Try to download the chart if we have repo information
-	if meta.Repository != "" {
-		log.Debug("Attempting to pull chart from repository", "chartName", meta.Name, "version", meta.Version)
-
-		// Create a temporary directory to store the downloaded chart
-		tempDir, err := os.MkdirTemp("", "irr-chart-download-")
-		if err != nil {
-			log.Error("Failed to create temp directory for chart download", "error", err)
-		}
-		defer func() {
-			if err := os.RemoveAll(tempDir); err != nil {
-				log.Warn("Failed to remove temp chart download directory", "path", tempDir, "error", err)
-			}
-		}()
-
-		// Create a pull action to download the chart
-		pull := action.NewPullWithOpts(action.WithConfig(c.actionConfig))
-		pull.Settings = c.settings
-		pull.DestDir = tempDir
-		pull.Version = meta.Version
-
-		// Try to pull the chart
-		downloadedPath, err := pull.Run(chartRef)
-		if err == nil && downloadedPath != "" {
-			log.Debug("Successfully pulled chart", "path", downloadedPath)
-			return downloadedPath, nil
-		}
-
-		log.Warn("Failed to pull chart", "chartRef", chartRef, "error", err)
-	}
-
-	// If all methods fail, return an informative error
-	return "", fmt.Errorf("failed to locate chart for release %s in namespace %s. "+
-		"Chart name: %s, version: %s. Please provide the chart path explicitly using --chart-path",
-		releaseName, namespace, meta.Name, meta.Version)
+	return cfg, nil
 }

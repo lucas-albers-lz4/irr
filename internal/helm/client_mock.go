@@ -18,11 +18,16 @@ type MockHelmClient struct {
 	GetChartCallCount     int
 	TemplateCallCount     int
 	GetNamespaceCallCount int
+	FindChartCallCount    int
+	ValidateCallCount     int
 
 	// Error simulation
-	GetValuesError error
-	GetChartError  error
-	TemplateError  error
+	GetValuesError   error
+	GetChartError    error
+	TemplateError    error
+	FindChartError   error
+	ValidateError    error
+	FindChartResults map[string]string // releaseKey -> chartPath
 }
 
 // NewMockHelmClient creates a new MockHelmClient
@@ -31,6 +36,7 @@ func NewMockHelmClient() *MockHelmClient {
 		ReleaseValues:    make(map[string]map[string]interface{}),
 		ReleaseCharts:    make(map[string]*ChartMetadata),
 		TemplateResults:  make(map[string]string),
+		FindChartResults: make(map[string]string),
 		CurrentNamespace: "default",
 	}
 }
@@ -101,6 +107,52 @@ func (m *MockHelmClient) GetCurrentNamespace() string {
 	return m.CurrentNamespace
 }
 
+// FindChartForRelease returns a mocked chart path for a release
+func (m *MockHelmClient) FindChartForRelease(_ context.Context, releaseName, namespace string) (string, error) {
+	m.FindChartCallCount++
+
+	if m.FindChartError != nil {
+		return "", m.FindChartError
+	}
+
+	releaseKey := releaseName
+	if namespace != "" {
+		releaseKey = fmt.Sprintf("%s/%s", namespace, releaseName)
+	}
+
+	// If a specific result was configured, return it
+	if path, exists := m.FindChartResults[releaseKey]; exists {
+		return path, nil
+	}
+
+	// Otherwise, return a default path
+	return fmt.Sprintf("/mock/helm/charts/%s", releaseName), nil
+}
+
+// ValidateRelease validates a release with overrides (mock implementation)
+func (m *MockHelmClient) ValidateRelease(_ context.Context, releaseName, namespace string, _ []string, _ string) error {
+	m.ValidateCallCount++
+
+	if m.ValidateError != nil {
+		return m.ValidateError
+	}
+
+	// Simply check if the release exists in our mock data
+	releaseKey := releaseName
+	if namespace != "" {
+		releaseKey = fmt.Sprintf("%s/%s", namespace, releaseName)
+	}
+
+	_, valuesExist := m.ReleaseValues[releaseKey]
+	_, chartExists := m.ReleaseCharts[releaseKey]
+
+	if !valuesExist || !chartExists {
+		return fmt.Errorf("release %q not found for validation", releaseKey)
+	}
+
+	return nil
+}
+
 // SetupMockRelease is a helper method to set up a mock release
 func (m *MockHelmClient) SetupMockRelease(releaseName, namespace string, values map[string]interface{}, chartMetadata *ChartMetadata) {
 	releaseKey := releaseName
@@ -115,4 +167,14 @@ func (m *MockHelmClient) SetupMockRelease(releaseName, namespace string, values 
 // SetupMockTemplate is a helper method to set up a mock template result
 func (m *MockHelmClient) SetupMockTemplate(chartPath, result string) {
 	m.TemplateResults[chartPath] = result
+}
+
+// SetupMockChartPath is a helper method to set up a mock chart path for a release
+func (m *MockHelmClient) SetupMockChartPath(releaseName, namespace, chartPath string) {
+	releaseKey := releaseName
+	if namespace != "" {
+		releaseKey = fmt.Sprintf("%s/%s", namespace, releaseName)
+	}
+
+	m.FindChartResults[releaseKey] = chartPath
 }
