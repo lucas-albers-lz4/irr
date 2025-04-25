@@ -188,7 +188,7 @@ func (d *Detector) processMapValue(v map[string]interface{}, path []string) ([]D
 	}
 
 	// If not an image map, recurse into values
-	log.Debug("Structure at path", pathToString(path), "did not match image map pattern, recursing into values.")
+	log.Debug("Structure at path", PathToString(path), "did not match image map pattern, recursing into values.")
 	for key, val := range v {
 		newPath := append(append([]string{}, path...), key)
 		detected, unsupported, err := d.DetectImages(val, newPath)
@@ -305,7 +305,7 @@ func (d *Detector) processSliceValue(v []interface{}, path []string) ([]Detected
 
 // processStringValue handles detection of images in string values
 func (d *Detector) processStringValue(v string, path []string) ([]DetectedImage, []UnsupportedImage, error) {
-	log.Debug("[DEBUG irr DETECT STRING] Processing string value", "path", pathToString(path), "value", v)
+	log.Debug("[DEBUG irr DETECT STRING] Processing string value", "path", PathToString(path), "value", v)
 
 	// Add nil check for context
 	if d.context == nil {
@@ -340,9 +340,9 @@ func (d *Detector) processStringValue(v string, path []string) ([]DetectedImage,
 		// In non-strict mode, any error from tryExtractImageFromString (template or parse error)
 		// means we should just skip this string value.
 		if errors.Is(err, ErrSkippedTemplateDetection) {
-			log.Debug("[DEBUG irr DETECT STRING SKIP] Skipping template value (non-strict)", "path", pathToString(path), "value", v)
+			log.Debug("[DEBUG irr DETECT STRING SKIP] Skipping template value (non-strict)", "path", PathToString(path), "value", v)
 		} else {
-			log.Debug("[DEBUG irr DETECT STRING SKIP] Skipping unparseable value (non-strict)", "path", pathToString(path), "value", v, "error", err)
+			log.Debug("[DEBUG irr DETECT STRING SKIP] Skipping unparseable value (non-strict)", "path", PathToString(path), "value", v, "error", err)
 		}
 		// Return nil slices and nil error for skips in non-strict mode.
 		return nil, nil, nil
@@ -352,10 +352,10 @@ func (d *Detector) processStringValue(v string, path []string) ([]DetectedImage,
 	if imgRef != nil {
 		// In non-strict mode, always add the detected image. Filtering happens later.
 		detectedImages = append(detectedImages, *imgRef)
-		log.Debug("[DEBUG irr DETECT STRING ADD] Detected image (non-strict)", "path", pathToString(path), "value", v)
+		log.Debug("[DEBUG irr DETECT STRING ADD] Detected image (non-strict)", "path", PathToString(path), "value", v)
 	} else {
 		// This case should ideally not happen if err is nil, but log if it does.
-		log.Warn("[DEBUG irr DETECT STRING WARN] tryExtractImageFromString returned nil error and nil imgRef (non-strict)", "path", pathToString(path), "value", v)
+		log.Warn("[DEBUG irr DETECT STRING WARN] tryExtractImageFromString returned nil error and nil imgRef (non-strict)", "path", PathToString(path), "value", v)
 	}
 
 	// Always return nil unsupportedMatches and nil error for non-strict string processing success/skip.
@@ -755,8 +755,8 @@ func copyPath(p []string) []string {
 	return newPath
 }
 
-// pathToString converts a path slice to a dot-separated string for logging.
-func pathToString(path []string) string {
+// PathToString converts a path slice to a dot-separated string for logging.
+func PathToString(path []string) string {
 	return strings.Join(path, ".")
 }
 
