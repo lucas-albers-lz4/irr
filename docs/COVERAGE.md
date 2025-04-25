@@ -106,8 +106,8 @@ To maximize impact and efficiency, follow this order when working through files 
   4. **Post-Change Verification:**
      - Run targeted tests to verify the changes work as expected ✓
      - Run targeted linting to confirm specific issues are resolved ✓
-     - Run full test suite: `go test ./...` ✓
-     - Run full linting: `golangci-lint run` ✓
+     - Run full test suite: `make test-quiet` ✓
+     - Run full linting: `make lint` ✓
 
 
 ## 1. Goal and Scope
@@ -225,26 +225,26 @@ To maximize impact and efficiency, follow this order when working through files 
 ### Phase 3: Address `cmd/irr` and `internal/helm` (Critical Low Coverage) & Add Core Integration Tests - **[IN PROGRESS]**
 
 *   **Goal:** Achieve ≥60% coverage for `cmd/irr` (Currently 46.5%) and `internal/helm` (Currently 37.4%). Focus on testing command execution paths, flag handling, helper functions, and particularly functions currently at 0% coverage (see list below). **Simultaneously, add integration tests (`test/integration`) focusing on identified gaps: Helm mode execution and core `override` scenarios.**
-*   **Testing Strategy:** For `cmd/irr`, prioritize black-box style tests using Cobra's `ExecuteCommandC` or simulating Helm plugin execution environment to verify end-to-end command behavior. Write direct unit tests for complex *private* helper functions *only if* command-level or integration tests don't provide sufficient coverage. For `internal/helm`, use mocks extensively. Add integration tests in `test/integration` targeting the gaps identified below.
+*   **Testing Strategy:** For `cmd/irr`, prioritize black-box style tests using Cobra's `ExecuteCommandC` or simulating Helm plugin execution (by invoking `irr` with `<release>` and `--namespace` flags, as Helm would) to verify end-to-end command behavior. Encourage consistent test naming (e.g., `Test<Command>_<Scenario>`). Write direct unit tests for complex *private* helper functions *only if* command-level or integration tests don't provide sufficient coverage. For `internal/helm`, use mocks extensively. Add integration tests in `test/integration` targeting the gaps identified below.
 *   **Completion Criteria:** Achieve ≥60% coverage for both `cmd/irr` and `internal/helm`, with no critical execution-path functions remaining at 0%. Add baseline integration tests covering Helm mode and core `override` scenarios.
 *   **Packages & Specific Actions:** (Focus on 0% functions first, interleave with integration test creation)
     *   **Integration Tests (`test/integration`)**: **[TODO - Add New/Verify Existing]**
         *   **Priority 1: Helm Mode Execution (GAP)**
-            - [ ] Add `TestInspectCommand_HelmMode`: Test `irr inspect <release> --namespace <ns>`.
-            - [ ] Add `TestOverrideCommand_HelmMode`: Test `irr override <release> --namespace <ns> --target-registry ...`.
-            - [ ] Add `TestValidateCommand_HelmMode`: Test `irr validate <release> --namespace <ns>` (requires setting up overrides first).
-        *   **Priority 2: `override` Command Scenarios (GAPS)**
+            - [ ] Add `TestInspectCommand_HelmMode` to `inspect_command_test.go`: Test `irr inspect <release> --namespace <ns>`.
+            - [ ] Add `TestOverrideCommand_HelmMode` to `override_command_test.go`: Test `irr override <release> --namespace <ns> --target-registry ...`.
+            - [ ] Add `TestValidateCommand_HelmMode` to `validate_command_test.go`: Test `irr validate <release> --namespace <ns>` (requires setting up overrides first).
+        *   **Priority 2: `override` Command Scenarios (GAPS) - Add to `override_command_test.go`**
             - [ ] Add `TestOverrideCommand_FlatStrategy`: Test `--path-strategy Flat`.
             - [ ] Add `TestOverrideCommand_Rules`: Test with a chart known to trigger rules (e.g., Bitnami security bypass) and verify output.
             - [ ] Add `TestOverrideCommand_Stdout`: Test `--output stdout`.
             - [ ] Add `TestOverrideCommand_RegistryMappingsFile`: Test using `--registry-mappings <file>`.
             - [ ] Verify/Enhance `TestOverrideFallbackTriggeredAndSucceeds`: Ensure it adequately covers the default (`PrefixSourceRegistry`) strategy if not covered elsewhere.
         *   **Priority 3: Other Gaps**
-            - [ ] Add `TestInspectCommand_JsonOutput`: Test `irr inspect --output-format json`.
-            - [ ] Add `TestValidateCommand_Strict`: Find a way to test `validate --strict` effectively (might require a chart that passes `override --strict` but fails `validate --strict`, or mocking).
-        *   **Priority 4: Verify Existing Coverage**
-            - [ ] Review `inspect_command_test.go`: Confirm standalone, subchart, basic flags coverage is robust.
-            - [ ] Review `validate_command_test.go`: Confirm standalone, multiple values, error cases coverage is robust.
+            - [ ] Add `TestInspectCommand_JsonOutput` to `inspect_command_test.go`: Test `irr inspect --output-format json`.
+            - [ ] Add `TestValidateCommand_Strict` to `validate_command_test.go`: Find a way to test `validate --strict` effectively (might require a chart that passes `override --strict` but fails `validate --strict`, or mocking).
+        *   **Priority 4: Review and Enhance Existing Coverage**
+            - [ ] Review and, if needed, refactor/enhance `inspect_command_test.go` to ensure standalone, subchart, basic flags coverage is robust and assertions are clear.
+            - [ ] Review and, if needed, refactor/enhance `validate_command_test.go` to ensure standalone, multiple values, error cases coverage is robust and assertions are clear.
     *   **`internal/helm/adapter.go`:** (Part of `internal/helm` - 37.4%)
         *   **Priority 1 (0%):**
             - [ ] `TestHandleChartYamlMissingWithSDK`: Add tests. **[0%]**
