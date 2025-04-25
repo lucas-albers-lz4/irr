@@ -302,6 +302,20 @@ compatibility:
 *   **`version`** (Optional): Specifies the configuration file format version.
 *   **`compatibility`** (Optional): Contains flags for handling potential backward compatibility issues (rarely needed).
 
+### Understanding Configuration Precedence (Override Command)
+
+When using the `irr override` command, it's important to understand how the different configuration options interact, especially regarding the target registry:
+
+1.  **Highest Priority: Explicit Mapping:** If an image's source registry (e.g., `docker.io`) is listed in `--source-registries` and has a specific, enabled entry in the `registries.mappings` list within the configuration file, the `target` defined in that mapping entry is **always** used.
+
+2.  **Fallback 1: `defaultTarget` (if `strictMode: false`)**: If an image's source registry is listed in `--source-registries` but **lacks** a specific mapping in the configuration file, *and* `registries.strictMode` is `false` (the default), `irr` checks if `registries.defaultTarget` is defined in the config file. If it is, this `defaultTarget` URL is used (combined with the selected path strategy, e.g., `prefix-source-registry`).
+
+3.  **Fallback 2: `--target-registry` CLI Flag (if `strictMode: false`)**: If there's no specific mapping *and* no `registries.defaultTarget` in the config file, *and* `registries.strictMode` is `false`, `irr` falls back to using the URL provided by the `--target-registry` CLI flag (combined with the selected path strategy). This CLI flag is therefore the ultimate fallback when not using strict mode.
+
+4.  **Strict Mode Enforcement:** If `registries.strictMode` is set to `true` in the configuration file, then **every** registry listed in the `--source-registries` CLI flag **must** have a corresponding, enabled entry in `registries.mappings`. If a mapping is missing, the command will **fail** instead of using any fallback (`defaultTarget` or `--target-registry`). Use `strictMode: true` to prevent accidental reliance on fallbacks and ensure all redirections are explicitly defined.
+
+In summary, you only *need* the `--target-registry` CLI flag if `strictMode` is `false` AND you might have source registries listed in `--source-registries` that are not explicitly mapped in your configuration file AND you haven't defined a `registries.defaultTarget`.
+
 ## Exit Codes
 
 | Code | Meaning                   |
