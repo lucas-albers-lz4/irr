@@ -47,18 +47,25 @@ quay.io: registry.example.com/quay
 
 // TestHarness provides a structure for setting up and running integration tests.
 type TestHarness struct {
-	t            *testing.T
-	tempDir      string
-	chartPath    string
-	targetReg    string
-	sourceRegs   []string
-	overridePath string
-	mappingsPath string
-	chartName    string
-	rootDir      string
-	outputPath   string
-	logger       *slog.Logger
-	cleanupFuncs []func()
+	t              *testing.T
+	tempDir        string
+	chartPath      string
+	targetReg      string
+	sourceRegs     []string
+	overridePath   string
+	mappingsPath   string
+	chartName      string
+	rootDir        string
+	outputPath     string
+	logger         *slog.Logger
+	cleanupFuncs   []func()
+	mockHelmClient *MockHelmClient // Added for helm client mocking
+}
+
+// MockHelmClient is a simplified mock for testing
+type MockHelmClient struct {
+	GetValuesFunc func(releaseName string, allValues bool) (map[string]interface{}, error)
+	MockChartPath string
 }
 
 // NewTestHarness creates a new TestHarness.
@@ -87,13 +94,14 @@ func NewTestHarness(t *testing.T) *TestHarness {
 	}
 
 	h := &TestHarness{
-		t:            t,
-		tempDir:      tempDir,
-		rootDir:      rootDir, // Initialize rootDir field
-		overridePath: filepath.Join(tempDir, "generated-overrides.yaml"),
-		mappingsPath: "",           // No mappings by default
-		outputPath:   "",           // No explicit output by default
-		logger:       log.Logger(), // <-- Use custom logger instance getter
+		t:              t,
+		tempDir:        tempDir,
+		rootDir:        rootDir, // Initialize rootDir field
+		overridePath:   filepath.Join(tempDir, "generated-overrides.yaml"),
+		mappingsPath:   "",                // No mappings by default
+		outputPath:     "",                // No explicit output by default
+		logger:         log.Logger(),      // <-- Use custom logger instance getter
+		mockHelmClient: &MockHelmClient{}, // Initialize mock helm client
 	}
 
 	// Setup testing environment variable
@@ -702,20 +710,33 @@ func (h *TestHarness) SetChartPath(path string) {
 
 // GetTestdataPath returns the absolute path to a test chart directory.
 func (h *TestHarness) GetTestdataPath(relPath string) string {
-	// Construct path relative to the project root
-	projectRootPath := filepath.Join(h.rootDir, "test-data", relPath) // <-- Use "test-data" directly from root
+	// First try the test/testdata path
+	testdataPath := filepath.Join(h.rootDir, "test", "testdata", relPath)
 
-	// Check if the path exists
-	if _, err := os.Stat(projectRootPath); err == nil {
-		absPath, absErr := filepath.Abs(projectRootPath)
+	// Check if the path exists in test/testdata
+	if _, err := os.Stat(testdataPath); err == nil {
+		absPath, absErr := filepath.Abs(testdataPath)
 		if absErr != nil {
-			h.t.Fatalf("Failed to get absolute path for %s: %v", projectRootPath, absErr)
+			h.t.Fatalf("Failed to get absolute path for %s: %v", testdataPath, absErr)
 		}
 		return absPath
 	}
 
-	// If not found relative to root, log a fatal error as the fallback logic was likely incorrect
-	h.t.Fatalf("Test data path not found at %s. Original relative path: %s", projectRootPath, relPath)
+	// Also try the test-data path as an alternative
+	altPath := filepath.Join(h.rootDir, "test-data", relPath)
+
+	// Check if the path exists in test-data
+	if _, err := os.Stat(altPath); err == nil {
+		absPath, absErr := filepath.Abs(altPath)
+		if absErr != nil {
+			h.t.Fatalf("Failed to get absolute path for %s: %v", altPath, absErr)
+		}
+		return absPath
+	}
+
+	// If not found in either location, log a fatal error
+	h.t.Fatalf("Test data path not found at either %s or %s. Original relative path: %s",
+		testdataPath, altPath, relPath)
 	return "" // Unreachable, but satisfies compiler
 }
 
@@ -1118,4 +1139,21 @@ func (h *TestHarness) RunIrrCommandWithOutput(cmdArgs []string) (string, error) 
 	}
 
 	return string(outputBytes), nil
+}
+
+// RunIrrCommand executes the IRR command with the given arguments and returns stdout, stderr, and exit code
+func (h *TestHarness) RunIrrCommand(args ...string) (stdout, stderr string, exitCode int) {
+	// This is a simplified implementation that just uses ExecuteIRRWithStderr and captures exit code
+	output, errOut, err := h.ExecuteIRRWithStderr(nil, args...)
+
+	// If err is an ExitCodeError, extract the exit code
+	var exitErr *exec.ExitError
+	if err != nil && errors.As(err, &exitErr) {
+		exitCode = exitErr.ExitCode()
+	} else if err != nil {
+		// For other errors, use a generic error code
+		exitCode = 1
+	}
+
+	return output, errOut, exitCode
 }
