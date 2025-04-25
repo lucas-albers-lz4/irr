@@ -180,7 +180,6 @@ irr override --chart-path CHART_PATH [flags]
 | `--config`               | DEPRECATED: Use `--registry-file` instead                 |                          |                                                  |
 | `--dry-run`              | Preview without writing (`stdout`)                       | false                    | `--dry-run`                                      |
 | `-o`, `--output-file`    | Output file path for overrides                           | `stdout`                 | `--output-file overrides.yaml`                   |
-| `-p`, `--strategy`       | Path generation strategy                                 | `prefix-source-registry` | `--strategy prefix-source-registry`              |
 | `--exclude-registries`   | Registries to exclude                                    |                          | `--exclude-registries gcr.io`                    |
 | `--include-pattern`      | Glob patterns to include                                 |                          | `--include-pattern "*.image"`                    |
 | `--exclude-pattern`      | Glob patterns to exclude                                 |                          | `--exclude-pattern "*.test.*"`                   |
