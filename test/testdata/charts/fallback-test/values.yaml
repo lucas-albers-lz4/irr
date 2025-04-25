@@ -1,0 +1,13 @@
+replicaCount: 1
+
+image:
+  repository: docker.io/nginx
+  pullPolicy: IfNotPresent
+  # Tag is derived from .Chart.AppVersion
+
+nonProblematicArgs:
+  - --arg1
+  - --arg2=val
+
+# We intentionally don't define problematicArgs here because they should only 
+# be in the live values, not the default values 
