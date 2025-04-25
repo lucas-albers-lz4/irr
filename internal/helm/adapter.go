@@ -2,6 +2,7 @@ package helm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -54,6 +55,11 @@ type OverrideOptions struct {
 	StrictMode       bool
 	PathStrategy     string
 }
+
+// ErrAnalysisFailedDueToProblematicStrings indicates that the image detection process failed
+// because it encountered string values that could not be reliably parsed or were likely
+// not image references (e.g., command arguments), leading to potential inaccuracies.
+var ErrAnalysisFailedDueToProblematicStrings = errors.New("analysis failed due to problematic strings")
 
 // NewAdapter creates a new Helm adapter
 func NewAdapter(helmClient ClientInterface, fs afero.Fs, isPlugin bool) *Adapter {
@@ -210,12 +216,15 @@ func (a *Adapter) OverrideRelease(ctx context.Context, releaseName, namespace st
 
 	// Initialize detector properly
 	detector := image.NewDetector(detectionContext)
-	detectedImages, _, err := detector.DetectImages(values, nil)
-	if err != nil {
-		return "", fmt.Errorf("failed to detect images in release values: %w", err)
+	detectedImages, unsupportedMatches, err := detector.DetectImages(values, nil)
+
+	// Check for analysis errors or unsupported strings
+	if err != nil || len(unsupportedMatches) > 0 {
+		err = a.handleUnsupportedMatches(releaseName, err, unsupportedMatches)
+		return "", err
 	}
 
-	// Generate overrides map manually
+	// Generate overrides map manually (only if no errors/unsupported strings occurred)
 	overrideMap := make(map[string]interface{})
 
 	for _, img := range detectedImages {
@@ -276,6 +285,62 @@ func (a *Adapter) OverrideRelease(ctx context.Context, releaseName, namespace st
 	}
 
 	return string(yamlBytes), nil
+}
+
+// handleUnsupportedMatches processes unsupported matches and errors from image detection
+// and returns an appropriate error message with recommendations
+func (a *Adapter) handleUnsupportedMatches(releaseName string, err error, unsupportedMatches []image.UnsupportedImage) error {
+	var problematicPaths []string
+	warningMessage := strings.Builder{}
+	warningMessage.WriteString("Warning: Analysis encountered issues processing live release values.\n")
+
+	if err != nil {
+		// Log the primary error
+		log.Error("Error during image detection in release values", "release", releaseName, "error", err)
+		warningMessage.WriteString(fmt.Sprintf("- Detection error: %v\n", err))
+		// We might not have specific path info from a general error, depends on the error type
+	}
+
+	// Process unsupported matches specifically for string errors
+	if len(unsupportedMatches) > 0 {
+		warningMessage.WriteString("- Problematic string values found at paths:\n")
+		for _, item := range unsupportedMatches {
+			// Focus on string errors as the primary trigger for the --exclude-pattern recommendation
+			if item.Type == image.UnsupportedTypeStringParseError || item.Type == image.UnsupportedTypeString {
+				// Use the exported PathToString function
+				pathStr := image.PathToString(item.Location)
+				log.Warn("Problematic string detected during live value analysis", "path", pathStr, "error", item.Error)
+				warningMessage.WriteString(fmt.Sprintf("  - %s (Error: %v)\n", pathStr, item.Error))
+				problematicPaths = append(problematicPaths, pathStr)
+			} else {
+				// Log other unsupported types for context, but don't emphasize them in the user warning
+				// Use the exported PathToString function
+				log.Debug("Unsupported structure detected", "path", image.PathToString(item.Location), "type", item.Type, "error", item.Error)
+			}
+		}
+	}
+
+	// Determine the appropriate recommendation message
+	switch {
+	case len(problematicPaths) > 0:
+		warningMessage.WriteString("Recommendation: Re-run the command using --exclude-pattern to ignore these paths for accurate results.\n")
+		warningMessage.WriteString("Example:")
+		for _, p := range problematicPaths {
+			// Provide a basic example; users might need more complex patterns
+			warningMessage.WriteString(fmt.Sprintf(" --exclude-pattern '%s'", p))
+		}
+		warningMessage.WriteString("\n")
+	case err != nil:
+		// If there was a general error but no specific string issues identified
+		warningMessage.WriteString("Recommendation: Check the Helm release values or chart structure for potential issues.\n")
+	default:
+		// Should not happen if len(unsupportedMatches) > 0, but handle defensively
+		warningMessage.WriteString("Recommendation: Review logs for details on unsupported structures.\n")
+	}
+
+	// Return a specific error indicating the analysis issue
+	// Embed the warning message in the error for clarity
+	return fmt.Errorf("%w: %s", ErrAnalysisFailedDueToProblematicStrings, warningMessage.String())
 }
 
 // sanitizeRegistryForPath sanitizes a registry name for use in a path

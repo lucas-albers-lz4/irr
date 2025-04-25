@@ -329,6 +329,83 @@ func TestOverrideRelease(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestOverrideReleaseWithProblematicStrings(t *testing.T) {
+	// Create a base mock client first
+	baseMockClient := NewMockHelmClient()
+
+	// Setup the mock release data for the base client
+	chartMeta := &ChartMetadata{Name: "test-release-chart", Version: "1.0.0"}
+	releaseName := "test-release"
+	namespace := "default"
+	baseValues := map[string]interface{}{ // These are the *initial* values before modification by MockHelmClientWithErrors
+		"image": map[string]interface{}{ // This key might need adjustment based on how GetReleaseValues is overridden
+			"repository": "nginx", // Ensure this doesn't contain docker.io if sourceRegistries expects it
+			"tag":        "1.14.0",
+		},
+	}
+	baseMockClient.SetupMockRelease(releaseName, namespace, baseValues, chartMeta)
+
+	// Now create the client that overrides GetReleaseValues
+	mockClient := &MockHelmClientWithErrors{
+		MockHelmClient: *baseMockClient, // Embed the configured base client
+	}
+
+	// Create the adapter with our mock client, fs, and plugin mode
+	fs := afero.NewMemMapFs()
+	adapter := NewAdapter(mockClient, fs, true) // Correct initialization
+
+	// Define the override options
+	options := OverrideOptions{
+		TargetRegistry:   "my-registry.example.com",
+		SourceRegistries: []string{"docker.io"}, // Crucial: Ensure this matches the source registry added by MockHelmClientWithErrors override
+		StrictMode:       false,
+		PathStrategy:     "prefix-source-registry", // Or another valid strategy
+	}
+
+	// Test overriding release - handle both return values
+	// MockHelmClientWithErrors.GetReleaseValues will add the problematicArgs
+	// OverrideRelease will then analyze these modified values
+	_, err := adapter.OverrideRelease(context.Background(), releaseName, namespace, options.TargetRegistry, options.SourceRegistries, options.PathStrategy, options)
+
+	// Assert error is returned
+	assert.Error(t, err)
+
+	// The error should contain information about problematic values
+	// Check for the specific error type introduced for this scenario
+	assert.ErrorIs(t, err, ErrAnalysisFailedDueToProblematicStrings, "Error should wrap ErrAnalysisFailedDueToProblematicStrings")
+}
+
+// MockHelmClientWithErrors extends MockHelmClient to simulate errors during image analysis
+// by adding problematic values that the detector will likely misinterpret.
+type MockHelmClientWithErrors struct {
+	MockHelmClient
+}
+
+// GetReleaseValues overrides the mock method to return values that will trigger analysis errors.
+func (m *MockHelmClientWithErrors) GetReleaseValues(ctx context.Context, releaseName, namespace string) (map[string]interface{}, error) {
+	// First call the original method to maintain the rest of the mock behavior
+	values, err := m.MockHelmClient.GetReleaseValues(ctx, releaseName, namespace)
+	if err != nil {
+		return nil, err
+	}
+
+	// Add values that will likely be detected as problematic strings by the image detector.
+	// The detector might attempt to parse the string "looks.like/a-repo:v1.2.3" as an image and fail,
+	// resulting in an UnsupportedImage entry with Type = UnsupportedTypeStringParseError
+	// and Location = ["problematicArgs", "1"] (assuming it's the second element).
+	problematicArgs := []interface{}{
+		"--some-arg",
+		"looks.like/a-repo:v1.2.3", // This should trigger the specific error
+		"--another-arg",
+	}
+	values["problematicArgs"] = problematicArgs
+
+	// Optionally add another problematic value that might just be a string
+	values["anotherProblematicString"] = "just-a-string-that-is-not-an-image"
+
+	return values, nil
+}
+
 func TestResolveChartPath(t *testing.T) {
 	testCases := []struct {
 		name        string
