@@ -4,6 +4,7 @@ package integration
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -368,4 +369,71 @@ func TestOverrideSimpleChart(t *testing.T) {
 	assert.Contains(t, string(content), "test-registry.local", "Output should include the target registry")
 	assert.Contains(t, string(content), "docker.io/library/nginx", "Output should include the transformed repository path for docker.io")
 	assert.Contains(t, string(content), "1.21.0", "Output should include the original tag")
+}
+
+func TestOverrideFallbackTriggeredAndSucceeds(t *testing.T) {
+	h := NewHarness(t)
+	defer h.Cleanup()
+
+	// Define the chart path
+	chartPath := GetTestdataPath("charts", "fallback-test")
+
+	// Define the problematic live values
+	liveValues := map[string]interface{}{
+		"replicaCount": float64(2), // Simulate live value differing from default
+		"image": map[string]interface{}{
+			"repository": "defaultrepo/defaultimage", // Matches default
+			"pullPolicy": "Always",                   // Differs from default
+			// Tag comes from Chart.yaml AppVersion (1.0.0)
+		},
+		"nonProblematicArgs": []interface{}{ // Matches default
+			"--arg1",
+			"--arg2=val",
+		},
+		"problematicArgs": []interface{}{ // This will cause the analysis error
+			"--real-arg=foo",
+			"--misleading-arg=looks.like/a-repo:v1.2.3",
+		},
+	}
+
+	// Configure the mock Helm client to return these live values
+	h.mockHelmClient.GetValuesFunc = func(releaseName string, allValues bool) (map[string]interface{}, error) {
+		require.Equal(t, "test-release", releaseName, "GetValues called with unexpected release name")
+		require.True(t, allValues, "GetValues should be called with allValues=true")
+		// Return a deep copy to prevent modification? For this test, direct return is okay.
+		return liveValues, nil
+	}
+	// Mock GetChartPath to return the correct path for our test chart
+	h.mockHelmClient.MockChartPath = chartPath
+
+	// Define expected override content (based ONLY on default values analysis)
+	// Note: The repository and tag match the defaults, registry comes from target
+	expectedOverrides := `
+image:
+  registry: my-target-registry.com
+  repository: defaultrepo/defaultimage
+  tag: 1.0.0
+`
+	// Define the expected warning message pattern
+	// Be somewhat flexible with whitespace and exact phrasing, but capture key elements.
+	// Use `regexp.QuoteMeta` for literal parts if needed, but simple matching works here.
+	expectedWarningRegex := regexp.MustCompile(`(?s)WARN.*error occurred processing live values.*problematicArgs.*Generated overrides are based ONLY on the chart's default values.*Images configured ONLY in the live release values might be MISSING.*use the --exclude-pattern`)
+
+	// Run the override command targeting the release
+	// We need source-registries that would match the default image repo if live analysis worked
+	cmd := []string{"override", "test-release",
+		"--target-registry", "my-target-registry.com",
+		"--source-registries", "defaultrepo", // Source registry matching the default image
+		"--log-level", "debug", // Use debug to see potential internal errors
+	}
+
+	stdout, stderr, exitCode := h.RunIrrCommand(cmd...)
+
+	// Assertions
+	assert.Equal(t, 0, exitCode, "Expected command to succeed with exit code 0 (fallback occurred)")
+	assert.Regexp(t, expectedWarningRegex, stderr, "Stderr should contain the specific fallback warning message")
+	assert.YAMLEq(t, strings.TrimSpace(expectedOverrides), strings.TrimSpace(stdout), "Stdout should contain overrides based only on default values")
+
+	// Optional: Add assertion to check DEBUG logs for the specific parsing error related to problematicArgs
+	// assert.Contains(t, stderr, "Failed to process value '--misleading-arg=looks.like/a-repo:v1.2.3' at path 'problematicArgs[1]'", "Debug logs should show the specific parsing error")
 }
