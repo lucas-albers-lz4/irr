@@ -88,6 +88,10 @@ func GetHelmSettings() *cli.EnvSettings {
 }
 
 // GetChartPathFromRelease attempts to get the chart path from a Helm release
+// by retrieving the chart metadata (name, version) from the release
+// and then attempting to pull the chart source using 'helm pull'.
+// This requires the chart to be available in configured Helm repositories
+// or otherwise downloadable by Helm. It saves the chart to a temporary directory.
 func GetChartPathFromRelease(releaseName string) (string, error) {
 	if releaseName == "" {
 		return "", fmt.Errorf("release name is empty")

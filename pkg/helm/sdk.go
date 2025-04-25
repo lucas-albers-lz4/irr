@@ -39,7 +39,10 @@ func SetFileSystem(newFs afero.Fs) {
 	fs = newFs
 }
 
-// ResolveChartPath resolves a chart path from a release name using the Helm SDK
+// ResolveChartPath attempts to resolve a chart path.
+// NOTE: This currently only validates if the provided chartPath exists.
+// It does not perform actual Helm SDK resolution based on release name or repo.
+// Configuration parameter is currently unused.
 func ResolveChartPath(_ *action.Configuration, _, chartPath string) (string, error) {
 	// Check if chart path exists
 	exists, err := afero.Exists(fs, chartPath)
