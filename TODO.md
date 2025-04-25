@@ -563,3 +563,37 @@ Introduce a `--no-validate` flag to the `irr override` command. This allows user
 - [ ] Manual testing using charts known to fail validation without specific required values (e.g., charts identified in the previous bulk test analysis). (Pending)
 - [ ] Subsequent testing via `test-charts.py` (after it's updated to use this flag) to confirm the reduction in validation-related failures during the 'override' phase. (Pending)
 
+## Phase 12: Enhance Override Robustness for Live Release Value Errors
+
+**Goal:** Improve the `helm irr override <release_name>` command's handling of specific errors encountered when analyzing live release values (`--all` values), preventing complete failure and providing useful feedback.
+
+**Proposed Behavior:**
+
+1.  **Primary Path (Attempt Live Analysis):**
+    *   Fetch computed values (`helm get values <release_name> --all`).
+    *   Attempt to parse and analyze these live values for all image references.
+    *   If successful, generate the override file based on these live values (current ideal behavior).
+
+2.  **Fallback Path (Handle Specific Analysis Errors):**
+    *   **Trigger Condition:** If the live value analysis fails *specifically* due to errors interpretable as "misidentified non-image string" (e.g., parsing `extraArgs` elements as images).
+    *   **Action on Trigger:**
+        *   **Log Error:** Log the exact path and value causing the failure.
+        *   **Attempt Default Analysis:** Locate the chart in the Helm cache. Load and analyze its *default* `values.yaml` for image references.
+        *   **If Default Analysis Succeeds:**
+            *   Generate the override file based *only* on images found in the *default* values.
+            *   **Issue Prominent Warning:** Output a clear warning message, ensuring it's visible on the console and captured in logs, indicating:
+                *   That an error occurred processing live values at specific path(s).
+                *   The generated overrides are based *only on the chart's default values*.
+                *   **Images configured *only* in the live release values might be MISSING.**
+                *   A strong recommendation to **review the output carefully** and use the `--exclude-pattern` flag (e.g., `--exclude-pattern 'problematic.path.*'`) on the original command against the release name for a more accurate result based on live data.
+        *   **If Default Analysis *Also* Fails:** Report the error encountered during the default analysis.
+    *   **Other Errors:** If the live analysis fails for other reasons (Helm errors, YAML errors), report the original error directly without attempting the fallback.
+
+**Rationale:**
+
+*   Prioritizes accuracy by attempting live analysis first.
+*   Increases robustness by handling common value interpretation errors gracefully.
+*   Provides a useful (though potentially partial) result instead of complete failure.
+*   Manages user expectations via clear warnings about potential incompleteness in the fallback scenario.
+*   Guides the user toward the best fix (`--exclude-pattern`) for achieving accurate overrides from live values.
+
