@@ -18,6 +18,7 @@ import (
 	"github.com/spf13/afero"
 	"gopkg.in/yaml.v3"
 	"helm.sh/helm/v3/pkg/action"
+	"helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/cli"
 )
 
@@ -186,7 +187,7 @@ func (a *Adapter) OverrideRelease(ctx context.Context, releaseName, namespace st
 	}
 
 	// Get release values from Helm
-	values, err := a.helmClient.GetReleaseValues(ctx, releaseName, namespace)
+	liveValues, err := a.helmClient.GetReleaseValues(ctx, releaseName, namespace)
 	if err != nil {
 		if IsReleaseNotFoundError(err) {
 			return "", &exitcodes.ExitCodeError{
@@ -198,15 +199,16 @@ func (a *Adapter) OverrideRelease(ctx context.Context, releaseName, namespace st
 		return "", fmt.Errorf("failed to get values for release %q: %w", releaseName, err)
 	}
 
-	// Get chart metadata for the release (logging purposes only)
-	_, err = a.helmClient.GetReleaseChart(ctx, releaseName, namespace)
+	// Get chart metadata for the release (needed for fallback path)
+	chartMeta, err := a.helmClient.GetReleaseChart(ctx, releaseName, namespace)
 	if err != nil {
-		return "", fmt.Errorf("failed to get chart metadata for release %q: %w", releaseName, err)
+		// Don't fail outright, but log and we won't be able to fallback
+		log.Warn("Failed to get chart metadata for release, fallback on error will not be possible", "release", releaseName, "error", err)
+		chartMeta = nil // Ensure chartMeta is nil if fetching failed
 	}
 
 	// Set up options as best we can
 	// Fix: Use proper constructor to initialize the detector with a valid context
-	// Create a detection context with source registries from the function parameter
 	detectionContext := image.DetectionContext{
 		SourceRegistries:  sourceRegistries, // Use the source registries from the parameter
 		ExcludeRegistries: []string{},
@@ -216,15 +218,65 @@ func (a *Adapter) OverrideRelease(ctx context.Context, releaseName, namespace st
 
 	// Initialize detector properly
 	detector := image.NewDetector(detectionContext)
-	detectedImages, unsupportedMatches, err := detector.DetectImages(values, nil)
+	detectedImages, unsupportedMatches, initialErr := detector.DetectImages(liveValues, nil)
 
-	// Check for analysis errors or unsupported strings
-	if err != nil || len(unsupportedMatches) > 0 {
-		err = a.handleUnsupportedMatches(releaseName, err, unsupportedMatches)
-		return "", err
+	// Check for analysis errors or unsupported strings from LIVE values
+	if initialErr != nil || len(unsupportedMatches) > 0 {
+		analysisErr := a.handleUnsupportedMatches(releaseName, initialErr, unsupportedMatches)
+
+		// --- Fallback Logic ---
+		// If the specific problematic string error occurred, try with default values
+		if errors.Is(analysisErr, ErrAnalysisFailedDueToProblematicStrings) && chartMeta != nil {
+			log.Warn("Live value analysis failed due to problematic strings. Attempting fallback using default chart values.", "release", releaseName)
+
+			// Find the chart path using the client
+			chartPath, findChartErr := a.helmClient.FindChartForRelease(ctx, releaseName, namespace)
+			if findChartErr != nil {
+				log.Error("Fallback failed: Could not find chart path for release.", "release", releaseName, "error", findChartErr)
+				// Return the original problematic string error, as fallback isn't possible
+				return "", analysisErr
+			}
+
+			// Load the chart to get default values
+			loadedChart, loadErr := loader.Load(chartPath) // Using Helm's loader
+			if loadErr != nil {
+				log.Error("Fallback failed: Could not load chart to get default values.", "chartPath", chartPath, "error", loadErr)
+				// Return the original problematic string error
+				return "", analysisErr
+			}
+
+			defaultValues := loadedChart.Values
+			log.Debug("Attempting analysis with default values", "chartPath", chartPath)
+
+			// Re-run detection with default values
+			// Use the same detector instance and context
+			fallbackDetectedImages, fallbackUnsupported, fallbackErr := detector.DetectImages(defaultValues, nil)
+
+			if fallbackErr != nil || len(fallbackUnsupported) > 0 {
+				// Fallback also failed
+				fallbackAnalysisErr := a.handleUnsupportedMatches(releaseName+" (fallback)", fallbackErr, fallbackUnsupported)
+				log.Error("Fallback analysis also failed.", "release", releaseName, "error", fallbackAnalysisErr)
+				// Return the original problematic string error, indicating primary failure reason
+				return "", analysisErr
+			}
+
+			// Fallback succeeded!
+			log.Warn("Fallback analysis successful. Generating overrides based on DEFAULT chart values.")
+			log.Warn("WARNING: These overrides may be incomplete as they do not reflect live release values.")
+			// Use the results from the fallback
+			detectedImages = fallbackDetectedImages
+			// Clear the initial error since fallback succeeded
+			analysisErr = nil
+		}
+		// --- End Fallback Logic ---
+
+		// If after potential fallback, we still have an error, return it
+		if analysisErr != nil {
+			return "", analysisErr
+		}
+		// If fallback succeeded, analysisErr is nil, and we proceed with detectedImages from fallback
 	}
-
-	// Generate overrides map manually (only if no errors/unsupported strings occurred)
+	// Generate overrides map manually (now uses detectedImages from live *or* fallback analysis)
 	overrideMap := make(map[string]interface{})
 
 	for _, img := range detectedImages {
@@ -248,37 +300,32 @@ func (a *Adapter) OverrideRelease(ctx context.Context, releaseName, namespace st
 		// Build nested structure
 		for i := 0; i < len(path)-1; i++ {
 			key := path[i]
-			if _, exists := current[key]; !exists {
+
+			// Ensure map exists at this level
+			if _, ok := current[key]; !ok {
 				current[key] = make(map[string]interface{})
 			}
-			if nextLevel, ok := current[key].(map[string]interface{}); ok {
-				current = nextLevel
-			} else {
-				log.Warn("Unexpected type for key %s, expected map", key)
-				break
+
+			// Type assertion with check
+			subMap, ok := current[key].(map[string]interface{})
+			if !ok {
+				// This should ideally not happen if logic is correct, but handle defensively
+				return "", fmt.Errorf("internal error: unexpected type at path '%s' while building override structure", strings.Join(path[:i+1], "."))
 			}
+			current = subMap // Move deeper into the map
 		}
 
-		// Set the final value
+		// Set the final value (image structure or simple string)
 		lastKey := path[len(path)-1]
-		current[lastKey] = map[string]interface{}{
-			"registry":   targetRegistry,
-			"repository": newRepo,
-		}
 
-		// Add tag or digest
-		if imgRef.Digest != "" {
-			if valueMap, ok := current[lastKey].(map[string]interface{}); ok {
-				valueMap["digest"] = imgRef.Digest
-			}
-		} else if imgRef.Tag != "" {
-			if valueMap, ok := current[lastKey].(map[string]interface{}); ok {
-				valueMap["tag"] = imgRef.Tag
-			}
-		}
+		// Determine if the original value was a map (image.repository/tag) or a simple string
+		// We need the original structure to recreate the override correctly.
+		// NOTE: The detector currently provides the path, but not the original structure type explicitly.
+		// Assuming simple string override for now, needs refinement if map structures are needed.
+		// TODO: Enhance detector or override logic to handle complex image structures correctly.
+		current[lastKey] = fmt.Sprintf("%s/%s:%s", targetRegistry, newRepo, imgRef.Tag)
 	}
-
-	// Convert to YAML
+	// Convert override map to YAML
 	yamlBytes, err := yaml.Marshal(overrideMap)
 	if err != nil {
 		return "", fmt.Errorf("failed to convert overrides to YAML: %w", err)
@@ -290,57 +337,27 @@ func (a *Adapter) OverrideRelease(ctx context.Context, releaseName, namespace st
 // handleUnsupportedMatches processes unsupported matches and errors from image detection
 // and returns an appropriate error message with recommendations
 func (a *Adapter) handleUnsupportedMatches(releaseName string, err error, unsupportedMatches []image.UnsupportedImage) error {
-	var problematicPaths []string
-	warningMessage := strings.Builder{}
-	warningMessage.WriteString("Warning: Analysis encountered issues processing live release values.\n")
-
-	if err != nil {
-		// Log the primary error
-		log.Error("Error during image detection in release values", "release", releaseName, "error", err)
-		warningMessage.WriteString(fmt.Sprintf("- Detection error: %v\n", err))
-		// We might not have specific path info from a general error, depends on the error type
-	}
-
-	// Process unsupported matches specifically for string errors
 	if len(unsupportedMatches) > 0 {
-		warningMessage.WriteString("- Problematic string values found at paths:\n")
-		for _, item := range unsupportedMatches {
-			// Focus on string errors as the primary trigger for the --exclude-pattern recommendation
-			if item.Type == image.UnsupportedTypeStringParseError || item.Type == image.UnsupportedTypeString {
-				// Use the exported PathToString function
-				pathStr := image.PathToString(item.Location)
-				log.Warn("Problematic string detected during live value analysis", "path", pathStr, "error", item.Error)
-				warningMessage.WriteString(fmt.Sprintf("  - %s (Error: %v)\n", pathStr, item.Error))
-				problematicPaths = append(problematicPaths, pathStr)
-			} else {
-				// Log other unsupported types for context, but don't emphasize them in the user warning
-				// Use the exported PathToString function
-				log.Debug("Unsupported structure detected", "path", image.PathToString(item.Location), "type", item.Type, "error", item.Error)
-			}
+		log.Warn("Detected problematic strings during analysis that might not be images.", "release", releaseName, "count", len(unsupportedMatches))
+		for _, match := range unsupportedMatches {
+			// Log the path where the problematic string was found
+			pathStr := strings.Join(match.Location, ".")
+			// We don't have the value itself in UnsupportedImage, so we log the path and the error type/message.
+			log.Warn("Problematic structure/string found", "path", pathStr, "type", match.Type, "error", match.Error)
 		}
-	}
+		log.Warn("These items were excluded from override generation.")
+		log.Warn("If these ARE image references, the chart structure might be complex or non-standard.")
+		log.Warn("If these are NOT image references (e.g., command args), use --exclude-pattern to filter values paths.")
 
-	// Determine the appropriate recommendation message
-	switch {
-	case len(problematicPaths) > 0:
-		warningMessage.WriteString("Recommendation: Re-run the command using --exclude-pattern to ignore these paths for accurate results.\n")
-		warningMessage.WriteString("Example:")
-		for _, p := range problematicPaths {
-			// Provide a basic example; users might need more complex patterns
-			warningMessage.WriteString(fmt.Sprintf(" --exclude-pattern '%s'", p))
+		// Wrap the original error (if any) or create a new one
+		if err != nil {
+			// Use %w to allow error unwrapping if needed later
+			return fmt.Errorf("%w: %w", ErrAnalysisFailedDueToProblematicStrings, err)
 		}
-		warningMessage.WriteString("\n")
-	case err != nil:
-		// If there was a general error but no specific string issues identified
-		warningMessage.WriteString("Recommendation: Check the Helm release values or chart structure for potential issues.\n")
-	default:
-		// Should not happen if len(unsupportedMatches) > 0, but handle defensively
-		warningMessage.WriteString("Recommendation: Review logs for details on unsupported structures.\n")
+		return ErrAnalysisFailedDueToProblematicStrings
 	}
-
-	// Return a specific error indicating the analysis issue
-	// Embed the warning message in the error for clarity
-	return fmt.Errorf("%w: %s", ErrAnalysisFailedDueToProblematicStrings, warningMessage.String())
+	// If no unsupported matches, return the original error (which might be nil)
+	return err
 }
 
 // sanitizeRegistryForPath sanitizes a registry name for use in a path
