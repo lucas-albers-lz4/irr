@@ -69,6 +69,8 @@ helm irr override my-release -n my-namespace \
   --source-registries docker.io,quay.io
 ```
 
+*Note on Validation:* By default, `helm irr override` automatically runs a validation step (similar to `helm template`) after generating the override file to check if the chart templates correctly with the new values. If `override` fails, but you suspect the override file itself was generated correctly, you can try running the command with the `--no-validate` flag. If it succeeds with `--no-validate`, the issue likely lies in the validation step, potentially due to missing values context when running against a local chart path instead of a deployed release.
+
 ### Helm Plugin Usage Notes
 
 When running `irr` as a Helm plugin (`helm irr ...`), there are a few key differences compared to running the standalone binary:
@@ -103,49 +105,65 @@ Harbor is a commonly used private registry with pull-through cache capabilities.
    helm install prometheus ./prometheus -f prometheus-overrides.yaml
    ```
 
-## Advanced Registry Mapping (Using --registry-file)
+## Configuring Registry Mappings
 
-For cases where you need precise control over specific image mappings, irr provides a `--registry-file` flag that accepts a YAML file with structured source-to-target mappings.
+You can specify custom registry mappings using a YAML configuration file (defaults to `registry-mappings.yaml`). This is the recommended way to control how source registries are mapped to your target registry's directory structure, especially when dealing with multiple sources or needing specific path translations.
 
-### Using the Registry Mappings File
+### Defining Mappings
 
-The registry mapping file (`registry-mappings.yaml` by default, or specified with `--registry-file`) uses a structured format. See the [CLI Reference](docs/cli-reference.md#configuration-file-registry-mappingsyaml) for the full structure.
+Create a `registry-mappings.yaml` file with the following structure:
 
-Example structure (`my-mappings.yaml`):
 ```yaml
-version: "1.0"
+version: "1.0" # Optional but recommended
 registries:
   mappings:
-    - source: "docker.io"
-      target: "my-registry.io/dockerhub"
     - source: "quay.io"
-      target: "my-registry.io/quay"
-    - source: "k8s.gcr.io"
-      target: "my-registry.io/google-k8s"
+      target: "my-registry.example.com/quay-mirror"
+      # enabled: true (optional, defaults to true)
+      # description: "Optional description"
+    - source: "docker.io"
+      target: "my-registry.example.com/docker-mirror"
+    - source: "gcr.io"
+      target: "my-registry.example.com/gcr-mirror"
+
+  # Optional fields for more control:
+  # defaultTarget: "your-fallback-registry.com/generic-prefix"
+  # strictMode: false # Set to true to fail if a source registry isn't explicitly mapped
 ```
 
-To use this file:
+You can also run `irr inspect --generate-config-skeleton` against a chart to generate a starting config file with detected source registries.
+
+Alternatively, you can use the `helm irr config` command to manage the mappings file. For example, to add or update the `docker.io` mapping:
+
+```bash
+helm irr config --source docker.io --target my-registry.example.com/docker-mirror
+```
+
+### How Mappings are Applied
+
+When running `helm irr override`, the tool applies mappings with the following precedence:
+
+1.  **Explicit Mapping (Highest Priority):** If a file is provided via `--registry-file`, mappings defined within it take precedence. Any image whose source registry matches an enabled entry in the `mappings` list will use the exact `target` defined there.
+2.  **Fallback Behavior (if `strictMode: false`):** If an image's source registry is listed in `--source-registries` but isn't found in the mapping file (or the file isn't provided), the tool uses the registry specified by the `--target-registry` flag combined with the default path strategy (e.g., `prefix-source-registry`). You can also define a `registries.defaultTarget` within the mapping file to control this fallback behavior more explicitly.
+3.  **Strict Mode (`strictMode: true`):** If enabled in the mapping file, the override command will fail if any registry listed in `--source-registries` does not have an explicit, enabled mapping in the file. This prevents accidental use of fallback targets.
+
+Using a mapping file is particularly useful for:
+
+*   Handling special cases where the default path strategy doesn't produce the desired result.
+*   Working with registries that have specific naming requirements for certain images.
+*   Setting up custom paths for pull-through cache configurations.
+*   Ensuring only explicitly configured source registries are rewritten (using `strictMode`).
+
+Use the mappings file with the `override` command using the `--registry-file` flag:
 
 ```bash
 helm irr override \
   --chart-path ./my-chart \
-  --target-registry fallback.registry.com \
-  --source-registries docker.io,quay.io,k8s.gcr.io \
-  --registry-file my-mappings.yaml \
+  --target-registry my-registry.example.com \
+  --source-registries docker.io,quay.io \
+  --registry-file ./registry-mappings.yaml \
   --output-file overrides.yaml
 ```
-
-### How Registry Mappings Work
-
-1. Mappings in the file specified by `--registry-file` have the highest priority.
-2. Any image whose source registry matches an enabled entry in the `mappings` list will use the exact target defined there.
-3. Images from source registries not found in the mappings file (or if the file is not provided) will fall back to using `--target-registry` combined with the default path strategy (e.g., `prefix-source-registry`), unless `strictMode` is enabled in the config.
-4. The `--target-registry` flag is often still required as a fallback or default target.
-
-This feature is particularly useful for:
-- Handling special cases where the standard path strategy doesn't produce the desired result
-- Working with registries that have specific naming requirements for certain images
-- Setting up custom paths for pull-through cache configurations
 
 ## Supported Image Reference Formats
 
@@ -240,45 +258,3 @@ This workflow describes how to test `irr` against a local chart directory, which
 ## Contributing
 
 Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details.
-
-## Registry Mappings
-
-You can specify custom registry mappings using a YAML configuration file (defaults to `registry-mappings.yaml`). This allows you to control how source registries are mapped to your target registry's directory structure.
-
-Create a `registry-mappings.yaml` file with the following structure:
-
-```yaml
-version: "1.0" # Optional but recommended
-registries:
-  mappings:
-    - source: "quay.io"
-      target: "my-registry.example.com/quay-mirror"
-      # enabled: true (optional, defaults to true)
-      # description: "Optional description"
-    - source: "docker.io"
-      target: "my-registry.example.com/docker-mirror"
-    - source: "gcr.io"
-      target: "my-registry.example.com/gcr-mirror"
-```
-
-You can also run `irr inspect --generate-config-skeleton` against a chart to generate a starting config file with detected source registries.
-
-Alternatively, you can use the `helm irr config` command to manage the mappings file. For example, to add or update the `docker.io` mapping:
-
-```bash
-helm irr config --source docker.io --target my-registry.example.com/docker-mirror
-```
-
-Use the mappings file with the `override` command:
-
-```bash
-helm irr override \
-  --chart-path ./my-chart \
-  --target-registry my-registry.example.com \
-  --source-registries docker.io,quay.io \
-  --registry-file ./registry-mappings.yaml \
-  --output-file overrides.yaml
-```
-
-When no mappings file is provided, or if a source registry isn't found in the file and strict mode is disabled, the tool will use the default path strategy (usually `prefix-source-registry`) with the `--target-registry` value. For example:
-```
