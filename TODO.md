@@ -4,161 +4,45 @@
 ## Implementation Sequence Notes
 - Phase 0 (Configuration) should be completed before Phase 3.5 registry handling
 - Phase 2 (Flag Consistency) should be completed before Phase 3.5 file naming standardization
-- Phase 3 (Output Behavior) should be completed before implementing strict mode in Phase 3.5 
+- Phase 3 (Output Behavior) should be completed before implementing strict mode in Phase 3.5
 
-## Phase 0: Configuration Setup (P0: Critical Usability)
-- [x] **[P0]** Implement `helm irr config` command (flag-driven only)
-  - [x] Allow user to set or update a mapping via flags (e.g., `--source quay.io --target harbor.local/quay`)
-  - [x] If the source already exists, update its target; otherwise, add a new mapping
-  - [x] No validation of endpoints; user is responsible for correctness
-  - [x] When running `inspect`, suggest likely mappings based on detected registries in the environment
-  - [x] Document that override/validate can run without config, but correctness depends on user configuration
-- [x] **[P0]** Analyze existing error code usage
-  - [x] Document current error codes and their conditions
-  - [x] Identify gaps in error handling
-  - [x] Create mapping between planned new error codes and existing ones
+## Phase 0: Configuration Setup (P0: Critical Usability) [COMPLETED]
+- [x] **[COMPLETED]** Implement `helm irr config` command and analyze error code usage.
 
-### Phase 1: Flag Cleanup (P0: User Experience Enhancements)
-- [x] **[P0]** Remove unused or confusing flags
-  - [x] Remove `--output-format` flag (Not used, always YAML)
-  - [x] Remove `--debug-template` flag (Not implemented/used) 
-  - [x] Remove `--threshold` flag (No clear use case; binary success preferred)
-  - [x] Hide or remove `--strategy` flag (Only one strategy implemented; hide/remove for now)
-  - [x] Hide or remove `--known-image-paths` flag (Not needed for most users; hide or remove)
-- [x] **[P0]** Flag cleanup verification
-  - [x] Review and update/remove any test cases using these flags
-  - [x] Test and lint after each change
-  - [x] Update CLI and other documentation to remove references to these flags
+## Phase 1: Flag Cleanup (P0: User Experience Enhancements) [COMPLETED]
+- [x] **[COMPLETED]** Remove unused/confusing flags and verify cleanup.
 
-### Phase 2: Flag Consistency and Defaults (P0: User Experience Enhancements)
-- [x] **[P0]** Unify `--chart-path` and `--release-name` behavior
-  - [x] Allow both flags to be used together
-  - [x] Implement auto-detection when only one is provided
-  - [x] Document precedence rules
-  - [x] Default to `--release-name` in plugin mode; default to `--chart-path` in standalone mode
-- [x] **[P0]** Implement mode-specific flag presentation
-  - [x] Tailor help output and flag requirements based on execution mode
-  - [x] Make `--release-name` primary in plugin mode
-  - [x] Make `--chart-path` primary in standalone mode
-  - [x] Try to keep flags in integration test mode the same.
-    I think we don't care what flags it displays in integration test mode as integration test mode is designed to mock standalone and plugin mode so we should try and reduce any code that makes it differ unless we need it for logging or test framework execution.
+## Phase 2: Flag Consistency and Defaults (P0: User Experience Enhancements) [COMPLETED]
+- [x] **[COMPLETED]** Unify `--chart-path`/`--release-name`, implement mode-specific flags, standardize `--namespace`, make `--source-registries` optional.
 
-- [x] **[P0]** Standardize `--namespace` behavior
-  - [x] Make `--namespace` always optional
-  - [x] Default to "default" namespace when not specified
-- [x] **[P0]** Make `--source-registries` optional in override when config or auto-detection is present
+## Phase 3: Output File Behavior Standardization (P0: User Experience Enhancements) [COMPLETED]
+- [x] **[COMPLETED]** Standardize `--output-file` behavior and file operation error handling.
 
-### Phase 3: Output File Behavior Standardization (P0: User Experience Enhancements)
-- [x] **[P0]** Standardize `--output-file` behavior across commands
-  - [x] `inspect`: Default to stdout if not specified
-  - [x] `override`: 
-    - [x] Default to stdout in standalone mode
-    - [x] Default to `<release-name>-overrides.yaml` in plugin mode with release name
-    - [x] Ensure explicit override with `--output-file` always works
-    - [x] Implement check to never overwrite existing files without explicit user action (e.g., `--force`; We don't have a `--force` command or plan to implement it)
-  - [x] `validate`: Only write file output when `--output-file` is specified
-- [x] **[P0]** Implement consistent error handling for file operations
-  - [x] Add clear error messages when file operations fail
-  - [x] Implement uniform permission handling across all commands
+## Phase 3.5: Streamlined Workflow Implementation (P1: User Experience Enhancements) [COMPLETED]
+- [x] **[COMPLETED]** Enhance registry handling, standardize override naming, handle unrecognized registries, integrate validation, improve K8s version handling, and implement consistent error codes.
 
-### Phase 3.5: Streamlined Workflow Implementation (P1: User Experience Enhancements)
-- [x] **[P1]** Implement enhanced source registry handling
-  - [x] Add explicit `--all-registries` flag for clarity
-  - [x] Implement auto-detection of registries with clear user feedback
-  - [x] Use two-stage approach for registry auto-detection:
-    - [x] In `inspect`: Auto-detect and show clear output about what was found
-    - [x] In `override`: Auto-detect, but clearly show what will be changed by:
-      - [x] Displaying a summary of detected registries before processing
-      - [x] Showing which registries will be remapped and which will be skipped
-      - [x] Providing a clear indication when processing is complete
-  - [x] Add `--dry-run` flag to show changes without writing files
-- [x] **[P1]** Standardize override file naming
-  - [x] Use consistent format: `<release-name>-overrides.yaml`
-  - [x] Remove any namespace component from the filename
-  - [x] Document naming convention in help text and documentation
-- [x] **[P1]** Handle unrecognized registries sensibly
-  - [x] Default: Skip unrecognized registries with clear warnings
-  - [x] Add `--strict` flag that fails when unrecognized registries are found
-  - [x] Without `--strict`: Log warnings about unrecognized registries but continue processing
-  - [x] With `--strict`: Fail with non-zero exit code when unrecognized registries are found
-  - [x] In both modes: Clearly log which registries were detected and which were skipped
-  - [x] Provide specific suggestions for missing mappings
-- [x] **[P1]** Integrate validation into override command
-  - [x] Run validation by default after generating overrides
-  - [x] Add `--no-validate` flag to skip validation
-  - [x] Implement silent validation with detailed output only on error
-- [x] **[P1]** Improve Kubernetes version handling
-  - [x] Document default Kubernetes version in help text
-  - [x] Provide clear error messages for version-related validation failures
+## Testing Strategy for CLI Enhancements (Completed Phases Summarized) [COMPLETED]
+- [x] **[COMPLETED]** Tests for Phases 0-3.5 (config, registry detection, file naming, strict mode, error handling) completed.
 
-- [x] **[P0]** Implement consistent error codes for enhanced debugging
-    We need to align and not collide with current error code numbers or handling
-    The actual error number can be decided we just want distinct error codes to handle more conditions
-    We should extend the existing error code system rather than replace it
-    Analysis of current codebase is needed to identify existing error codes before assigning new ones
-  - [x] Exit 0: Success
-  - [x] Exit 1: General error
-  - [x] Exit 2: Configuration error (missing/invalid registry mappings)
-  - [x] Exit 3: Validation error (helm template validation failed)
-  - [x] Exit 4: File operation error (file exists, permission denied)
-  - [x] Exit 5: Registry detection error (no registries found or mapped)
-  - [x] Ensure all error messages include the error code for reference
-  
-## Testing Strategy for CLI Enhancements
-
-### Configuration Command Tests
-- [x] Test updating existing mapping with new target
-- [x] Test adding new mapping when source doesn't exist
-- [x] Test reading from existing mapping file
-- [x] Test config command creates file with correct permissions
-
-### Registry Auto-detection Tests
-- [x] Test detection of common registries (docker.io, quay.io, gcr.io, etc.)
-- [x] Test detection with incomplete/ambiguous registry specifications
-- [x] Test behavior when no registries are detected
-- [x] Test behavior with mixed recognized/unrecognized registries
-
-### File Naming and Output Tests
-- [x] Test default file naming follows `<release-name>-overrides.yaml` format
-- [x] Test behavior when output file already exists
-- [x] Test custom output path with `--output-file` flag
-- [x] Test permission handling for output files
-
-### Strict Mode Tests
-- [x] Test normal mode skips unrecognized registries with warnings
-- [x] Test strict mode fails on unrecognized registries
-- [x] Test logging output in both modes
-- [x] Test exit codes match specification
-
-### Error Handling Tests
-- [x] Test each distinct error condition produces correct error code
-- [x] Test error messages are informative and actionable
-- [x] Test behavior with invalid input combinations
-- [x] Test command continues/fails as expected for each error type
-
-### Phase 4: Documentation Updates (P0: User Experience Enhancements)
-- [x] **[P0]** Update documentation to reflect CLI changes
-  - [x] Document all flag defaults and required/optional status in help output
-  - [x] Update CLI reference guide with new behavior
-  - [x] Create a command summary with flag behavior in clear table format
-  - [x] Document when files will be written vs. stdout output
+## Phase 4: Documentation Updates (P0: User Experience Enhancements) [COMPLETED]
+- [x] **[COMPLETED]** Update documentation for all CLI changes (flags, defaults, behavior, output).
 
 ### Implementation Notes
 - We've restructured the chart loading mechanism to properly use the chart.NewLoader() function, which improves code organization and maintainability
 - We've fixed the strategy flag handling to keep it available but with sensible defaults, making the interface cleaner without removing functionality
 - The integration tests now pass consistently after fixing implementation issues with chart sources and required flags
- 
+
 ## REMINDER On the Implementation Process: (DONT REMOVE THIS SECTION)
 - For each change:
   1. **Baseline Verification:**
      - Run full test suite: `go test ./...` ✓
      - Run full linting: `golangci-lint run` ✓
      - Determine if any existing failures need to be fixed before proceeding with new feature work ✓
-  
+
   2. **Pre-Change Verification:**
      - Run targeted tests relevant to the component being modified ✓
      - Run targeted linting to identify specific issues (e.g., `golangci-lint run --enable-only=unused` for unused variables) ✓
-  
+
   3. **Make Required Changes:**
      - Follow KISS and YAGNI principles ✓
      - Maintain consistent code style ✓
@@ -168,14 +52,14 @@
        - Start with simpler packages before tackling complex ones
        - Always provide test helpers for swapping the filesystem implementation
        - Run tests frequently to catch issues early
-  
+
   4. **Post-Change Verification:**
      - Run targeted tests to verify the changes work as expected ✓
      - Run targeted linting to confirm specific issues are resolved ✓
      - Run full test suite: `go test ./...` ✓
      - Run full linting: `golangci-lint run` ✓
      - **CRITICAL:** After filesystem mocking changes, verify all tests still pass with both the real and mock filesystem
-  
+
   5. **Git Commit:**
      - Stop after completing a logical portion of a feature to make well reasoned git commits with changes and comments ✓
      - Request suggested git commands for committing the changes ✓
@@ -188,7 +72,7 @@
      - default behavior: fail if file exists (per section 3.4 in PLUGIN-SPECIFIC.md)
      - Use file permissions constants for necessaary permission set, those are defined in this file : `pkg/fileutil/constants.go`
 
-##END REMINDER On the Implementation Process: 
+##END REMINDER On the Implementation Process:
 
 ## Phase 5: Registry Format Standardization (P1: Technical Debt Reduction)
 
@@ -196,11 +80,7 @@
 Fully standardize on the structured registry format throughout the codebase, deprecating the legacy key-value format while maintaining backward compatibility for existing users.
 
 ### Motivation
-- Structured format provides better metadata with description and enabled flags
-- Improved organization with dedicated sections for mappings, default targets, and strict mode
-- Future extensibility through the version field
-- Simplified code maintenance with a single canonical format
-- Clearer documentation and user guidance
+- Structured format provides better metadata, organization, extensibility, and maintainability.
 
 ### Implementation Steps
 
@@ -216,15 +96,15 @@ Fully standardize on the structured registry format throughout the codebase, dep
 #### Phase 5.2: CLI Command Updates
 - [ ] **[P1]** Update CLI commands for structured format
   - [x] Review and update the `inspect` command skeleton generation
-  - [ ] Update the `config` command to only write structured format
-  - [ ] Update the `override` command to expect structured format
+  - [/] Update the `config` command to write structured format (preserves loaded structured, creates new otherwise)
+  - [x] Update the `override` command to handle structured format (via LoadMappings)
   - [/] Update help text and examples to show structured format
   - [/] Ensure `--registry-file` flag documentation mentions structured format
 
 #### Phase 5.3: Test Updates
 - [ ] **[P1]** Update test suite for structured format
   - [x] Modify `TestRegistryMappingFile` in `test/integration/integration_test.go`
-  - [ ] Update `TestConfigFileMappings` and similar tests
+  - [ ] Update TestConfigFileMappings (uses legacy input) and similar tests
   - [x] Update `CreateRegistryMappingsFile()` in `test/integration/harness.go` to default to structured format
   - [x] Add tests for handling of legacy format files (conversion path)
   - [ ] Verify all existing tests pass with the updated format
@@ -237,74 +117,18 @@ Fully standardize on the structured registry format throughout the codebase, dep
   - [ ] Document the backward compatibility mechanism
 
 ### Files Requiring Changes
-
-1. **Registry Package Files**:
-   - `pkg/registry/mappings.go`: Update legacy format handling
-   - `pkg/registry/config.go`: Make structured format the primary interface
-
-2. **Command Files**:
-   - `cmd/irr/inspect.go`: Review createConfigSkeleton() implementation
-   - `cmd/irr/config.go`: Update to prefer structured format
-   - `cmd/irr/override.go`: Update to handle structured format
-   - `cmd/irr/validate.go`: Update to expect structured format
-
-3. **Test Files**:
-   - `test/integration/harness.go`: Update CreateRegistryMappingsFile()
-   - `test/integration/integration_test.go`: Update tests using registry files
-   - `pkg/registry/config_test.go`: Ensure tests cover structured format
-   - `pkg/registry/mappings_test.go`: Update to test legacy conversion
-
-4. **Documentation**:
-   - `docs/CLI-REFERENCE.md`: Update with structured format examples
-   - `docs/CONFIGURATION.md`: Update registry configuration documentation
-   - Add a migration guide if not already present
+(List remains relevant for future work)
 
 ### Acceptance Criteria
-- All commands generate and expect structured format by default
-- Legacy format files can still be read and converted
-- All tests pass with structured format
-- Documentation clearly explains the structured format
-- CLI help text and error messages reference structured format
-- Deprecation notices are clear but not disruptive to users
+(Summarized)
+- Structured format is default, legacy format readable, tests pass, docs updated.
 
 ### Testing Strategy
-- Test reading legacy format files and proper conversion
-- Test writing only structured format files
-- Test handling of corrupted or invalid files
-- Verify backward compatibility works for existing configs
-- Check CLI output and help text for clarity
+(Summarized)
+- Test legacy conversion, structured writing, invalid files, compatibility, CLI output.
 
-## Phase 6: Remove IRR_DEBUG Support (Staged Approach) **[COMPLETED]**
-
-- **Goal:** Eliminate the redundant legacy `IRR_DEBUG` environment variable to simplify logging configuration and ensure documentation consistency. Rely solely on `LOG_LEVEL` for controlling log verbosity.
-- **Rationale:** `IRR_DEBUG=1` provides the same functionality as `LOG_LEVEL=DEBUG` but adds an extra configuration vector and has led to documentation inconsistencies. Removing it streamlines the logging system.
-
-- **Actions (Staged):**
-
-    **Stage 1: Preparation and Audit**
-    - [x] Search the codebase for all uses of `IRR_DEBUG` (code, tests, docs, scripts).
-    - [x] Document all locations and usages to inform the next steps.
-    - [x] Update documentation to clarify that `LOG_LEVEL` is the only supported debug control going forward.
-
-    **Stage 2: Update Test and Build Infrastructure**
-    - [x] Update `Makefile`, CI scripts, and any other build/test execution commands to replace `IRR_DEBUG=1` with `LOG_LEVEL=DEBUG`.
-    - [x] Update test files to use `LOG_LEVEL=DEBUG` instead of setting/unsetting `IRR_DEBUG`.
-    - [x] Run all tests; fix any failures related to this change before proceeding.
-
-    **Stage 3: Remove IRR_DEBUG from Code**
-    - [x] Remove the check for `IRR_DEBUG` within the `init()` function in `pkg/log/log.go`.
-    - [x] Remove any code that sets/unsets or checks `IRR_DEBUG` in test files.
-    - [x] Run all tests; fix any failures related to this change before proceeding.
-
-    **Stage 4: Final Cleanup**
-    - [x] Remove all references to `IRR_DEBUG` from documentation files (`TESTING.md`, `DEVELOPMENT.md`, `PLUGIN-SPECIFIC.md`, `LOGGING.md`, `README.md`, `TODO.md`, etc.).
-    - [x] Search the codebase (`grep`) for any remaining uses of `IRR_DEBUG` and remove them.
-    - [x] Run all tests; ensure everything passes.
-
-- **Verification Criteria:**
-    - [x] All tests (`make test`) pass after each stage.
-    - [x] A codebase search (`grep -R IRR_DEBUG . --exclude-dir=.git --exclude=irr`) yields no relevant results in code or documentation at the end.
-    - [x] Manually verify that setting `export IRR_DEBUG=1` does *not* enable debug logging when `LOG_LEVEL` is not set or is set to `INFO` or higher.
+## Phase 6: Remove IRR_DEBUG Support [COMPLETED]
+- [x] **[COMPLETED]** Eliminate the redundant legacy `IRR_DEBUG` environment variable. `LOG_LEVEL` is now the sole control for log verbosity.
 
 ## Phase 7: Image Pattern Detection Improvements (Revised Focus)
 
@@ -312,25 +136,17 @@ Fully standardize on the structured registry format throughout the codebase, dep
 Improve the analyzer's ability to detect and process image references in complex Helm charts, particularly focusing on init containers, admission webhooks, and other specialized configurations.
 
 ### Motivation
-- Some complex charts with admission webhooks or multi-container deployments have image references that aren't being detected
-- Debug tooling helps identify paths that are missed during analysis
-- Consistent detection across all image variations improves reliability of the override process
+- Address missed image references in complex charts (e.g., admission webhooks).
+- Improve reliability via consistent detection and debug tooling.
 
 ### Implementation Steps
 
-#### Phase 7.1: Debugging and Analysis
-- [x] **[P0]** Add debugging output to trace image detection
-  - [x] Add debug logging to analyzeMapValue, analyzeStringValue, and analyzeArray functions
-  - [x] Log detailed path information for all analyzed values
-  - [x] Log detection results to identify missed patterns
-  - [x] Run failing test cases with debug output to identify issues
+#### Phase 7.1: Debugging and Analysis [COMPLETED]
+- [x] **[COMPLETED]** Add debugging output to trace image detection.
 
-#### Phase 7.2: Image Pattern Detection Improvements
-- [x] **[P0]** Fix ingress-nginx admission webhook image detection
-  - [x] Add debug output to identify missed patterns
-  - [x] Run focused test for ingress-nginx chart with admission webhook
-  - [x] Verify all expected images are detected properly
-  
+#### Phase 7.2: Image Pattern Detection Improvements [COMPLETED]
+- [x] **[COMPLETED]** Fix ingress-nginx admission webhook image detection.
+
 #### Phase 7.3: Additional Chart Coverage
 - [x] **[P1]** Expand test coverage to more complex charts
   - [ ] Review and enable previously skipped test cases
@@ -340,260 +156,83 @@ Improve the analyzer's ability to detect and process image references in complex
   - [x] Add proper handling for template-string image references
   - [ ] Fix simplified-prometheus-stack test case
 
-## Phase 7.4: Kube-State-Metrics Handling Fix (Generator-Level)
-- [ ] **[P0]** Fix linter errors in `pkg/generator/generator.go`:
-    - [ ] Correct the call signature for `detector.DetectImages` (pass initial path, handle 3 return values).
-    - [ ] Resolve `image.SetVerboseDetection` usage (likely remove, rely on `debug.Enabled` and `log` level).
-- [ ] **[P0]** Validate `normalizeKubeStateMetricsOverrides` function in `pkg/generator/kube_state_metrics.go`:
-    - [ ] Use debug logs (`LOG_LEVEL=DEBUG`) to trace the function's input (`overrides`, `detectedImages`) and output (`normalizedOverrides`).
-    - [ ] Confirm it correctly identifies KSM images from `detectedImages` regardless of their original detected path.
-    - [ ] Verify it constructs the expected top-level `kube-state-metrics` map structure in the `normalizedOverrides`.
-    - [ ] Ensure it handles cases where `kube-state-metrics` might already exist at the top level correctly (avoids duplicates/overwrites if necessary).
-- [ ] **[P0]** Refine `TestKubePrometheusStack` for `kube-state-metrics`:
-    - [ ] Remove special-case workarounds or forced passes for the `exporters` group related to KSM.
-    - [ ] Update assertions to specifically validate the *final*, normalized structure for `kube-state-metrics` in the generated overrides file (check for `overrides["kube-state-metrics"]`).
-    - [ ] Ensure the test uses realistic values/setup reflecting the actual chart structure for KSM.
+#### Phase 7.4: Kube-State-Metrics Handling Fix (Generator-Level) **[NEXT P0]**
+- [x] **[P0]** Fix linter errors in `pkg/generator/generator.go` related to `detector.DetectImages` call.
+- [/] **[P0]** Validate `normalizeKubeStateMetricsOverrides` function in `pkg/generator/kube_state_metrics.go` for correct identification and structure (implementation review complete, pending test validation).
+- [ ] **[P0]** Refine `TestKubePrometheusStack` for `kube-state-metrics` assertions without workarounds.
 
 ## Phase 7.5: Debug Environment Test Validation
 - [ ] **[P1]** Run the full test suite with `LOG_LEVEL=DEBUG` enabled *after* Phase 7.4 is complete and verified.
-- [ ] **[P1]** Compare pass rates with normal test runs.
-- [ ] **[P1]** Investigate and fix any tests that fail *only* when `LOG_LEVEL=DEBUG` is active.
+- [ ] **[P1]** Compare pass rates and fix any tests failing only in debug mode.
 
-## Phase 8: Fix Bitnami Chart Detection and Rules Processing
-
-### Overview
-Address the discrepancy where integration tests for the rules system pass, but validation against a large corpus of real-world charts (`test-charts.py`) reveals failures for charts that should be identified as Bitnami. The goal is to ensure the Bitnami detection mechanism is robust enough for real-world chart variations and that the rules engine correctly applies Bitnami-specific logic when detected.
-
-### Motivation
-- The rules engine exists specifically to handle variations like those found in Bitnami charts.
-- The current Bitnami detection logic appears insufficient for the diversity of real-world charts, leading to validation failures (109 errors reported in `error_details.csv`).
-- Accurate detection and rule application are critical for the tool's reliability with common chart sources like Bitnami.
-- This needs to be fixed before tackling subchart analysis (Phase 9) as it affects the baseline processing.
-
-### Implementation Steps
-
-#### Phase 8.1: Analyze Failures and Detection Logic
-- [ ] **[P0]** **Identify Failing Charts:** Extract a representative sample of the 109 failing charts from `test/output/error_details.csv` that are expected to be Bitnami charts.
-- [ ] **[P0]** **Inspect Failing Chart Characteristics:** Manually examine the `Chart.yaml` of the sample failing charts, specifically looking at the fields used by the current detection logic: `home` (expecting "bitnami.com"), `sources` (expecting "github.com/bitnami/charts"), `maintainers` (expecting "Bitnami" or "Broadcom"), and `dependencies` (expecting "bitnami-common"). Document how these fields differ or are missing compared to charts that pass `TestRulesSystemIntegration`.
-- [ ] **[P0]** **Review Current Detection Mechanism:** Locate and analyze the existing code responsible for identifying a chart as Bitnami. Confirm it checks the documented fields (`home`, `sources`, `maintainers`, `dependencies`) and applies the Medium/High confidence thresholds correctly. Add debug logging to trace the checks for each field and the final confidence assessment.
-- [ ] **[P0]** **Run with Debugging:** Execute `irr inspect` or `irr validate` with debug logging enabled on the sample failing charts to observe the detection logic's field checks and confidence scoring, pinpointing why they fail to reach Medium/High confidence.
-
-#### Phase 8.2: Refine Bitnami Detection Logic
-- [ ] **[P0]** **Update Detection Criteria:** Based on findings in 8.1, modify the detection code. This might involve: adjusting string matching for `maintainers`/`sources` (e.g., case-insensitivity, broader patterns), making the `dependencies` check more robust, adding new reliable indicators, or adjusting the number of indicators required for Medium/High confidence thresholds.
-- [ ] **[P0]** **Consider Edge Cases:** Account for charts potentially derived from Bitnami standards but with modifications (e.g., different maintainer emails but standard names/annotations, forks not updating all metadata).
-- [ ] **[P0]** **Ensure Correct Timing:** Confirm the detection logic runs early enough in the process so that subsequent steps (like rule application or specific value analysis) can leverage the "is Bitnami" status.
-
-#### Phase 8.3: Verify Rules Engine Integration
-- [ ] **[P1]** **Confirm Rule Triggering:** Add debug logs or targeted tests to ensure that once a chart *is* correctly identified as Bitnami (reaching Medium/High confidence with the refined logic from 8.2), the specific Bitnami rule adding `global.security.allowInsecureImages=true` is activated.
-- [ ] **[P1]** **Validate Rule Effects:** Verify that the activated rule correctly adds `global.security.allowInsecureImages: true` to the override structure generated by IRR.
-
-#### Phase 8.4: Testing and Validation
-- [ ] **[P0]** **Update Unit/Integration Tests:** Modify existing tests in `TestRulesSystemIntegration` or add new test cases that use fixtures more representative of the failing real-world chart patterns. Ensure these tests cover the refined detection logic.
-- [ ] **[P0]** **Re-run Bulk Validation:** Execute the `test-charts.py --operation validate` script again. Analyze the resulting `error_details.csv` to confirm a significant reduction (ideally elimination) of the Bitnami-related errors among the original 109 failures.
-- [ ] **[P1]** **Check for Regressions:** Ensure the changes haven't negatively impacted the processing of non-Bitnami charts or introduced new failures.
+## Phase 8: Fix Bitnami Chart Detection and Rules Processing [COMPLETED]
+- [x] **[COMPLETED]** Ensure robust Bitnami chart detection for real-world variations and correct application of Bitnami-specific rules.
 
 ## Phase 9: Implement Subchart Discrepancy Warning (User Feedback Stop-Gap)
 
 ### Overview
-Acknowledge the current limitation where `irr` does not analyze default values from subcharts. Implement a warning mechanism in `inspect` to alert users when the number of images detected by `irr` differs from those found by rendering the chart with `helm template`. This provides feedback about potential incompleteness without undertaking the full complexity of Helm's value computation immediately.
+Warn users in `inspect` when `irr`'s image count differs from `helm template`'s (limited parse), indicating potential missed images from subchart defaults.
 
 ### Motivation
-- The current analyzer only processes the top-level `values.yaml` file provided via `--values` or the chart's default `values.yaml`.
-- Images defined only in subchart `values.yaml` files are missed, leading to incomplete `inspect` results and `override` files.
-- Users need clear feedback when using `irr` on complex charts where subchart defaults are common.
-- Implementing the full Helm value computation logic is complex and deferred to a later phase. This warning provides an interim solution.
+- Analyzer currently misses images defined *only* in subchart `values.yaml`.
+- Provide interim feedback as full subchart value computation (Phase 10) is complex and deferred.
 
-### Implementation Steps (Phase 9.1 in previous plan)
-
-- [ ] **[P1]** **Integrate Helm SDK Template Execution:**
-    - Modify `cmd/irr/inspect.go`.
-    - Import necessary Helm SDK packages (`helm.sh/helm/v3/pkg/action`, `helm.sh/helm/v3/pkg/chart/loader`, `helm.sh/helm/v3/pkg/cli`, `helm.sh/helm/v3/pkg/cli/values`).
-    - Use `action.NewInstall` configured for template rendering (e.g., `inst.DryRun = true`, `inst.ClientOnly = true`).
-    - Load chart values using `vals.MergeValues` similar to how Helm does internally, considering provided value files (`--values`).
-    - Execute the template action using `inst.Run(chart, vals)`.
-    - Capture the resulting multi-document YAML string from the release manifest.
-    - Handle potential Helm SDK errors gracefully.
-- [ ] **[P1]** **Parse Rendered Manifests (Limited Scope):**
-    - Use a YAML parsing library (e.g., `gopkg.in/yaml.v3`) to split and parse the multi-document YAML string from the previous step.
-    - Iterate through each document.
-    - Check the `kind` field. If `Deployment` or `StatefulSet`:
-        - Traverse standard image paths: `spec.template.spec.containers[*].image`, `spec.template.spec.initContainers[*].image`.
-        - Extract unique image reference strings found.
-    - Store unique image strings in a map or set for counting.
-    - *Note: This warning mechanism intentionally limits parsing to Deployments/StatefulSets as a stop-gap to balance utility and implementation complexity. Full analysis (Phase 10) must eventually cover other resource types.*
-- [ ] **[P1]** **Compare Image Counts:**
-    - Retrieve the list of `ImagePattern` from the existing `analyzer.AnalyzeHelmValues` call.
-    - Get the count of unique patterns found by the current analyzer.
-    - Compare this count with the number of unique image strings extracted from the rendered Deployments/StatefulSets in the previous step.
-- [ ] **[P1]** **Issue Warning on Mismatch:**
-    - If counts differ, use `log.Warnf` to output a clear message.
-    - Message should state the different counts (analyzer vs. template), explain the likely cause (subchart default values not analyzed by `irr inspect`), mention the limited scope of the template check (Deployments/StatefulSets only), and reference the controlling flag.
-- [ ] **[P1]** **Add Control Flag:**
-    - Add a new boolean flag (e.g., `--warn-subchart-discrepancy`) to the `inspect` command definition in `cmd/irr/inspect.go` using `cobra`.
-    - Set its default value (e.g., `true`).
-    - Wrap the logic for steps 1-4 within an `if` block conditional on this flag being enabled.
-- [ ] **[P1]** **Add Tests:**
-    - Create new integration tests in `test/integration/inspect_test.go` (or similar).
-    - Use `kube-prometheus-stack` or another suitable umbrella chart.
-    - Test cases:
-        - Flag enabled, counts differ -> Warning is logged.
-        - Flag enabled, counts match -> No warning is logged.
-        - Flag disabled -> No warning is logged, regardless of counts.
-- [ ] **[P1]** **Update Documentation:**
-    - Update `docs/CLI-REFERENCE.md` to include the new `--warn-subchart-discrepancy` flag for the `inspect` command.
-    - Add a section to `docs/TROUBLESHOOTING.md` or a relevant guide explaining the warning, its cause (current analyzer limitations), the limited scope of the check, and the implications for override generation. Explicitly state that `irr` does not process subchart defaults.
+### Implementation Steps (Phase 9.1)
+- [ ] **[P1]** Integrate Helm SDK Template Execution (`helm template`) within `inspect`.
+- [ ] **[P1]** Parse Rendered Manifests (Limited Scope: Deployments/StatefulSets only) to extract image strings.
+- [ ] **[P1]** Compare `irr` analyzer count vs. rendered template count.
+- [ ] **[P1]** Issue Warning on Mismatch (explaining cause, limitations, flag).
+- [ ] **[P1]** Add Control Flag (`--warn-subchart-discrepancy`, default true).
+- [ ] **[P1]** Add Tests covering flag and warning logic.
+- [ ] **[P1]** Update Documentation explaining the warning and limitation.
 
 ### Acceptance Criteria (Phase 9)
-- `irr inspect` includes an optional mechanism (`--warn-subchart-discrepancy`, default true) to compare its findings against a limited parse of `helm template` output.
-- A clear warning is logged if the image counts differ, explaining the likely cause and limitations.
-- New integration tests verify the warning logic and flag control.
-- Documentation is updated to clearly state the limitation regarding subchart default values and explain the warning mechanism.
+- Optional warning mechanism exists and works. Tests pass. Docs updated.
 
-## Phase 10: Refactor Analyzer for Full Subchart Support (Deferred - Was Phase 9.2)
+## Phase 10: Refactor Analyzer for Full Subchart Support (Deferred - Complex)
 
 ### Overview
-Enhance the analyzer to correctly process Helm charts with subcharts by replicating Helm's value computation logic. This involves loading dependencies and merging values from parent charts, subcharts, and user-provided files before analysis.
+Enhance the analyzer to correctly process subcharts by replicating Helm's value computation logic (loading dependencies, merging values).
 
 ### Motivation
-- Provide truly accurate `inspect` and `override` results for complex umbrella charts.
-- Eliminate the need for the discrepancy warning mechanism introduced in Phase 9.
-- Address the core limitation of the current analyzer.
-
-### Implementation Steps (Details from original Phase 9.2)
-- [ ] **[P2]** **Research & Design Helm Value Computation:**
-    - Deeply investigate Helm Go SDK functions for loading charts (`chart/loader.Load`), handling dependencies, and merging values (`pkg/cli/values.Options`, `pkg/chartutil.CoalesceValues`).
-    - Prototype code to programmatically replicate Helm's value computation process for a given chart and user-provided value files, resulting in a final, merged values map representing what Helm uses for templating.
-    - *Crucial Design Point:* Determine how to track the origin of each value within the merged map (e.g., did it come from the parent `values.yaml`, a specific subchart's `values.yaml`, or a user file?). This origin information is essential for generating correctly structured overrides later.
-- [ ] **[P2]** **Refactor Analyzer Input:**
-    - Modify the analyzer's primary entry function (e.g., `AnalyzeHelmValues` or potentially a new function like `AnalyzeChartContext`).
-    - Instead of just `map[string]interface{}` representing a single values file, the input should represent the fully computed/merged values for the chart context (from step 1).
-    - The function signature might also need to accept information about value origins (design from step 1) if that's how source path tracking is implemented.
-- [ ] **[P2]** **Adapt Analyzer Traversal & Source Path Logic:**
-    - The core recursive analysis functions (`analyzeMapValue`, `analyzeStringValue`) might largely remain the same if they operate correctly on the merged values map.
-    - **Critical Enhancement:** Modify the logic that records `ImagePattern` (or equivalent). When an image is detected, it must now correctly determine and store its *effective source path* suitable for override generation. This involves using the value origin tracking (from step 1) to construct the correct path (e.g., an image from the `grafana` subchart needs a path starting with `grafana.`).
-- [ ] **[P2]** **Update Command Usage:**
-    - Modify `cmd/irr/inspect.go` and `cmd/irr/override.go`.
-    - Remove the simple loading of a single values file.
-    - Implement the Helm chart loading and value computation logic designed in step 1.
-    - Call the refactored analyzer (step 2) with the computed values and necessary context.
-    - Ensure `override` correctly uses the enhanced source path information (step 3) to structure the generated YAML override file (e.g., placing Grafana image overrides under a top-level `grafana:` key).
-- [ ] **[P2]** **Add Comprehensive Tests:**
-    - Create/enhance integration tests in `test/integration/` specifically for umbrella charts.
-    - Use `kube-prometheus-stack` and potentially other charts with multiple nesting levels.
-    - Verify `inspect` output now includes images defined only in subchart defaults.
-    - Verify `override` generates correctly structured files, applying overrides to the appropriate subchart keys (e.g., `grafana: { image: ... }`, `kube-state-metrics: { image: ... }`).
-- [ ] **[P2]** **Update Documentation:**
-    - Remove documented limitations regarding subchart analysis.
-    - Ensure examples demonstrate usage with complex umbrella charts.
-- [ ] **[P3]** **Review/Remove Warning Mechanism (from Phase 9):**
-    - Once this phase (Phase 10) is complete and validated, evaluate if the warning mechanism from Phase 9 is still needed.
-    - If redundant, remove the Helm template comparison code, the `--warn-subchart-discrepancy` flag, associated tests, and documentation related to the warning mechanism.
-
-### Acceptance Criteria (Phase 10)
-- `irr inspect` correctly identifies images defined in both parent and subchart values, reporting accurate source paths reflecting subchart context (e.g., `grafana.image`).
-- `irr override` correctly generates overrides for images originating from both parent and subchart values, placing them under the correct top-level keys in the output file (e.g., `grafana: { image: ... }`).
-- Tests confirm accurate behavior for multiple levels of subchart nesting and various value override scenarios.
-- Documented limitations regarding subcharts are removed.
-- The warning mechanism from Phase 9 may be removed if deemed obsolete.
-
-### Recommendations for Future Approach (Learnings from `feature/sub-charts`)
-
-1.  **Incremental Implementation (Agile-First):** Break down the subchart support feature into smaller, manageable, and independently testable parts. For example:
-    *   **Subchart Discovery:** Focus *only* on identifying and listing subcharts within a given chart.
-    *   **Value Propagation:** Implement how top-level values override subchart values.
-    *   **Analysis Extension:** Adapt the `analyzer` to correctly process resources defined within subcharts.
-    *   **Generator Extension:** Ensure the `generator` can handle templating and output for subcharts.
-    *   **CLI Integration:** Update commands like `inspect` and `override` to utilize the new subchart capabilities *after* the core logic is implemented and tested.
-2.  **Focused Commits (SRP):** Each commit should ideally address a single concern or piece of functionality related to subcharts. This improves clarity, makes reviews easier, and simplifies potential rollbacks.
-3.  **Test-Driven Development (TDD):** Write tests *before* or *alongside* implementing each piece of subchart functionality. Start with unit tests for core logic (analyzer, generator) and then add integration tests as components are connected. This ensures each part works correctly before moving to the next.
-4.  **Feature Flag (Optional but Recommended):** Consider introducing subchart support behind a feature flag initially. This allows merging incremental progress into `main` without exposing potentially unstable functionality to users until it's complete and well-tested.
-
-## Phase 11: Decouple Override Validation (P1: Testing Enablement)
-
-### Overview
-Introduce a `--no-validate` flag to the `irr override` command. This allows users to generate the image override file without triggering the internal Helm template validation check that `override` currently performs.
-
-### Motivation
-- The current `irr override` command implicitly runs a validation step (similar to `helm template`) using only the chart's default values and the generated overrides. This causes failures for many charts that require additional mandatory values to render successfully.
-- This internal validation prevents effective testing scenarios (e.g., in `test-charts.py`) where the goal is purely to generate the override file first, and then validate it externally using a more complete set of values (like those determined by chart classification).
-- Decoupling allows `override` to focus solely on generating the override structure based on detected images, making its behavior more predictable and testable in isolation.
+- Provide truly accurate results for umbrella charts.
+- Eliminate the need for the Phase 9 warning.
+- Address core analyzer limitation.
+- **Note:** High complexity, requires careful design regarding value origins for override generation.
 
 ### Implementation Steps
-- [x] **[P1]** Add `--no-validate` flag to `override` command:
-    - [x] Modify `cmd/irr/override.go` to define a new boolean flag `--no-validate` (default `false`) using Cobra.
-- [x] **[P1]** Make internal validation conditional:
-    - [x] Locate the code block within the `override` command's execution logic responsible for performing the Helm template validation check.
-    - [x] Wrap this block in a conditional statement: `if !cmd.Flags().GetBool("no-validate") { /* existing validation code */ }`.
-- [x] **[P1]** Update command help text:
-    - [x] Ensure the `--no-validate` flag and its purpose are clearly documented in the `irr override` help output (Done via Cobra flag definition).
-- [x] **[P1]** Add/Update integration tests:
-    - [x] Review existing integration tests for the `override` command in `test/integration/override_command_test.go`.
-    - [x] Add specific test cases to verify:
-        - [x] The default behavior (validation runs) when the flag is absent (`TestOverrideDefaultValidationFailure`).
-        - [x] The behavior when `--no-validate` is present (validation is skipped, command potentially succeeds even if validation would fail) (`TestOverrideNoValidateSuccessOnValidationFailure`).
-    - [x] Create dedicated test chart (`validation-fail-test`) to reliably trigger validation failures.
-    - [x] Debug and fix issues related to test harness path resolution (`GetTestdataPath`).
-    - [x] Debug and fix issues related to registry path sanitization (`SanitizeRegistryForPath`).
-    - [x] Refine test assertions for robustness (Including workarounds for current command behavior).
-    - [x] Added tests for new `simple` chart (`TestOverrideSimpleChart`) and validation failure (`TestValidateValidationFailChart`).
-- [ ] **[P1]** Update documentation:
-    - [ ] Modify `docs/CLI-REFERENCE.md` to include the new flag for the `override` command.
-    - [ ] Consider adding notes to `docs/TROUBLESHOOTING.md` or relevant sections explaining when to use this flag, especially in scripting or testing contexts.
+- [ ] **[P2]** Research & Design Helm Value Computation replication.
+- [ ] **[P2]** Refactor Analyzer Input to accept computed/merged values + origin info.
+- [ ] **[P2]** Adapt Analyzer Traversal & Source Path Logic for subchart context.
+- [ ] **[P2]** Update Command Usage (`inspect`, `override`) to use new logic.
+- [ ] **[P2]** Add Comprehensive Tests for umbrella charts and subchart overrides.
+- [ ] **[P2]** Update Documentation removing subchart limitations.
+- [ ] **[P3]** Review/Remove Warning Mechanism (from Phase 9) if obsolete.
 
-### Acceptance Criteria
-- [x] Running `irr override` without the flag performs validation as before.
-- [x] Running `irr override --no-validate` successfully generates the override file but skips the internal Helm validation, potentially allowing it to complete for charts that would otherwise fail due to missing required values during the internal check.
-- [x] Integration tests confirm the correct behavior of the flag.
-- [ ] CLI help text and user documentation accurately reflect the new flag. (Help text done, user docs pending).
+### Acceptance Criteria (Phase 10)
+- `inspect`/`override` handle subchart values/paths correctly. Tests pass. Docs updated. Warning (Phase 9) may be removed.
 
-### Files Requiring Changes
-- `cmd/irr/override.go`
-- `test/integration/override_command_test.go`
-- `test/integration/validate_command_test.go`
-- `test/integration/integration_test.go`
-- `test/integration/harness.go`
-- `pkg/image/normalization.go`
-- `test/testdata/charts/validation-fail-test/*` (New chart)
-- `test/testdata/charts/simple/*` (New chart)
-- `docs/CLI-REFERENCE.md` (Pending)
-- Potentially `docs/TROUBLESHOOTING.md` or other guides. (Pending)
+### Recommendations for Future Approach (Learnings from `feature/sub-charts`)
+(Keep recommendations as they guide future work)
 
-### Testing Strategy
-- [x] Unit/Integration tests focusing on the conditional execution of the validation logic based on the flag.
-- [ ] Manual testing using charts known to fail validation without specific required values (e.g., charts identified in the previous bulk test analysis). (Pending)
-- [ ] Subsequent testing via `test-charts.py` (after it's updated to use this flag) to confirm the reduction in validation-related failures during the 'override' phase. (Pending)
+## Phase 11: Decouple Override Validation [COMPLETED]
+- [x] **[COMPLETED]** Introduce `--no-validate` flag to `irr override` to skip internal Helm template validation, improving testability for charts requiring extra values.
 
 ## Phase 12: Enhance Override Robustness for Live Release Value Errors
 
-**Goal:** Improve the `helm irr override <release_name>` command's handling of specific errors encountered when analyzing live release values (`--all` values), preventing complete failure and providing useful feedback.
+**Goal:** Improve `helm irr override <release_name>` handling of specific live value analysis errors (problematic strings).
 
-**Proposed Behavior:**
+**Completed Steps:**
+- [x] **[P0]** Detect and report errors when live value analysis encounters problematic strings (e.g., parsing non-image strings like args).
+- [x] **[P0]** Log the problematic path/value causing the failure.
+- [x] **[P0]** Include a recommendation in the error message to use `--exclude-pattern`.
 
-1.  **Primary Path (Attempt Live Analysis):**
-    *   Fetch computed values (`helm get values <release_name> --all`).
-    *   Attempt to parse and analyze these live values for all image references.
-    *   If successful, generate the override file based on these live values (current ideal behavior).
-
-2.  **Fallback Path (Handle Specific Analysis Errors):**
-    *   **Trigger Condition:** If the live value analysis fails *specifically* due to errors interpretable as "misidentified non-image string" (e.g., parsing `extraArgs` elements as images).
-    *   **Action on Trigger:**
-        *   **Log Error:** Log the exact path and value causing the failure.
-        *   **Attempt Default Analysis:** Locate the chart in the Helm cache. Load and analyze its *default* `values.yaml` for image references.
-        *   **If Default Analysis Succeeds:**
-            *   Generate the override file based *only* on images found in the *default* values.
-            *   **Issue Prominent Warning:** Output a clear warning message, ensuring it's visible on the console and captured in logs, indicating:
-                *   That an error occurred processing live values at specific path(s).
-                *   The generated overrides are based *only on the chart's default values*.
-                *   **Images configured *only* in the live release values might be MISSING.**
-                *   A strong recommendation to **review the output carefully** and use the `--exclude-pattern` flag (e.g., `--exclude-pattern 'problematic.path.*'`) on the original command against the release name for a more accurate result based on live data.
-        *   **If Default Analysis *Also* Fails:** Report the error encountered during the default analysis.
-    *   **Other Errors:** If the live analysis fails for other reasons (Helm errors, YAML errors), report the original error directly without attempting the fallback.
+**Remaining Steps (Fallback Mechanism):**
+- [ ] **[P1]** **Attempt Default Analysis:** If the *specific* problematic string error occurs, locate the chart in cache and analyze its *default* `values.yaml`.
+- [ ] **[P1]** **Generate Partial Overrides:** If default analysis succeeds, generate overrides based *only* on default values.
+- [ ] **[P1]** **Issue Prominent Warning:** If fallback occurs, clearly warn user that overrides are based on defaults and may be incomplete due to errors in live values.
+- [ ] **[P1]** **Handle Default Analysis Failure:** If fallback analysis *also* fails, report that error.
 
 **Rationale:**
-
-*   Prioritizes accuracy by attempting live analysis first.
-*   Increases robustness by handling common value interpretation errors gracefully.
-*   Provides a useful (though potentially partial) result instead of complete failure.
-*   Manages user expectations via clear warnings about potential incompleteness in the fallback scenario.
-*   Guides the user toward the best fix (`--exclude-pattern`) for achieving accurate overrides from live values.
+- Prioritizes accuracy (live analysis), increases robustness (handles common string errors), provides partial results instead of failure, guides user (`--exclude-pattern`).
 
