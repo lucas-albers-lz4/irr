@@ -67,7 +67,7 @@ Manually identifying and overriding all container image references (including th
 
 ### 5.3. Security Considerations
 
-* **Input Validation:** Input parameters, especially file paths (`--chart-path`, `--output-file`, potential `--config`), must be validated to prevent path traversal vulnerabilities.
+* **Input Validation:** Input parameters, especially file paths (`--chart-path`, `--output-file`, `--registry-file`), must be validated to prevent path traversal vulnerabilities.
 * **Dependency Management:** Use Go modules for dependency management. Regularly scan dependencies for known vulnerabilities (e.g., using `govulncheck`).
 * **Resource Handling:** Ensure proper handling of file descriptors and memory, especially when processing large charts or values files, to prevent resource exhaustion issues.
 * **Output Sanitization:** While the primary output is structured YAML, ensure that registry/repository names derived from inputs are appropriately handled if used in logging or error messages to prevent potential injection issues (though less likely in this context).
@@ -161,7 +161,7 @@ When an image reference matches an excluded registry, it will be skipped during 
 
 ### 6.1.6 Registry Mapping Format
 
-The tool supports registry mappings provided via a configuration file (typically passed with `--config`). This allows redirecting specific source registries to different target paths or registries. Two YAML formats are supported for defining these mappings:
+The tool supports registry mappings provided via a configuration file (typically passed with `--registry-file`). This allows redirecting specific source registries to different target paths or registries. Two YAML formats are supported for defining these mappings:
 
 1.  **Structured Format (Preferred):**
     *   Uses a top-level `mappings:` key.
@@ -305,7 +305,7 @@ The Phase 4 implementation focuses on a standalone CLI with three core commands:
     *   Optional: `--source-registries <list>` (filter results to these registries)
     *   Optional: `--generate-config-skeleton <output_path>`
     *   Optional: `--output-file <path>` (defaults to stdout)
-    *   Optional: `--config <path>` (to identify excluded registries during analysis)
+    *   Optional: `--registry-file <path>` (to identify excluded registries during analysis)
 *   **Processing:** Loads chart/release values, traverses the structure, detects image patterns (`pkg/image`), categorizes by source registry, identifies value paths.
 *   **Output:** YAML formatted report listing detected images, source registries, value paths, and any parsing issues. If `--generate-config-skeleton` is used, outputs a basic config file with detected source registries.
 
@@ -317,10 +317,9 @@ The Phase 4 implementation focuses on a standalone CLI with three core commands:
     *   `--target-registry <url>` (required, unless fully defined via mappings)
     *   `--source-registries <list>` (required, unless using mappings)
     *   Optional: `--output-file <path>` (defaults to stdout)
-    *   Optional: `--config <path>` (for registry mappings, exclusions, path strategy)
+    *   Optional: `--registry-file <path>` (for registry mappings, exclusions)
     *   Optional: `--strict` (fail on unsupported structures)
-    *   Optional: `--path-strategy <name>` (defaults to `prefix-source-registry`)
-*   **Processing:** Loads chart/release values, loads configuration, detects images, filters based on source/exclude lists, generates new image paths using the selected strategy (`pkg/strategy`), constructs the minimal override map (`pkg/override`).
+*   **Processing:** Loads chart/release values, loads configuration, detects images, filters based on source/exclude lists, generates new image paths using the default strategy (`prefix-source-registry`), constructs the minimal override map (`pkg/override`).
 *   **Output:** YAML formatted override values file.
 
 ### 7.3. `irr validate`
@@ -367,15 +366,9 @@ Defines how the original image path is mapped within the target registry.
 * **Pros:** Maintains logical separation based on origin within the target registry; clear lineage. Compatible with Harbor pull-through project naming conventions.
 * **Cons:** Creates slightly longer image names. Requires corresponding setup in the target registry (e.g., Harbor project named `dockerio` proxying `docker.io`).
 
-### 8.2. `flat` (Potential Future Strategy)
+### 8.2. `flat` (Removed)
 
-* **Mechanism:** Discards the original source registry path, placing the image directly under the target registry URL.
-* **Example:**
-  * Source: `docker.io/bitnami/redis:latest`
-  * Target Registry: `myharbor.internal:5000/proxied-images`
-  * Result: `myharbor.internal:5000/proxied-images/bitnami/redis:latest`
-* **Pros:** Simpler paths.
-* **Cons:** Potential for naming collisions if different source registries have identical repository paths (e.g., `docker.io/library/nginx` vs `quay.io/library/nginx`); loses origin information in the path itself. Requires careful target registry setup.
+* This strategy is no longer supported.
 
 ## 9. Future Considerations
 
@@ -396,8 +389,8 @@ Defines how the original image path is mapped within the target registry.
 * Validation of generated target URLs (e.g., basic format check).
 * More sophisticated image identification heuristics.
 * Image signature validation integration (out of scope but may be relevant for registry integration).
-* Custom Key Patterns: Introduce a `--config <path>` flag to specify a YAML/JSON file defining custom regex patterns (e.g., `customImage:.*`).
-* Multi-strategy support: Allow different path strategies per source registry (e.g., prefix for Docker Hub, flat for GHCR).
+* Custom Key Patterns: Introduce functionality via `--registry-file` to specify custom detection logic or paths.
+* Multi-strategy support: Potentially allow different path translations based on mappings in `--registry-file`.
 
 ### 9.3. Enhanced Image Reference Handling
 

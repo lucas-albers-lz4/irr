@@ -2,7 +2,7 @@
 
 ## Overview
 
-The `test/tools/test-charts.py` script is a comprehensive testing tool designed to validate the `helm-image-override` functionality across a wide range of Helm charts. It automates the process of downloading, analyzing, and testing charts with our image override tool, providing detailed feedback and statistics.
+The `test/tools/test-charts.py` script is a comprehensive testing tool designed to validate the `irr` functionality across a wide range of Helm charts. It automates the process of downloading, analyzing, and testing charts with our image override tool, providing detailed feedback and statistics.
 
 ## Dependencies
 
@@ -154,7 +154,7 @@ The script categorizes errors to help identify and debug issues:
    Error: unknown flag: --chart
    ```
    - Solution: Verify command syntax in test script
-   - Check: Recent changes to helm-image-override CLI
+   - Check: Recent changes to irr CLI
 
 3. **Cache Issues**
    ```

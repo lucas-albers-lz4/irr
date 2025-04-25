@@ -11,7 +11,6 @@
 - [8. Summary of Key Differences](#8-summary-of-key-differences-plugin-vs-standalone-cli)
 - [9. Prerequisites & Installation](#9-prerequisites--installation)
 - [10. Appendix: Troubleshooting & Examples](#10-appendix-troubleshooting--examples)
-- [11. Implementation Prioritization and Roadmap](#11-implementation-prioritization-and-roadmap)
 
 ## 1. Introduction
 
@@ -133,33 +132,7 @@ The plugin requires these Kubernetes permissions:
 
 Features that only make sense within the Helm plugin context.
 
-### 4.1. Suggest Source Registries (Interactive)
-*   **Concept:** Interactive helper for `helm irr override <release-name>`. Primarily for new user ease-of-use, not CI/CD.
-*   **Functionality:**
-    *   Runs if `helm irr override <release>` is invoked without `--source-registries` and no config mappings are found.
-    *   Performs internal `inspect`.
-    *   Prompts user with detected registries and image counts.
-    *   Allows selection (all, none, specific subset).
-*   **Example Prompt:**
-    ```
-    Found 3 source registries in release 'my-app':
-    [1] docker.io (12 images)
-    [2] quay.io (3 images)
-    [3] gcr.io (1 image)
-
-    Select registries to override (e.g., 1,2 or 'all'): [all]
-    ```
-*   **Goal:** Simplify the process for users who haven't pre-analyzed or configured. Automatically disabled in non-interactive/CI environments.
-
-### 4.2. Implementation Considerations
-
-List-releases performs full image analysis by default with a circuit breaker limit of 300 charts, providing good performance (under 5 seconds for typical deployments) while delivering valuable insights.
-
-Interactive registry selection supports comma-separated numbers or 'all'/'none' options with clear instructions in the prompt.
-
-Non-TTY environments are automatically detected, disabling interactive prompts and requiring explicit source registries or configuration to proceed.
-
-### 4.3. File Overwrite Protection
+### 4.1. File Overwrite Protection
 
 **File Overwrite Protection:**
 Implement a simple, safe approach for output files:
@@ -171,209 +144,7 @@ Implement a simple, safe approach for output files:
 
 This approach follows UNIX philosophy by simply stating the problem without prescribing solutions. The error is concise and clear, letting users decide how to handle the situation.
 
-### 4.4. Implementation Architecture: Adapter Pattern
-
-*   **Concept:** Use an adapter layer between the Helm plugin interface and core IRR functionality to maintain separation of concerns.
-*   **Architecture:**
-    ```
-    [helm irr command] → [Helm-aware adapter] → [Core IRR functions]
-    ```
-
-*   **Adapter Responsibilities:**
-    1. Process Helm-specific context (namespaces, releases)
-    2. Gather required data from Helm (values, chart sources)
-    3. Transform this data into the format expected by core IRR functions
-    4. Call existing core inspect/override/validate functions
-    5. Manage error translation between Helm-specific and core contexts
-    6. Handle CLI flag inheritance from global Helm options
-
-*   **Interface Definitions:**
-    ```go
-    // HelmClientInterface abstracts Helm SDK interactions
-    type HelmClientInterface interface {
-        GetReleaseValues(releaseName string, namespace string) (map[string]interface{}, error)
-        GetChartMetadata(releaseName string, namespace string) (*ChartMetadata, error)
-        TemplateChart(releaseName string, chartSource string, valueFiles []string) (string, error)
-        // Additional Helm-specific operations as needed
-    }
-
-    // CoreIRRInterface defines the contract with core functionality
-    type CoreIRRInterface interface {
-        Inspect(chartPath string, values map[string]interface{}) (*InspectResult, error)
-        Override(chartPath string, values map[string]interface{}, options OverrideOptions) (*OverrideResult, error)
-        Validate(chartPath string, values []map[string]interface{}) error
-    }
-    ```
-
-*   **Implementation Example:**
-    ```go
-    // HelmAdapter handles Helm-specific context and operations
-    type HelmAdapter struct {
-        helmClient  HelmClientInterface
-        coreRunner  CoreIRRInterface
-        logger      Logger
-        configStore ConfigStore
-    }
-
-    // Inspect implements the Helm plugin version of inspect
-    func (h *HelmAdapter) Inspect(releaseName string, namespace string, options *InspectOptions) (*InspectResult, error) {
-        // 1. Get release info from Helm with retries and proper error handling
-        releaseValues, err := h.helmClient.GetReleaseValues(releaseName, namespace)
-        if err != nil {
-            if isNotFoundError(err) {
-                return nil, fmt.Errorf("release '%s' not found in namespace '%s'. Verify the release exists with: helm list -n %s", 
-                    releaseName, namespace, namespace)
-            }
-            return nil, fmt.Errorf("failed to fetch values for release '%s': %w", releaseName, err)
-        }
-        
-        // 2. Transform Helm release data into format expected by core
-        chartData, err := h.prepareChartDataFromRelease(releaseName, namespace, releaseValues)
-        if err != nil {
-            return nil, err
-        }
-        
-        // 3. Apply any Helm-specific options transformation
-        coreOptions := h.transformInspectOptions(options)
-        
-        // 4. Call core function with transformed data
-        result, err := h.coreRunner.Inspect(chartData.Path, chartData.Values, coreOptions)
-        if err != nil {
-            return nil, fmt.Errorf("inspect operation failed: %w", err)
-        }
-        
-        // 5. Enrich result with Helm-specific context if needed
-        h.enhanceResultWithHelmContext(result, releaseName, namespace)
-        
-        return result, nil
-    }
-    
-    // transformReleaseToChartInput converts Helm release data to core chart format
-    func (h *HelmAdapter) prepareChartDataFromRelease(releaseName, namespace string, values map[string]interface{}) (*ChartData, error) {
-        // Get chart information from release
-        chartMeta, err := h.helmClient.GetChartMetadata(releaseName, namespace)
-        if err != nil {
-            return nil, fmt.Errorf("failed to get chart metadata: %w", err)
-        }
-        
-        // Handle chart source resolution with fallbacks
-        chartPath, err := h.resolveChartSource(chartMeta)
-        if err != nil {
-            h.logger.Warn("Could not resolve exact chart source, using best available match")
-        }
-        
-        return &ChartData{
-            Path:    chartPath,
-            Values:  values,
-            Version: chartMeta.Version,
-            Name:    chartMeta.Name,
-        }, nil
-    }
-    
-    // resolveChartSource attempts to find the exact chart source with fallbacks
-    func (h *HelmAdapter) resolveChartSource(meta *ChartMetadata) (string, error) {
-        // Try exact version from release metadata
-        exactSource, err := h.lookupExactChartSource(meta.Name, meta.Version, meta.Repository)
-        if err == nil {
-            return exactSource, nil
-        }
-        
-        // Check for chart in local cache if available
-        localPath, err := h.findInLocalCache(meta.Name, meta.Version)
-        if err == nil {
-            return localPath, nil
-        }
-        
-        // Last resort - use repository information and let Helm handle it
-        return fmt.Sprintf("%s/%s:%s", meta.Repository, meta.Name, meta.Version), nil
-    }
-    ```
-
-*   **Error Handling Strategy:**
-    1. **Detailed Contextual Errors:** Enrich errors with Helm context (e.g., release name, namespace)
-    2. **Recovery Guidance:** Include actionable advice in error messages when possible
-    3. **Categorized Error Types:** Define error categories that can be handled appropriately by callers
-    4. **Graceful Degradation:** Fall back to simpler approaches when optimal path fails
-
-*   **Credential Sanitization:**
-    ```go
-    // Function to sanitize output that might contain sensitive information
-    func sanitizeCredentials(content string) string {
-        // Redact common credential patterns in content
-        sensitivePatterns := []*regexp.Regexp{
-            regexp.MustCompile(`(?i)(access[_-]?key|secret[_-]?key|password|token)([=:])([^&\s]+)`),
-            regexp.MustCompile(`eyJ[a-zA-Z0-9_-]{5,}\.[a-zA-Z0-9_-]{5,}\.[a-zA-Z0-9_-]{5,}`), // JWT tokens
-            regexp.MustCompile(`https?:\/\/[^:]+:[^@]+@`), // URL embedded credentials
-        }
-        
-        redacted := content
-        for _, pattern := range sensitivePatterns {
-            redacted = pattern.ReplaceAllString(redacted, "$1$2[REDACTED]")
-        }
-        
-        return redacted
-    }
-    
-    // Always sanitize Helm output before logging or displaying
-    func (h *HelmAdapter) executeHelmCommand(args ...string) (string, error) {
-        output, err := h.helmClient.ExecCommand(args...)
-        
-        // Sanitize before logging or error reporting
-        sanitizedOutput := sanitizeCredentials(output)
-        if err != nil {
-            sanitizedErr := sanitizeCredentials(err.Error())
-            h.logger.Debug("Helm command failed: %v", sanitizedErr)
-            return "", fmt.Errorf(sanitizedErr)
-        }
-        
-        // Only log or return sanitized output
-        return sanitizedOutput, nil
-    }
-    ```
-
-*   **Testing Strategy:**
-    1. **Unit Testing the Adapter:**
-       - Mock the Helm interfaces using a robust mocking framework (gomock/testify)
-       - Test each adapter method with various success/failure scenarios
-       - Verify error handling, retry behavior, and edge cases
-       - Assert the correct core functions are called with expected arguments
-
-    2. **Component Testing:**
-       - Test the adapter with a real CoreIRR implementation but mocked Helm client
-       - Verify end-to-end behavior within the adapter's boundaries
-       - Focus on data transformation correctness
-
-    3. **Integration Testing:**
-       - Create fixture Helm releases in a test cluster
-       - Run the plugin commands against these fixtures
-       - Verify outputs match expectations
-       - Test with various Helm versions to ensure compatibility
-
-    4. **Mock Helm Runtime:**
-       - Use dependency injection to swap the real Helm client with the mock
-       - Create test scenarios for various Helm release states
-       - Test both success paths and error handling
-
-    5. **Fuzzing & Edge Cases:**
-       - Apply fuzzing to input values and chart structures to identify parsing vulnerabilities
-       - Test edge cases such as malformed charts, extremely large values files, and unusual image formats
-       - Verify robustness against unexpected Helm release states and responses
-       - Test security concerns like path traversal and credential leakage
-
-    6. **Real-World Chart Testing:**
-       - Include tests with popular real-world charts (e.g., nginx, prometheus, cert-manager)
-       - Test charts with complex subchart structures
-       - Verify correct handling of charts using various image reference patterns
-
-**Conclusions (Section 4.5):**
-1. The adapter pattern maintains clean separation between Helm plugin functionality and core IRR logic
-2. Well-defined interfaces enable thorough testing with mocks for both Helm and core components
-3. Robust error handling with context-specific messages improves user experience
-4. Configuration injection allows for flexible behavior without modifying core components
-5. The design follows SOLID principles, particularly Single Responsibility and Dependency Inversion
-6. Performance considerations are built into the design from the beginning
-
-### 4.6. Non-Destructive Philosophy
+### 4.2. Non-Destructive Philosophy
 
 *   **Core Principle:** IRR is strictly a read-only, analysis and validation tool that never directly applies changes to the cluster.
 *   **Workflow Security:** This strict separation ensures users always maintain explicit control over what changes are applied to their clusters.
@@ -395,7 +166,6 @@ This approach follows UNIX philosophy by simply stating the problem without pres
 
     3. **Workflow Enhancement without Violation:**
        - The tool can facilitate user review while maintaining the separation
-       - Example: `--diff` feature to visualize differences (but not apply them)
        - Example: Suggest the exact `helm upgrade` command for the user to run
 
 *   **Command Chaining Helper:**
@@ -437,54 +207,14 @@ This approach follows UNIX philosophy by simply stating the problem without pres
     4. **Review:** Enforces review step before application
     5. **CI/CD Friendly:** Fits into GitOps workflows where changes are committed before application
 
-**Conclusions (Section 4.6):**
+**Conclusions (Section 4.2):**
 1. The plugin strictly adheres to the core IRR philosophy of being an analysis tool, not an application tool
 2. This separation of concerns enhances safety, transparency, and user control
-3. The workflow can be improved through better visualization, suggestions, and integration, while preserving this philosophy
+3. The workflow can be improved through better visualization and suggestions, while preserving this philosophy
 4. This approach aligns with enterprise GitOps workflows and change management practices
 
 **Conclusions (Section 4):**
-1.  Discovery commands (`list-releases`) need performance considerations (sampling) for usability.
-2.  Interactive features enhance new-user experience but require robust detection and disabling for automation (CI/CD).
-3.  File output operations need strong safety defaults to prevent accidental data loss, with clear overrides (`--force`, `--backup`).
-
-### 4.7 Command Flag Reference
-
-| Flag | Commands | Required | Default | Description |
-|------|----------|----------|---------|-------------|
-| `--analyze-images` | `list-releases` | No | false | Scan release values for image references |
-| `--full-scan` | `list-releases` | No | false | Perform comprehensive (slower) image analysis |
-| `--non-interactive` | `override` | No | false | Disable interactive prompts for registry selection |
-| `--force` | `override` | No | false | Overwrite existing output files |
-| `--backup` | `override` | No | false | Create backup of existing output files before overwriting |
-| `--output-file/-o` | `override`, `inspect` | No | varies | Specify output file path (use `-` for stdout) |
-
-**TTY Detection & Non-Interactive Environments:**
-```go
-// TTY detection implementation
-func isInteractiveTerminal() bool {
-    // Check if stdout is a TTY
-    if fileInfo, _ := os.Stdout.Stat(); (fileInfo.Mode() & os.ModeCharDevice) != 0 {
-        // Check CI environment variables
-        if os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") != "" {
-            return false
-        }
-        return true
-    }
-    return false
-}
-```
-
-**Testing Plugin Commands:**
-The plugin commands should be tested at three levels:
-1. **Unit tests:** Test the adapter layer with mocked Helm client
-2. **Integration tests:** Test against a local Kubernetes cluster (e.g., kind)
-3. **CLI tests:** Verify command-line output formats and error messages
-
-Test coverage must include:
-- Interactive vs. non-interactive behavior
-- Error handling and messaging
-- Output formatting consistency
+1.  File output operations need strong safety defaults to prevent accidental data loss.
 
 ## 5. Workflow Integration & Defaults
 
@@ -495,7 +225,7 @@ Adjusting behavior to better fit common Helm workflows.
 *   **Proposal:** When running `helm irr override <release-name>` without `--output-file`, default to writing to `<release-name>-overrides.yaml` in the current directory instead of `stdout`. Use filename sanitization (e.g., release `my/app` -> `my-app-overrides.yaml`).
 *   **Rationale:** Might feel more intuitive for release-focused workflows. Reduces pipe/redirection complexity for simple cases.
 *   **Contrast with CLI:** Standalone `irr override --chart-path ...` should still default to `stdout` for consistency with typical CLI tools.
-*   **Safety:** Apply the file overwrite protection outlined in Section 4.3. Allow explicit `stdout` via `-o -`.
+*   **Safety:** Apply the file overwrite protection outlined in Section 4.1. Allow explicit `stdout` via `-o -`.
 *   **Secure File Handling:**
     ```go
     // Secure file creation with proper permissions
@@ -729,8 +459,6 @@ Clear communication of capabilities helps users choose the right tool.
 | **Cluster Interaction**  | Yes (Get Values, List, etc.)  | No                        | Plugin uses Helm SDK                        |
 | **Output Default**       | `<release>-overrides.yaml`    | `stdout`                  | Plugin tailored for release workflow        |
 | **Output Safety**        | Fail if file exists           | Standard pipe/redirect    | Simple error if file exists                 |
-| **Interactive Mode**     | Auto-detect                   | None                      | TTY detection with required params in CI    |
-| **Exclusive Commands**   | `list-releases` with analysis | N/A                       | Leveraging Helm context                     |
 
 ## 9. Prerequisites & Installation
 
@@ -770,129 +498,3 @@ helm irr inspect my-release -n dev                    # Analyze image references
 helm irr override my-release -n dev -t registry.local # Generate override file
 helm irr validate my-release -n dev -f my-release-overrides.yaml # Pre-flight check
 ```
-
-## 11. Implementation Prioritization and Roadmap
-
-### 11.1. Feature Prioritization
-- **High priority:** Namespace-aware commands, release value fetching, file overwrite protection, validation with deployed state
-- **Medium priority:** Helm logging style
-- **Low priority:** Interactive registry selection, chart source annotations
-
-### 11.2. Implementation Sequence
-
-The recommended implementation approach follows three vertical slices, each delivering increasing value:
-
-#### Vertical Slice 1: Core Functionality
-1. **Adapter Framework**
-   - Basic interface definitions
-   - Helm client integration
-   - Error translation
-
-2. **Inspect Command**
-   - Release value fetching
-   - Image reference detection
-   - Basic reporting
-
-3. **Override Command**
-   - Basic override file generation
-   - File output handling with safety checks
-   - Target registry transformation
-
-4. **Simple Validation**
-   - Helm template verification
-   - Basic error reporting
-
-### 11.3. Testing and Quality Standards
-
-**Test Coverage Requirements:**
-| Phase | Unit Test | Integration Test | E2E Test |
-|-------|-----------|-----------------|----------|
-| MVP | 80% coverage | Basic commands against kind | N/A |
-| Phase 2 | 85% coverage | All commands, error paths | Chart fixtures |
-| Phase 3 | 90% coverage | Multi-version Helm testing | Popular charts |
-
-### 11.4. Version and Compatibility Management
-
-**Versioning Policy:**
-- Follow semantic versioning (major.minor.patch)
-- Breaking changes only in major version increments
-- Feature additions in minor version increments
-- Bug fixes in patch version increments
-
-**Breaking Change Policy:**
-1. Major version increments for API or behavior changes
-2. Deprecation notices in at least one minor release before removal
-3. Migration guides provided for all breaking changes
-4. Maintenance of previous major version for 6 months minimum
-
-**Backward Compatibility:**
-- Command-line interface stability guaranteed within major versions
-- Configuration file format stable within major versions
-- Output formats (YAML structure) stable within major versions
-- Internal APIs may change between minor versions
-
-### 11.5. Bug Triage and Feature Request Process
-
-**Bug Triage Process:**
-1. Initial assessment within 2 business days
-2. Priority assignment:
-   - P0: Critical/security (fix ASAP)
-   - P1: Major functionality impact (target next release)
-   - P2: Minor functionality impact (prioritize by user impact)
-   - P3: Cosmetic or edge case (address as time permits)
-3. Security vulnerabilities handled via private report channel
-
-**Feature Request Process:**
-1. Submission via GitHub issues using provided template
-2. Assessment criteria:
-   - Alignment with tool philosophy
-   - Implementation complexity
-   - User benefit and demand
-   - Maintenance impact
-3. Response to all requests within 10 business days
-
-func configureLogging(cmd *cobra.Command) {
-    // Check for test mode first (highest precedence)
-    if os.Getenv("IRR_TESTING") == "true" {
-        // In test mode, use the test framework logging controls
-        testLogLevel := os.Getenv("LOG_LEVEL")
-        if testLogLevel != "" {
-            setLogLevel(testLogLevel)
-            return
-        }
-        
-        // LOG_LEVEL takes precedence in test mode
-        setLogLevel("INFO") // Or DEBUG if that's the desired default for tests
-    }
-    
-    // Production mode - check command line flag
-    debugFlag, _ := cmd.Flags().GetBool("debug")
-    if debugFlag {
-        setLogLevel("DEBUG")
-        return
-    }
-    
-    // Default production level
-    setLogLevel("INFO")
-}
-
-### 6.2.1 Logging Levels
-
-The plugin implements a simple dual-level logging approach for users:
-
-**User-Facing Controls:**
-- Default: Normal operational logging (INFO level)
-- Detailed debug output for troubleshooting is enabled via the `LOG_LEVEL=DEBUG` environment variable.
-
-**Test Framework Integration:**
-The plugin's logging system integrates with the existing IRR test framework, which uses:
-- `IRR_TESTING=true`: Activates test mode
-- `LOG_LEVEL=DEBUG|INFO|WARN|ERROR`: Controls verbosity in tests
-
-Tests for the logging system itself will utilize these existing flags to maintain consistency with the established testing patterns.
-
-**Precedence Flow:**
-1. Test framework settings (when `IRR_TESTING=true`)
-   - `LOG_LEVEL` takes priority
-2. Environment variable (`LOG_LEVEL`)
-3. Default logging level (INFO)
