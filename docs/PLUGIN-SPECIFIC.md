@@ -133,21 +133,7 @@ The plugin requires these Kubernetes permissions:
 
 Features that only make sense within the Helm plugin context.
 
-### 4.1. List Releases Enhanced for IRR (`helm irr list-releases`)
-*   **Concept:** A plugin-only command extending `helm list`.
-*   **Functionality:**
-    *   Internally calls `helm list` (respecting namespace flags like `-n`, `--all-namespaces`).
-    *   Automatically performs image analysis on each listed release's values (with a circuit breaker limit of 300 charts).
-    *   Indicates which releases contain images potentially manageable by `irr` (e.g., with an asterisk or a separate column).
-*   **Goal:** Help users quickly identify which running applications are relevant targets for `irr`.
-*   **Example Output:**
-    ```
-    NAME       NAMESPACE  REVISION  UPDATED          STATUS    CHART          APP VERSION  IMAGE SOURCES     IRR-RELEVANT
-    my-app     dev        2         ...              deployed  my-chart-1.2.0 1.0.0        docker.io, quay.io  ✓
-    redis      prod       5         ...              deployed  redis-15.0.1   6.2.7        internal-registry   ✗
-    ```
-
-### 4.2. Suggest Source Registries (Interactive)
+### 4.1. Suggest Source Registries (Interactive)
 *   **Concept:** Interactive helper for `helm irr override <release-name>`. Primarily for new user ease-of-use, not CI/CD.
 *   **Functionality:**
     *   Runs if `helm irr override <release>` is invoked without `--source-registries` and no config mappings are found.
@@ -165,7 +151,7 @@ Features that only make sense within the Helm plugin context.
     ```
 *   **Goal:** Simplify the process for users who haven't pre-analyzed or configured. Automatically disabled in non-interactive/CI environments.
 
-### 4.3. Implementation Considerations
+### 4.2. Implementation Considerations
 
 List-releases performs full image analysis by default with a circuit breaker limit of 300 charts, providing good performance (under 5 seconds for typical deployments) while delivering valuable insights.
 
@@ -173,7 +159,7 @@ Interactive registry selection supports comma-separated numbers or 'all'/'none' 
 
 Non-TTY environments are automatically detected, disabling interactive prompts and requiring explicit source registries or configuration to proceed.
 
-### 4.4. File Overwrite Protection
+### 4.3. File Overwrite Protection
 
 **File Overwrite Protection:**
 Implement a simple, safe approach for output files:
@@ -185,7 +171,7 @@ Implement a simple, safe approach for output files:
 
 This approach follows UNIX philosophy by simply stating the problem without prescribing solutions. The error is concise and clear, letting users decide how to handle the situation.
 
-### 4.5. Implementation Architecture: Adapter Pattern
+### 4.4. Implementation Architecture: Adapter Pattern
 
 *   **Concept:** Use an adapter layer between the Helm plugin interface and core IRR functionality to maintain separation of concerns.
 *   **Architecture:**
@@ -509,7 +495,7 @@ Adjusting behavior to better fit common Helm workflows.
 *   **Proposal:** When running `helm irr override <release-name>` without `--output-file`, default to writing to `<release-name>-overrides.yaml` in the current directory instead of `stdout`. Use filename sanitization (e.g., release `my/app` -> `my-app-overrides.yaml`).
 *   **Rationale:** Might feel more intuitive for release-focused workflows. Reduces pipe/redirection complexity for simple cases.
 *   **Contrast with CLI:** Standalone `irr override --chart-path ...` should still default to `stdout` for consistency with typical CLI tools.
-*   **Safety:** Apply the file overwrite protection outlined in Section 4.4. Allow explicit `stdout` via `-o -`.
+*   **Safety:** Apply the file overwrite protection outlined in Section 4.3. Allow explicit `stdout` via `-o -`.
 *   **Secure File Handling:**
     ```go
     // Secure file creation with proper permissions
@@ -518,7 +504,8 @@ Adjusting behavior to better fit common Helm workflows.
         file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
         if err != nil {
             if os.IsExist(err) {
-                return fmt.Errorf("output file '%s' already exists. Use --force to overwrite or --backup", filename)
+                // Error message updated to remove reference to non-existent flags
+                return fmt.Errorf("output file '%s' already exists", filename)
             }
             return fmt.Errorf("error creating output file: %w", err)
         }
@@ -633,8 +620,7 @@ A key difference between the plugin and standalone execution lies in how the Kub
   run: |
     helm irr override ${{ env.RELEASE }} -n ${{ env.NAMESPACE }} \
       --target-registry ${{ secrets.TARGET_REGISTRY }} \
-      --output-file ./overrides.yaml \
-      --non-interactive
+      --output-file ./overrides.yaml
   env:
     HELM_KUBECONTEXT: ${{ secrets.KUBE_CONTEXT }}
 ```
@@ -666,14 +652,12 @@ Minor adjustments for a smoother plugin experience.
 **User-Facing Logging:**
 The plugin intentionally implements a simple, binary logging approach:
 - Default: Standard operational logging (errors, warnings, key status messages)
-- `--debug`: Detailed debug output for troubleshooting
+- Detailed debug output for troubleshooting is enabled via the `LOG_LEVEL=DEBUG` environment variable.
 
 This minimal approach prevents flag complexity and maintains consistency across CLI and plugin usage patterns.
 
-**Note for Developers:** The test framework uses environment variables (`IRR_TESTING=true`, `LOG_LEVEL`) that are not intended for end users. These variables are reserved for testing infrastructure and should not be exposed in user documentation.
-
 **Conflicting Flag Resolution:**
-- Debug levels: `--debug` overrides `--verbose` if both provided
+- Debug levels: `LOG_LEVEL=DEBUG` takes precedence over other levels.
 - Output targets: `--output-file` overrides any config setting
 - Namespace flags: `-n/--namespace` overrides any inherited context
 
@@ -683,7 +667,7 @@ This minimal approach prevents flag complexity and maintains consistency across 
 The plugin mimics Helm's output style with consistent log levels, color coding (cyan for info, yellow for warnings, red for errors), and status message formatting. This creates a seamless user experience that feels like a native part of Helm.
 
 **Debug Logging Approach:**
-The plugin uses a single `--debug` flag for troubleshooting needs. When enabled, output includes detailed information about operations, API calls, and internal states in a human-readable format. Structured data formats are only used in debug mode for machine parsing when needed.
+The plugin uses the `LOG_LEVEL=DEBUG` environment variable for troubleshooting needs. When enabled, output includes detailed information about operations, API calls, and internal states in a human-readable format. Structured data formats are only used in debug mode for machine parsing when needed.
 
 ### 6.4. Telemetry & Privacy
 - No user data collection by default
@@ -898,7 +882,7 @@ The plugin implements a simple dual-level logging approach for users:
 
 **User-Facing Controls:**
 - Default: Normal operational logging (INFO level)
-- `--debug`: Detailed debug logging for troubleshooting
+- Detailed debug output for troubleshooting is enabled via the `LOG_LEVEL=DEBUG` environment variable.
 
 **Test Framework Integration:**
 The plugin's logging system integrates with the existing IRR test framework, which uses:
@@ -910,5 +894,5 @@ Tests for the logging system itself will utilize these existing flags to maintai
 **Precedence Flow:**
 1. Test framework settings (when `IRR_TESTING=true`)
    - `LOG_LEVEL` takes priority
-2. Command line flags (`--debug`) - Deprecated, use `LOG_LEVEL` environment variable
+2. Environment variable (`LOG_LEVEL`)
 3. Default logging level (INFO)

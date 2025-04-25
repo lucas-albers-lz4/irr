@@ -555,7 +555,7 @@ Establish baseline performance metrics to understand resource requirements and s
 ## 11. Debug Logging Testing
 
 ### Debug Output Validation
-Test the debug logging functionality with the `--debug` flag:
+Test the debug logging functionality by setting the `LOG_LEVEL=DEBUG` environment variable:
 
 | Test Case | Expected Debug Output |
 |-----------|---------------------|

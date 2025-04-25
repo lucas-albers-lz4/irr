@@ -118,20 +118,6 @@ registry: my-registry.example.com:5000
 
 #### Path Strategy Selection
 
-**Issue:** Unexpected image paths in target registry
-```yaml
-# Expected
-my-registry.com/nginx:1.23
-
-# Got
-my-registry.com/dockerio/nginx:1.23
-```
-
-**Solution:**
-- Default strategy is prefix-source-registry
-- Use --strategy flag to select different strategy
-- Check documentation for available strategies
-
 #### Source Registry Filtering
 
 **Issue:** Some images not being processed
@@ -141,9 +127,9 @@ image: custom-registry.com/app:1.0
 ```
 
 **Solution:**
-- Verify registry is in --source-registries list
-- Check for --exclude-registries conflicts
-- Use --verbose to see registry matching logic
+- Verify registry is in `--source-registries` list provided to `helm irr override`.
+- Check for `--exclude-registries` conflicts.
+- Use `LOG_LEVEL=debug helm irr inspect ...` to see registry matching logic.
 
 ### Performance Issues
 
@@ -152,9 +138,9 @@ image: custom-registry.com/app:1.0
 **Issue:** Slow processing of large charts with many images
 
 **Solution:**
-- This is expected for complex charts
-- Use --verbose to identify bottlenecks
-- Consider processing subchart overrides separately
+- This is expected for complex charts.
+- Use `LOG_LEVEL=debug helm irr ...` to identify bottlenecks.
+- Consider processing subchart overrides separately.
 
 ### Integration Issues
 
@@ -166,24 +152,29 @@ Error: template: chart/templates/deployment.yaml:54:19: executing "chart/templat
 ```
 
 **Solution:**
-- Verify the override structure matches original
-- Check for required but missing fields
-- Use --dry-run to preview override structure
+- Verify the override structure matches original values.
+- Check for required but missing fields.
+- Use `helm irr override ... --dry-run` to preview override structure.
 
 ## Debug Tools
 
-### Verbose Output
+### Debug Logging
 
-Use the --verbose flag to get detailed information about:
+Use the `LOG_LEVEL=debug` environment variable with `helm irr` commands to get detailed information about:
 - Image detection process
 - Path construction
 - Registry matching
 - Type detection
 - Template variable handling
 
+Example:
+```bash
+LOG_LEVEL=debug helm irr inspect my-release -n my-namespace
+```
+
 ### Dry Run Mode
 
-Use --dry-run to:
+Use `helm irr override ... --dry-run` to:
 - Preview changes without writing files
 - Validate override structure
 - Check path strategy results
@@ -192,8 +183,8 @@ Use --dry-run to:
 ## Getting Help
 
 If you encounter an issue not covered here:
-1. Enable --verbose output
-2. Run with --dry-run first
+1. Enable debug logging (`LOG_LEVEL=debug helm irr ...`)
+2. Run `helm irr override ... --dry-run` first
 3. Check the generated override structure
 4. Verify chart values structure
 5. Open an issue with the above information 

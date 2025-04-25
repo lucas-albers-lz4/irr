@@ -322,7 +322,7 @@ In summary, you only *need* the `--target-registry` CLI flag if `strictMode` is 
 | 0    | Success                   |
 | 1    | Missing required flag     |
 | 2    | Input/Configuration error |
-| 3    | Invalid strategy          |
+| 3    | Input/Configuration error |
 | 4    | Chart not found           |
 | 10   | Chart parsing error       |
 | 11   | Image processing error    |

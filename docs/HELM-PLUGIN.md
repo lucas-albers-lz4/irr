@@ -114,14 +114,22 @@ The plugin uses the same configuration options as the IRR CLI tool:
 
 ```yaml
 # ~/.irr.yaml
-registry_mappings:
-  docker.io: "registry.local/docker"
-  quay.io: "registry.local/quay"
+# registry_mappings: # DEPRECATED Simple Map Format
+#   docker.io: "registry.local/docker"
+#   quay.io: "registry.local/quay"
+
+version: "1.0" # Optional
+registries:
+  mappings:
+    - source: "docker.io"
+      target: "registry.local/docker"
+    - source: "quay.io"
+      target: "registry.local/quay"
 
 exclude_registries:
   - "internal-registry.company.com"
 
-path_strategy: "prefix-source-registry"  # default
+# path_strategy: "prefix-source-registry" # No longer configurable via file
 ```
 
 ## Examples
@@ -160,8 +168,7 @@ steps:
     run: |
       helm irr override my-app \
         --target-registry $REGISTRY \
-        --source-registries docker.io,quay.io \
-        --non-interactive
+        --source-registries docker.io,quay.io
 
   - name: Validate Before Deployment
     run: |
@@ -208,7 +215,7 @@ Enable debug logging for more information:
 # Using environment variable (Recommended)
 LOG_LEVEL=DEBUG helm irr inspect my-release
 
-# Using deprecated flag
+# Using deprecated flag is no longer supported
 # helm irr inspect my-release --debug
 ```
 

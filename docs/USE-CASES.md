@@ -46,13 +46,13 @@ When working with a new chart, first inspect it to understand its image structur
 #### Using Standalone CLI:
 ```bash
 # Inspect local chart
-irr inspect --chart-path ./my-chart
+helm irr inspect --chart-path ./my-chart
 
 # Generate detailed report
-irr inspect --chart-path ./my-chart --output-file report.yaml --format yaml
+helm irr inspect --chart-path ./my-chart --output-file report.yaml --output-format yaml
 
 # Filter images by registry
-irr inspect --chart-path ./my-chart --source-registries docker.io,quay.io
+helm irr inspect --chart-path ./my-chart --source-registries docker.io,quay.io
 ```
 
 #### Using Helm Plugin:
@@ -79,7 +79,7 @@ Based on analysis, create or update your configuration file:
 # vim ~/.irr.yaml
 
 # Option 2: Generate a skeleton based on chart inspection (Recommended for new configs)
-irr inspect --chart-path ./my-chart --generate-config-skeleton my-chart-config.yaml
+helm irr inspect --chart-path ./my-chart --generate-config-skeleton my-chart-config.yaml
 # Now edit my-chart-config.yaml to add target registry mappings
 ```
 
@@ -105,10 +105,10 @@ Generate the override values file to redirect images:
 #### Using Standalone CLI:
 ```bash
 # Generate overrides with global config
-irr override --chart-path ./my-chart --output-file overrides.yaml
+helm irr override --chart-path ./my-chart --output-file overrides.yaml
 
 # Override with specific target
-irr override --chart-path ./my-chart --target-registry registry.local \
+helm irr override --chart-path ./my-chart --target-registry registry.local \
   --source-registries docker.io,quay.io --output-file overrides.yaml
 ```
 
@@ -118,20 +118,20 @@ irr override --chart-path ./my-chart --target-registry registry.local \
 helm irr override my-release --output-file overrides.yaml
 
 # Generate with specific config
-helm irr override my-release --config custom-config.yaml --output-file overrides.yaml
+helm irr override my-release --registry-file custom-config.yaml --output-file overrides.yaml
 ```
 
 ### 4. Validating Overrides
 
-Before applying generated overrides, use `irr validate` as a pre-flight check to ensure they don't break Helm's templating engine. This command runs `helm template` internally using the provided overrides.
+Before applying generated overrides, use `helm irr validate` as a pre-flight check to ensure they don't break Helm's templating engine. This command runs `helm template` internally using the provided overrides.
 
 #### Using Standalone CLI:
 ```bash
 # Validate overrides against a local chart
-irr validate --chart-path ./my-chart --values overrides.yaml
+helm irr validate --chart-path ./my-chart --values overrides.yaml
 
 # Validate with multiple value files (overrides applied last)
-irr validate --chart-path ./my-chart --values base-values.yaml --values overrides.yaml
+helm irr validate --chart-path ./my-chart --values base-values.yaml --values overrides.yaml
 ```
 
 #### Using Helm Plugin:
@@ -181,7 +181,7 @@ jobs:
       
       - name: Generate Overrides
         run: |
-          irr override --chart-path ./charts/my-app \
+          helm irr override --chart-path ./charts/my-app \
             --target-registry ${{ secrets.REGISTRY_URL }} \
             --source-registries docker.io,quay.io \
             --output-file overrides.yaml
@@ -200,7 +200,7 @@ For air-gapped environments where external internet access is restricted:
 1. **Preparation (Internet-connected environment):**
    ```bash
    # Generate override file
-   irr override --chart-path ./my-chart --target-registry internal-registry.local \
+   helm irr override --chart-path ./my-chart --target-registry internal-registry.local \
      --source-registries docker.io,quay.io --output-file overrides.yaml
    
    # Use tool like skopeo to copy images to internal registry
@@ -220,13 +220,13 @@ For charts with multiple components and complex structures:
 
 ```bash
 # Inspect with verbose output
-irr inspect --chart-path ./kube-prometheus-stack --verbose
+LOG_LEVEL=debug helm irr inspect --chart-path ./kube-prometheus-stack
 
 # Generate overrides with higher threshold
-irr override --chart-path ./kube-prometheus-stack --threshold 90 --output-file overrides.yaml
+helm irr override --chart-path ./kube-prometheus-stack --threshold 90 --output-file overrides.yaml
 
 # Validate the generated overrides
-irr validate --chart-path ./kube-prometheus-stack --values overrides.yaml
+helm irr validate --chart-path ./kube-prometheus-stack --values overrides.yaml
 ```
 
 ### 4. Troubleshooting
@@ -235,10 +235,10 @@ For charts that have issues with image detection:
 
 ```bash
 # Run with debug logging
-irr inspect --chart-path ./problematic-chart --debug
+LOG_LEVEL=debug helm irr inspect --chart-path ./problematic-chart
 
 # Test with strict mode to see all issues
-irr override --chart-path ./problematic-chart --strict --dry-run
+helm irr override --chart-path ./problematic-chart --strict --dry-run
 ```
 
 ## Best Practices

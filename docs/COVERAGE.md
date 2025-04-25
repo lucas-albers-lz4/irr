@@ -90,7 +90,6 @@ To maximize impact and efficiency, follow this order when working through files 
      - Determine if any existing failures need to be fixed before proceeding with new feature work ✓
   
   2. **Pre-Change Verification:**
-     - Run targeted tests relevant to the component being modified (e.g., `go test -v ./test/integration -run TestComplexChartFeatures/ingress-nginx_with_admission_webhook` and if you need or debug output call with IRR_DEBUG=1 , `IRR_DEBUG=1 go test -v ./test/integration -run TestComplexChartFeatures/ingress-nginx_with_admission_webhook`✓
      - Run targeted tests relevant to the component being modified (e.g., `go test -v ./test/integration -run TestComplexChartFeatures/ingress-nginx_with_admission_webhook` and if you need debug output call with `LOG_LEVEL=DEBUG`, `LOG_LEVEL=DEBUG go test -v ./test/integration -run TestComplexChartFeatures/ingress-nginx_with_admission_webhook`)✓
      - Run targeted linting to identify specific issues (e.g., `golangci-lint run --enable-only=unused` for unused variables) ✓
   
@@ -230,66 +229,4 @@ To maximize impact and efficiency, follow this order when working through files 
         *   **Priority 1:**
             - [x] `TestGetReleaseValues`: Test logic with mock Helm client. **[IN PROGRESS - 16.7%]**
         *   **Priority 2:**
-            - [ ] `TestGetHelmSettings`: Test flag parsing/settings creation. **[0%]**
-            - [x] `TestGetReleaseNamespace`: Test logic. **[DONE - 100%]**
-            - [x] `TestGetChartPathFromRelease`: Test logic with mock Helm client. **[IN PROGRESS - 6.5%]**
-    *   **`cmd/irr/inspect.go`:** Test the `inspect` command logic end-to-end using `ExecuteCommandC`.
-        *   **Priority 1:**
-            - [x] `TestRunInspect`: Core command execution flow. **[IN PROGRESS - 59.5%]**
-            - [x] `TestLoadHelmChart`: Core chart loading. **[IN PROGRESS - 21.9%]**
-            - [x] `TestAnalyzeChart`: Core chart analysis. **[DONE - 85.7%]**
-        *   **Priority 2:**
-            - [x] `TestSetupAnalyzerAndLoadChart`: Setup logic. **[IN PROGRESS - 56.5%]**
-            - [ ] `TestInspectHelmRelease`: Helm release handling. **[0%]**
-        *   **Priority 3:**
-            - [x] Test remaining helper functions: `filterImagesBySourceRegistries` **(90.9%)**, `extractUniqueRegistries` **(100%)**, `outputRegistrySuggestions` **(100%)**, `outputRegistryConfigSuggestion` **(100%)**, `getInspectFlags` **(71.9%)**, `getAnalysisPatterns` **(71.4%)**, `processImagePatterns` **(76.2%)**. Many of these will be tested indirectly via `TestRunInspect`. **[Mostly DONE]**
-    *   **`cmd/irr/main.go`:**
-        *   **Priority 3:**
-            - [ ] `TestMain`: Difficult to test directly, focus on testing `root.Execute`. **[0%]**
-            - [x] `TestLogHelmEnvironment`: Test logging helper. **[DONE - 100%]**
-    *   **`cmd/irr/override.go`:** Test the `override` command logic end-to-end using `ExecuteCommandC`.
-        *   **Priority 1:**
-            - [x] `TestRunOverride` (or similar for the main execution path): Cover different flag combinations (chart path, release, stdin, stdout, files). **[IN PROGRESS - 33.3%]**
-            - [ ] `TestCreateAndExecuteGenerator`: Test core generation logic. **[0%]**
-            - [ ] `TestLoadChart`: Test chart loading. **[0%]**
-        *   **Priority 2:**
-            - [ ] `TestValidateChart`: Test validation logic. **[0%]**
-            - [x] `TestHandleHelmPluginOverride`: Test plugin integration. **[DONE - 80.0%]**
-            - [x] `TestValidateUnmappableRegistries`: Test registry validation. **[IN PROGRESS - 28.2%]**
-        *   **Priority 3:**
-            - [ ] `TestGetStringFlag`: **[0%]**
-            - [ ] `TestOutputOverrides`: **[0%]**
-            - [ ] `TestSkipCWDCheck`: **[0%]**
-            - [ ] `TestIsStdOutRequested`: **[0%]**
-            - [x] `TestGetReleaseNameAndNamespace`: **[DONE - 100%]**
-            - [x] `TestHandlePluginOverrideOutput`: **[IN PROGRESS - 35.7%]**
-            - [x] `TestValidatePluginOverrides`: **[DONE - 72.7%]**
-    *   **`cmd/irr/root.go`:**
-        *   **Priority 1:**
-            - [ ] `TestExecute`: Test main entry point. **[0%]**
-        *   **Priority 3:**
-            - [ ] `TestErrorExitCode`: Test custom error type methods (Error, ExitCode). **[0%]**
-    *   **`cmd/irr/validate.go`:** Test the `validate` command logic end-to-end.
-        *   **Priority 1:**
-            - [x] `TestRunValidate`: Core execution flow. **[IN PROGRESS - 70.0%]**
-        *   **Priority 2:**
-            - [ ] `TestHandleHelmPluginValidate`: Test plugin validation. **[0%]** (Was previously Low %)
-        *   **Priority 3:**
-            - [ ] `TestHandleChartYamlMissingErrors`: Test error handling. **[0%]**
-            - [ ] `TestFindChartInPossibleLocations`: Test chart location logic. **[0%]**
-    *   **`internal/helm`:** Test adapter, client, and command wrappers. Requires mocking underlying Helm CLI calls or SDK interactions.
-        *   **Priority 1:**
-            - [ ] `client.go`: `TestGetReleaseValues`. **[0%]**
-            - [ ] `client.go`: `TestGetReleaseChart`. **[0%]**
-        *   **Priority 2:**
-            - [ ] `client.go`: `TestNewHelmClient`. **[0%]**
-            - [ ] `client.go`: `TestTemplateChart`. **[0%]**
-            - [ ] `command.go`: `TestCmdTemplate`. **[0%]**
-            - [ ] `command.go`: `TestCmdGetValues`. **[0%]**
-        *   **Priority 3:**
-            - [ ] `adapter.go`: `TestHandleChartYamlMissingWithSDK`. **[0%]**
-            - [ ] `client.go`: `TestGetCurrentNamespace`. **[0%]**
-            - [ ] `client.go`: `TestFindChartForRelease`. **[0%]**
-            - [ ] `client_mock.go`: Test mock implementation if complex (e.g., `TestMockGetCurrentNamespace`). **[0%]**
-
-### Phase 4: Address Remaining 0% / Low Coverage & Utilities - **[TODO]**
+            - [ ] `
