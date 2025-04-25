@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"errors"
+
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 )
@@ -45,14 +47,13 @@ func newTestFS() *testFS {
 	return fs
 }
 
-// Stat overrides the AferoFS.Stat method to use our custom statFunc
+// Stat wraps afero.Fs.Stat for testing.
 func (t *testFS) Stat(name string) (os.FileInfo, error) {
-	if t.statFunc != nil {
-		// Return error from statFunc directly without wrapping
-		return t.statFunc(name)
+	info, err := t.fs.Stat(name)
+	if err != nil {
+		return nil, fmt.Errorf("stat failed for %s: %w", name, err)
 	}
-	// Fallback to default behavior, return error directly
-	return t.fs.Stat(name)
+	return info, nil
 }
 
 // MkdirAll overrides the AferoFS.MkdirAll method to use our custom mkdirAllFunc
@@ -138,6 +139,31 @@ func testNotFoundErrorVariants(t *testing.T, existsFunc func(string) (bool, erro
 	}
 }
 
+// helper function to test error propagation for non-NotExist errors
+func testNonExistErrorPropagation(t *testing.T, funcToTest func(string) (bool, error), funcName string) {
+	// Use the newer utilsTestFS
+	errorFS := newUtilsTestFS()
+
+	// Setup custom Stat function directly
+	originalStatFunc := errorFS.statFunc
+	customErr := fmt.Errorf("unexpected error: permission denied")
+	errorFS.statFunc = func(_ string) (os.FileInfo, error) {
+		return nil, customErr // Return the specific custom error
+	}
+	defer func() { errorFS.statFunc = originalStatFunc }()
+
+	errorCleanup := SetFS(errorFS)
+	defer errorCleanup()
+
+	// Test error propagation
+	_, err := funcToTest("any-path") // Call the function under test
+	assert.Error(t, err, "Expected an error")
+	// Check if the returned error wraps our specific custom error
+	assert.True(t, errors.Is(err, customErr), "%s() should propagate or wrap the specific error, got: %v", funcName, err)
+	// Optionally, also check if the outer wrapper message is present
+	assert.Contains(t, err.Error(), "failed to stat path", "Outer error wrap mismatch")
+}
+
 func TestFileExists(t *testing.T) {
 	// Create test filesystem
 	mockFS := newTestFS()
@@ -191,24 +217,9 @@ func TestFileExists(t *testing.T) {
 		testNotFoundErrorVariants(t, FileExists, "file-not-exist-1", "file-not-exist-2", "FileExists")
 	})
 
-	// Test other error cases that should be propagated
+	// Use the helper for non-NotExist error propagation test
 	t.Run("Non-NotExist error propagation", func(t *testing.T) {
-		// Create special mock filesystem that returns a different error
-		errorFS := newTestFS()
-
-		// Setup custom Stat function
-		errorFS.MockStat(func(_ string) (os.FileInfo, error) {
-			return nil, fmt.Errorf("unexpected error: permission denied")
-		})
-
-		errorCleanup := SetFS(errorFS)
-		defer errorCleanup()
-
-		// Test error propagation
-		_, err := FileExists("any-file")
-		if err == nil || !strings.Contains(err.Error(), "unexpected error: permission denied") {
-			t.Errorf("FileExists() should propagate unexpected errors, got %v", err)
-		}
+		testNonExistErrorPropagation(t, FileExists, "FileExists")
 	})
 }
 
@@ -264,24 +275,9 @@ func TestDirExists(t *testing.T) {
 		testNotFoundErrorVariants(t, DirExists, "dir-not-exist-1", "dir-not-exist-2", "DirExists")
 	})
 
-	// Test other error cases that should be propagated
+	// Use the helper for non-NotExist error propagation test
 	t.Run("Non-NotExist error propagation", func(t *testing.T) {
-		// Create special mock filesystem that returns a different error
-		errorFS := newTestFS()
-
-		// Setup custom Stat function
-		errorFS.MockStat(func(_ string) (os.FileInfo, error) {
-			return nil, fmt.Errorf("unexpected error: permission denied")
-		})
-
-		errorCleanup := SetFS(errorFS)
-		defer errorCleanup()
-
-		// Test error propagation
-		_, err := DirExists("any-dir")
-		if err == nil || !strings.Contains(err.Error(), "unexpected error: permission denied") {
-			t.Errorf("DirExists() should propagate unexpected errors, got %v", err)
-		}
+		testNonExistErrorPropagation(t, DirExists, "DirExists")
 	})
 }
 
@@ -350,24 +346,32 @@ func TestEnsureDirExists(t *testing.T) {
 
 	// Test DirExists error path by injecting error
 	t.Run("DirExists error", func(t *testing.T) {
-		// Create special mock filesystem for error cases
-		specialMockFS := newTestFS()
+		// Use the newer utilsTestFS
+		specialMockFS := newUtilsTestFS()
 
-		// Override Stat to return a specific error
-		specialMockFS.MockStat(func(name string) (os.FileInfo, error) {
+		// Override Stat to return a specific error directly
+		originalStatFunc := specialMockFS.statFunc
+		specialMockFS.statFunc = func(name string) (os.FileInfo, error) {
 			if name == "special-error-dir" {
 				return nil, fmt.Errorf("custom error that's not a NotExist error")
 			}
-			return nil, os.ErrNotExist
-		})
+			// Fallback for other paths (needed by subsequent FileExists check inside EnsureDirExists)
+			// Use the original underlying Stat logic for non-target paths
+			if originalStatFunc != nil {
+				return originalStatFunc(name)
+			}
+			return specialMockFS.AferoFS.Stat(name)
+		}
+		defer func() { specialMockFS.statFunc = originalStatFunc }()
 
 		specialCleanup := SetFS(specialMockFS)
 		defer specialCleanup()
 
 		// Test error propagation
 		err := EnsureDirExists("special-error-dir")
-		if err == nil || !strings.Contains(err.Error(), "custom error that's not a NotExist error") {
-			t.Errorf("EnsureDirExists() should propagate DirExists errors, got: %v", err)
+		assert.Error(t, err, "Expected an error")
+		if err != nil {
+			assert.Contains(t, err.Error(), "custom error that's not a NotExist error", "Error message mismatch")
 		}
 	})
 

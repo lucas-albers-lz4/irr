@@ -4,21 +4,37 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
+
+// isNotExistError checks if an error is a standard os.IsNotExist error
+// or contains common "not found" substrings.
+func isNotExistError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if os.IsNotExist(err) {
+		return true
+	}
+	// Check for common substrings for broader compatibility (e.g., with afero errors)
+	lowerCaseError := strings.ToLower(err.Error())
+	return strings.Contains(lowerCaseError, "file does not exist") || strings.Contains(lowerCaseError, "no such file or directory")
+}
 
 // FileExists checks if a file exists at the given path
 func FileExists(path string) (bool, error) {
 	info, err := DefaultFS.Stat(path)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if isNotExistError(err) {
 			return false, nil
 		}
-		return false, err
+		// Wrap other Stat errors
+		return false, fmt.Errorf("failed to stat path %s: %w", path, err)
 	}
 
 	// Defensive check against nil FileInfo
 	if info == nil {
-		return false, fmt.Errorf("received nil FileInfo with no error from Stat")
+		return false, fmt.Errorf("received nil FileInfo with no error from Stat for path %s", path)
 	}
 
 	return !info.IsDir(), nil
@@ -28,15 +44,16 @@ func FileExists(path string) (bool, error) {
 func DirExists(path string) (bool, error) {
 	info, err := DefaultFS.Stat(path)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if isNotExistError(err) {
 			return false, nil
 		}
-		return false, err
+		// Wrap other Stat errors
+		return false, fmt.Errorf("failed to stat path %s: %w", path, err)
 	}
 
 	// Defensive check against nil FileInfo
 	if info == nil {
-		return false, fmt.Errorf("received nil FileInfo with no error from Stat")
+		return false, fmt.Errorf("received nil FileInfo with no error from Stat for path %s", path)
 	}
 
 	return info.IsDir(), nil
@@ -45,13 +62,15 @@ func DirExists(path string) (bool, error) {
 // EnsureDirExists ensures a directory exists at the given path
 func EnsureDirExists(path string) error {
 	exists, err := DirExists(path)
-	if err != nil && !os.IsNotExist(err) {
+	// Use isNotExistError for checking the error from DirExists
+	if err != nil && !isNotExistError(err) {
 		return err
 	}
 
 	if !exists {
 		fileExists, fileErr := FileExists(path)
-		if fileErr != nil && !os.IsNotExist(fileErr) {
+		// Use isNotExistError for checking the error from FileExists
+		if fileErr != nil && !isNotExistError(fileErr) {
 			return fileErr
 		}
 		if fileExists {

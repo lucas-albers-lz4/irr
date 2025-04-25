@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
@@ -107,22 +108,28 @@ func newUtilsTestFS() *utilsTestFS {
 	}
 }
 
-// Stat overrides the AferoFS.Stat method to properly handle not-exist errors
+// Stat overrides the AferoFS.Stat method to use the custom statFunc first,
+// then fall back to the embedded FS, returning errors directly.
 func (f *utilsTestFS) Stat(name string) (os.FileInfo, error) {
+	f.statCount++ // Increment count regardless of path taken
+	// Use fmt.Printf for logging within this method as it doesn't have access to *testing.T
+	fmt.Printf("[utilsTestFS.Stat LOG] Called for path: %s, statFunc set: %v\n", name, f.statFunc != nil)
+
+	// 1. Check custom mock function first
 	if f.statFunc != nil {
-		// Return error from statFunc directly without wrapping
-		return f.statFunc(name)
+		// Return result directly from mock function
+		fmt.Printf("[utilsTestFS.Stat LOG] Using statFunc for path: %s\n", name)
+		info, err := f.statFunc(name)
+		fmt.Printf("[utilsTestFS.Stat LOG] statFunc for path '%s' returned: info=%v, err=%v\n", name, info, err)
+		return info, err
 	}
-	// Fallback, return error directly
-	info, err := f.fs.Stat(name)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, os.ErrNotExist // Return standard error directly
-		}
-		// Return other errors directly without wrapping
-		return nil, err
-	}
-	return info, nil
+
+	// 2. Fallback to embedded FS Stat if no mock function was set
+	fmt.Printf("[utilsTestFS.Stat LOG] Using embedded AferoFS.Stat for path: %s\n", name)
+	// Return result directly from embedded FS
+	info, err := f.AferoFS.Stat(name)
+	fmt.Printf("[utilsTestFS.Stat LOG] embedded AferoFS.Stat for path '%s' returned: info=%v, err=%v\n", name, info, err)
+	return info, err
 }
 
 func TestFileExists_Utils(t *testing.T) {
@@ -191,8 +198,13 @@ func TestFileExists_Utils(t *testing.T) {
 			// Call FileExists
 			exists, err := FileExists(tc.path)
 
-			// Check results
-			assert.NoError(t, err, "FileExists should not return an error")
+			// Check results based on expected outcome
+			if tc.expected {
+				assert.NoError(t, err, "Expected no error for existing path '%s'", tc.path)
+			} else {
+				// Expect NoError because FileExists/DirExists now return nil for any IsNotExist-like error
+				assert.NoError(t, err, "Expected no error for non-existent path '%s' (isNotExistError should handle)", tc.path)
+			}
 			assert.Equal(t, tc.expected, exists)
 		})
 	}
@@ -264,8 +276,13 @@ func TestDirExists_Utils(t *testing.T) {
 			// Call DirExists
 			exists, err := DirExists(tc.path)
 
-			// Check results
-			assert.NoError(t, err, "DirExists should not return an error")
+			// Check results based on expected outcome
+			if tc.expected {
+				assert.NoError(t, err, "Expected no error for existing path '%s'", tc.path)
+			} else {
+				// Expect NoError because FileExists/DirExists now return nil for any IsNotExist-like error
+				assert.NoError(t, err, "Expected no error for non-existent path '%s' (isNotExistError should handle)", tc.path)
+			}
 			assert.Equal(t, tc.expected, exists)
 		})
 	}
@@ -287,10 +304,17 @@ func newPathCollisionFS(collisionPath string) *pathCollisionFS {
 // Stat is overridden to make it look like the collision path exists but is not a directory
 func (f *pathCollisionFS) Stat(name string) (os.FileInfo, error) {
 	if name == f.collisionPath {
-		// Create a fake file info that reports exists=true and isDir=false
-		return &testFileInfo{name: filepath.Base(name), dir: false}, nil
+		// Simulate the file exists but is not a directory
+		// We need a mock FileInfo that returns IsDir() == false
+		return &mockFileInfo{name: filepath.Base(name), isDir: false}, nil
 	}
-	return f.utilsTestFS.Stat(name)
+	// Delegate other paths to the embedded utilsTestFS Stat
+	info, err := f.utilsTestFS.Stat(name)
+	if err != nil {
+		// Wrap errors from the embedded Stat call
+		return nil, fmt.Errorf("path collision FS delegation error for %s: %w", name, err)
+	}
+	return info, nil
 }
 
 func TestEnsureDirExists_Utils(t *testing.T) {
@@ -514,3 +538,16 @@ func TestGetAbsPath_AllPaths(t *testing.T) {
 	// only errors in extremely rare cases (like paths with null characters or system call errors)
 	// so we'll consider it adequately covered for practical purposes.
 }
+
+// mockFileInfo implements os.FileInfo for testing purposes.
+type mockFileInfo struct {
+	name  string
+	isDir bool
+}
+
+func (f mockFileInfo) Name() string       { return f.name }
+func (f mockFileInfo) Size() int64        { return 0 }
+func (f mockFileInfo) Mode() os.FileMode  { return 0 }
+func (f mockFileInfo) ModTime() time.Time { return time.Time{} }
+func (f mockFileInfo) IsDir() bool        { return f.isDir }
+func (f mockFileInfo) Sys() interface{}   { return nil }
