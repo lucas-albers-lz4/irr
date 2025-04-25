@@ -44,8 +44,10 @@ The binary will be created at `bin/irr`.
 
 ### Basic Usage
 
+To generate an override file for a local Helm chart:
+
 ```bash
-irr override \
+helm irr override \
   --chart-path ./my-chart \
   --target-registry harbor.example.com:5000 \
   --source-registries docker.io,quay.io \
@@ -58,22 +60,26 @@ This generates an `overrides.yaml` file that you can use with Helm:
 helm install my-release ./my-chart -f overrides.yaml
 ```
 
-### Supported Options
+Alternatively, you can operate on an installed Helm release (ensure you specify the namespace if not `default`):
 
+```bash
+# This will create my-release-overrides.yaml by default
+helm irr override my-release -n my-namespace \
+  --target-registry harbor.example.com:5000 \
+  --source-registries docker.io,quay.io
 ```
-  --chart-path string            Path to the Helm chart (directory or .tgz archive)
-  --target-registry string       Target registry URL (e.g., harbor.example.com:5000)
-  --source-registries string     Comma-separated list of source registries to rewrite (e.g., docker.io,quay.io)
-  --output-file string           Output file path for overrides (default: stdout)
-  --path-strategy string         Path strategy to use (default "prefix-source-registry")
-  --verbose                      Enable verbose output
-  --dry-run                      Preview changes without writing file
-  --strict                       Fail on unrecognized image structures
-  --exclude-registries string    Comma-separated list of registries to exclude from processing
-  --threshold int                Success threshold percentage (0-100) (default 100)
-  --registry-file string         Path to a YAML file containing registry mappings (source: target)
-  --config string                Path to a YAML configuration file for precise image mappings
-```
+
+### Helm Plugin Usage Notes
+
+When running `irr` as a Helm plugin (`helm irr ...`), there are a few key differences compared to running the standalone binary:
+
+*   **Release Context:** Commands like `inspect`, `override`, `validate` can operate directly on a deployed Helm release name instead of just a local chart path. When doing so, the plugin uses the release's context (values, namespace, chart source).
+*   **Namespace Awareness:** The plugin respects the Helm/Kubernetes namespace (via `-n`, current context, or `default`).
+*   **Output Default for `override <release-name>`:** When `helm irr override <release-name>` is used (without `--chart-path`), the default output is a file named `<release-name>-overrides.yaml` in the current directory instead of `stdout`. If `--chart-path` is used, it defaults to `stdout`.
+
+### Flags and Options
+
+Each `irr` subcommand (`inspect`, `override`, `validate`, `config`) supports various flags to control its behavior. For a detailed list of flags available for each command, please refer to the [CLI Reference documentation](docs/cli-reference.md).
 
 ### Example: Redirecting Images to Harbor
 
@@ -85,7 +91,7 @@ Harbor is a commonly used private registry with pull-through cache capabilities.
 
 2. Generate overrides for a chart:
    ```bash
-   irr \
+   helm irr override \
      --chart-path ./prometheus \
      --target-registry harbor.example.com \
      --source-registries docker.io,quay.io \
@@ -97,72 +103,44 @@ Harbor is a commonly used private registry with pull-through cache capabilities.
    helm install prometheus ./prometheus -f prometheus-overrides.yaml
    ```
 
-## Path Strategies
+## Advanced Registry Mapping (Using --registry-file)
 
-The tool supports different strategies for structuring the repository paths in the target registry.
+For cases where you need precise control over specific image mappings, irr provides a `--registry-file` flag that accepts a YAML file with structured source-to-target mappings.
 
-### prefix-source-registry (Default)
+### Using the Registry Mappings File
 
-This strategy places images under a subdirectory named after the source registry:
+The registry mapping file (`registry-mappings.yaml` by default, or specified with `--registry-file`) uses a structured format. See the [CLI Reference](docs/cli-reference.md#configuration-file-registry-mappingsyaml) for the full structure.
 
-| Original Image | Transformed Image |
-|----------------|-------------------|
-| docker.io/nginx:1.23 | harbor.example.com/dockerio/nginx:1.23 |
-| quay.io/prometheus/node-exporter:v1.3.1 | harbor.example.com/quayio/prometheus/node-exporter:v1.3.1 |
-
-This strategy maintains the hierarchical structure with slashes and helps avoid naming conflicts while preserving registry origin information.
-
-### flat
-
-This strategy flattens the repository path by replacing slashes with dashes:
-
-| Original Image | Transformed Image |
-|----------------|-------------------|
-| docker.io/library/nginx:1.21 | harbor.example.com/dockerio-library-nginx:1.21 |
-| quay.io/prometheus/node-exporter:v1.3.1 | harbor.example.com/quayio-prometheus-node-exporter:v1.3.1 |
-
-This is useful for registries or environments that prefer flat namespaces without slashes.
-
-To enable the flat strategy, use the `--strategy` flag:
-
-```bash
-irr override --chart my-chart --strategy flat --target-registry target-registry.com
-```
-
-## Advanced Registry Mapping
-
-For cases where you need precise control over specific image mappings, irr provides a `--config` flag that accepts a YAML file with exact image-to-target mappings.
-
-### Using the Config File
-
-The config file uses a simple map format where:
-- Keys are source image references (e.g., `docker.io/library/nginx`)
-- Values are target image locations including registry and path (e.g., `my-registry.io/custom/nginx-mirror`)
-
-Example config file (`mappings.yaml`):
+Example structure (`my-mappings.yaml`):
 ```yaml
-docker.io/library/nginx: my-registry.io/custom/nginx-mirror
-quay.io/prometheus/prometheus: my-registry.io/monitoring/prometheus
-k8s.gcr.io/etcd: my-registry.io/kubernetes/etcd
+version: "1.0"
+registries:
+  mappings:
+    - source: "docker.io"
+      target: "my-registry.io/dockerhub"
+    - source: "quay.io"
+      target: "my-registry.io/quay"
+    - source: "k8s.gcr.io"
+      target: "my-registry.io/google-k8s"
 ```
 
-To use this config file:
+To use this file:
 
 ```bash
-irr override \
+helm irr override \
   --chart-path ./my-chart \
   --target-registry fallback.registry.com \
   --source-registries docker.io,quay.io,k8s.gcr.io \
-  --config mappings.yaml \
+  --registry-file my-mappings.yaml \
   --output-file overrides.yaml
 ```
 
-### How Config Mappings Work
+### How Registry Mappings Work
 
-1. The `--config` mappings have higher priority than the path strategy
-2. Any image that matches a key in the config file will use the exact target specified
-3. Images not matched in the config will fall back to using `--target-registry` with the selected path strategy
-4. The `--target-registry` flag is still required as a fallback for unmapped images
+1. Mappings in the file specified by `--registry-file` have the highest priority.
+2. Any image whose source registry matches an enabled entry in the `mappings` list will use the exact target defined there.
+3. Images from source registries not found in the mappings file (or if the file is not provided) will fall back to using `--target-registry` combined with the default path strategy (e.g., `prefix-source-registry`), unless `strictMode` is enabled in the config.
+4. The `--target-registry` flag is often still required as a fallback or default target.
 
 This feature is particularly useful for:
 - Handling special cases where the standard path strategy doesn't produce the desired result
@@ -208,60 +186,17 @@ The project includes both unit tests and integration tests. Here's how to run th
 ```bash
 # Run all tests
 make test
-
-# Run only unit tests
-make test-unit
-
-# Run only integration tests
-make test-integration
-
-# Run integration tests with debug output
-make test-integration-debug
-
-# Run a specific integration test by name
-make test-integration-specific TEST_NAME=TestConfigFileMappings
-
-# Run specific integration test (e.g., cert-manager)
-make test-cert-manager
 ```
 
 For detailed testing instructions, test architecture, and test coverage information, see [TESTING.md](TESTING.md).
 
-### Direct Go Test Commands
-
-If you prefer to run tests directly with Go's test command:
-
-```bash
-# Run all integration tests
-go test -v ./test/integration/...
-
-# Run a specific integration test
-go test -v ./test/integration/... -run TestConfigFileMappings
-
-# Run with debug logging
-IRR_TESTING=true LOG_LEVEL=DEBUG go test -v ./test/integration/... -run TestConfigFileMappings
-```
-
-### Test Coverage
-
-To generate test coverage reports:
-
-```bash
-# Generate coverage for all tests
-go test -coverprofile=coverage.out ./...
-
-# View coverage in browser
-go tool cover -html=coverage.out
-
-# View coverage in terminal
-go tool cover -func=coverage.out
-```
-
 # Testing a Single Helm Chart
+
+This workflow describes how to test `irr` against a local chart directory, which is useful before applying overrides to a deployed release.
 
 ## Prerequisites
 - Helm CLI installed
-- irr binary built
+- `irr` Helm plugin installed (`helm plugin install ...`)
 
 ## Steps
 
@@ -271,15 +206,17 @@ go tool cover -func=coverage.out
    helm pull bitnami/nginx --untar --destination ./tmp
    ```
 
-2. **Run the override tool**
+2. **Run the override tool against the local chart**
    ```bash
-   ./bin/irr \
+   # Using helm irr on a local path typically defaults to stdout
+   helm irr override \
      --chart-path ./tmp/nginx \
      --target-registry my-registry.example.com \
      --source-registries docker.io,quay.io \
      --output-file ./tmp/overrides.yaml \
-     --verbose
+     --log-level info
    ```
+   *Note: When running `helm irr override <release-name>` against an installed release, the output defaults to `<release-name>-overrides.yaml`.*
 
 3. **Validate with Helm template**
    ```bash
@@ -306,24 +243,36 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for det
 
 ## Registry Mappings
 
-You can specify custom registry mappings using a YAML configuration file. This allows you to control how source registries are mapped to your target registry's directory structure.
+You can specify custom registry mappings using a YAML configuration file (defaults to `registry-mappings.yaml`). This allows you to control how source registries are mapped to your target registry's directory structure.
 
-Create a `registry-mappings.yaml` file:
+Create a `registry-mappings.yaml` file with the following structure:
 
 ```yaml
-mappings:
-  - source: "quay.io"
-    target: "my-registry.example.com/quay-mirror"
-  - source: "docker.io"
-    target: "my-registry.example.com/docker-mirror"
-  - source: "gcr.io"
-    target: "my-registry.example.com/gcr-mirror"
+version: "1.0" # Optional but recommended
+registries:
+  mappings:
+    - source: "quay.io"
+      target: "my-registry.example.com/quay-mirror"
+      # enabled: true (optional, defaults to true)
+      # description: "Optional description"
+    - source: "docker.io"
+      target: "my-registry.example.com/docker-mirror"
+    - source: "gcr.io"
+      target: "my-registry.example.com/gcr-mirror"
 ```
 
-Use the mappings file with the tool:
+You can also run `irr inspect --generate-config-skeleton` against a chart to generate a starting config file with detected source registries.
+
+Alternatively, you can use the `helm irr config` command to manage the mappings file. For example, to add or update the `docker.io` mapping:
 
 ```bash
-irr \
+helm irr config --source docker.io --target my-registry.example.com/docker-mirror
+```
+
+Use the mappings file with the `override` command:
+
+```bash
+helm irr override \
   --chart-path ./my-chart \
   --target-registry my-registry.example.com \
   --source-registries docker.io,quay.io \
@@ -331,43 +280,5 @@ irr \
   --output-file overrides.yaml
 ```
 
-When no mappings file is provided, the tool will use the default behavior of prefixing the sanitized source registry name:
-- `docker.io/nginx:1.23` -> `my-registry.example.com/dockerio/nginx:1.23`
-
-## Test Output Management
-
-To run tests with reduced output volume:
-
-### 1. Limiting output to just failures
-
-```bash
-go test ./... -v 2>&1 | grep -A 10 "\-\-\-\sFAIL"
-```
-
-### 2. Using quiet mode for passing tests
-
-```bash
-go test -quiet ./...
-```
-
-### 3. Running specific packages
-
-```bash
-# Test only a specific package
-go test ./pkg/chart/...
-
-# Test multiple packages
-go test ./pkg/chart/... ./pkg/image/...
-```
-
-### 4. Using test.output flag to capture verbose logs to a file
-
-```bash
-go test -v ./... -args -test.testlogfile=test_output.log
-```
-
-### 5. Using race detection but quiet output 
-
-```bash
-go test -race -quiet ./...
+When no mappings file is provided, or if a source registry isn't found in the file and strict mode is disabled, the tool will use the default path strategy (usually `prefix-source-registry`) with the `--target-registry` value. For example:
 ```
