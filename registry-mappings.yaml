@@ -1,13 +1,31 @@
-mappings:
-  - source: "quay.io"
-    target: "harbor.home.arpa/quay"
-  - source: "docker.io"
-    target: "harbor.home.arpa/docker"
-  - source: "gcr.io"
-    target: "harbor.home.arpa/gcr"
-  - source: "registry.k8s.io"
-    target: "harbor.home.arpa/k8s"
-  - source: "ghcr.io"
-    target: "harbor.home.arpa/github"
-  - source: "k8s.gcr.io"
-    target: "harbor.home.arpa/k8s"
+# IRR Configuration File
+# 
+# This file contains registry mappings for redirecting container images
+# from public registries to your private registry. Update the target values
+# to match your registry configuration.
+#
+# USAGE INSTRUCTIONS:
+# 1. Update the 'target' fields with your actual registry paths
+# 2. Use with 'irr override' command to generate image overrides
+# 3. Validate generated overrides with 'irr validate'
+#
+# IMPORTANT NOTES:
+# - This file uses the standard structured format which includes version, registries, 
+#   and compatibility sections for enhanced functionality
+# - The 'override' and 'validate' commands can run without this config, 
+#   but image redirection correctness depends on your configuration
+# - When using Harbor as a pull-through cache, ensure your target paths
+#   match your Harbor project configuration
+# - You can set or update mappings using 'irr config --source <reg> --target <path>'
+# - This file was auto-generated from detected registries in your chart
+#
+registries:
+    mappings:
+        - source: quay.io
+          target: registry.local/quay-io
+          description: Mapping for quay.io
+          enabled: true
+    defaultTarget: registry.local/default
+version: "1.0"
+compatibility:
+    ignoreEmptyFields: true
