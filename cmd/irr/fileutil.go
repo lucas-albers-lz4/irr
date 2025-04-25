@@ -14,10 +14,26 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Global variable for injecting mock Helm client during tests
+// Removed dependency on mocks package
+
 // Variables to allow mocking for tests
 var (
 	// helmAdapterFactory is a function that creates a Helm adapter, can be replaced in tests
-	helmAdapterFactory = defaultHelmAdapterFactory
+	helmAdapterFactory = func() (*helm.Adapter, error) {
+		log.Debug("Helm Adapter Factory: ENTER")
+		// Check if running in testing mode
+		if os.Getenv("IRR_TESTING") == trueString {
+			log.Debug("Helm Adapter Factory: IRR_TESTING=true detected")
+			log.Warn("Helm Adapter Factory: Mock support temporarily disabled")
+			// Skip mock client creation since we removed the dependency
+			// This will just return the default implementation in test mode for now
+		}
+
+		log.Debug("Helm Adapter Factory: Calling default factory")
+		// Call the original default factory function
+		return defaultHelmAdapterFactory()
+	}
 )
 
 // defaultHelmAdapterFactory is the real implementation of creating a Helm adapter
