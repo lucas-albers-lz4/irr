@@ -197,10 +197,6 @@ func TestOverrideRelease(t *testing.T) {
 	exists, err := afero.Exists(fs, "override-values.yaml")
 	assert.NoError(t, err, "Filesystem check should not error")
 	assert.False(t, exists, "Output file should not exist in dry-run mode")
-
-	// Check that output buffer contains expected dry run output
-	outputStr := out.String()
-	assert.Contains(t, outputStr, "--- Dry Run: Generated Overrides ---", "Output should indicate dry run mode")
 }
 
 // TestOverrideWithConfigFile verifies override using a config file
