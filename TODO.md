@@ -261,3 +261,74 @@ Enhance the analyzer to correctly process subcharts by replicating Helm's value 
     *   Verify differences between test mock objects and real-world objects (esp. chart loading and detection).
     *   Fix the test to accurately simulate real-world behavior or adjust expectations.
 
+Phase 13.
+
+## Phase 13: Code Documentation Review and Alignment
+
+**Goal:** Ensure all Go code documentation (godoc, comments) accurately reflects current functionality, removing or correcting outdated information.
+
+**Process:** Review files package by package or by logical area. For each checklist item (which may cover one or two files, e.g., `foo.go` and `foo_test.go`):
+1. Read code and documentation.
+2. Compare documentation to functionality.
+3. Identify and correct/remove discrepancies.
+4. **After completing the review for an item, run `make lint` and `make test-quiet` to ensure no issues were introduced.**
+
+### Phase 13.1: `cmd/irr` Package (CLI Commands)
+- [x] Review `cmd/irr/main.go` (and `main_test.go`)
+- [x] Review `cmd/irr/root.go` (and `root_test.go`)
+- [x] Review `cmd/irr/config.go` (and `config_test.go`)
+- [x] Review `cmd/irr/inspect.go` (and `inspect_test.go`)
+- [x] Review `cmd/irr/override.go` (and `override_test.go`)
+- [x] Review `cmd/irr/validate.go` (and `validate_test.go`)
+- [x] Review `cmd/irr/helm.go` (and `helm_test.go`)
+- [x] Review `cmd/irr/fileutil.go` (and `fileutil_test.go`)
+- [x] Review `cmd/irr/constants.go`
+- [x] Review `cmd/irr/kube_version_test.go`
+- [x] Review `cmd/irr/test_helpers_test.go`
+- [x] Review `cmd/irr/cli_test_helpers.go`
+- [x] Review `cmd/irr/cli_test.go`
+
+### Phase 13.2: `pkg/analysis` Package
+- [x] Review `pkg/analysis/analyzer.go` (and `analyzer_test.go`)
+- [x] Review `pkg/analysis/types.go`
+
+### Phase 13.3: `pkg/analyzer` Package
+- [x] Review `pkg/analyzer/analyzer.go` (and `analyzer_test.go`)
+
+### Phase 13.4: `pkg/chart` Package
+- [x] Review `pkg/chart/api.go` (and `api_test.go`)
+- [x] Review `pkg/chart/loader.go` (and `loader_test.go`)
+- [x] Review `pkg/chart/generator.go` (and `generator_test.go`, `generator_loader_test.go`)
+- [x] Review `pkg/chart/chartinfo.go`
+- [x] Review `pkg/chart/overrides_yaml_test.go`
+- [x] Review `pkg/chart/rules_integration_test.go`
+- [x] Review `pkg/chart/validate_template_test.go`
+- [x] Review `pkg/chart/errors.go` (and `errors_test.go`)
+
+### Phase 13.5: `pkg/exitcodes` Package
+- [x] Review `pkg/exitcodes/exitcodes.go` (and `exitcodes_test.go`)
+
+### Phase 13.6: `pkg/fileutil` Package
+- [x] Review `pkg/fileutil/fs.go` (and `fs_test.go`)
+- [x] Review `pkg/fileutil/utils.go` (and `utils_test.go`)
+- [x] Review `pkg/fileutil/constants.go`
+- [x] Review `pkg/fileutil/fileutil_test.go`
+
+### Phase 13.7: `pkg/generator` Package
+- [x] Review `pkg/generator/generator.go` (and `generator_test.go`)
+- [x] Review `pkg/generator/kube_state_metrics.go` (if exists) - N/A, logic in generator.go
+
+### Phase 13.8: `pkg/helm` Package (Note: distinct from `internal/helm`)
+- [x] Review `pkg/helm/client.go` (and `client_test.go`)
+- [x] Review `pkg/helm/repo.go` (and `repo_test.go`)
+- [x] Review `pkg/helm/sdk.go` (and `sdk_test.go`)
+- [x] Review `pkg/helm/version.go` (and `version_test.go`)
+
+### Phase 13.9: `pkg/image` Package
+- [x] Review `pkg/image/detector.go`
+- [x] Review `pkg/image/detection.go` (and `detection_test.go`)
+- [x] Review `pkg/image/parser.go` (and `parser_test.go`, `parser_edge_test.go`)
+- [x] Review `pkg/image/validation.go` (and `validation_test.go`)
+- [x] Review `pkg/image/normalization.go`
+
+### Phase 13.10: `pkg/log` Package
