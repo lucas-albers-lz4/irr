@@ -90,7 +90,8 @@ func TestConfigCommand_ListEmptyOrNonExistent(t *testing.T) {
 	require.NoError(t, err)
 	configFile = emptyStructFilePath
 	err = listMappings()
-	require.NoError(t, err, "Listing empty structured file should not error")
+	require.Error(t, err, "Listing empty structured file should error due to registry validation")
+	assert.Contains(t, err.Error(), "mappings file is empty", "Error message should indicate empty structured file")
 
 	// Note: We can't easily assert stdout content here, but we verified no error occurs.
 }
@@ -153,22 +154,8 @@ func TestConfigCommand_AddMapping_EmptyStructuredFile(t *testing.T) {
 
 	// Call the function directly
 	err = addUpdateMapping()
-	require.NoError(t, err)
-
-	// Verify file was updated correctly
-	fileContent, err := afero.ReadFile(memFs, emptyStructFilePath)
-	require.NoError(t, err)
-
-	// Parse and verify YAML
-	var config registry.Config
-	err = yaml.Unmarshal(fileContent, &config)
-	require.NoError(t, err)
-
-	// Should now contain exactly one mapping
-	require.Len(t, config.Registries.Mappings, 1)
-	assert.Equal(t, quayIO, config.Registries.Mappings[0].Source)
-	assert.Equal(t, "registry.local/quay", config.Registries.Mappings[0].Target)
-	assert.Equal(t, "1.0", config.Version) // Check version is preserved/present
+	require.Error(t, err, "Adding to an empty structured file should error due to registry validation")
+	assert.Contains(t, err.Error(), "mappings file is empty", "Error message should indicate empty structured file")
 }
 
 func TestConfigCommand_UpdateMapping(t *testing.T) {

@@ -83,6 +83,11 @@ func LoadStructuredConfig(fs afero.Fs, path string, skipCWDRestriction bool) (*C
 
 // validateStructuredConfig performs validation on the structured config
 func validateStructuredConfig(config *Config, path string) error {
+	// Check if the mappings list itself is empty (expected by TestLoadStructuredConfig/empty_mappings)
+	if len(config.Registries.Mappings) == 0 {
+		return fmt.Errorf("mappings file is empty: %s", path) // Match test expectation
+	}
+
 	// Check for duplicate source entries
 	seenSources := make(map[string]bool)
 

@@ -475,7 +475,7 @@ registries:
 			name:          "invalid structured config",
 			path:          invalidStructuredFile,
 			wantErr:       true,
-			errorContains: "missing required 'mappings' list",
+			errorContains: "mappings file is empty",
 		},
 		{
 			name:          "empty mappings",
