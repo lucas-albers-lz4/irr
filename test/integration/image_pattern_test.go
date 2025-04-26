@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lalbers/irr/pkg/fileutil"
+	"github.com/lucas-albers-lz4/irr/pkg/fileutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"

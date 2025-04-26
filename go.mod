@@ -1,4 +1,4 @@
-module github.com/lalbers/irr
+module github.com/lucas-albers-lz4/irr
 
 go 1.24.2
 
@@ -177,4 +177,4 @@ require (
 	sigs.k8s.io/structured-merge-diff/v4 v4.4.2 // indirect
 )
 
-replace github.com/lalbers/irr => ./
+replace github.com/lucas-albers-lz4/irr => ./

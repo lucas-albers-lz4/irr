@@ -10,8 +10,8 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/lalbers/irr/pkg/image"
-	"github.com/lalbers/irr/pkg/log"
+	"github.com/lucas-albers-lz4/irr/pkg/image"
+	"github.com/lucas-albers-lz4/irr/pkg/log"
 )
 
 // ImagePattern represents a detected image string and its location.

@@ -4,7 +4,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/lalbers/irr/pkg/log"
+	"github.com/lucas-albers-lz4/irr/pkg/log"
 	"helm.sh/helm/v3/pkg/chart"
 )
 

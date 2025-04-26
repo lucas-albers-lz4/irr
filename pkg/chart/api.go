@@ -2,7 +2,7 @@
 package chart
 
 import (
-	"github.com/lalbers/irr/pkg/fileutil"
+	"github.com/lucas-albers-lz4/irr/pkg/fileutil"
 )
 
 // NewLoader creates a new DefaultLoader instance with the default filesystem.

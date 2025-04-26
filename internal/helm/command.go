@@ -10,8 +10,8 @@ import (
 	"helm.sh/helm/v3/pkg/cli"
 	"helm.sh/helm/v3/pkg/strvals"
 
-	"github.com/lalbers/irr/pkg/fileutil"
-	log "github.com/lalbers/irr/pkg/log"
+	"github.com/lucas-albers-lz4/irr/pkg/fileutil"
+	log "github.com/lucas-albers-lz4/irr/pkg/log"
 	"sigs.k8s.io/yaml"
 )
 

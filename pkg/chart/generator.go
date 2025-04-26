@@ -13,14 +13,14 @@ import (
 	"helm.sh/helm/v3/pkg/chartutil"
 	"helm.sh/helm/v3/pkg/cli"
 
-	"github.com/lalbers/irr/pkg/analysis"
-	"github.com/lalbers/irr/pkg/fileutil"
-	image "github.com/lalbers/irr/pkg/image"
-	log "github.com/lalbers/irr/pkg/log"
-	"github.com/lalbers/irr/pkg/override"
-	"github.com/lalbers/irr/pkg/registry"
-	"github.com/lalbers/irr/pkg/rules"
-	"github.com/lalbers/irr/pkg/strategy"
+	"github.com/lucas-albers-lz4/irr/pkg/analysis"
+	"github.com/lucas-albers-lz4/irr/pkg/fileutil"
+	image "github.com/lucas-albers-lz4/irr/pkg/image"
+	log "github.com/lucas-albers-lz4/irr/pkg/log"
+	"github.com/lucas-albers-lz4/irr/pkg/override"
+	"github.com/lucas-albers-lz4/irr/pkg/registry"
+	"github.com/lucas-albers-lz4/irr/pkg/rules"
+	"github.com/lucas-albers-lz4/irr/pkg/strategy"
 )
 
 // Constants

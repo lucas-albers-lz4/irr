@@ -5,11 +5,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/lucas-albers-lz4/irr/pkg/fileutil"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/lalbers/irr/pkg/fileutil"
 )
 
 // TestGeneratorLoader_Load tests the Load method of the GeneratorLoader

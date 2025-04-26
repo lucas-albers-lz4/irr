@@ -7,7 +7,8 @@ import (
 	"strings" // Need this for normalization checks
 
 	"github.com/distribution/reference"
-	log "github.com/lalbers/irr/pkg/log"
+
+	log "github.com/lucas-albers-lz4/irr/pkg/log"
 )
 
 // Constants

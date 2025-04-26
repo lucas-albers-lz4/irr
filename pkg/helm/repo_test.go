@@ -12,9 +12,7 @@ import (
 	"helm.sh/helm/v3/pkg/repo"
 	"helm.sh/helm/v3/pkg/repo/repotest"
 
-	// Use fileutil constants for permissions
-	"github.com/lalbers/irr/pkg/fileutil"
-	// Assuming log package is used/needed
+	"github.com/lucas-albers-lz4/irr/pkg/fileutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

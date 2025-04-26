@@ -10,10 +10,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"helm.sh/helm/v3/pkg/chart"
 
-	"github.com/lalbers/irr/pkg/analysis"
-	"github.com/lalbers/irr/pkg/image"
-	"github.com/lalbers/irr/pkg/log"
-	"github.com/lalbers/irr/pkg/rules"
+	"github.com/lucas-albers-lz4/irr/pkg/analysis"
+	"github.com/lucas-albers-lz4/irr/pkg/image"
+	"github.com/lucas-albers-lz4/irr/pkg/log"
+	"github.com/lucas-albers-lz4/irr/pkg/rules"
 )
 
 // mockChartLoader implements analysis.ChartLoader for testing

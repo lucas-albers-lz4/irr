@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lalbers/irr/pkg/testutil"
+	"github.com/lucas-albers-lz4/irr/pkg/testutil"
 )
 
 // TestCertManagerOverrides is the original monolithic test for cert-manager.

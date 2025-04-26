@@ -3,71 +3,33 @@ package main
 import (
 	"testing"
 
-	// Mock internal/helm for testing command logic without actual Helm calls
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// Constants for repeated test values in validate tests - reserved for future use
-// These are available for tests that need common values
-/*
-const (
-	validateTestChartPath = "../../test/testdata/charts/minimal-test"
-	validateTestRelease   = "test-release"
-)
-*/
-
-// Mock the helm.Template function via the exported variable
-/*
-var mockHelmTemplate = func(_ string, _ *helm.TemplateOptions) (string, error) {
-	return "---\napiVersion: v1\nkind: Pod\nmetadata:\n  name: test-pod", nil
-}
-
-func setupValidateTest(t *testing.T) (*cobra.Command, *validateOptions, *bytes.Buffer) {
-	testingLog := log.NewTestLogger(t)
-	v := viper.New()
-	v.Set("logLevel", "debug")
-	v.Set("namespace", "test-namespace")
-
-	cmd := &cobra.Command{}
-	opts := newValidateOptions(v)
-	buf := new(bytes.Buffer)
-	cmd.SetOut(buf)
-	cmd.SetErr(buf)
-
-	// Inject mocks or test configurations here if needed
-	// For example, override helmAdapter.Template
-	// helmAdapter.Template = mockHelmTemplate
-
-	// Initialize logger with test settings
-	err := log.SetupLogger(testingLog, "debug", "text")
-	require.NoError(t, err)
-
-	return cmd, opts, buf
-}
-*/
-
+// TestNewValidateCommand tests the creation and flag setup of the validate command
 func TestNewValidateCommand(t *testing.T) {
-	cmd := newValidateCmd() // Use the actual command constructor
-	require.NotNil(t, cmd, "newValidateCmd should return a non-nil command")
+	cmd := newValidateCmd()
 
-	// Check basic properties
-	assert.Equal(t, "validate [release-name]", cmd.Use, "Command use string should be correct")
-	assert.NotEmpty(t, cmd.Short, "Command should have a short description")
+	// Check if flags are correctly defined
+	assert.NotNil(t, cmd.Flags().Lookup("chart-path"), "chart-path flag should be defined")
+	assert.NotNil(t, cmd.Flags().Lookup("release-name"), "release-name flag should be defined")
+	assert.NotNil(t, cmd.Flags().Lookup("values"), "values flag should be defined")
+	assert.NotNil(t, cmd.Flags().Lookup("namespace"), "namespace flag should be defined")
+	assert.NotNil(t, cmd.Flags().Lookup("output-file"), "output-file flag should be defined")
+	assert.NotNil(t, cmd.Flags().Lookup("strict"), "strict flag should be defined")
+	assert.NotNil(t, cmd.Flags().Lookup("kube-version"), "kube-version flag should be defined")
 
-	// Check if flags are registered (example: check for --chart-path)
-	chartPathFlag := cmd.Flags().Lookup("chart-path")
-	require.NotNil(t, chartPathFlag, "--chart-path flag should be registered")
+	// Check default values
+	chartPath, err := cmd.Flags().GetString("chart-path")
+	require.NoError(t, err, "Failed to get chart-path flag")
+	assert.Equal(t, "", chartPath, "Default chart-path should be empty")
 
-	valuesFlag := cmd.Flags().Lookup("values")
-	require.NotNil(t, valuesFlag, "--values flag should be registered")
+	namespace, err := cmd.Flags().GetString("namespace")
+	require.NoError(t, err, "Failed to get namespace flag")
+	assert.Equal(t, "default", namespace, "Default namespace should be 'default'")
 
-	kubeVersionFlag := cmd.Flags().Lookup("kube-version")
-	require.NotNil(t, kubeVersionFlag, "--kube-version flag should be registered")
-
-	strictFlag := cmd.Flags().Lookup("strict")
-	require.NotNil(t, strictFlag, "--strict flag should be registered")
-
-	// Ensure RunE is set
-	assert.NotNil(t, cmd.RunE, "RunE function should be set")
+	strict, err := cmd.Flags().GetBool("strict")
+	require.NoError(t, err, "Failed to get strict flag")
+	assert.False(t, strict, "Default strict mode should be false")
 }

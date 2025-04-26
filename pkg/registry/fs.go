@@ -2,7 +2,7 @@
 package registry
 
 import (
-	"github.com/lalbers/irr/pkg/fileutil"
+	"github.com/lucas-albers-lz4/irr/pkg/fileutil"
 	"github.com/spf13/afero"
 )
 

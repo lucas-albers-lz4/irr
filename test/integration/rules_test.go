@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lalbers/irr/pkg/chart"
-	"github.com/lalbers/irr/pkg/testutil"
+	"github.com/lucas-albers-lz4/irr/pkg/chart"
+	"github.com/lucas-albers-lz4/irr/pkg/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

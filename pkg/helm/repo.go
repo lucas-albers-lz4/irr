@@ -8,11 +8,10 @@ import (
 	"sync"
 	"time"
 
+	log "github.com/lucas-albers-lz4/irr/pkg/log"
 	"helm.sh/helm/v3/pkg/cli"
 	"helm.sh/helm/v3/pkg/getter"
 	"helm.sh/helm/v3/pkg/repo"
-
-	log "github.com/lalbers/irr/pkg/log"
 )
 
 // RepositoryManager handles Helm repository operations with caching

@@ -5,14 +5,13 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/lalbers/irr/pkg/analysis"
-	"github.com/lalbers/irr/pkg/fileutil"
+	"github.com/lucas-albers-lz4/irr/pkg/analysis"
+	"github.com/lucas-albers-lz4/irr/pkg/fileutil"
+	"github.com/lucas-albers-lz4/irr/pkg/log"
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
-
 	// "helm.sh/helm/v3/pkg/chartutil" // Not needed after removing unused funcs
 	// "sigs.k8s.io/yaml" // Not needed after removing unused funcs
-	log "github.com/lalbers/irr/pkg/log"
 )
 
 // Loader defines the interface for loading Helm charts.

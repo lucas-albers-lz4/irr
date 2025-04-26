@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	// Use constants for file permissions instead of hardcoded values for consistency and maintainability
-	"github.com/lalbers/irr/pkg/fileutil" // Correct import path based on go.mod
+	"github.com/lucas-albers-lz4/irr/pkg/fileutil"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

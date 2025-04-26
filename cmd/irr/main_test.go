@@ -4,8 +4,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/lalbers/irr/pkg/log"
-	"github.com/lalbers/irr/pkg/testutil"
+	log "github.com/lucas-albers-lz4/irr/pkg/log"
+	"github.com/lucas-albers-lz4/irr/pkg/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

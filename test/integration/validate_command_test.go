@@ -6,10 +6,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/lalbers/irr/pkg/exitcodes"
-	"github.com/lalbers/irr/pkg/fileutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/lucas-albers-lz4/irr/pkg/exitcodes"
+	"github.com/lucas-albers-lz4/irr/pkg/fileutil"
 )
 
 func TestValidateCommand(t *testing.T) {

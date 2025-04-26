@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/lalbers/irr/internal/helm"
+	"github.com/lucas-albers-lz4/irr/internal/helm"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

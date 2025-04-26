@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lalbers/irr/pkg/strategy"
+	"github.com/lucas-albers-lz4/irr/pkg/strategy"
 	"github.com/stretchr/testify/assert"
 )
 

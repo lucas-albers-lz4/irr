@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/distribution/reference"
-	image "github.com/lalbers/irr/pkg/image"
+	image "github.com/lucas-albers-lz4/irr/pkg/image"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lalbers/irr/pkg/image"
+	"github.com/lucas-albers-lz4/irr/pkg/image"
 	"github.com/stretchr/testify/assert"
 	"gopkg.in/yaml.v3"
 )

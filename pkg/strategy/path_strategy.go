@@ -6,9 +6,9 @@ import (
 	"path"
 	"strings"
 
-	"github.com/lalbers/irr/pkg/image"
-	log "github.com/lalbers/irr/pkg/log"
-	"github.com/lalbers/irr/pkg/registry"
+	"github.com/lucas-albers-lz4/irr/pkg/image"
+	log "github.com/lucas-albers-lz4/irr/pkg/log"
+	"github.com/lucas-albers-lz4/irr/pkg/registry"
 )
 
 const (

@@ -9,7 +9,7 @@ import (
 	"bytes"
 	"context"
 
-	"github.com/lalbers/irr/internal/helm"
+	"github.com/lucas-albers-lz4/irr/internal/helm"
 	"github.com/spf13/cobra"
 	helmchart "helm.sh/helm/v3/pkg/chart"
 )

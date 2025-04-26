@@ -6,10 +6,10 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/lalbers/irr/pkg/image"
-	"github.com/lalbers/irr/pkg/override"
-	"github.com/lalbers/irr/pkg/registry"
-	"github.com/lalbers/irr/pkg/strategy"
+	"github.com/lucas-albers-lz4/irr/pkg/image"
+	"github.com/lucas-albers-lz4/irr/pkg/override"
+	"github.com/lucas-albers-lz4/irr/pkg/registry"
+	"github.com/lucas-albers-lz4/irr/pkg/strategy"
 	"github.com/stretchr/testify/require"
 )
 

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/lalbers/irr/pkg/strategy"
+	"github.com/lucas-albers-lz4/irr/pkg/strategy"
 )
 
 // Error sentinel values

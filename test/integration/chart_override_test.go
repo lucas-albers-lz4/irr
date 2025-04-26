@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lalbers/irr/pkg/override"
-	"github.com/lalbers/irr/pkg/testutil"
+	"github.com/lucas-albers-lz4/irr/pkg/override"
+	"github.com/lucas-albers-lz4/irr/pkg/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"

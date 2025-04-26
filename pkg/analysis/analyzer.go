@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	log "github.com/lalbers/irr/pkg/log"
+	log "github.com/lucas-albers-lz4/irr/pkg/log"
 	helmchart "helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
 )

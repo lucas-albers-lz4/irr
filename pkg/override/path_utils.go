@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/lalbers/irr/pkg/log"
+	log "github.com/lucas-albers-lz4/irr/pkg/log"
 )
 
 //nolint:unused // Kept for potential future uses

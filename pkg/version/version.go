@@ -7,8 +7,8 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/lalbers/irr/pkg/exitcodes"
-	log "github.com/lalbers/irr/pkg/log"
+	"github.com/lucas-albers-lz4/irr/pkg/exitcodes"
+	log "github.com/lucas-albers-lz4/irr/pkg/log"
 )
 
 const (

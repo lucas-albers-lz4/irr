@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/lalbers/irr/pkg/image"
-	"github.com/lalbers/irr/pkg/log"
-	"github.com/lalbers/irr/pkg/override"
-	"github.com/lalbers/irr/pkg/registry"
-	"github.com/lalbers/irr/pkg/strategy"
+	"github.com/lucas-albers-lz4/irr/pkg/image"
+	"github.com/lucas-albers-lz4/irr/pkg/log"
+	"github.com/lucas-albers-lz4/irr/pkg/override"
+	"github.com/lucas-albers-lz4/irr/pkg/registry"
+	"github.com/lucas-albers-lz4/irr/pkg/strategy"
 )
 
 // KubeStateMetricsKey is the expected top-level key for kube-state-metrics overrides.

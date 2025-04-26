@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/lalbers/irr/pkg/image"
-	"github.com/lalbers/irr/pkg/registry"
+	"github.com/lucas-albers-lz4/irr/pkg/image"
+	"github.com/lucas-albers-lz4/irr/pkg/registry"
 	"github.com/stretchr/testify/assert"
 )
 

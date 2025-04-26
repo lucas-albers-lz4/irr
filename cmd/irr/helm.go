@@ -8,8 +8,8 @@ import (
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/cli"
 
-	"github.com/lalbers/irr/pkg/helm"
-	log "github.com/lalbers/irr/pkg/log"
+	"github.com/lucas-albers-lz4/irr/pkg/helm"
+	log "github.com/lucas-albers-lz4/irr/pkg/log"
 	"github.com/spf13/cobra"
 )
 

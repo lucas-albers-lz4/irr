@@ -7,7 +7,7 @@ import (
 
 	"errors"
 
-	log "github.com/lalbers/irr/pkg/log"
+	log "github.com/lucas-albers-lz4/irr/pkg/log"
 )
 
 // Add these error declarations at the top of the file, after the import section

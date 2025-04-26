@@ -3,8 +3,8 @@ package main
 import (
 	"testing"
 
-	"github.com/lalbers/irr/pkg/fileutil"
-	"github.com/lalbers/irr/pkg/registry"
+	"github.com/lucas-albers-lz4/irr/pkg/fileutil"
+	"github.com/lucas-albers-lz4/irr/pkg/registry"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

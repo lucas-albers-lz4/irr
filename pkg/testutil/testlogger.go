@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/lalbers/irr/pkg/log"
+	"github.com/lucas-albers-lz4/irr/pkg/log"
 )
 
 var (

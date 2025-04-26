@@ -6,10 +6,10 @@ import (
 
 	"errors"
 
-	"github.com/lalbers/irr/pkg/exitcodes"
-	"github.com/lalbers/irr/pkg/fileutil"
-	log "github.com/lalbers/irr/pkg/log"
-	"github.com/lalbers/irr/pkg/registry"
+	"github.com/lucas-albers-lz4/irr/pkg/exitcodes"
+	"github.com/lucas-albers-lz4/irr/pkg/fileutil"
+	log "github.com/lucas-albers-lz4/irr/pkg/log"
+	"github.com/lucas-albers-lz4/irr/pkg/registry"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"sigs.k8s.io/yaml"

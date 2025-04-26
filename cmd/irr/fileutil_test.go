@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lalbers/irr/internal/helm"
-	"github.com/lalbers/irr/pkg/exitcodes"
+	"github.com/lucas-albers-lz4/irr/internal/helm"
+	"github.com/lucas-albers-lz4/irr/pkg/exitcodes"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"

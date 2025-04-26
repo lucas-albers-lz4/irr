@@ -6,10 +6,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/lalbers/irr/internal/helm"
-	"github.com/lalbers/irr/pkg/exitcodes"
-	"github.com/lalbers/irr/pkg/fileutil"
-	log "github.com/lalbers/irr/pkg/log"
+	"github.com/lucas-albers-lz4/irr/internal/helm"
+	"github.com/lucas-albers-lz4/irr/pkg/exitcodes"
+	"github.com/lucas-albers-lz4/irr/pkg/fileutil"
+	log "github.com/lucas-albers-lz4/irr/pkg/log"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 )
