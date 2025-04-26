@@ -328,3 +328,16 @@ func TestCreateHelmAdapter(t *testing.T) {
 
 // NOTE: Testing defaultHelmAdapterFactory directly is hard due to helm.NewHelmClient()
 // We test the createHelmAdapter which USES the factory variable, covering the indirection.
+
+// TestDefaultHelmAdapterFactory verifies the default factory creates an adapter.
+func TestDefaultHelmAdapterFactory(t *testing.T) {
+	// Basic test: Ensure it returns a non-nil adapter without errors in a standard setup.
+	// We assume the underlying helm.NewHelmClient() works in a default environment.
+	// More complex testing would involve mocking helm client setup.
+	adapter, err := defaultHelmAdapterFactory()
+
+	assert.NoError(t, err, "defaultHelmAdapterFactory should not error in standard setup")
+	assert.NotNil(t, adapter, "defaultHelmAdapterFactory should return a non-nil adapter")
+
+	// TODO: Add test case where helm.NewHelmClient() fails? Requires mocking Helm internals.
+}

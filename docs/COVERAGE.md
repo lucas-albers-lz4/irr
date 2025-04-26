@@ -114,22 +114,23 @@ To maximize impact and efficiency, follow this order when working through files 
 
 *   **Primary Goal:** Pragmatically increase Go test coverage to **at least 75%** for all core packages (`pkg/*`), and significantly reduce the number of functions with 0% coverage across the codebase. Aim for **>75% overall coverage** as a stretch goal.
     *   *Note:* While percentages are useful targets, the focus should be on writing *meaningful* tests covering important logic, error conditions, and edge cases, rather than simply inflating numbers with trivial tests.
-*   **Immediate Focus (Address Gaps):** Prioritize packages currently below 75% (`internal/helm`, `cmd/irr`, `pkg/log`, `pkg/helm`, `pkg/registry`, `pkg/analyzer`, `test/integration`) and functions with 0% coverage, particularly within `cmd/irr`, `internal/helm`, and `pkg/log`.
+*   **Immediate Focus (Address Gaps):** Prioritize packages currently below 75% (`internal/helm`, `cmd/irr`, `pkg/helm`, `pkg/registry`, `pkg/analyzer`, `test/integration`) and functions with 0% coverage, particularly within `cmd/irr` and `internal/helm`.
 *   **Subsequent Phases:** Target higher coverage (**>85%**) for core *logic* packages (`pkg/analysis`, `pkg/override`, `pkg/generator`, `pkg/image`, `pkg/rules`, `pkg/strategy`) once the initial 75% goal is met broadly. Address utility packages more thoroughly, test edge cases identified during broader chart testing, and refine tests as the codebase evolves. Add low-priority, long-term coverage goals (e.g., >30-50%) for test helper packages (`test/mocks`, `test/integration/harness.go`).
 
 ## 2. Current Status (as of [Current Date] -> Updated)
 
-*   **Overall Coverage:** **64.0%** (Run `go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out`)
+*   **Overall Coverage:** **64.4%** (Run `go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out`)
 *   **Progress Summary:**
-    *   Overall coverage increased significantly from 61.0% to **64.0%**.
-    *   `cmd/irr` coverage increased from 46.5% to **52.7%**.
-    *   `internal/helm` coverage increased significantly from 37.4% to **49.5%**.
-    *   `pkg/registry` coverage decreased slightly from 69.1% to **68.2%**.
+    *   Overall coverage increased slightly from 64.0% to **64.4%**.
+    *   `cmd/irr` coverage remains at **52.7%**.
+    *   `internal/helm` coverage remains at **49.5%**.
+    *   `pkg/log` coverage increased significantly from 47.8% to **95.7%** (Target Exceeded).
+    *   `pkg/registry` coverage remains at **68.2%**.
     *   `pkg/chart` (75.3%) and `pkg/image` (75.3%) still meet the 75% target.
     *   `pkg/helm` (63.3%) remains below target.
-    *   `internal/helm` (49.5%), `test/integration` (41.5%), and `pkg/log` (47.8%) are still the lowest covered packages requiring the most attention, though `cmd/irr` (52.7%) is also relatively low.
-    *   `pkg/registry` (68.2%) and `pkg/analyzer` (70.6%) are approaching the target.
-    *   Many 0% functions remain, especially in `cmd/irr`, `internal/helm`, `test/integration`, and `pkg/log`.
+    *   `internal/helm` (49.5%), `test/integration` (41.5%) are still the lowest covered packages requiring the most attention, followed by `cmd/irr` (52.7%).
+    *   `pkg/registry` (68.2%), `pkg/helm` (63.3%), and `pkg/analyzer` (70.6%) are approaching the target.
+    *   Many 0% functions remain, especially in `cmd/irr`, `internal/helm`, `test/integration`.
     *   `test/mocks` and `tools/lint/...` remain at 0%.
     *   **All Go unit tests (`make test`) are currently passing.**
     *   **All `make lint` checks are passing.**
@@ -138,7 +139,6 @@ To maximize impact and efficiency, follow this order when working through files 
     *   `github.com/lalbers/irr/tools/lint/fileperm`: **0.0%** (Low Priority Tooling)
     *   `github.com/lalbers/irr/tools/lint/fileperm/cmd`: **0.0%** (Low Priority Tooling)
     *   `github.com/lalbers/irr/test/integration`: **41.5%** (High Priority)
-    *   `github.com/lalbers/irr/pkg/log`: **47.8%** (High Priority - Regression)
     *   `github.com/lalbers/irr/internal/helm`: **49.5%** (High Priority)
     *   `github.com/lalbers/irr/cmd/irr`: **52.7%** (High Priority)
     *   `github.com/lalbers/irr/pkg/helm`: **63.3%** (Medium Priority)
@@ -152,16 +152,17 @@ To maximize impact and efficiency, follow this order when working through files 
     *   `github.com/lalbers/irr/pkg/analysis`: **89.3%** (Target Met)
     *   `github.com/lalbers/irr/pkg/strategy`: **90.9%** (Target Met)
     *   `github.com/lalbers/irr/pkg/fileutil`: **94.4%** (Target Met)
+    *   `github.com/lalbers/irr/pkg/log`: **95.7%** (Target Met - Exceeded!)
     *   `github.com/lalbers/irr/pkg/rules`: **97.7%** (Target Met)
     *   `github.com/lalbers/irr/pkg/exitcodes`: **100.0%** (Target Met)
     *   `github.com/lalbers/irr/pkg/version`: **100.0%** (Target Met)
 *   **Next Priorities:**
-    1.  Increase coverage in **`internal/helm`** (critical helper package, 49.5%). Focus on 0% functions (`NewHelmClient`, `GetReleaseValues`, `GetReleaseChart`, `TemplateChart`, `processHelmLogs`, `GetCurrentNamespace`, `FindChartForRelease`, `ValidateRelease`, `getActionConfig`, `command.go: Template`, `command.go: GetValues`).
+    1.  Increase coverage in **`internal/helm`** (critical helper package, 49.5%). Focus on 0% functions (`NewHelmClient`, `GetReleaseValues`, `GetReleaseChart`, `TemplateChart`, `ValidateRelease`, `getActionConfig`, `command.go: Template`, `command.go: GetValues`).
     2.  Increase coverage in **`cmd/irr`** (CLI entry points, 52.7%). Focus on 0% functions (e.g., `main`, `Execute`, `defaultHelmAdapterFactory`, `GetHelmSettings`, `inspectHelmRelease`, `getRequiredFlags`, `setupGeneratorConfig`, `createAndExecuteGenerator`, `createGenerator`, `runOverrideStandaloneMode`, multiple functions in `validate.go`). **Prioritize command-level (black-box) testing and Helm plugin mode testing.**
-    3.  Address the regression and low coverage in **`pkg/log`** (47.8%). Focus *urgently* on 0% functions for core logging operations (`SetOutput`, `Debug`, `Info`, `Warn`, `Error`, `Logger`, `String`, `SetTestModeWithTimestamps`).
+    3.  ~~Address the regression and low coverage in **`pkg/log`** (47.8%). Focus *urgently* on 0% functions for core logging operations (`SetOutput`, `Debug`, `Info`, `Warn`, `Error`, `Logger`, `String`, `SetTestModeWithTimestamps`).~~ **[DONE - 95.7%]**
     4.  **Concurrently with #1/#2:** Begin adding *new*, targeted integration tests (`test/integration` - 41.5%) for core `cmd/irr` command scenarios, especially Helm mode.
     5.  Increase coverage in **`pkg/helm`** (Helm client interactions, 63.3%). Focus on 0% functions (`GetReleaseMetadata`, `TemplateChart`, `sdk.go: Load`, `sdk.go: LoadChart`).
-    6.  Increase coverage in **`pkg/registry`** (68.2%). Focus on 0% functions (`validateLegacyMappings` (SKIP), `LoadMappingsDefault`, `mappings_test_default.go` functions).
+    6.  Increase coverage in **`pkg/registry`** (68.2%). Focus on 0% functions (`LoadMappingsDefault`, `mappings_test_default.go` functions). Skip legacy mapping tests.
     7.  Increase coverage in **`pkg/analyzer`** (70.6%). Focus on `analyzeInterfaceValue` (0%).
     8.  Address remaining 0% coverage functions in other packages (e.g., `pkg/rules`, `pkg/testutil`).
     9. (Lower Priority) Improve coverage for `test/integration` beyond adding core command tests (address 0% functions like `loadMappings`, etc.).
@@ -171,7 +172,7 @@ To maximize impact and efficiency, follow this order when working through files 
 
 ### Phase 1: Previous Core Logic - **[MOSTLY COMPLETE]**
 
-*   Packages like `pkg/analysis`, `pkg/image`, `pkg/override`, `pkg/registry`, `pkg/strategy`, `pkg/rules` have good coverage. Minor 0% gaps remain (see Phase 4).
+*   Packages like `pkg/analysis`, `pkg/image`, `pkg/override`, `pkg/strategy`, `pkg/rules` have good coverage. Minor 0% gaps remain (see Phase 4).
 *   **Completion Criteria:** All packages from Phase 1 maintain ≥75% coverage.
 
 ### Phase 2: Address Below-Target Core Packages & Regressions - **[IN PROGRESS]**
@@ -179,10 +180,16 @@ To maximize impact and efficiency, follow this order when working through files 
 *   **Target Coverage:** >75% for each package.
 *   **Completion Criteria:** All listed packages reach ≥75% coverage, with no critical functions remaining at 0%.
 *   **Packages & Specific Actions:** (Reordered by Priority based on Current Status)
-    *   **`pkg/log` (`log.go`):** **[TODO - 47.8%]** (High Priority - Regression)
-        *   **Priority 1 (Core Logging Functions - 0% - URGENT):**
-            - [ ] `TestSetOutput`: Add test. **[0%]**
-            - [ ] `TestDebug`: Add test (requires capture). **[0%]**
+    *   **`pkg/log` (`log.go`):** **[COMPLETE - 95.7%]** (Target Exceeded)
+        *   ~~**Priority 1 (Core Logging Functions - 0% - URGENT):**~~
+            - [X] `TestSetOutput`: Added test.
+            - [X] `TestDebug`: Covered via other tests.
+            - [X] `TestInfo`: Covered via other tests.
+            - [X] `TestWarn`: Covered via other tests.
+            - [X] `TestError`: Covered via other tests.
+            - [X] `TestLogger`: Added test.
+            - [X] `TestString`: Added test.
+            - [X] `TestSetTestModeWithTimestamps`: Added test.
     *   **`pkg/helm` (`client.go`, `sdk.go`):** **[TODO - 63.3%]** (Medium Priority)
         *   **Priority 1 (Core Client Interaction - 0%/Low):**
             - [ ] `client.go: TestGetReleaseMetadata`: Add tests. **[0%]**
@@ -198,7 +205,7 @@ To maximize impact and efficiency, follow this order when working through files 
     *   **`pkg/registry` (`mappings.go`, `config.go`, `mappings_test_default.go`):** **[TODO - 68.2%]** (Medium Priority)
         *   **NOTE:** Tests related to *legacy* mapping formats (e.g., `TestValidateLegacyMappings`, `TestRegistryMappingFileFormats`) should be skipped, as this functionality is planned for removal. Focus on structured mappings (`TestValidateStructuredMappings`, `LoadMappingsDefault` with structured data).
         *   **Priority 1 (Core Logic - 0%/Low):**
-            - [ ] `mappings.go: TestValidateLegacyMappings`: Add tests. **[0%]**  <- SKIP (Legacy)
+            - [ ] `mappings.go: TestValidateLegacyMappings`: ~~Add tests~~ **[0%]**  <- SKIP (Legacy)
             - [ ] `mappings.go: TestLoadMappingsDefault`: Add tests (depends on `mappings_test_default.go`). **[0%]**
             - [ ] `mappings.go: TestValidateStructuredMappings`: Add more tests. **[54.2%]**
         *   **Priority 2 (Test Helpers - 0%):**
@@ -222,7 +229,7 @@ To maximize impact and efficiency, follow this order when working through files 
         *   **(No immediate actions needed for 75% target)**
         *   Review low coverage functions (`types.go: String` (42.9%), `normalization.go: NormalizeImageReference` (53.5%), `parser.go: parseWithRegex` (51.7%)) if aiming higher.
     *   **`pkg/testutil` (`testlogger.go`, `log_capture.go`):** **[TARGET MET - 77.8%]** (Lower Priority - Enhance if needed)
-        *   Review 0% function `testlogger.go: SuppressLogging`.
+        *   [ ] Review 0% function `testlogger.go: SuppressLogging`. (Potential Easy Fix)
         *   Review low coverage function `log_capture.go: containsAll` (50.0%).
 
 ### Phase 3: Address `cmd/irr` and `internal/helm` (Critical Low Coverage) & Add Core Integration Tests - **[IN PROGRESS]**
@@ -259,8 +266,8 @@ To maximize impact and efficiency, follow this order when working through files 
             - [ ] `TestInspectRelease`: Add more tests. **[56.8%]** -> Added error cases. **[~??%]**
             - [ ] `TestResolveChartPath`: Add more tests. **[64.8%]** -> Skipped (unexported, complex setup). **[64.8%]**
     *   **`internal/helm/client.go`:** (Part of `internal/helm` - **49.5%**)
-        *   **Priority 1 (0%):**
-            - [ ] `TestNewHelmClient`: Add tests. **[0%]**
+        *   **Priority 1 (0% - Potential Easy Fixes Highlighted):**
+            - [ ] `TestNewHelmClient`: Add tests. **[0%]** (Easy Fix?)
             - [ ] `TestGetReleaseValues`: Add tests for mocked client. **[0%]**
             - [ ] `TestGetReleaseChart`: Add tests for mocked client. **[0%]**
             - [ ] `TestTemplateChart`: Add tests for mocked client. **[0%]**
@@ -268,7 +275,7 @@ To maximize impact and efficiency, follow this order when working through files 
             - [x] `TestGetCurrentNamespace`: Added tests. **[100.0%]** -> **FIXED**
             - [x] `TestFindChartForRelease`: Added tests for mock client. **[100.0%]** -> **FIXED**
             - [ ] `TestValidateRelease`: Add tests for mock client. **[0%]**
-            - [ ] `TestGetActionConfig`: Add tests. **[0%]**
+            - [ ] `TestGetActionConfig`: Add tests. **[0%]** (Easy Fix?)
         *   **Priority 2 (Low Coverage):**
             - [ ] `TestFindChartInHelmCachePaths`: Add more tests. **[61.1%]** -> Skipped (unexported, complex setup). **[61.1%]**
     *   **`internal/helm/client_mock.go`:** (Part of `internal/helm` - **49.5%**)
@@ -281,12 +288,14 @@ To maximize impact and efficiency, follow this order when working through files 
             - [ ] `TestTemplate`: Test defined but requires SDK mocking or refactoring. **[0%]** -> Skipped (requires SDK mock/refactor). **[0%]**
             - [ ] `TestGetValues`: Test defined but requires SDK mocking or refactoring. **[0%]** -> Skipped (requires SDK mock/refactor). **[0%]**
     *   **`cmd/irr/root.go`:** (Part of `cmd/irr` - **52.7%**)
-        *   **Priority 1 (0%):**
+        *   **Priority 1 (0% - Potential Easy Fixes Highlighted):**
             - [x] `TestSetFs`: Added test. **[100.0%]**
             - [x] `TestError`: Added test (for ExitCodeError). **[100.0%]**
             - [x] `TestExitCode`: Added test (for ExitCodeError). **[100.0%]**
             - [-] `TestExecute`: Skipped (Covered by subcommand tests). **[N/A]**
             - [-] `TestInitConfig`: Skipped (Complex viper/fs mocking). **[N/A]**
+            - [ ] `TestDefaultHelmAdapterFactory`: Add tests. **[0%]** (Easy Fix?)
+            - [ ] `TestGetHelmSettings`: Add tests. **[0%]** (Easy Fix?)
         *   **Priority 2 (Low Coverage):**
             - [X] `TestLoadRegistryMappings`: Added more tests (still failing). **[~??%]** -> Fixed assertions.
             - [X] `TestValidateUnmappableRegistries`: Added more tests (still failing/panicking). **[~??%]** -> Fixed assertions.
@@ -307,12 +316,12 @@ To maximize impact and efficiency, follow this order when working through files 
             - [ ] `TestValidateUnmappableRegistries`: Added more tests (still failing/panicking). **[~??%]**
             - [-] `TestHandlePluginOverrideOutput`: Skipped (Testing difficulties). **[N/A]**
     *   **`cmd/irr/validate.go`:** (Part of `cmd/irr` - **52.7%**)
-        *   **Priority 1 (0%):**
+        *   **Priority 1 (0% - Potential Easy Fixes Highlighted):**
             - [x] `TestDetectChartInCurrentDirectoryIfNeeded`: Added tests. **[100.0%]** -> Fixed detection call.
             - [-] `TestRunValidate`: Skipped (Covered by command/integration tests). **[N/A]**
-            - [-] `TestGetValidateFlags`: Skipped (Internal helper, covered by command tests). **[N/A]**
-            - [-] `TestGetValidateReleaseNamespace`: Skipped (Simple wrapper for common func). **[N/A]**
-            - [-] `TestGetValidateOutputFlags`: Skipped (Internal helper, covered by command tests). **[N/A]**
+            - [ ] `TestGetValidateFlags`: Add tests. **[0%]** (Easy Fix?)
+            - [ ] `TestGetValidateReleaseNamespace`: Add tests. **[0%]** (Easy Fix?)
+            - [ ] `TestGetValidateOutputFlags`: Add tests. **[0%]** (Easy Fix?)
             - [x] `TestValidateAndDetectChartPath`: Added tests. **[100.0%]**
         *   **Priority 2 (Low Coverage):**
             - [ ] `TestValidateChartWithFiles`: Add more tests. **[40.8%]**
@@ -323,16 +332,24 @@ To maximize impact and efficiency, follow this order when working through files 
             - [ ] `TestLoadHelmChart`: Add more tests. **[21.9%]**
             - [ ] `TestSetupAnalyzerAndLoadChart`: Add more tests. **[56.5%]**
     *   **`cmd/irr/helm.go`:** (Part of `cmd/irr` - **52.7%**)
-        *   **Priority 1 (0%):**
-            - [ ] `TestGetHelmSettings`: Add tests (cmd version). **[0%]**
+        *   **Priority 1 (0% - Potential Easy Fixes Highlighted):**
+            - [ ] `TestGetHelmSettings`: Add tests (cmd version). **[0%]** (Easy Fix?)
         *   **Priority 2 (Low Coverage):**
             - [ ] `TestGetChartPathFromRelease`: Add more tests. **[6.5%]**
             - [ ] `TestGetReleaseValues`: Add more tests (cmd version). **[16.7%]**
             - [ ] `TestRemoveHelmPluginFlags`: Add more tests. **[50.0%]**
-    *   **`pkg/registry` (`mappings.go`, `config.go`, `mappings_test_default.go`):** **[TODO - 68.2%]** (Medium Priority)
-    *   **`pkg/analyzer` (`analyzer.go`):** **[TODO - 70.6%]** (Medium Priority)
-    *   **`pkg/log` (`log.go`):** **[TODO - 47.8%]** (High Priority - Regression)
-    *   **`pkg/helm` (`client.go`, `sdk.go`):** **[TODO - 63.3%]** (Medium Priority)
+
+### Phase 4: Remaining Core Logic & Utilities - **[TODO]**
+
+*   Address remaining 0% functions in Phase 2 packages after they reach >75%.
+*   Address `pkg/analyzer: TestAnalyzeInterfaceValue`.
+*   Address 0% functions in already >75% packages (e.g., `pkg/testutil: SuppressLogging`).
+
+### Phase 5: Lower Priority (Integration Deep Dive, Mocks, Tooling) - **[TODO]**
+
+*   Expand `test/integration` coverage.
+*   Add tests for `test/mocks` and `tools/lint/...`.
+
 
 ## 4. Addressing Path Handling Test Failures (Blocking Refactor)
 

@@ -122,3 +122,10 @@ func TestGetChartPathFromRelease_EmptyName(t *testing.T) {
 	// (Get, Pull, LocateChart) and filesystem operations, which is better suited
 	// for integration tests or command-level tests using a mocked Helm client.
 }
+
+// TestGetHelmSettings verifies that GetHelmSettings returns a non-nil settings object.
+func TestGetHelmSettings(t *testing.T) {
+	settings := GetHelmSettings()
+	assert.NotNil(t, settings, "GetHelmSettings should return a non-nil object")
+	// We don't assert specific values within settings as they depend on the environment.
+}

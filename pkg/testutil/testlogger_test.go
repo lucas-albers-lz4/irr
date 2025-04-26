@@ -1,6 +1,7 @@
 package testutil
 
 import (
+	"bytes"
 	"fmt"
 	"testing"
 
@@ -65,4 +66,37 @@ func TestCaptureLogging(t *testing.T) {
 	})
 
 	// Add more test cases if needed, e.g., for Warn, Error levels, different formats, etc.
+}
+
+// TestSuppressLogging verifies that logging is suppressed and restored correctly.
+func TestSuppressLogging(t *testing.T) {
+	// 1. Setup a buffer to capture potential log output for the test duration.
+	var testBuf bytes.Buffer
+	restoreOutput := log.SetOutput(&testBuf)
+	defer restoreOutput() // Ensure original output is restored after the test.
+
+	// Log something initially to ensure the buffer capture works.
+	log.Info("Initial message before suppression")
+	initialContent := testBuf.String()
+	assert.NotEmpty(t, initialContent, "Should have logged initial message")
+	testBuf.Reset() // Clear buffer for the suppression test itself.
+
+	// 2. Suppress logging
+	restoreSuppression := SuppressLogging()
+
+	// 3. Log while suppressed
+	log.Warn("This message should be suppressed") // Use Warn for variety
+	assert.Empty(t, testBuf.String(), "Log buffer should be empty while logging is suppressed")
+
+	// 4. Restore logging
+	restoreSuppression()
+
+	// 5. Log after restoration
+	log.Error("This message should appear after restoration") // Use Error for variety
+	afterRestoreContent := testBuf.String()
+	assert.NotEmpty(t, afterRestoreContent, "Should have logged message after restoration")
+	assert.Contains(t, afterRestoreContent, "This message should appear after restoration",
+		"Log buffer should contain the message logged after restoration")
+	assert.NotContains(t, afterRestoreContent, "This message should be suppressed",
+		"Log buffer should NOT contain the message logged during suppression")
 }
