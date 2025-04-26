@@ -5,6 +5,15 @@ import (
 	"reflect"
 	"sort"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// Constants used in tests
+const (
+	typeMap    = "map"
+	typeString = "string"
 )
 
 // Helper function to sort ImagePatterns by path for consistent test results
@@ -220,7 +229,7 @@ func TestBasicValueTraversal(t *testing.T) {
 	}
 
 	// Check main container structure
-	if mainContainer.Type != "map" {
+	if mainContainer.Type != typeMap {
 		t.Errorf("Main container: expected type 'map', got %q", mainContainer.Type)
 	}
 	if mainContainer.Structure == nil {
@@ -237,7 +246,7 @@ func TestBasicValueTraversal(t *testing.T) {
 	}
 
 	// Check sidecar container structure
-	if sidecarContainer.Type != "map" {
+	if sidecarContainer.Type != typeMap {
 		t.Errorf("Sidecar container: expected type 'map', got %q", sidecarContainer.Type)
 	}
 	if sidecarContainer.Structure == nil {
@@ -473,81 +482,175 @@ func TestConfigWithIncludeExcludePatterns(t *testing.T) {
 
 // TestAnalyzeInterfaceValue tests the analyzeInterfaceValue function
 func TestAnalyzeInterfaceValue(t *testing.T) {
-	// TODO: This test requires more sophisticated setup to properly test the analyzeInterfaceValue function
-	// It's challenging to create a reflect.Value of interface{} type with the correct inner content
-	// Without modifying the implementation of analyzeInterfaceValue, we'll test it indirectly through other tests
-	// and increment coverage by a small amount for this phase.
-	t.Skip("This test requires refactoring to work correctly with the current implementation of analyzeInterfaceValue")
+	// Since this function is complex to test directly due to IsNil checks on reflect values,
+	// and we already have good indirect coverage through other tests, we'll test
+	// the key functionality using AnalyzeHelmValues instead.
 
-	// Setup test cases - keeping for reference when implementing a more robust test
-	testCases := []struct {
-		name        string
-		value       interface{}
-		expectCount int // How many patterns we expect to find
-	}{
-		{
-			name: "Map interface",
-			value: map[string]interface{}{
-				"repository": "nginx",
-				"tag":        "latest",
+	// This approach is a compromise that gives us coverage while being practical to implement
+
+	t.Run("Interface value as map", func(t *testing.T) {
+		// Create a map with an interface value containing a map
+		values := map[string]interface{}{
+			"test": map[string]interface{}{
+				"image": interface{}(map[string]interface{}{
+					"repository": "nginx",
+					"tag":        "latest",
+				}),
 			},
-			expectCount: 1, // Should find one image map
-		},
-		{
-			name:        "String interface",
-			value:       interface{}("nginx:latest"), // Wrap in interface{} to avoid reflection on concrete type
-			expectCount: 1,                           // Should find one image string
-		},
-		{
-			name: "Slice interface",
-			value: interface{}([]interface{}{ // Wrap in interface{} to ensure reflection works as intended
-				"nginx:alpine",
-				map[string]interface{}{
-					"repository": "redis",
-					"tag":        "6.0",
-				},
-			}),
-			expectCount: 2, // Should find two images (one string, one map)
-		},
-		{
-			name:        "Integer interface",
-			value:       interface{}(42), // Wrap in interface{} to ensure reflection works as intended
-			expectCount: 0,               // Should not find any images
-		},
-		{
-			name:        "Boolean interface",
-			value:       interface{}(true), // Wrap in interface{} to ensure reflection works as intended
-			expectCount: 0,                 // Should not find any images
-		},
-		{
-			name:        "Nil interface",
-			value:       nil,
-			expectCount: 0, // Should not find any images
-		},
+		}
+
+		patterns, err := AnalyzeHelmValues(values, nil)
+		require.NoError(t, err)
+
+		// Verify we found the image pattern
+		found := false
+		for _, p := range patterns {
+			if p.Path == "test.image" && p.Type == typeMap {
+				found = true
+				assert.Equal(t, "repository=nginx,tag=latest", p.Value)
+				break
+			}
+		}
+		assert.True(t, found, "Should have found the image map pattern")
+	})
+
+	t.Run("Interface value as string", func(t *testing.T) {
+		// Create a map with an interface value containing a string
+		values := map[string]interface{}{
+			"test": map[string]interface{}{
+				"image": interface{}("nginx:latest"),
+			},
+		}
+
+		patterns, err := AnalyzeHelmValues(values, nil)
+		require.NoError(t, err)
+
+		// Verify we found the image pattern
+		found := false
+		for _, p := range patterns {
+			if p.Path == "test.image" && p.Type == typeString {
+				found = true
+				assert.Equal(t, "nginx:latest", p.Value)
+				break
+			}
+		}
+		assert.True(t, found, "Should have found the image string pattern")
+	})
+
+	t.Run("Interface value as scalar", func(t *testing.T) {
+		// Create a map with an interface value containing a non-image scalar
+		values := map[string]interface{}{
+			"test": map[string]interface{}{
+				"image": interface{}(42), // Number won't be detected as an image
+			},
+		}
+
+		patterns, err := AnalyzeHelmValues(values, nil)
+		require.NoError(t, err)
+
+		// Verify we didn't find any image patterns at this path
+		for _, p := range patterns {
+			assert.NotEqual(t, "test.image", p.Path, "Should not have found a pattern for a scalar value")
+		}
+	})
+
+	t.Run("Nil interface value", func(t *testing.T) {
+		// Create a map with an interface value that's nil
+		values := map[string]interface{}{
+			"test": map[string]interface{}{
+				"image": nil,
+			},
+		}
+
+		patterns, err := AnalyzeHelmValues(values, nil)
+		require.NoError(t, err)
+
+		// Verify we didn't find any image patterns at this path
+		for _, p := range patterns {
+			assert.NotEqual(t, "test.image", p.Path, "Should not have found a pattern for a nil value")
+		}
+	})
+}
+
+// TestAnalyzeInterfaceValueDirect tests the analyzeInterfaceValue function directly
+func TestAnalyzeInterfaceValueDirect(t *testing.T) {
+	// This test ensures analyzeInterfaceValue properly processes interface values
+
+	// Setup - create a config that will match our test paths
+	config := &Config{
+		IncludePatterns: []string{"*"}, // Match all paths
+		ExcludePatterns: []string{},    // Exclude nothing
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Create a slice to collect patterns
-			patterns := []ImagePattern{}
+	// For each test, we need to create an interface{} value, then wrap that
+	// in another interface{} so that we can have a reflect.Value where IsNil is valid
 
-			// Create a config for the analysis
-			config := &Config{}
+	t.Run("Interface containing map", func(t *testing.T) {
+		// Create a patterns slice to collect results
+		patterns := make([]ImagePattern, 0)
 
-			// Call the function being tested - use reflect.ValueOf on interface{} values to ensure proper reflection
-			if tc.value == nil {
-				// Special handling for nil value
-				analyzeInterfaceValue("test.path", reflect.ValueOf(tc.value), &patterns, config)
-			} else {
-				// For non-nil values, create an interface value to test interface handling
-				v := reflect.ValueOf(&tc.value).Elem() // Get a reflect.Value that is an interface
-				analyzeInterfaceValue("test.path", v, &patterns, config)
-			}
+		// Create an interface value inside a pointer to make IsNil valid
+		mapVal := map[string]interface{}{
+			"repository": "nginx",
+			"tag":        "latest",
+		}
+		testVal := new(interface{})
+		*testVal = mapVal
 
-			// Check if the expected number of patterns were found
-			if len(patterns) != tc.expectCount {
-				t.Errorf("analyzeInterfaceValue() found %d patterns, expected %d", len(patterns), tc.expectCount)
-			}
-		})
-	}
+		// Create reflect.Value from the pointer-to-interface
+		reflectVal := reflect.ValueOf(testVal).Elem()
+
+		// Call analyzeInterfaceValue with the correct signature
+		analyzeInterfaceValue("test.image", reflectVal, &patterns, config)
+
+		// Verify we have patterns (map was analyzed)
+		require.Len(t, patterns, 1, "Should have found the image pattern")
+		assert.Equal(t, "test.image", patterns[0].Path)
+		assert.Equal(t, typeMap, patterns[0].Type)
+		assert.Equal(t, "repository=nginx,tag=latest", patterns[0].Value)
+	})
+
+	t.Run("Interface containing slice", func(t *testing.T) {
+		// Create a patterns slice to collect results
+		patterns := make([]ImagePattern, 0)
+
+		// Create an interface value inside a pointer to make IsNil valid
+		sliceVal := []interface{}{
+			map[string]interface{}{
+				"image": "nginx:latest",
+			},
+		}
+		testVal := new(interface{})
+		*testVal = sliceVal
+
+		// Create reflect.Value from the pointer-to-interface
+		reflectVal := reflect.ValueOf(testVal).Elem()
+
+		// Call analyzeInterfaceValue with the correct signature
+		analyzeInterfaceValue("test.containers", reflectVal, &patterns, config)
+
+		// Verify patterns were generated from the slice's contents
+		require.NotEmpty(t, patterns, "Should have found patterns from slice contents")
+		for _, pattern := range patterns {
+			t.Logf("Found pattern: %s = %s", pattern.Path, pattern.Value)
+		}
+	})
+
+	t.Run("Interface containing nil", func(t *testing.T) {
+		// Create a patterns slice to collect results
+		patterns := make([]ImagePattern, 0)
+
+		// Create a nil interface value in a way IsNil can be called on it
+		var nilVal interface{}
+		valPtr := &nilVal
+
+		// Create reflect.Value from the interface
+		reflectVal := reflect.ValueOf(valPtr).Elem()
+
+		// Call analyzeInterfaceValue with the correct signature
+		analyzeInterfaceValue("test.nilvalue", reflectVal, &patterns, config)
+
+		// Verify we don't have patterns (nil wasn't analyzed)
+		assert.Len(t, patterns, 0, "Should not find patterns for nil value")
+	})
 }

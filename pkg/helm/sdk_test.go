@@ -498,12 +498,37 @@ func TestErrorHandling_WithMockTime(t *testing.T) {
 	mockTime.AssertExpectations(t)
 }
 
+// TestSDKLoader_Load tests the Load function of the defaultChartLoader
 func TestSDKLoader_Load(t *testing.T) {
-	t.Skip("Skipping test for SDKLoader.Load - implementation pending or requires more setup")
+	// We can only reliably test the error path since loader.Load uses the real filesystem
+	// Create a loader
+	chartLoader := &defaultChartLoader{}
+
+	t.Run("Invalid path", func(t *testing.T) {
+		// Load from a non-existent path
+		// This path should not exist on any system
+		chartObj, err := chartLoader.Load("/non-existent-path-for-testing-only-12345")
+
+		// Verify error
+		require.Error(t, err)
+		assert.Nil(t, chartObj)
+		assert.Contains(t, err.Error(), "failed to load chart")
+	})
 }
 
+// TestSDKLoader_LoadChart tests the LoadChart wrapper function
 func TestSDKLoader_LoadChart(t *testing.T) {
-	t.Skip("Skipping test for SDKLoader.LoadChart - implementation pending or requires more setup")
+	// We can only reliably test the error path
+	t.Run("Invalid path", func(t *testing.T) {
+		// Load from a non-existent path
+		// This path should not exist on any system
+		chartObj, err := LoadChart("/non-existent-path-for-testing-only-12345")
+
+		// Verify error
+		require.Error(t, err)
+		assert.Nil(t, chartObj)
+		assert.Contains(t, err.Error(), "failed to load chart")
+	})
 }
 
 func TestGetIndexFile(t *testing.T) {

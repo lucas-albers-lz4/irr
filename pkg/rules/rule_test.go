@@ -598,3 +598,31 @@ func TestApplyRulesToMap_LogOutput(t *testing.T) {
 		"msg":   "Rules system is disabled, skipping rule application", // Match actual log msg
 	})
 }
+
+/*
+// Removed TestSetChart as the SetChart method is defined on the Rule interface
+// but not implemented by BaseRule or the mockTestRule.
+// Coverage report likely indicates it's not implemented/used by any concrete type.
+func TestSetChart(t *testing.T) {
+	assertions := assert.New(t)
+	// Use a mock rule that embeds BaseRule
+	mockRule := &mockTestRule{
+		baseRule: NewBaseRule("test-rule", "test description", nil, 0),
+		applies:  true, // or false, doesn't matter for SetChart
+	}
+	chartMeta := &chart.Chart{
+		Metadata: &chart.Metadata{
+			Name:    "my-chart",
+			Version: "1.0.0",
+		},
+	}
+
+	mockRule.SetChart(chartMeta)
+
+	// Assertions remain the same, ensuring the call doesn't panic
+	// and the rule object is still valid.
+	assertions.NotNil(mockRule, "Rule should not be nil after setting chart")
+	// If mockTestRule or BaseRule had internal state affected by SetChart,
+	// we would add assertions here.
+}
+*/

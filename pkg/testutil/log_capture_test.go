@@ -147,3 +147,74 @@ func TestContainsLog(t *testing.T) {
 	assert.False(t, ContainsLog(testOutput, "level=WARNING"))
 	assert.False(t, ContainsLog(testOutput, `msg="Another message"`))
 }
+
+func TestContainsAll(t *testing.T) {
+	tests := []struct {
+		name     string
+		actual   map[string]interface{}
+		expected map[string]interface{}
+		want     bool
+	}{
+		{
+			name:     "Exact match",
+			actual:   map[string]interface{}{"level": "INFO", "msg": "test", "count": 10.0},
+			expected: map[string]interface{}{"level": "INFO", "msg": "test", "count": 10},
+			want:     true,
+		},
+		{
+			name:     "Partial match (expected is subset)",
+			actual:   map[string]interface{}{"level": "INFO", "msg": "test", "count": 10.0, "extra": true},
+			expected: map[string]interface{}{"level": "INFO", "count": 10},
+			want:     true,
+		},
+		{
+			name:     "Empty expected map",
+			actual:   map[string]interface{}{"level": "INFO", "msg": "test"},
+			expected: map[string]interface{}{},
+			want:     true,
+		},
+		{
+			name:     "Empty actual map",
+			actual:   map[string]interface{}{},
+			expected: map[string]interface{}{"level": "INFO"},
+			want:     false,
+		},
+		{
+			name:     "Key missing in actual",
+			actual:   map[string]interface{}{"level": "INFO"},
+			expected: map[string]interface{}{"level": "INFO", "msg": "test"},
+			want:     false,
+		},
+		{
+			name:     "Value mismatch",
+			actual:   map[string]interface{}{"level": "WARN", "msg": "test"},
+			expected: map[string]interface{}{"level": "INFO", "msg": "test"},
+			want:     false,
+		},
+		{
+			name:     "Type mismatch (float vs string)",
+			actual:   map[string]interface{}{"level": "INFO", "count": 10.0},
+			expected: map[string]interface{}{"level": "INFO", "count": "10"},
+			want:     false,
+		},
+		{
+			name:     "Type mismatch (string vs float)",
+			actual:   map[string]interface{}{"level": "INFO", "count": "10"},
+			expected: map[string]interface{}{"level": "INFO", "count": 10.0},
+			want:     false,
+		},
+		{
+			name:     "Int64 comparison",
+			actual:   map[string]interface{}{"level": "INFO", "large_count": float64(123456789012345)},
+			expected: map[string]interface{}{"level": "INFO", "large_count": int64(123456789012345)},
+			want:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := containsAll(tt.actual, tt.expected)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}

@@ -340,3 +340,50 @@ func TestMockHelmClient_ErrorScenarios(t *testing.T) {
 		})
 	}
 }
+
+// TestRealHelmClient_GetReleaseMetadata tests the GetReleaseMetadata method of RealHelmClient
+func TestRealHelmClient_GetReleaseMetadata(t *testing.T) {
+	// Create a real client
+	client := NewRealHelmClient(cli.New())
+
+	t.Run("Empty release name", func(t *testing.T) {
+		// Call the method with empty release name
+		metadata, err := client.GetReleaseMetadata(context.Background(), "", "test-namespace")
+
+		// Verify error
+		require.Error(t, err)
+		assert.Nil(t, metadata)
+		assert.Contains(t, err.Error(), "release name is empty")
+	})
+
+	// Note: We can't easily test successful paths or actual SDK failures
+	// without complex mocking of the Helm SDK or integration tests.
+}
+
+// TestRealHelmClient_TemplateChart tests the TemplateChart method of RealHelmClient
+func TestRealHelmClient_TemplateChart(t *testing.T) {
+	// Create a real client
+	client := NewRealHelmClient(cli.New())
+
+	t.Run("Empty chart path", func(t *testing.T) {
+		// Call the method with empty chart path
+		// We'll use a non-existent path, which should fail
+		output, err := client.TemplateChart(
+			context.Background(),
+			"/non/existent/chart/path",
+			"test-release",
+			"test-namespace",
+			map[string]interface{}{},
+			"",
+		)
+
+		// Verify error
+		require.Error(t, err)
+		assert.Equal(t, "", output)
+		// The error message will contain the non-existent path
+		assert.Contains(t, err.Error(), "chart")
+	})
+
+	// Note: We can't easily test successful paths or actual SDK failures
+	// without complex mocking of the Helm SDK or integration tests.
+}
