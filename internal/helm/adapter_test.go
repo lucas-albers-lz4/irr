@@ -2,14 +2,15 @@ package helm
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
-	"github.com/lalbers/irr/pkg/chart"
-	"github.com/lalbers/irr/pkg/fileutil"
-	"github.com/lalbers/irr/pkg/image"
+	"github.com/lucas-albers-lz4/irr/pkg/chart"
+	"github.com/lucas-albers-lz4/irr/pkg/fileutil"
+	"github.com/lucas-albers-lz4/irr/pkg/image"
+	"github.com/lucas-albers-lz4/irr/pkg/testutil"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -226,107 +227,293 @@ func TestNewAdapter(t *testing.T) {
 }
 
 func TestValidateRelease(t *testing.T) {
-	// Create a mock client
-	mockClient := NewMockHelmClient()
+	t.Run("Successful validation", func(t *testing.T) {
+		// Create a mock client
+		mockClient := NewMockHelmClient()
 
-	// Setup mock values response
-	mockValues := map[string]interface{}{
-		"image": map[string]interface{}{
-			"repository": "nginx",
-			"tag":        "latest",
-		},
-	}
+		// Setup mock values response
+		mockValues := map[string]interface{}{
+			"image": map[string]interface{}{
+				"repository": "nginx",
+				"tag":        "latest",
+			},
+		}
 
-	// Setup mock release
-	chartMeta := &ChartMetadata{
-		Name:    "test-chart",
-		Version: "1.0.0",
-	}
-	mockClient.SetupMockRelease("test-release", "default", mockValues, chartMeta)
+		// Setup mock release
+		chartMeta := &ChartMetadata{
+			Name:    "test-chart",
+			Version: "1.0.0",
+			Path:    "/path/to/chart",
+		}
+		mockClient.SetupMockRelease("test-release", "default", mockValues, chartMeta)
 
-	// Setup mock template response
-	mockClient.SetupMockTemplate("test-chart", "apiVersion: v1\nkind: Pod")
+		// Setup mock template response using the correct key and providing nil error
+		mockClient.SetupMockTemplate("default", "test-release", "apiVersion: v1\nkind: Pod", nil)
 
-	// Create an adapter with the mock client
-	fs := afero.NewMemMapFs()
-	adapter := NewAdapter(mockClient, fs, true)
+		// Create an adapter with the mock client
+		fs := afero.NewMemMapFs()
+		adapter := NewAdapter(mockClient, fs, true)
 
-	// Call ValidateRelease
-	ctx := context.Background()
-	err := adapter.ValidateRelease(ctx, "test-release", "default", []string{}, "")
+		// Call ValidateRelease
+		ctx := context.Background()
+		err := adapter.ValidateRelease(ctx, "test-release", "default", []string{}, "")
 
-	// Should succeed with our mock
-	require.NoError(t, err)
+		// Should succeed with our mock
+		require.NoError(t, err)
+		// Verify that TemplateChart was called by checking the flag on the mock
+		assert.True(t, mockClient.TemplateChartCalled, "Expected TemplateChart to be called on the mock client")
+	})
+
+	t.Run("Error during validation", func(t *testing.T) {
+		// Create a mock client that returns an error on ValidateRelease
+		mockClient := NewMockHelmClient()
+		validationError := fmt.Errorf("helm validation failed")
+		// Configure TemplateChart to return the error
+		mockClient.SetupMockTemplate("some-namespace", "some-release", "", validationError)
+
+		// ALSO: Configure mock for successful GetReleaseValues/GetChartFromRelease calls
+		// These are called by adapter.ValidateRelease before it calls client.TemplateChart
+		mockClient.SetupMockRelease(
+			"some-release",
+			"some-namespace",
+			map[string]interface{}{"key": "value"},             // Dummy values
+			&ChartMetadata{Name: "some-chart", Version: "1.0"}, // Dummy chart metadata
+		)
+
+		// Create an adapter with the mock client
+		fs := afero.NewMemMapFs()
+		adapter := NewAdapter(mockClient, fs, true)
+
+		// Call ValidateRelease
+		ctx := context.Background()
+		err := adapter.ValidateRelease(ctx, "some-release", "some-namespace", []string{}, "")
+
+		// Verify the error is wrapped correctly
+		// The adapter wraps the error from TemplateChart
+		assert.ErrorContains(t, err, "template rendering failed")
+		assert.ErrorIs(t, err, validationError, "Returned error should wrap the original validation error")
+		// Check the full error message now that wrapping should work
+		// assert.Contains(t, err.Error(), "failed to validate release: helm validation failed", "Error message should indicate adapter failure and wrap helm client error")
+		// Verify the TemplateChart function was called on the mock
+		assert.True(t, mockClient.TemplateChartCalled, "TemplateChart should be called on the mock client")
+	})
 }
 
 func TestInspectRelease(t *testing.T) {
-	// Create a mock client
-	mockClient := NewMockHelmClient()
+	t.Run("Successful inspection", func(t *testing.T) {
+		// Create a mock client
+		mockClient := NewMockHelmClient()
 
-	// Create a chart metadata
-	chartMeta := &ChartMetadata{
-		Name:    "test-chart",
-		Version: "1.0.0",
-	}
+		// Create a chart metadata
+		chartMeta := &ChartMetadata{
+			Name:    "test-chart",
+			Version: "1.0.0",
+		}
 
-	// Setup mock release with values
-	mockValues := map[string]interface{}{
-		"image": map[string]interface{}{
-			"repository": "nginx",
-			"tag":        "latest",
-		},
-	}
-	mockClient.SetupMockRelease("test-release", "default", mockValues, chartMeta)
+		// Setup mock release with values
+		mockValues := map[string]interface{}{
+			"image": map[string]interface{}{
+				"repository": "nginx",
+				"tag":        "latest",
+			},
+		}
+		mockClient.SetupMockRelease("test-release", "default", mockValues, chartMeta)
 
-	// Create an adapter with the mock client
-	fs := afero.NewMemMapFs()
-	adapter := NewAdapter(mockClient, fs, true)
+		// Create an adapter with the mock client
+		fs := afero.NewMemMapFs()
+		adapter := NewAdapter(mockClient, fs, true)
 
-	// Call InspectRelease
-	ctx := context.Background()
-	err := adapter.InspectRelease(ctx, "test-release", "default", "")
+		// Call InspectRelease (no output file)
+		ctx := context.Background()
+		err := adapter.InspectRelease(ctx, "test-release", "default", "")
 
-	// Should succeed with our mock
-	require.NoError(t, err)
+		// Should succeed with our mock
+		require.NoError(t, err)
+		assert.Equal(t, 1, mockClient.GetValuesCallCount)
+		assert.Equal(t, 1, mockClient.GetChartCallCount)
+	})
+
+	t.Run("Error getting release values", func(t *testing.T) {
+		// Create a mock client that errors on GetReleaseValues
+		mockClient := NewMockHelmClient()
+		getValueError := fmt.Errorf("failed to get values")
+		mockClient.GetValuesError = getValueError
+
+		// Create an adapter with the mock client
+		fs := afero.NewMemMapFs()
+		adapter := NewAdapter(mockClient, fs, true)
+
+		// Call InspectRelease
+		ctx := context.Background()
+		err := adapter.InspectRelease(ctx, "test-release", "default", "")
+
+		// Should fail
+		require.Error(t, err)
+		assert.ErrorIs(t, err, getValueError, "Error should wrap the GetReleaseValues error")
+		assert.Contains(t, err.Error(), "failed to get values for release \"test-release\"", "Error message should indicate failure point")
+		assert.Equal(t, 1, mockClient.GetValuesCallCount)
+		assert.Equal(t, 0, mockClient.GetChartCallCount) // Should fail before getting chart
+	})
+
+	t.Run("Error getting release chart", func(t *testing.T) {
+		// Create a mock client that errors on GetReleaseChart
+		mockClient := NewMockHelmClient()
+		getChartError := fmt.Errorf("failed to get chart")
+		mockClient.GetChartError = getChartError
+
+		// Need to set up mock values because GetReleaseValues is called first
+		mockClient.SetupMockRelease("test-release", "default", map[string]interface{}{"key": "val"}, nil)
+
+		// Create an adapter with the mock client
+		fs := afero.NewMemMapFs()
+		adapter := NewAdapter(mockClient, fs, true)
+
+		// Call InspectRelease
+		ctx := context.Background()
+		err := adapter.InspectRelease(ctx, "test-release", "default", "")
+
+		// Should fail
+		require.Error(t, err)
+		assert.ErrorIs(t, err, getChartError, "Error should wrap the GetReleaseChart error")
+		assert.Contains(t, err.Error(), "failed to get chart metadata for release \"test-release\"", "Error message should indicate failure point")
+		assert.Equal(t, 1, mockClient.GetValuesCallCount) // Should be called
+		assert.Equal(t, 1, mockClient.GetChartCallCount)  // Should be called
+	})
+
+	t.Run("Error writing output file", func(t *testing.T) {
+		// Create a mock client
+		mockClient := NewMockHelmClient()
+
+		// Setup mock release
+		chartMeta := &ChartMetadata{Name: "test-chart", Version: "1.0.0"}
+		mockValues := map[string]interface{}{"image": map[string]interface{}{"repository": "nginx", "tag": "latest"}}
+		mockClient.SetupMockRelease("test-release", "default", mockValues, chartMeta)
+
+		// Create a *read-only* filesystem to simulate write error
+		fs := afero.NewReadOnlyFs(afero.NewMemMapFs())
+		adapter := NewAdapter(mockClient, fs, true)
+
+		// Define an output file path
+		outputFile := "/output/inspect-results.yaml"
+
+		// Call InspectRelease with the output file
+		ctx := context.Background()
+		err := adapter.InspectRelease(ctx, "test-release", "default", outputFile)
+
+		// Should fail because the filesystem is read-only
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to write output to file \"/output/inspect-results.yaml\"", "Error message should indicate file write failure")
+		assert.Contains(t, err.Error(), "operation not permitted", "Error message should include OS error")
+		assert.Contains(t, err.Error(), outputFile, "Error message should contain the output file path")
+		// Check that underlying operations succeeded before the write attempt
+		assert.Equal(t, 1, mockClient.GetValuesCallCount)
+		assert.Equal(t, 1, mockClient.GetChartCallCount)
+	})
 }
 
 func TestOverrideRelease(t *testing.T) {
-	// Create a mock client
-	mockClient := NewMockHelmClient()
+	t.Run("Successful override", func(t *testing.T) {
+		// Create a mock client
+		mockClient := NewMockHelmClient()
 
-	// Create a chart metadata
-	chartMeta := &ChartMetadata{
-		Name:    "test-chart",
-		Version: "1.0.0",
-	}
+		// Create a chart metadata
+		chartMeta := &ChartMetadata{
+			Name:    "test-chart",
+			Version: "1.0.0",
+		}
 
-	// Setup mock release
-	mockValues := map[string]interface{}{
-		"image": map[string]interface{}{
-			"repository": "docker.io/nginx",
-			"tag":        "latest",
-		},
-	}
-	mockClient.SetupMockRelease("test-release", "default", mockValues, chartMeta)
+		// Setup mock release
+		mockValues := map[string]interface{}{
+			"image": map[string]interface{}{
+				"repository": "docker.io/nginx",
+				"tag":        "latest",
+			},
+		}
+		mockClient.SetupMockRelease("test-release", "default", mockValues, chartMeta)
 
-	// Create an adapter with the mock client
-	fs := afero.NewMemMapFs()
-	adapter := NewAdapter(mockClient, fs, true)
+		// Create an adapter with the mock client
+		fs := afero.NewMemMapFs()
+		adapter := NewAdapter(mockClient, fs, true)
 
-	// Define options
-	options := OverrideOptions{
-		TargetRegistry:   "my-registry",
-		SourceRegistries: []string{"docker.io"},
-		StrictMode:       false,
-		PathStrategy:     "prefix-source-registry",
-	}
+		// Define options
+		options := OverrideOptions{
+			TargetRegistry:   "my-registry",
+			SourceRegistries: []string{"docker.io"},
+			StrictMode:       false,
+			PathStrategy:     "prefix-source-registry",
+		}
 
-	// Call OverrideRelease
-	ctx := context.Background()
-	_, err := adapter.OverrideRelease(ctx, "test-release", "default", "my-registry", []string{"docker.io"}, "prefix-source-registry", options)
+		// Call OverrideRelease
+		ctx := context.Background()
+		_, err := adapter.OverrideRelease(ctx, "test-release", "default", "my-registry", []string{"docker.io"}, "prefix-source-registry", options)
 
-	// Should succeed with our mock
-	require.NoError(t, err)
+		// Should succeed with our mock
+		require.NoError(t, err)
+		assert.Equal(t, 1, mockClient.GetValuesCallCount, "GetReleaseValues should be called once")
+	})
+
+	t.Run("Error getting release values", func(t *testing.T) {
+		// Create a mock client that errors on GetReleaseValues
+		mockClient := NewMockHelmClient()
+		getValueError := fmt.Errorf("failed to get values")
+		mockClient.GetValuesError = getValueError
+
+		// Create an adapter with the mock client
+		fs := afero.NewMemMapFs()
+		adapter := NewAdapter(mockClient, fs, true)
+
+		// Define options
+		options := OverrideOptions{
+			TargetRegistry:   "my-registry",
+			SourceRegistries: []string{"docker.io"},
+			StrictMode:       false,
+			PathStrategy:     "prefix-source-registry",
+		}
+
+		// Call OverrideRelease
+		ctx := context.Background()
+		_, err := adapter.OverrideRelease(ctx, "test-release", "default", "my-registry", []string{"docker.io"}, "prefix-source-registry", options)
+
+		// Should fail
+		require.Error(t, err)
+		assert.ErrorIs(t, err, getValueError, "Error should wrap the GetValues error")
+		assert.Contains(t, err.Error(), "failed to get values for release \"test-release\"", "Error message should indicate failure point")
+		assert.Equal(t, 1, mockClient.GetValuesCallCount, "GetValues should be called once")
+		assert.Equal(t, 0, mockClient.GetChartCallCount, "GetChart should not be called if GetValues fails")
+	})
+
+	t.Run("Error getting release chart", func(t *testing.T) {
+		// Create a mock client that errors on GetReleaseChart
+		mockClient := NewMockHelmClient()
+		getChartError := fmt.Errorf("failed to get chart")
+		mockClient.GetChartError = getChartError
+
+		// Need to set up mock values because GetReleaseValues is called first
+		mockClient.SetupMockRelease("test-release", "default", map[string]interface{}{"key": "val"}, nil)
+
+		// Create an adapter with the mock client
+		fs := afero.NewMemMapFs()
+		adapter := NewAdapter(mockClient, fs, true)
+
+		// Define options
+		options := OverrideOptions{
+			TargetRegistry:   "my-registry",
+			SourceRegistries: []string{"docker.io"},
+			StrictMode:       false,
+			PathStrategy:     "prefix-source-registry",
+		}
+
+		// Call OverrideRelease
+		ctx := context.Background()
+		_, err := adapter.OverrideRelease(ctx, "test-release", "default", "my-registry", []string{"docker.io"}, "prefix-source-registry", options)
+
+		// Should fail
+		require.Error(t, err)
+		assert.ErrorIs(t, err, getChartError, "Error should wrap the GetReleaseChart error")
+		assert.Contains(t, err.Error(), "failed to get release chart metadata before override", "Error message should indicate failure point")
+		assert.Equal(t, 1, mockClient.GetValuesCallCount, "GetReleaseValues should be called once")
+		assert.Equal(t, 1, mockClient.GetChartCallCount, "GetReleaseChart should be called once")
+	})
 }
 
 func TestOverrideReleaseWithProblematicStrings(t *testing.T) {
@@ -335,8 +522,8 @@ func TestOverrideReleaseWithProblematicStrings(t *testing.T) {
 
 	// Setup the mock release data for the base client
 	chartMeta := &ChartMetadata{Name: "test-release-chart", Version: "1.0.0"}
-	releaseName := "test-release"
-	namespace := "default"
+	releaseName := testReleaseName
+	namespace := testNamespace
 	baseValues := map[string]interface{}{ // These are the *initial* values before modification by MockHelmClientWithErrors
 		"image": map[string]interface{}{ // This key might need adjustment based on how GetReleaseValues is overridden
 			"repository": "nginx", // Ensure this doesn't contain docker.io if sourceRegistries expects it
@@ -347,7 +534,7 @@ func TestOverrideReleaseWithProblematicStrings(t *testing.T) {
 
 	// Now create the client that overrides GetReleaseValues
 	mockClient := &MockHelmClientWithErrors{
-		MockHelmClient: *baseMockClient, // Embed the configured base client
+		MockHelmClient: baseMockClient, // Embed the configured base client by pointer
 	}
 
 	// Create the adapter with our mock client, fs, and plugin mode
@@ -378,7 +565,7 @@ func TestOverrideReleaseWithProblematicStrings(t *testing.T) {
 // MockHelmClientWithErrors extends MockHelmClient to simulate errors during image analysis
 // by adding problematic values that the detector will likely misinterpret.
 type MockHelmClientWithErrors struct {
-	MockHelmClient
+	*MockHelmClient // Embed by pointer
 }
 
 // GetReleaseValues overrides the mock method to return values that will trigger analysis errors.
@@ -582,99 +769,165 @@ image:
 }
 
 func TestHandleChartYamlMissingWithSDK(t *testing.T) {
-	// Create a helper function to mimic just the chart name and version extraction logic
-	// This is extracted from the first part of handleChartYamlMissingWithSDK
-	extractChartNameAndVersion := func(chartPath string) (name string, version string) {
-		// Extract chart name from the path
-		chartName := filepath.Base(chartPath)
-		chartName = strings.TrimSuffix(chartName, ".tgz")
+	// Setup in-memory filesystem
+	fs := afero.NewMemMapFs()
+	testDir := "/test/chart/missing-yaml"
+	err := fs.MkdirAll(testDir, os.ModePerm)
+	require.NoError(t, err)
 
-		// Extract potential version from name-version pattern
-		parts := strings.Split(chartName, "-")
-		if len(parts) > 1 {
-			// Try to detect if last part is a version number
-			lastPart := parts[len(parts)-1]
-			if lastPart != "" && lastPart[0] >= '0' && lastPart[0] <= '9' {
-				// This simplified logic doesn't handle complex version numbers well
-				// In a real implementation, we might need more sophisticated version detection
-				return strings.Join(parts[:len(parts)-1], "-"), lastPart
-			}
-		}
+	// Create a dummy templates directory (Helm requires it)
+	err = fs.MkdirAll(filepath.Join(testDir, "templates"), os.ModePerm)
+	require.NoError(t, err)
 
-		return chartName, ""
-	}
+	// Don't create Chart.yaml
 
-	// Test cases
-	testCases := []struct {
-		name            string
-		chartPath       string
-		expectedName    string
-		expectedVersion string
-		customCheck     func(t *testing.T, name, version string)
-	}{
-		{
-			name:            "Chart with version in name",
-			chartPath:       "/path/to/nginx-1.2.3.tgz",
-			expectedName:    "nginx",
-			expectedVersion: "1.2.3",
-		},
-		{
-			name:            "Chart without version in name",
-			chartPath:       "/path/to/nginx.tgz",
-			expectedName:    "nginx",
-			expectedVersion: "",
-		},
-		{
-			name:            "Chart with multiple hyphens",
-			chartPath:       "/path/to/my-awesome-chart-2.0.0.tgz",
-			expectedName:    "my-awesome-chart",
-			expectedVersion: "2.0.0",
-		},
-		{
-			name:            "Chart with version-like word not at the end",
-			chartPath:       "/path/to/1.0-chart.tgz",
-			expectedName:    "1.0-chart",
-			expectedVersion: "",
-		},
-		{
-			// The complex version case needs special handling
-			name:      "Chart with complex version",
-			chartPath: "/path/to/chart-1.2.3-alpha.1.tgz",
-			customCheck: func(t *testing.T, name, version string) {
-				// Log the actual values to help understand what the function does
-				t.Logf("For complex version case, actual name=%q, version=%q", name, version)
+	// UseTestLogger sets up logging for the test
+	restoreLog := testutil.UseTestLogger(t)
+	defer restoreLog()
 
-				// The function might not handle complex versions perfectly, but we can
-				// do basic checks that the logic is reasonable
-				assert.Contains(t, name, "chart", "Chart name should contain the word 'chart'")
+	// Run the function with empty strings for the ignored parameters
+	// The function signature is: handleChartYamlMissingWithSDK(_, _, originalChartPath string, _ *RealHelmClient)
+	_, err = handleChartYamlMissingWithSDK("", "", testDir, nil)
 
-				// Check if either the name contains the version parts or the version does
-				versionElements := []string{"1.2.3", "alpha", "1"}
-				for _, elem := range versionElements {
-					assert.True(t,
-						strings.Contains(name, elem) || strings.Contains(version, elem),
-						"Either name or version should contain %q", elem)
-				}
-			},
-		},
-		{
-			name:            "Chart with absolute path",
-			chartPath:       filepath.Join(os.TempDir(), "charts", "app-3.4.5.tgz"),
-			expectedName:    "app",
-			expectedVersion: "3.4.5",
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			name, version := extractChartNameAndVersion(tc.chartPath)
-
-			if tc.customCheck != nil {
-				tc.customCheck(t, name, version)
-			} else {
-				assert.Equal(t, tc.expectedName, name, "Chart name should match expected")
-				assert.Equal(t, tc.expectedVersion, version, "Chart version should match expected")
-			}
-		})
-	}
+	// Assertions
+	require.Error(t, err, "Expected an error because Chart.yaml is missing")
+	// The actual error message is about not being able to locate the chart
+	assert.Contains(t, err.Error(), "could not locate chart", "Error message should indicate chart could not be located")
 }
+
+func TestGetReleaseValues(t *testing.T) {
+	t.Run("Successful retrieval", func(t *testing.T) {
+		// Create a mock helm client
+		mockClient := NewMockHelmClient()
+
+		// Set up mock release data
+		releaseValues := map[string]interface{}{
+			"image": map[string]interface{}{
+				"repository": "nginx",
+				"tag":        "latest",
+			},
+			"service": map[string]interface{}{
+				"type": "ClusterIP",
+				"port": 80,
+			},
+		}
+		chartMeta := &ChartMetadata{
+			Name:    "test-chart",
+			Version: "1.0.0",
+		}
+		mockClient.SetupMockRelease("test-release", "test-namespace", releaseValues, chartMeta)
+
+		// Create the adapter with the mock client
+		adapter := NewAdapter(mockClient, afero.NewMemMapFs(), false)
+
+		// Call the adapter's GetReleaseValues method
+		values, err := adapter.GetReleaseValues(context.Background(), "test-release", "test-namespace")
+
+		// Verify the result
+		require.NoError(t, err)
+		require.NotNil(t, values)
+
+		// Verify the GetReleaseValues function was called
+		assert.Equal(t, 1, mockClient.GetValuesCallCount)
+
+		// Verify the structure of the returned values
+		img, ok := values["image"].(map[string]interface{})
+		require.True(t, ok, "image section should be a map")
+		assert.Equal(t, "nginx", img["repository"])
+		assert.Equal(t, "latest", img["tag"])
+
+		svc, ok := values["service"].(map[string]interface{})
+		require.True(t, ok, "service section should be a map")
+		assert.Equal(t, "ClusterIP", svc["type"])
+
+		// Port could be either int or float64 depending on how YAML is parsed
+		portValue := svc["port"]
+		switch port := portValue.(type) {
+		case float64:
+			assert.Equal(t, float64(80), port)
+		case int:
+			assert.Equal(t, int(80), port)
+		default:
+			assert.Fail(t, "port should be a number")
+		}
+	})
+
+	t.Run("Error retrieval", func(t *testing.T) {
+		// Create a mock helm client that returns an error
+		mockClient := NewMockHelmClient()
+		mockClient.GetValuesError = fmt.Errorf("release not found")
+
+		// Create the adapter with the mock client
+		adapter := NewAdapter(mockClient, afero.NewMemMapFs(), false)
+
+		// Call the adapter's GetReleaseValues method
+		values, err := adapter.GetReleaseValues(context.Background(), "non-existent", "default")
+
+		// Verify the result
+		assert.Error(t, err)
+		assert.Nil(t, values)
+		assert.Contains(t, err.Error(), "failed to get values for release")
+		assert.Contains(t, err.Error(), "release not found")
+
+		// Verify the GetReleaseValues function was called
+		assert.Equal(t, 1, mockClient.GetValuesCallCount)
+	})
+}
+
+func TestGetChartFromRelease(t *testing.T) {
+	t.Run("Successful retrieval", func(t *testing.T) {
+		// Create a mock helm client
+		mockClient := NewMockHelmClient()
+
+		// Set up mock release data
+		expectedChartMeta := &ChartMetadata{
+			Name:       "test-chart",
+			Version:    "1.0.0",
+			Repository: "https://charts.example.com",
+			Path:       "/path/to/test-chart",
+		}
+		mockClient.SetupMockRelease("test-release", "test-namespace", map[string]interface{}{}, expectedChartMeta)
+
+		// Create the adapter with the mock client
+		adapter := NewAdapter(mockClient, afero.NewMemMapFs(), false)
+
+		// Call the adapter's GetChartFromRelease method
+		chartMeta, err := adapter.GetChartFromRelease(context.Background(), "test-release", "test-namespace")
+
+		// Verify the result
+		require.NoError(t, err)
+		require.NotNil(t, chartMeta)
+
+		// Verify the GetReleaseChart function was called
+		assert.Equal(t, 1, mockClient.GetChartCallCount)
+
+		// Verify the returned chart metadata matches what we expected
+		assert.Equal(t, expectedChartMeta.Name, chartMeta.Name)
+		assert.Equal(t, expectedChartMeta.Version, chartMeta.Version)
+		assert.Equal(t, expectedChartMeta.Repository, chartMeta.Repository)
+		assert.Equal(t, expectedChartMeta.Path, chartMeta.Path)
+	})
+
+	t.Run("Error retrieval", func(t *testing.T) {
+		// Create a mock helm client that returns an error
+		mockClient := NewMockHelmClient()
+		mockClient.GetChartError = fmt.Errorf("release chart not found")
+
+		// Create the adapter with the mock client
+		adapter := NewAdapter(mockClient, afero.NewMemMapFs(), false)
+
+		// Call the adapter's GetChartFromRelease method
+		chartMeta, err := adapter.GetChartFromRelease(context.Background(), "non-existent", "default")
+
+		// Verify the result
+		assert.Error(t, err)
+		assert.Nil(t, chartMeta)
+		assert.Contains(t, err.Error(), "failed to get release chart metadata")
+		assert.Contains(t, err.Error(), "release chart not found")
+
+		// Verify the GetReleaseChart function was called
+		assert.Equal(t, 1, mockClient.GetChartCallCount)
+	})
+}
+
+// TODO: Add more tests for other functions in adapter.go
