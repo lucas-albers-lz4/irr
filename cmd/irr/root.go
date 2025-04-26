@@ -7,11 +7,11 @@ import (
 	"os"
 	"path/filepath"
 
-	log "github.com/lalbers/irr/pkg/log"
+	log "github.com/lucas-albers-lz4/irr/pkg/log"
 
-	"github.com/lalbers/irr/pkg/analysis"
-	"github.com/lalbers/irr/pkg/override"
-	"github.com/lalbers/irr/pkg/registry"
+	"github.com/lucas-albers-lz4/irr/pkg/analysis"
+	"github.com/lucas-albers-lz4/irr/pkg/override"
+	"github.com/lucas-albers-lz4/irr/pkg/registry"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -314,9 +314,12 @@ func init() {
 		// Attempt to find chart path for context-aware config loading
 		// We need to do this *before* viper reads the config, but Viper doesn't expose the fs easily.
 		// So, we use our own detection logic with AppFs.
-		chartDir, chartDetectErr := detectChartInCurrentDirectory(AppFs, ".") // Start search from "."
+		var relativePath string                                                   // Declare relativePath
+		chartDir, relativePath, chartDetectErr := detectChartIfNeeded(AppFs, ".") // Start search from "."
 		if chartDetectErr == nil {
+			// Use chartDir (absolute path) for joining with config file name
 			projectConfigFile := filepath.Join(chartDir, ".irr.yaml")
+			log.Debug("Checking for project-specific config", "path", projectConfigFile, "basedOnDetectedChartDir", chartDir, "relativeChartPath", relativePath)
 			exists, err := afero.Exists(AppFs, projectConfigFile)
 			if err != nil {
 				log.Warn("Failed to check if project config file exists", "error", err)
@@ -340,10 +343,11 @@ func getRootCmd() *cobra.Command {
 }
 
 // executeCommand is a helper for testing Cobra commands
-func executeCommand(root *cobra.Command, args ...string) (output string, err error) {
-	buf := new(bytes.Buffer)
-	root.SetOut(buf)
-	root.SetErr(buf)
+func executeCommand(root *cobra.Command, args ...string) (stdout, stderr string, err error) {
+	stdoutBuf := new(bytes.Buffer)
+	stderrBuf := new(bytes.Buffer)
+	root.SetOut(stdoutBuf)
+	root.SetErr(stderrBuf)
 
 	// Ensure test-analyze flag is set when TestAnalyzeMode is true
 	if TestAnalyzeMode {
@@ -362,7 +366,7 @@ func executeCommand(root *cobra.Command, args ...string) (output string, err err
 	root.SetArgs(args)
 	err = root.Execute()
 
-	return buf.String(), err
+	return stdoutBuf.String(), stderrBuf.String(), err
 }
 
 // initConfig reads in config file and ENV variables if set.

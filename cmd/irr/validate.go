@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/lalbers/irr/internal/helm"
-	"github.com/lalbers/irr/pkg/exitcodes"
-	log "github.com/lalbers/irr/pkg/log"
+	"github.com/lucas-albers-lz4/irr/internal/helm"
+	"github.com/lucas-albers-lz4/irr/pkg/exitcodes"
+	log "github.com/lucas-albers-lz4/irr/pkg/log"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"helm.sh/helm/v3/pkg/action"
@@ -58,48 +58,6 @@ IMPORTANT NOTES:
 	cmd.Flags().String("kube-version", "", "Kubernetes version to use for validation (defaults to current client version)")
 
 	return cmd
-}
-
-// detectChartInCurrentDirectoryIfNeeded attempts to find a Helm chart in the current
-// directory or an immediate subdirectory if the chartPath is not provided.
-// It returns the detected path or an error if no chart is found.
-func detectChartInCurrentDirectoryIfNeeded(chartPath string) (string, error) {
-	if chartPath != "" {
-		return chartPath, nil
-	}
-
-	// Check if Chart.yaml exists in current directory
-	if _, err := AppFs.Stat("Chart.yaml"); err == nil {
-		// Current directory is a chart
-		currentDir, err := os.Getwd()
-		if err != nil {
-			return "", fmt.Errorf("failed to get current directory: %w", err)
-		}
-		return currentDir, nil
-	}
-
-	// Check if there's a chart directory
-	entries, err := afero.ReadDir(AppFs, ".")
-	if err != nil {
-		return "", fmt.Errorf("failed to read current directory: %w", err)
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() {
-			// Check if the directory contains Chart.yaml
-			chartFile := filepath.Join(entry.Name(), "Chart.yaml")
-			if _, err := AppFs.Stat(chartFile); err == nil {
-				// Found a chart directory
-				chartPath, err := filepath.Abs(entry.Name())
-				if err != nil {
-					return "", fmt.Errorf("failed to get absolute path for chart: %w", err)
-				}
-				return chartPath, nil
-			}
-		}
-	}
-
-	return "", fmt.Errorf("no Helm chart found in current directory")
 }
 
 // runValidate is the main entry point for the validate command
@@ -172,46 +130,52 @@ func getValidateOutputFlags(cmd *cobra.Command) (outputFile string, strict bool,
 	return outputFile, strict, nil
 }
 
-// validateAndDetectChartPath ensures chart path exists or attempts to detect it
+// validateAndDetectChartPath validates the chart path or detects it if necessary.
 func validateAndDetectChartPath(chartPath string) (string, error) {
-	if chartPath == "" {
-		// Try to detect chart if path is empty
-		detectedPath, err := detectChartInCurrentDirectoryIfNeeded("")
+	log.Debug("validateAndDetectChartPath: Start", "inputChartPath", chartPath)
+	var err error
+	finalPath := chartPath
+	var relativePath string // Declare relativePath for the detection function
+
+	// Detect chart if path is not provided
+	if finalPath == "" {
+		log.Debug("validateAndDetectChartPath: Chart path empty, attempting detection.")
+		// Correct call: Pass the original chartPath (empty here) via finalPath variable
+		finalPath, relativePath, err = detectChartIfNeeded(AppFs, finalPath)
 		if err != nil {
+			log.Debug("validateAndDetectChartPath: Detection failed", "error", err)
+			// Wrap the specific detection error with a more user-friendly message and exit code
 			return "", &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitChartNotFound,
-				Err:  fmt.Errorf("chart path not specified and %w", err),
+				Err:  fmt.Errorf("chart path not specified and %w", err), // Keep original error context
 			}
 		}
-		chartPath = detectedPath
-		log.Info("Detected chart at %s", chartPath)
+		// Log both paths
+		log.Debug("validateAndDetectChartPath: Detected chart path", "absolutePath", finalPath, "relativePath", relativePath)
 	}
 
-	// Make path absolute
-	absPath, err := filepath.Abs(chartPath)
-	if err != nil {
-		return "", &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get absolute path for chart: %w", err),
-		}
-	}
-	chartPath = absPath
+	// Use finalPath directly with AppFs.Stat
+	absPath := finalPath // Rename for minimal changes below, but it might be relative
 
-	// Check if chart path exists
-	if _, err := AppFs.Stat(chartPath); err != nil {
+	// Check if the path exists using the application's filesystem abstraction
+	log.Debug("validateAndDetectChartPath: Checking if path exists", "pathToCheck", absPath)
+	if _, err := AppFs.Stat(absPath); err != nil {
+		log.Debug("validateAndDetectChartPath: Path check failed", "pathChecked", absPath, "error", err)
 		if os.IsNotExist(err) {
 			return "", &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitChartNotFound,
-				Err:  fmt.Errorf("chart path not found: %s", chartPath),
+				Err:  fmt.Errorf("chart path not found: %s", absPath), // Use path checked in error
 			}
 		}
+		// Handle other Stat errors (e.g., permission denied)
 		return "", &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to access chart path %s: %w", chartPath, err),
+			Code: exitcodes.ExitIOError,
+			Err:  fmt.Errorf("failed to access chart path '%s': %w", absPath, err),
 		}
 	}
 
-	return chartPath, nil
+	log.Debug("validateAndDetectChartPath: Path exists and is valid", "finalPath", absPath)
+	return absPath, nil
 }
 
 // validateChartWithFiles validates a chart with values files
@@ -455,16 +419,20 @@ func handleStandaloneValidate(cmd *cobra.Command, chartPath string, valuesFiles 
 
 	// Check if chart path exists or is detectable
 	chartPath, err = validateAndDetectChartPath(chartPath)
+	log.Debug("Result from validateAndDetectChartPath", "chartPath", chartPath, "error", err)
 	if err != nil {
+		log.Debug("Error detected after validateAndDetectChartPath, returning.", "error", err)
 		return err
 	}
 
 	// Check if values files are specified when needed
 	if len(valuesFiles) == 0 {
-		return &exitcodes.ExitCodeError{
+		err := &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitInputConfigurationError,
 			Err:  fmt.Errorf("at least one values file must be specified"),
 		}
+		log.Debug("Missing values file check triggered, returning error.", "error", err)
+		return err
 	}
 
 	// Verify that all values files exist

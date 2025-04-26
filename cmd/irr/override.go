@@ -17,17 +17,16 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/lalbers/irr/internal/helm"
-	"github.com/lalbers/irr/pkg/chart"
-	"github.com/lalbers/irr/pkg/exitcodes"
-	"github.com/lalbers/irr/pkg/fileutil"
-	log "github.com/lalbers/irr/pkg/log"
-	"github.com/lalbers/irr/pkg/registry"
-	"github.com/lalbers/irr/pkg/strategy"
+	"github.com/lucas-albers-lz4/irr/internal/helm"
+	"github.com/lucas-albers-lz4/irr/pkg/chart"
+	"github.com/lucas-albers-lz4/irr/pkg/exitcodes"
+	"github.com/lucas-albers-lz4/irr/pkg/fileutil"
+	log "github.com/lucas-albers-lz4/irr/pkg/log"
+	"github.com/lucas-albers-lz4/irr/pkg/registry"
+	"github.com/lucas-albers-lz4/irr/pkg/strategy"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"sigs.k8s.io/yaml"
-	// Helm SDK imports
 )
 
 const (
@@ -621,13 +620,17 @@ func logConfigMode(config *GeneratorConfig) {
 	}
 }
 
+// validateUnmappableRegistries checks if all provided source registries are covered by mappings.
+// It logs warnings or returns an error based on strict mode.
 func validateUnmappableRegistries(config *GeneratorConfig) error {
 	// Add nil check for safety
 	if config == nil {
 		return errors.New("internal error: validateUnmappableRegistries called with nil config")
 	}
+
 	if len(config.SourceRegistries) == 0 {
-		return nil // No source registries to check, so nothing to map
+		// No source registries provided, nothing to validate
+		return nil
 	}
 
 	// Check if *any* mappings exist (either from file or configMap)
@@ -871,7 +874,10 @@ func runOverrideStandaloneMode(cmd *cobra.Command, outputFile string, dryRun boo
 	// Auto-detect chart path if not provided
 	if config.ChartPath == "" { // Check config.ChartPath which setupGeneratorConfig sets
 		log.Info("No chart path provided, attempting to detect chart...")
-		detectedPath, detectErr := detectChartInCurrentDirectory(AppFs, ".")
+		var relativePath string // Declare relativePath
+		var detectErr error     // Declare detectErr
+		// Call the updated function and capture all return values
+		detectedPath, relativePath, detectErr := detectChartIfNeeded(AppFs, ".")
 		if detectErr != nil {
 			return &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitChartLoadFailed,
@@ -879,7 +885,8 @@ func runOverrideStandaloneMode(cmd *cobra.Command, outputFile string, dryRun boo
 			}
 		}
 		config.ChartPath = detectedPath // Update config
-		log.Info("Using detected chart path", "path", detectedPath)
+		// Log both paths for consistency, even if relativePath is unused here
+		log.Info("Using detected chart path", "absolute", detectedPath, "relative", relativePath)
 	}
 
 	// --- Common Config Setup (after mode-specific gathering) ---

@@ -15,13 +15,14 @@ import (
 	"gopkg.in/yaml.v3"
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
+	"helm.sh/helm/v3/pkg/chartutil"
 
-	"github.com/lalbers/irr/pkg/analyzer"
-	"github.com/lalbers/irr/pkg/exitcodes"
-	"github.com/lalbers/irr/pkg/fileutil"
-	"github.com/lalbers/irr/pkg/image"
-	log "github.com/lalbers/irr/pkg/log"
-	"github.com/lalbers/irr/pkg/registry"
+	"github.com/lucas-albers-lz4/irr/pkg/analyzer"
+	"github.com/lucas-albers-lz4/irr/pkg/exitcodes"
+	"github.com/lucas-albers-lz4/irr/pkg/fileutil"
+	"github.com/lucas-albers-lz4/irr/pkg/image"
+	log "github.com/lucas-albers-lz4/irr/pkg/log"
+	"github.com/lucas-albers-lz4/irr/pkg/registry"
 	"github.com/spf13/cobra"
 )
 
@@ -382,19 +383,22 @@ func runInspect(cmd *cobra.Command, args []string) error {
 func setupAnalyzerAndLoadChart(_ *cobra.Command, flags *InspectFlags) (string, *ImageAnalysis, error) {
 	config := flags.AnalyzerConfig // Already configured in getInspectFlags
 	chartPath := flags.ChartPath
+	var relativePath string // Declare relativePath variable
 
 	// Detect chart path if not provided
 	if chartPath == "" {
 		var detectErr error
 		// Start search from the current directory (".") within the mock filesystem
-		chartPath, detectErr = detectChartInCurrentDirectory(AppFs, ".")
+		// Use the updated function name and capture all return values
+		chartPath, relativePath, detectErr = detectChartIfNeeded(AppFs, ".") // Assuming start from "."
 		if detectErr != nil {
 			return "", nil, &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitChartLoadFailed,
 				Err:  fmt.Errorf("failed to find chart: %w", detectErr),
 			}
 		}
-		log.Info("Detected chart path", chartPath)
+		// Log both detected paths for clarity
+		log.Info("Detected chart path", "absolute", chartPath, "relative", relativePath)
 	} else {
 		// Validate provided chart path using AppFs
 		absChartPath := chartPath // Use the provided path directly for now
@@ -423,7 +427,9 @@ func setupAnalyzerAndLoadChart(_ *cobra.Command, flags *InspectFlags) (string, *
 	}
 
 	// Analyze the chart
-	analysis, err := analyzeChart(loadedChart, config)
+	// Pass relativePath if analyzeChart needs it, otherwise it remains unused for now
+	// analysis, err := analyzeChart(loadedChart, config, relativePath) // Example if needed
+	analysis, err := analyzeChart(loadedChart, config) // Current signature
 	if err != nil {
 		// analyzeChart should already return an ExitCodeError
 		return chartPath, nil, err
@@ -802,54 +808,88 @@ func processImagePatterns(patterns []analyzer.ImagePattern) (images []ImageInfo,
 	return images, skipped
 }
 
-// detectChartInCurrentDirectory tries to find a Chart.yaml starting from a given directory and moving upwards.
-// It now accepts afero.Fs and the starting directory path to work reliably with mock filesystems.
-func detectChartInCurrentDirectory(fs afero.Fs, startDir string) (string, error) {
-	// Validate startDir - it should exist within the provided fs
-	startDirInfo, err := fs.Stat(startDir)
+// detectChartInCurrentDirectory first checks the given start directory ("."), then searches upwards within the provided filesystem for a Chart.yaml file.
+// It returns the absolute path (relative to fs root) to the chart directory and a matching relative path,
+// or an error if not found.
+func detectChartInCurrentDirectory(fs afero.Fs) (detectedAbsPath, detectedRelPath string, err error) {
+	startSearchDir := "."
+	log.Debug("detectChartInCurrentDirectory: Start", "fs_root_relative_start", startSearchDir)
+
+	// 1. Check the starting directory itself
+	startChartFilePath := filepath.Join(startSearchDir, chartutil.ChartfileName)
+	log.Debug("Checking for chart in start directory", "path", startChartFilePath)
+	exists, err := afero.Exists(fs, startChartFilePath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return "", fmt.Errorf("starting directory for chart detection does not exist in the filesystem: %s", startDir)
+		log.Debug("Error checking for chart file existence in start dir (ignoring)", "path", startChartFilePath, "error", err)
+	}
+	if exists {
+		cleanAbsPath := filepath.Clean(startSearchDir)
+		log.Debug("Chart found in start directory", "absolutePath", cleanAbsPath)
+		// Return the start directory path for both values when found immediately
+		return cleanAbsPath, cleanAbsPath, nil
+	}
+	log.Debug("Chart not found in start directory, searching upwards...")
+
+	// 2. Search upwards from the parent of the starting directory
+	currentDir := filepath.Dir(startSearchDir) // Start searching from parent
+	if currentDir == startSearchDir {          // Handle case where start is already root
+		currentDir = "." // Ensure we check root if needed
+	}
+
+	maxSearchDepth := 100 // Prevent infinite loops
+
+	for i := 0; i < maxSearchDepth; i++ {
+		// If currentDir is empty or invalid, stop
+		if currentDir == "" || currentDir == "/" || currentDir == "." && i > 0 { // Avoid redundant check of "." if we started there
+			log.Debug("Reached root or invalid directory while searching upwards", "currentDir", currentDir)
+			break
 		}
-		return "", fmt.Errorf("failed to stat starting directory %s: %w", startDir, err)
-	}
-	if !startDirInfo.IsDir() {
-		return "", fmt.Errorf("starting path for chart detection is not a directory: %s", startDir)
-	}
 
-	currentDir := startDir
-	for {
-		chartYamlPath := filepath.Join(currentDir, "Chart.yaml")
-		log.Debug("Checking for chart at:", chartYamlPath)
+		chartFilePath := filepath.Join(currentDir, chartutil.ChartfileName)
+		log.Debug("Checking for chart upwards", "path", chartFilePath, "iteration", i)
 
-		// Check existence using the provided filesystem
-		exists, err := afero.Exists(fs, chartYamlPath)
+		exists, err := afero.Exists(fs, chartFilePath)
 		if err != nil {
-			// Don't fail immediately, could be a permission issue, try parent
-			log.Debug("Error checking path", chartYamlPath, err)
+			log.Debug("Error checking for chart file existence upwards (ignoring)", "path", chartFilePath, "error", err)
 		}
 
 		if exists {
-			chartYamlInfo, chartStatErr := fs.Stat(chartYamlPath)
-			currentDirInfo, dirStatErr := fs.Stat(currentDir)
-
-			if chartStatErr == nil && dirStatErr == nil && currentDirInfo.IsDir() && !chartYamlInfo.IsDir() {
-				// Found Chart.yaml file within a directory
-				log.Debug("Found Chart.yaml at:", chartYamlPath)
-				return currentDir, nil // Return the directory containing Chart.yaml
-			}
+			cleanAbsPath := filepath.Clean(currentDir)
+			log.Debug("Chart found upwards", "absolutePath", cleanAbsPath)
+			// Return the found path for both values
+			return cleanAbsPath, cleanAbsPath, nil
 		}
 
-		// Move to parent directory
 		parentDir := filepath.Dir(currentDir)
-		if parentDir == currentDir {
-			// Reached root directory
+		if parentDir == currentDir { // Termination check
+			log.Debug("Reached filesystem root while searching upwards", "currentDir", currentDir)
 			break
 		}
 		currentDir = parentDir
 	}
 
-	return "", fmt.Errorf("no Chart.yaml found searching upwards from %s", startDir)
+	log.Debug("Chart not found searching upwards from fs root", "startDir", startSearchDir)
+	return "", "", fmt.Errorf("no %s found in current directory or searching upwards from the root of the provided filesystem", chartutil.ChartfileName)
+}
+
+// detectChartIfNeeded determines the chart path if not provided.
+// It prioritizes the provided chart path. If empty, it calls detectChartInCurrentDirectory.
+func detectChartIfNeeded(fs afero.Fs, inputChartPath string) (finalAbsPath, finalRelPath string, err error) {
+	log.Debug("detectChartIfNeeded: Start", "inputChartPath", inputChartPath)
+	if inputChartPath != "" {
+		log.Debug("detectChartIfNeeded: Chart path provided, skipping detection", "chartPath", inputChartPath)
+		// Return the input path and "." for relative path as detection was skipped.
+		return inputChartPath, ".", nil
+	}
+
+	log.Debug("detectChartIfNeeded: No chart path provided, searching current directory.")
+	detectedPath, relativePath, err := detectChartInCurrentDirectory(fs)
+	if err != nil {
+		// Wrap the error from detection.
+		return "", "", fmt.Errorf("chart path not specified and error occurred during detection: %w", err)
+	}
+	log.Debug("detectChartIfNeeded: Detected chart path", "detectedPath", detectedPath, "relativePath", relativePath)
+	return detectedPath, relativePath, nil
 }
 
 // createConfigSkeleton generates a registry mapping config skeleton
