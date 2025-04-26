@@ -3,10 +3,14 @@ package helm
 import (
 	"context"
 	"fmt"
+
+	log "github.com/lucas-albers-lz4/irr/pkg/log"
+	"github.com/stretchr/testify/mock"
 )
 
 // MockHelmClient implements ClientInterface for testing
 type MockHelmClient struct {
+	mock.Mock // Embed testify mock
 	// Mock responses
 	ReleaseValues    map[string]map[string]interface{} // releaseName -> values
 	ReleaseCharts    map[string]*ChartMetadata         // releaseName -> chart metadata
@@ -28,6 +32,11 @@ type MockHelmClient struct {
 	FindChartError   error
 	ValidateError    error
 	FindChartResults map[string]string // releaseKey -> chartPath
+
+	// Track calls
+	TemplateChartCalled bool
+	TemplateChartErr    error // Error to return from TemplateChart
+	ReleaseValuesErr    error
 }
 
 // NewMockHelmClient creates a new MockHelmClient
@@ -83,22 +92,24 @@ func (m *MockHelmClient) GetReleaseChart(_ context.Context, releaseName, namespa
 	return chart, nil
 }
 
-// TemplateChart returns a mocked template result
-func (m *MockHelmClient) TemplateChart(_ context.Context, releaseName, chartPath string, _ map[string]interface{}, namespace, kubeVersion string) (string, error) {
-	m.TemplateCallCount++
+// TemplateChart mocks the TemplateChart method
+func (m *MockHelmClient) TemplateChart(_ context.Context, releaseName, chartPath string, _ map[string]interface{}, namespace, _ string) (string, error) {
+	m.TemplateChartCalled = true // Mark as called
 
-	if m.TemplateError != nil {
-		return "", m.TemplateError
+	// Return preconfigured error first, if any
+	if m.TemplateChartErr != nil {
+		return "", m.TemplateChartErr
 	}
 
-	result, exists := m.TemplateResults[chartPath]
-	if !exists {
-		// Return a default templated output if none configured
-		return fmt.Sprintf("# Templated output for chart %s with release %s in namespace %s (kubeVersion: %s)",
-			chartPath, releaseName, namespace, kubeVersion), nil
+	// Return predefined success result based on namespace/release key
+	key := fmt.Sprintf("%s/%s", namespace, releaseName)
+	if result, ok := m.TemplateResults[key]; ok {
+		return result, nil
 	}
 
-	return result, nil
+	// Return a simple default if no specific result or error is configured
+	log.Debug("Mock TemplateChart returning default success value", "key", key, "chartPath", chartPath)
+	return "---\napiVersion: v1\nkind: Pod\nmetadata:\n  name: mock-pod", nil
 }
 
 // GetCurrentNamespace returns the mocked current namespace
@@ -164,9 +175,14 @@ func (m *MockHelmClient) SetupMockRelease(releaseName, namespace string, values 
 	m.ReleaseCharts[releaseKey] = chartMetadata
 }
 
-// SetupMockTemplate is a helper method to set up a mock template result
-func (m *MockHelmClient) SetupMockTemplate(chartPath, result string) {
-	m.TemplateResults[chartPath] = result
+// SetupMockTemplate configures the mock response for TemplateChart for a specific namespace/release key
+func (m *MockHelmClient) SetupMockTemplate(namespace, releaseName, result string, err error) {
+	if m.TemplateResults == nil {
+		m.TemplateResults = make(map[string]string)
+	}
+	key := fmt.Sprintf("%s/%s", namespace, releaseName)
+	m.TemplateResults[key] = result
+	m.TemplateChartErr = err // Store the error to be returned by TemplateChart
 }
 
 // SetupMockChartPath is a helper method to set up a mock chart path for a release

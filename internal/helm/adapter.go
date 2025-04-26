@@ -10,11 +10,11 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/lalbers/irr/pkg/chart"
-	"github.com/lalbers/irr/pkg/exitcodes"
-	"github.com/lalbers/irr/pkg/fileutil"
-	"github.com/lalbers/irr/pkg/image"
-	log "github.com/lalbers/irr/pkg/log"
+	"github.com/lucas-albers-lz4/irr/pkg/chart"
+	"github.com/lucas-albers-lz4/irr/pkg/exitcodes"
+	"github.com/lucas-albers-lz4/irr/pkg/fileutil"
+	"github.com/lucas-albers-lz4/irr/pkg/image"
+	log "github.com/lucas-albers-lz4/irr/pkg/log"
 	"github.com/spf13/afero"
 	"gopkg.in/yaml.v3"
 	"helm.sh/helm/v3/pkg/action"
@@ -202,9 +202,7 @@ func (a *Adapter) OverrideRelease(ctx context.Context, releaseName, namespace st
 	// Get chart metadata for the release (needed for fallback path)
 	chartMeta, err := a.helmClient.GetReleaseChart(ctx, releaseName, namespace)
 	if err != nil {
-		// Don't fail outright, but log and we won't be able to fallback
-		log.Warn("Failed to get chart metadata for release, fallback on error will not be possible", "release", releaseName, "error", err)
-		chartMeta = nil // Ensure chartMeta is nil if fetching failed
+		return "", fmt.Errorf("failed to get release chart metadata before override: %w", err)
 	}
 
 	// Set up options as best we can
@@ -377,6 +375,7 @@ func sanitizeRegistryForPath(registry string) string {
 
 // ValidateRelease validates a Helm release with override values
 func (a *Adapter) ValidateRelease(ctx context.Context, releaseName, namespace string, overrideFiles []string, kubeVersion string) error {
+	log.Debug("Entering ValidateRelease", "release", releaseName, "namespace", namespace)
 	// Validate inputs
 	if a.helmClient == nil {
 		log.Error("Helm client is nil in ValidateRelease, this is likely a configuration error")
@@ -456,6 +455,8 @@ func (a *Adapter) ValidateRelease(ctx context.Context, releaseName, namespace st
 		}
 	}
 
+	log.Debug("Preparing to template chart for validation", "chartPath", chartPath, "releaseName", releaseName, "namespace", namespace, "err_before_template", err)
+
 	// Load values files
 	var overrideValues []map[string]interface{}
 	for _, file := range overrideFiles {
@@ -474,8 +475,7 @@ func (a *Adapter) ValidateRelease(ctx context.Context, releaseName, namespace st
 		}
 	}
 
-	// Perform validation
-	// For now, just attempt to template with the override values
+	// Perform validation by templating
 	_, err = a.helmClient.TemplateChart(ctx, releaseName, chartPath, values, namespace, kubeVersion)
 	if err != nil {
 		// If templating fails with a "Chart.yaml file is missing" error, try to handle it
@@ -603,8 +603,11 @@ func loadValuesFile(fs afero.Fs, filename string) (map[string]interface{}, error
 func (a *Adapter) resolveChartPath(meta *ChartMetadata) (string, error) {
 	// If the chart metadata already has a path (rare), use it
 	if meta.Path != "" {
+		log.Debug("resolveChartPath returning early with provided meta.Path", "path", meta.Path)
 		return meta.Path, nil
 	}
+
+	log.Debug("resolveChartPath proceeding with Helm SDK/cache lookup", "chartName", meta.Name, "version", meta.Version)
 
 	// Create Helm settings to access Helm's configuration
 	settings := cli.New()

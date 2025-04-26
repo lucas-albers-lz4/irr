@@ -6,12 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
-	"sort"
 	"strings"
 
-	"github.com/lalbers/irr/pkg/log"
-	"github.com/spf13/afero"
+	log "github.com/lucas-albers-lz4/irr/pkg/log"
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/chartutil"
@@ -233,36 +230,6 @@ func IsReleaseNotFoundError(err error) bool {
 	}
 	// Use errors.Is to properly handle wrapped errors
 	return errors.Is(err, driver.ErrReleaseNotFound)
-}
-
-// findChartInHelmCachePaths tries to find a chart in a list of Helm cache directories.
-func findChartInHelmCachePaths(meta *ChartMetadata, cacheDir string) (string, error) {
-	helmCachePaths := []string{
-		filepath.Join(os.Getenv("HOME"), "Library", "Caches", "helm", "repository"),
-		filepath.Join(os.Getenv("HOME"), ".cache", "helm", "repository"),
-		filepath.Join(os.Getenv("APPDATA"), "helm", "repository"),
-	}
-	fs := afero.NewOsFs()
-	for _, cachePath := range helmCachePaths {
-		if cachePath == cacheDir {
-			continue
-		}
-		potentialChartPath := filepath.Join(cachePath, meta.Name+"-"+meta.Version+".tgz")
-		log.Debug("Checking generic cache path", "path", potentialChartPath)
-		exists, err := afero.Exists(fs, potentialChartPath)
-		if err == nil && exists {
-			log.Debug("Found chart in generic cache (exact version)", "path", potentialChartPath)
-			return potentialChartPath, nil
-		}
-		matches, err := afero.Glob(fs, filepath.Join(cachePath, meta.Name+"-*.tgz"))
-		if err == nil && len(matches) > 0 {
-			sort.Strings(matches)
-			chartPath := matches[len(matches)-1]
-			log.Debug("Found chart in generic cache (glob match)", "path", chartPath)
-			return chartPath, nil
-		}
-	}
-	return "", nil
 }
 
 // FindChartForRelease locates the chart path for a given Helm release.
