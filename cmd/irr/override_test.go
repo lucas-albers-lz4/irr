@@ -6,11 +6,19 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
-	"github.com/lalbers/irr/internal/helm"
-	"github.com/lalbers/irr/pkg/fileutil"
+	"github.com/lucas-albers-lz4/irr/internal/helm"
+	"github.com/lucas-albers-lz4/irr/pkg/chart"
+	"github.com/lucas-albers-lz4/irr/pkg/exitcodes"
+	"github.com/lucas-albers-lz4/irr/pkg/fileutil"
+	"github.com/lucas-albers-lz4/irr/pkg/log"
+	"github.com/lucas-albers-lz4/irr/pkg/registry"
+	"github.com/lucas-albers-lz4/irr/pkg/strategy"
+	"github.com/lucas-albers-lz4/irr/pkg/testutil"
 	"github.com/spf13/afero"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	helmchart "helm.sh/helm/v3/pkg/chart"
@@ -420,3 +428,654 @@ func setupTestFsOverride(t *testing.T) (afero.Fs, func()) {
 	return fs, reset
 }
 */
+
+func TestHandleGenerateError(t *testing.T) {
+	testCases := []struct {
+		name            string
+		inputError      error
+		expectedCode    int
+		expectedWrapped error // The original error we expect to be wrapped
+	}{
+		{
+			name:            "ThresholdExceeded error",
+			inputError:      fmt.Errorf("wrapping: %w", strategy.ErrThresholdExceeded),
+			expectedCode:    exitcodes.ExitThresholdError,
+			expectedWrapped: strategy.ErrThresholdExceeded,
+		},
+		{
+			name:            "ChartNotFound error",
+			inputError:      fmt.Errorf("wrapping: %w", chart.ErrChartNotFound),
+			expectedCode:    exitcodes.ExitChartParsingError,
+			expectedWrapped: chart.ErrChartNotFound,
+		},
+		{
+			name:            "ChartLoadFailed error",
+			inputError:      fmt.Errorf("wrapping: %w", chart.ErrChartLoadFailed),
+			expectedCode:    exitcodes.ExitChartParsingError,
+			expectedWrapped: chart.ErrChartLoadFailed,
+		},
+		{
+			name:            "UnsupportedStructure error",
+			inputError:      fmt.Errorf("wrapping: %w", chart.ErrUnsupportedStructure),
+			expectedCode:    exitcodes.ExitUnsupportedStructure,
+			expectedWrapped: chart.ErrUnsupportedStructure,
+		},
+		{
+			name:            "Generic error",
+			inputError:      fmt.Errorf("some other generic error"),
+			expectedCode:    exitcodes.ExitImageProcessingError,
+			expectedWrapped: fmt.Errorf("exit code %d: failed to process chart: some other generic error", exitcodes.ExitImageProcessingError),
+		},
+		{
+			name:            "Nil error",
+			inputError:      nil,
+			expectedCode:    exitcodes.ExitImageProcessingError, // Default case for nil
+			expectedWrapped: nil,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			resultErr := handleGenerateError(tc.inputError)
+
+			// Use require.ErrorAs with exitcodes.ExitCodeError
+			var exitErr *exitcodes.ExitCodeError
+			require.ErrorAs(t, resultErr, &exitErr, "Result should be an ExitCodeError or wrap one")
+
+			// Check the exit code by accessing the correct field (Code)
+			assert.Equal(t, tc.expectedCode, exitErr.Code, "Exit code should match expected")
+
+			// Check if the original error is wrapped correctly by accessing the correct field (Err)
+			if tc.expectedWrapped != nil {
+				// For generic errors created with errors.New, compare messages instead of using errors.Is
+				if tc.name == "Generic error" {
+					require.NotNil(t, exitErr.Err, "Wrapped error should not be nil for generic error test")
+					// Compare the message of the wrapped error (exitErr.Err)
+					assert.Equal(t, tc.expectedWrapped.Error(), exitErr.Error(), "Wrapped error message mismatch for generic error")
+				} else {
+					assert.ErrorIs(t, exitErr.Err, tc.expectedWrapped, "ExitCodeError should wrap the correct original error: %v", exitErr.Err)
+				}
+				// Also check the *full* message contains the original error message
+				// Use inputError.Error() for the substring check
+				assert.Contains(t, exitErr.Error(), tc.inputError.Error(), "Full error message should contain the original error string")
+			} else {
+				// Handle the nil input case
+				assert.ErrorContains(t, exitErr.Err, "<nil>", "Error for nil input should indicate nil")
+			}
+		})
+	}
+}
+
+func TestOutputOverrides(t *testing.T) {
+	content := []byte("key: value\n")
+	outputFilename := "/output/overrides.yaml"
+
+	t.Run("Dry Run", func(t *testing.T) {
+		fs := afero.NewMemMapFs() // Filesystem shouldn't be touched
+		restoreFs := SetFs(fs)
+		defer restoreFs()
+
+		cmd, stdout, _ := getRootCmdWithOutputs()
+		err := outputOverrides(cmd, content, "", true) // Empty outputFile, dryRun=true
+
+		require.NoError(t, err)
+		assert.Contains(t, stdout.String(), string(content), "Output should contain YAML content")
+		// Check that no file was written
+		_, err = fs.Stat(outputFilename)
+		assert.True(t, os.IsNotExist(err), "File should not exist in dry run")
+	})
+
+	t.Run("Output to Stdout", func(t *testing.T) {
+		fs := afero.NewMemMapFs() // Filesystem shouldn't be touched
+		restoreFs := SetFs(fs)
+		defer restoreFs()
+
+		cmd, stdout, _ := getRootCmdWithOutputs()
+		err := outputOverrides(cmd, content, "", false) // Empty outputFile, dryRun=false
+
+		require.NoError(t, err)
+		assert.Contains(t, stdout.String(), string(content), "Output should contain YAML content")
+		// Check that no file was written
+		_, err = fs.Stat(outputFilename)
+		assert.True(t, os.IsNotExist(err), "File should not exist when outputting to stdout")
+	})
+
+	t.Run("Output to File", func(t *testing.T) {
+		fs := afero.NewMemMapFs()
+		restoreFs := SetFs(fs)
+		defer restoreFs()
+
+		cmd, stdout, _ := getRootCmdWithOutputs()
+		err := outputOverrides(cmd, content, outputFilename, false) // Specific outputFile, dryRun=false
+
+		require.NoError(t, err)
+		assert.Empty(t, stdout.String(), "Stdout should be empty when writing to file")
+
+		// Check file content
+		fileBytes, err := afero.ReadFile(fs, outputFilename)
+		require.NoError(t, err, "Should be able to read the created file")
+		assert.Equal(t, content, fileBytes, "File content should match input YAML")
+	})
+
+	t.Run("Output to File Fails - File Exists", func(t *testing.T) {
+		fs := afero.NewMemMapFs()
+		restoreFs := SetFs(fs)
+		defer restoreFs()
+
+		// Pre-create the output file
+		err := afero.WriteFile(fs, outputFilename, []byte("existing content"), 0o644) // Use 0o644
+		require.NoError(t, err)
+
+		cmd, _, _ := getRootCmdWithOutputs()
+		err = outputOverrides(cmd, content, outputFilename, false)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "already exists", "Error message should indicate file exists")
+		// Check it's the right exit code using require.ErrorAs
+		var exitErr *exitcodes.ExitCodeError
+		require.ErrorAs(t, err, &exitErr, "Error should be an ExitCodeError or wrap one")
+		assert.Equal(t, exitcodes.ExitIOError, exitErr.Code, "Exit code should be ExitIOError")
+	})
+
+	t.Run("Output to File Fails - Cannot Create Dir", func(t *testing.T) {
+		// Use a read-only filesystem to prevent MkdirAll
+		fs := afero.NewReadOnlyFs(afero.NewMemMapFs())
+		restoreFs := SetFs(fs)
+		defer restoreFs()
+
+		cmd, _, _ := getRootCmdWithOutputs()
+		filePath := "/some/nonexistent/dir/output.yaml"
+		err := outputOverrides(cmd, content, filePath, false)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to create output directory", "Error message should indicate directory creation failure")
+		// Check it's the right exit code using require.ErrorAs
+		var exitErr *exitcodes.ExitCodeError
+		require.ErrorAs(t, err, &exitErr, "Error should be an ExitCodeError or wrap one")
+		assert.Equal(t, exitcodes.ExitIOError, exitErr.Code, "Exit code should be ExitIOError")
+	})
+}
+
+// Helper to get root command with mocked stdout/stderr for testing output
+func getRootCmdWithOutputs() (cmd *cobra.Command, stdout, stderr *bytes.Buffer) { // Combined types
+	root := getRootCmd() // Assumes getRootCmd() returns a fresh instance or resets state
+	stdout = new(bytes.Buffer)
+	stderr = new(bytes.Buffer)
+	root.SetOut(stdout)
+	root.SetErr(stderr)
+	return root, stdout, stderr
+}
+
+func TestSkipCWDCheck(t *testing.T) {
+	// Store original values and ensure they are restored
+	originalFlagValue := integrationTestMode
+	originalEnvValue, envWasSet := os.LookupEnv("IRR_TESTING")
+	defer func() {
+		integrationTestMode = originalFlagValue
+		if envWasSet {
+			if err := os.Setenv("IRR_TESTING", originalEnvValue); err != nil {
+				t.Logf("WARN: Failed to restore env var IRR_TESTING: %v", err)
+			}
+		} else {
+			if err := os.Unsetenv("IRR_TESTING"); err != nil {
+				t.Logf("WARN: Failed to unset env var IRR_TESTING: %v", err)
+			}
+		}
+	}()
+
+	testCases := []struct {
+		name     string
+		setFlag  bool
+		setEnv   string // Value to set for IRR_TESTING, empty means unset
+		expected bool
+	}{
+		{
+			name:     "Neither set",
+			setFlag:  false,
+			setEnv:   "",
+			expected: false,
+		},
+		{
+			name:     "Flag set, Env unset",
+			setFlag:  true,
+			setEnv:   "",
+			expected: true,
+		},
+		{
+			name:     "Flag unset, Env set to true",
+			setFlag:  false,
+			setEnv:   "true",
+			expected: true,
+		},
+		{
+			name:     "Flag unset, Env set to false",
+			setFlag:  false,
+			setEnv:   "false", // Should not trigger the check
+			expected: false,
+		},
+		{
+			name:     "Flag set, Env set to true",
+			setFlag:  true,
+			setEnv:   "true",
+			expected: true,
+		},
+		{
+			name:     "Flag set, Env set to false",
+			setFlag:  true,
+			setEnv:   "false",
+			expected: true, // Flag takes precedence (or rather, OR logic)
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Set the global flag
+			integrationTestMode = tc.setFlag
+
+			// Set/unset the environment variable
+			if tc.setEnv != "" {
+				err := os.Setenv("IRR_TESTING", tc.setEnv)
+				require.NoError(t, err, "Failed to set environment variable")
+			} else {
+				err := os.Unsetenv("IRR_TESTING")
+				// Ignore "not set" error if it was already unset
+				if err != nil && !strings.Contains(err.Error(), "environment variable not set") {
+					require.NoError(t, err, "Failed to unset environment variable")
+				}
+			}
+
+			// Call the function and assert
+			result := skipCWDCheck()
+			assert.Equal(t, tc.expected, result)
+		})
+	}
+}
+
+func TestIsStdOutRequested(t *testing.T) {
+	testCases := []struct {
+		name     string
+		flags    map[string]interface{} // flag name -> value (string for output-file, bool for dry-run)
+		expected bool
+	}{
+		{
+			name:     "Dry run set to true",
+			flags:    map[string]interface{}{"dry-run": true, "output-file": ""},
+			expected: true,
+		},
+		{
+			name:     "Dry run set to false, output file empty",
+			flags:    map[string]interface{}{"dry-run": false, "output-file": ""},
+			expected: false,
+		},
+		{
+			name:     "Dry run set to false, output file set to -",
+			flags:    map[string]interface{}{"dry-run": false, "output-file": "-"},
+			expected: true,
+		},
+		{
+			name:     "Dry run set to false, output file set to a file name",
+			flags:    map[string]interface{}{"dry-run": false, "output-file": "output.yaml"},
+			expected: false,
+		},
+		{
+			name:     "Dry run set to true, output file set to -",
+			flags:    map[string]interface{}{"dry-run": true, "output-file": "-"},
+			expected: true, // Dry run takes precedence
+		},
+		{
+			name:     "Dry run set to true, output file set to a file name",
+			flags:    map[string]interface{}{"dry-run": true, "output-file": "output.yaml"},
+			expected: true, // Dry run takes precedence
+		},
+		{
+			name:     "Flags not set (defaults)",
+			flags:    map[string]interface{}{},
+			expected: false, // Defaults to false for dry-run and empty for output-file
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create a dummy command and set flags
+			cmd := &cobra.Command{}
+			cmd.Flags().Bool("dry-run", false, "")
+			cmd.Flags().String("output-file", "", "")
+
+			for name, value := range tc.flags {
+				switch v := value.(type) {
+				case bool:
+					err := cmd.Flags().Set(name, fmt.Sprintf("%t", v))
+					require.NoError(t, err)
+				case string:
+					err := cmd.Flags().Set(name, v)
+					require.NoError(t, err)
+				}
+			}
+
+			result := isStdOutRequested(cmd)
+			assert.Equal(t, tc.expected, result)
+		})
+	}
+}
+
+func TestLoadRegistryMappings(t *testing.T) {
+	configFilePath := "/test/config.yaml"
+	validContent := `
+registries:
+  mappings:
+  - source: docker.io
+    target: my-registry/dockerhub
+  - source: quay.io
+    target: my-registry/quay
+`
+	invalidContent := `mappings: - source: invalid`
+
+	testCases := []struct {
+		name          string
+		setupFs       func(fs afero.Fs)
+		configFileArg string // Value for --config flag
+		skipCheck     bool   // Value for skipCWDCheck result
+		expectError   bool
+		expectMapping bool // Whether we expect config.Mappings to be populated
+		checkError    func(t *testing.T, err error)
+	}{
+		{
+			name: "Valid config file, skip check false",
+			setupFs: func(fs afero.Fs) {
+				// Ensure directory exists before writing
+				err := fs.MkdirAll(filepath.Dir(configFilePath), 0o755) // Use 0o755
+				require.NoError(t, err, "Failed to create directory for config")
+				err = afero.WriteFile(fs, configFilePath, []byte(validContent), 0o644) // Use 0o644
+				require.NoError(t, err)
+			},
+			configFileArg: configFilePath,
+			skipCheck:     false,
+			expectError:   false,
+			expectMapping: true,
+		},
+		{
+			name: "Valid config file, skip check true", // Should still work
+			setupFs: func(fs afero.Fs) {
+				// Ensure directory exists before writing
+				err := fs.MkdirAll(filepath.Dir(configFilePath), 0o755) // Use 0o755
+				require.NoError(t, err, "Failed to create directory for config")
+				err = afero.WriteFile(fs, configFilePath, []byte(validContent), 0o644) // Use 0o644
+				require.NoError(t, err)
+			},
+			configFileArg: configFilePath,
+			skipCheck:     true,
+			expectError:   false,
+			expectMapping: true,
+		},
+		{
+			name:          "Config file flag not provided",
+			setupFs:       func(_ afero.Fs) {}, // Rename fs to _
+			configFileArg: "",                  // No --config flag
+			skipCheck:     false,
+			expectError:   false,
+			expectMapping: false, // No file loaded
+		},
+		{
+			name:          "Config file not found",
+			setupFs:       func(_ afero.Fs) {}, // Rename fs to _
+			configFileArg: "/non/existent/config.yaml",
+			skipCheck:     false,
+			expectError:   true,
+			expectMapping: false,
+			checkError: func(t *testing.T, err error) {
+				assert.ErrorContains(t, err, "mappings file does not exist")
+				// Check it's the right exit code using require.ErrorAs
+				var exitErr *exitcodes.ExitCodeError
+				require.ErrorAs(t, err, &exitErr, "Error should be an ExitCodeError or wrap one")
+				assert.Equal(t, exitcodes.ExitInputConfigurationError, exitErr.Code, "Exit code for '%s' should be ExitInputConfigurationError", "Config file not found")
+			},
+		},
+		{
+			name: "Invalid YAML content",
+			setupFs: func(fs afero.Fs) {
+				// Ensure directory exists before writing
+				err := fs.MkdirAll(filepath.Dir(configFilePath), 0o755) // Use 0o755
+				require.NoError(t, err, "Failed to create directory for config")
+				err = afero.WriteFile(fs, configFilePath, []byte(invalidContent), 0o644) // Use 0o644
+				require.NoError(t, err)
+			},
+			configFileArg: configFilePath,
+			skipCheck:     false,
+			expectError:   true,
+			expectMapping: false,
+			checkError: func(t *testing.T, err error) {
+				assert.ErrorContains(t, err, "failed to load config file")
+				// Check it's the right exit code using require.ErrorAs
+				var exitErr *exitcodes.ExitCodeError
+				require.ErrorAs(t, err, &exitErr, "Error should be an ExitCodeError or wrap one")
+				assert.Equal(t, exitcodes.ExitInputConfigurationError, exitErr.Code, "Exit code for '%s' should be ExitInputConfigurationError", "Invalid YAML content")
+			},
+		},
+		{
+			name:          "Nil config input",  // Test the initial nil check
+			setupFs:       func(_ afero.Fs) {}, // Rename fs to _
+			configFileArg: "",
+			skipCheck:     false,
+			expectError:   true, // Expect error because we pass nil config
+			expectMapping: false,
+			checkError: func(t *testing.T, err error) {
+				assert.ErrorContains(t, err, "internal error: loadRegistryMappings called with nil config")
+			},
+		},
+	}
+
+	// Mock skipCWDCheck - Commented out as function assignment is not allowed
+	// originalSkipCWDCheck := skipCWDCheck
+	// defer func() { skipCWDCheck = originalSkipCWDCheck }()
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			fs := afero.NewMemMapFs()
+			restoreFs := SetFs(fs)
+			defer restoreFs()
+			tc.setupFs(fs)
+
+			// Set up mock for skipCWDCheck - Commented out
+			// skipCWDCheck = func() bool { return tc.skipCheck }
+			// INSTEAD: Set the actual global flag based on tc.skipCheck for the duration of the test case
+			originalIntegrationTestMode := integrationTestMode
+			integrationTestMode = tc.skipCheck                                   // Set global flag based on test case
+			defer func() { integrationTestMode = originalIntegrationTestMode }() // Restore original value
+
+			// Create dummy command and set config flag
+			cmd := &cobra.Command{}
+			cmd.Flags().String("config", "", "")
+			if tc.configFileArg != "" {
+				err := cmd.Flags().Set("config", tc.configFileArg)
+				require.NoError(t, err)
+			}
+
+			var config *GeneratorConfig
+			if tc.name != "Nil config input" { // Don't create config for the nil test case
+				config = &GeneratorConfig{}
+			}
+
+			err := loadRegistryMappings(cmd, config)
+
+			switch {
+			case tc.expectError:
+				require.Error(t, err)
+				if tc.checkError != nil {
+					tc.checkError(t, err)
+				}
+				// Also verify it's an ExitCodeError where expected using require.ErrorAs
+				if strings.Contains(tc.name, "not found") || strings.Contains(tc.name, "Invalid YAML") {
+					var exitErr *exitcodes.ExitCodeError
+					require.ErrorAs(t, err, &exitErr, "Error in '%s' should be an ExitCodeError", tc.name)
+					assert.Equal(t, exitcodes.ExitInputConfigurationError, exitErr.Code, "Exit code for '%s' should be ExitInputConfigurationError", tc.name)
+				}
+			case tc.expectMapping:
+				require.NoError(t, err)
+				assert.NotNil(t, config.Mappings, "Expected mappings to be loaded")
+				assert.NotEmpty(t, config.Mappings.Entries, "Expected mapping entries to be loaded")
+			default: // Neither error nor mapping expected
+				require.NoError(t, err)
+				if config != nil {
+					assert.Nil(t, config.Mappings, "Expected mappings to be nil or not loaded")
+				}
+			}
+		})
+	}
+}
+
+func TestValidateUnmappableRegistries(t *testing.T) {
+	testCases := []struct {
+		name           string
+		config         GeneratorConfig
+		expectError    bool
+		expectLogs     []map[string]interface{} // Changed type to map for JSON logs
+		checkErrorFunc func(t *testing.T, err error)
+	}{
+		{
+			name: "No source registries",
+			config: GeneratorConfig{
+				SourceRegistries: []string{},
+			},
+			expectError: false,
+		},
+		{
+			name: "Source registries, no mappings, strict mode",
+			config: GeneratorConfig{
+				SourceRegistries: []string{"docker.io", "quay.io"},
+				StrictMode:       true,
+			},
+			expectError: true,
+			checkErrorFunc: func(t *testing.T, err error) {
+				assert.ErrorContains(t, err, "strict mode enabled: no mapping found")
+				var exitErr *exitcodes.ExitCodeError
+				require.ErrorAs(t, err, &exitErr, "Error should be an ExitCodeError")
+				assert.Equal(t, exitcodes.ExitRegistryDetectionError, exitErr.Code)
+			},
+		},
+		{
+			name: "Source registries, no mappings, non-strict mode",
+			config: GeneratorConfig{
+				SourceRegistries: []string{"docker.io", "quay.io"},
+				TargetRegistry:   "my-registry",
+				StrictMode:       false,
+			},
+			expectError: false,
+			expectLogs: []map[string]interface{}{
+				{"level": "WARN", "msg": "No mapping found for registries", "registries": "docker.io, quay.io"},
+				{"level": "INFO", "msg": "These registries will be redirected using the target registry", "target": "my-registry"},
+				{"level": "INFO", "msg": "irr config suggestion", "source": "docker.io", "target": "my-registry/docker-io"},
+				{"level": "INFO", "msg": "irr config suggestion", "source": "quay.io", "target": "my-registry/quay-io"},
+			},
+		},
+		{
+			name: "Mappings exist, all sources mapped",
+			config: GeneratorConfig{
+				SourceRegistries: []string{"docker.io"},
+				Mappings: &registry.Mappings{
+					Entries: []registry.Mapping{{Source: "docker.io", Target: "path"}},
+				},
+				StrictMode: true,
+			},
+			expectError: false,
+		},
+		{
+			name: "Mappings exist, one source unmapped, strict mode",
+			config: GeneratorConfig{
+				SourceRegistries: []string{"docker.io", "gcr.io"},
+				Mappings: &registry.Mappings{
+					Entries: []registry.Mapping{{Source: "docker.io", Target: "path"}},
+				},
+				StrictMode: true,
+			},
+			expectError: true,
+			checkErrorFunc: func(t *testing.T, err error) {
+				assert.ErrorContains(t, err, "strict mode enabled: no mapping found for registries: gcr.io")
+				var exitErr *exitcodes.ExitCodeError
+				require.ErrorAs(t, err, &exitErr, "Error should be an ExitCodeError")
+				assert.Equal(t, exitcodes.ExitRegistryDetectionError, exitErr.Code)
+			},
+		},
+		{
+			name: "Mappings exist, one source unmapped, non-strict mode",
+			config: GeneratorConfig{
+				SourceRegistries: []string{"docker.io", "gcr.io"},
+				TargetRegistry:   "target-repo",
+				Mappings: &registry.Mappings{
+					Entries: []registry.Mapping{{Source: "docker.io", Target: "path"}},
+				},
+				StrictMode: false,
+			},
+			expectError: false,
+			expectLogs: []map[string]interface{}{
+				{"level": "WARN", "msg": "No mapping found for registries", "registries": "gcr.io"},
+				{"level": "INFO", "msg": "These registries will be redirected using the target registry", "target": "target-repo"},
+				{"level": "INFO", "msg": "irr config suggestion", "source": "gcr.io", "target": "target-repo/gcr-io"},
+			},
+		},
+		{
+			name: "ConfigMappings exist, one source unmapped, strict mode",
+			config: GeneratorConfig{
+				SourceRegistries: []string{"docker.io", "gcr.io"},
+				ConfigMappings:   map[string]string{"docker.io": "path"},
+				StrictMode:       true,
+			},
+			expectError: true,
+			checkErrorFunc: func(t *testing.T, err error) {
+				assert.ErrorContains(t, err, "strict mode enabled: no mapping found for registries: gcr.io")
+				var exitErr *exitcodes.ExitCodeError
+				require.ErrorAs(t, err, &exitErr, "Error should be an ExitCodeError")
+				assert.Equal(t, exitcodes.ExitRegistryDetectionError, exitErr.Code)
+			},
+		},
+		{
+			name:        "Nil config",
+			config:      GeneratorConfig{},
+			expectError: true,
+			checkErrorFunc: func(t *testing.T, err error) {
+				assert.ErrorContains(t, err, "internal error: validateUnmappableRegistries called with nil config")
+			},
+		},
+	}
+
+	// Mock skipCWDCheck - Commented out as function assignment is not allowed
+	// originalSkipCWDCheck := skipCWDCheck
+	// defer func() { skipCWDCheck = originalSkipCWDCheck }()
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Capture logs at INFO level, as warnings/suggestions are logged at INFO/WARN
+			// Use CaptureJSONLogs to handle JSON output
+			logLevel := log.LevelInfo // Default capture level
+			_, logs, captureErr := testutil.CaptureJSONLogs(logLevel, func() {
+				var err error
+				// Handle the nil config case carefully - now passing zero value
+				if tc.name == "Nil config" {
+					// The function has an internal nil check. Let's call it with nil to test that path.
+					err = validateUnmappableRegistries(nil)
+				} else {
+					cfg := tc.config // Make a copy to potentially modify
+					if cfg.Mappings == nil {
+						cfg.Mappings = &registry.Mappings{}
+					}
+					err = validateUnmappableRegistries(&cfg)
+				}
+
+				if tc.expectError {
+					require.Error(t, err)
+					if tc.checkErrorFunc != nil {
+						tc.checkErrorFunc(t, err)
+					}
+				} else {
+					require.NoError(t, err)
+				}
+			})
+			require.NoError(t, captureErr, "Log capture failed")
+
+			// Check logs using JSON matchers
+			for _, expectedLog := range tc.expectLogs {
+				// Now expectedLog is the correct type (map[string]interface{})
+				testutil.AssertLogContainsJSON(t, logs, expectedLog)
+			}
+		})
+	}
+}
