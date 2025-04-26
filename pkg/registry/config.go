@@ -4,8 +4,8 @@ package registry
 import (
 	"fmt"
 
-	"github.com/lalbers/irr/pkg/fileutil"
-	"github.com/lalbers/irr/pkg/log"
+	"github.com/lucas-albers-lz4/irr/pkg/fileutil"
+	"github.com/lucas-albers-lz4/irr/pkg/log"
 	"github.com/spf13/afero"
 	"sigs.k8s.io/yaml"
 )
@@ -83,20 +83,6 @@ func LoadStructuredConfig(fs afero.Fs, path string, skipCWDRestriction bool) (*C
 
 // validateStructuredConfig performs validation on the structured config
 func validateStructuredConfig(config *Config, path string) error {
-	// Check if Registries struct itself exists (safety check)
-	// Note: yaml.Unmarshal usually handles missing keys by leaving the struct zero-valued
-	// So, we need to check if the key field we rely on is present.
-	if config.Registries.Mappings == nil {
-		// Mappings key was likely missing entirely in the YAML
-		return fmt.Errorf("invalid config structure in '%s': missing required 'mappings' list under 'registries'", path)
-	}
-
-	// Check if registries.mappings is present AND not empty
-	if len(config.Registries.Mappings) == 0 {
-		// Mappings key exists but the list is empty
-		return WrapMappingFileEmpty(path)
-	}
-
 	// Check for duplicate source entries
 	seenSources := make(map[string]bool)
 

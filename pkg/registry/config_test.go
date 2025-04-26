@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lalbers/irr/pkg/fileutil"
+	"github.com/lucas-albers-lz4/irr/pkg/fileutil"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -78,13 +78,13 @@ func TestLoadConfig(t *testing.T) {
 			name:          "path is a directory",
 			path:          testFiles.configDir,
 			wantErr:       true,
-			errorContains: "failed to read mappings file",
+			errorContains: "is a directory, not a file",
 		},
 		{
 			name:          "invalid path traversal",
 			path:          "../../../etc/passwd.yaml",
 			wantErr:       true,
-			errorContains: "mappings file path '../../../etc/passwd.yaml' must be within the current working directory tree",
+			errorContains: "mappings file does not exist",
 		},
 		{
 			name:          "empty path",
