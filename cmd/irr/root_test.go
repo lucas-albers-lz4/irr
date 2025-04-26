@@ -534,3 +534,12 @@ func TestExitCodeErrorMethods(t *testing.T) {
 	// Test the ExitCode() method
 	assert.Equal(t, expectedExitCode, exitErr.ExitCode(), "ExitCode() method should return the stored exit code")
 }
+
+// TestGetRootCmd verifies the getRootCmd helper returns the global rootCmd instance.
+func TestGetRootCmd(t *testing.T) {
+	// Ensure the global rootCmd is initialized (should be by package init)
+	require.NotNil(t, rootCmd, "Global rootCmd should be initialized")
+
+	cmd := getRootCmd()
+	assert.Same(t, rootCmd, cmd, "getRootCmd should return the global rootCmd instance")
+}

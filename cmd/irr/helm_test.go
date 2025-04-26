@@ -129,3 +129,52 @@ func TestGetHelmSettings(t *testing.T) {
 	assert.NotNil(t, settings, "GetHelmSettings should return a non-nil object")
 	// We don't assert specific values within settings as they depend on the environment.
 }
+
+// TestInitHelmPlugin verifies that plugin-specific flags are made visible.
+func TestInitHelmPlugin(t *testing.T) {
+	// Need to ensure rootCmd has the flags defined (usually done in root.go init)
+	// For isolated testing, create a temporary root command or ensure init ran.
+	// Using the actual rootCmd assumes init() in root.go has run.
+	cmd := getRootCmd() // Assuming getRootCmd() exists and returns the configured rootCmd
+
+	// Ensure flags exist (redundant if getRootCmd ensures init)
+	require.NotNil(t, cmd.PersistentFlags().Lookup("release-name"), "release-name flag missing")
+	require.NotNil(t, cmd.PersistentFlags().Lookup("namespace"), "namespace flag missing")
+
+	// Optional: Set flags to hidden initially to verify the change
+	err := cmd.PersistentFlags().MarkHidden("release-name")
+	require.NoError(t, err)
+	err = cmd.PersistentFlags().MarkHidden("namespace")
+	require.NoError(t, err)
+
+	// Call the function
+	initHelmPlugin()
+
+	// Assert flags are no longer hidden
+	assert.False(t, cmd.PersistentFlags().Lookup("release-name").Hidden, "release-name flag should be visible after initHelmPlugin")
+	assert.False(t, cmd.PersistentFlags().Lookup("namespace").Hidden, "namespace flag should be visible after initHelmPlugin")
+}
+
+// TestRemoveHelmPluginFlags verifies that plugin-specific flags are hidden.
+func TestRemoveHelmPluginFlags(t *testing.T) {
+	// Create a dummy command with the flags
+	cmd := &cobra.Command{}
+	addReleaseFlag(cmd) // Use helper to add the flag
+	addNamespaceFlag(cmd)
+
+	// Ensure flags start visible (or their default state)
+	require.False(t, cmd.PersistentFlags().Lookup("release-name").Hidden, "release-name should start visible")
+	require.False(t, cmd.PersistentFlags().Lookup("namespace").Hidden, "namespace should start visible")
+
+	// Call the function
+	removeHelmPluginFlags(cmd)
+
+	// Assert flags are now hidden
+	assert.True(t, cmd.PersistentFlags().Lookup("release-name").Hidden, "release-name flag should be hidden after removeHelmPluginFlags")
+	assert.True(t, cmd.PersistentFlags().Lookup("namespace").Hidden, "namespace flag should be hidden after removeHelmPluginFlags")
+
+	// Test idempotency (calling again shouldn't error or change state)
+	removeHelmPluginFlags(cmd)
+	assert.True(t, cmd.PersistentFlags().Lookup("release-name").Hidden, "release-name flag should remain hidden")
+	assert.True(t, cmd.PersistentFlags().Lookup("namespace").Hidden, "namespace flag should remain hidden")
+}

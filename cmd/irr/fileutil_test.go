@@ -274,6 +274,7 @@ func TestGetCommandContext(t *testing.T) {
 
 		// Verify the retrieved context contains the expected value
 		assert.Equal(t, expectedValue, retrievedCtx.Value(key), "Retrieved context should contain the value set on the command")
+		assert.Same(t, ctx, retrievedCtx, "Should return the exact context set on the command")
 	})
 
 	t.Run("command has no context", func(t *testing.T) {
@@ -286,6 +287,7 @@ func TestGetCommandContext(t *testing.T) {
 		// Verify it returns a background context (cannot directly compare background contexts,
 		// but we can check it's non-nil and perhaps that it doesn't contain our test value)
 		assert.NotNil(t, retrievedCtx, "Should return a non-nil context")
+		assert.Equal(t, context.Background(), retrievedCtx, "Should return context.Background() when command context is nil")
 		// Check that it doesn't contain a specific value, implying it's likely background
 		type contextKey string
 		key := contextKey("testKey")
