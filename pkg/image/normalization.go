@@ -5,8 +5,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/distribution/reference"
-	"github.com/lalbers/irr/pkg/log"
+	distref "github.com/distribution/reference"
+	"github.com/lucas-albers-lz4/irr/pkg/log"
 )
 
 const (
@@ -161,7 +161,7 @@ func NormalizeImageReference(ref *Reference) {
 	}
 
 	// Parse using the library's normalization function
-	named, err := reference.ParseNormalizedNamed(refStr)
+	named, err := distref.ParseNormalizedNamed(refStr)
 	if err != nil {
 		// If there's a parsing error, fall back to manual normalization
 		log.Debug("Warning: ParseNormalizedNamed failed for '%s'", "value", refStr)
@@ -193,11 +193,11 @@ func NormalizeImageReference(ref *Reference) {
 		log.Debug("Successfully normalized to", "value", named.String())
 
 		// Extract normalized components
-		ref.Registry = reference.Domain(named)
-		ref.Repository = reference.Path(named)
+		ref.Registry = distref.Domain(named)
+		ref.Repository = distref.Path(named)
 
 		// Extract tag/digest
-		if taggedRef, isTagged := named.(reference.Tagged); isTagged {
+		if taggedRef, isTagged := named.(distref.Tagged); isTagged {
 			ref.Tag = taggedRef.Tag()
 			log.Debug("Normalized tag", "value", ref.Tag)
 		} else if ref.Digest == "" {
@@ -206,7 +206,7 @@ func NormalizeImageReference(ref *Reference) {
 			log.Debug("No tag or digest after normalization, defaulting to %s", defaultTag)
 		}
 
-		if digestedRef, isDigested := named.(reference.Digested); isDigested {
+		if digestedRef, isDigested := named.(distref.Digested); isDigested {
 			ref.Digest = digestedRef.Digest().String()
 			log.Debug("Normalized digest", "digest", ref.Digest)
 		}
