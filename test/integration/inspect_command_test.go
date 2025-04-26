@@ -402,7 +402,11 @@ func TestInspectCommand_HelmMode(t *testing.T) {
 	assert.Contains(t, stderr, "IRR running as Helm plugin", "Stderr should contain log indicating Helm plugin mode")
 	assert.Contains(t, stderr, "Running inspect in Helm plugin mode for release", "Stderr should contain log attempting Helm release inspection")
 	// Check for a specific error related to fetching the release (might vary)
-	assert.Contains(t, stderr, "release: not found", "Stderr should indicate failure to get the Helm release (release: not found)")
+	// Check if stderr contains either the "release not found" error (common locally) or the "cluster unreachable" error (common in CI)
+	assert.True(t,
+		strings.Contains(stderr, "release: not found") || strings.Contains(stderr, "Kubernetes cluster unreachable"),
+		"Stderr should indicate failure to get the Helm release (either 'release: not found' or 'Kubernetes cluster unreachable')",
+	)
 
 	// Stdout might be empty or contain partial info depending on where the error occurred
 	_ = stdout // Avoid unused variable error
