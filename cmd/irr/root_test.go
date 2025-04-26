@@ -9,8 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lalbers/irr/pkg/log"
-	"github.com/lalbers/irr/pkg/testutil"
+	log "github.com/lucas-albers-lz4/irr/pkg/log"
+	"github.com/lucas-albers-lz4/irr/pkg/testutil"
+	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -18,14 +19,14 @@ import (
 
 func TestRootCommand_NoSubcommand(t *testing.T) {
 	cmd := getRootCmd() // Use the helper from test_helpers_test.go
-	_, err := executeCommand(cmd)
+	_, _, err := executeCommand(cmd)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "a subcommand is required")
 }
 
 func TestRootCommand_Help(t *testing.T) {
 	cmd := getRootCmd()
-	output, err := executeCommand(cmd, "help")
+	output, _, err := executeCommand(cmd, "help")
 	assert.NoError(t, err)
 	assert.Contains(t, output, "irr (Image Relocation and Rewrite) is a tool")
 }
@@ -242,7 +243,7 @@ func TestRootCommandRunWithNoArgs(t *testing.T) {
 
 func TestVersionCommand(t *testing.T) {
 	cmd := getRootCmd()
-	output, err := executeCommand(cmd, "--version") // Use --version flag
+	output, _, err := executeCommand(cmd, "--version") // Use --version flag
 	require.NoError(t, err, "Command execution failed")
 
 	// Verify the stdout output contains the version string
@@ -305,7 +306,7 @@ func TestRootCmdExecution(t *testing.T) {
 	// Example Test using executeCommand (modify as needed for actual tests)
 	t.Run("HelpCommand", func(t *testing.T) {
 		cmd := getRootCmd() // Get the root command instance
-		output, err := executeCommand(cmd, "--help")
+		output, _, err := executeCommand(cmd, "--help")
 
 		assert.NoError(t, err, "Executing --help should not produce an error")
 		assert.Contains(t, output, "Usage:", "Help output should contain Usage information")
@@ -495,3 +496,41 @@ It also supports linting image references for potential issues.`,
 // Note: Assumes executeCommand captures both stdout and stderr where logs might appear.
 // If logs go ONLY to stderr and executeCommand merges, these tests should work.
 // If logs go to a specific file or logger needs redirection for testing, setup might be more complex.
+
+func TestSetFs(t *testing.T) {
+	// 1. Store the original filesystem
+	originalFs := AppFs
+
+	// 2. Create a new mock filesystem
+	mockFs := afero.NewMemMapFs()
+
+	// 3. Call SetFs with the mock filesystem
+	restoreFunc := SetFs(mockFs)
+
+	// 4. Assert that the global AppFs is now the mock filesystem
+	assert.Equal(t, mockFs, AppFs, "AppFs should be replaced with the mock filesystem")
+
+	// 5. Call the restore function
+	restoreFunc()
+
+	// 6. Assert that the global AppFs is restored to the original filesystem
+	assert.Equal(t, originalFs, AppFs, "AppFs should be restored to the original filesystem")
+}
+
+func TestExitCodeErrorMethods(t *testing.T) {
+	// Create a sample error
+	originalErr := errors.New("this is the original error message")
+	expectedExitCode := 42
+
+	// Create an ExitCodeError instance
+	exitErr := &ExitCodeError{
+		err:      originalErr,
+		exitCode: expectedExitCode,
+	}
+
+	// Test the Error() method
+	assert.Equal(t, originalErr.Error(), exitErr.Error(), "Error() method should return the wrapped error string")
+
+	// Test the ExitCode() method
+	assert.Equal(t, expectedExitCode, exitErr.ExitCode(), "ExitCode() method should return the stored exit code")
+}
