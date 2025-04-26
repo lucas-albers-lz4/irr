@@ -623,7 +623,9 @@ func (h *TestHarness) ExecuteIRR(envOverrides map[string]string, args ...string)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	h.logger.Info(fmt.Sprintf("Executing command: %s %v (env: %v)", cmd.Path, cmd.Args, cmd.Env))
+	// Log the command being executed (excluding environment variables for brevity)
+	h.logger.Info("Executing command", "command", cmd.Path, "args", cmd.Args)
+
 	err = cmd.Run()
 
 	stdoutStr := stdout.String()
@@ -658,7 +660,9 @@ func (h *TestHarness) ExecuteIRRWithStderr(envOverrides map[string]string, args 
 	cmd.Stdout = &stdoutBuf
 	cmd.Stderr = &stderrBuf
 
-	h.logger.Info(fmt.Sprintf("Executing command (capturing stderr): %s %v (env: %v)", cmd.Path, cmd.Args, cmd.Env))
+	// Log the command being executed (excluding environment variables for brevity)
+	h.logger.Info("Executing command (capturing stderr)", "command", cmd.Path, "args", cmd.Args)
+
 	err = cmd.Run()
 
 	stdout = stdoutBuf.String()
