@@ -517,7 +517,7 @@ func outputRegistryConfigSuggestion(chartPath string, registries map[string]bool
 
 // inspectHelmRelease handles inspection when a release name is provided (plugin mode)
 func inspectHelmRelease(cmd *cobra.Command, flags *InspectFlags, releaseName, namespace string) error {
-	log.Debug("Running inspect in Helm plugin mode for release", releaseName, "in namespace", namespace)
+	log.Debug("Running inspect in Helm plugin mode for release", "release", releaseName, "namespace", namespace)
 
 	helmAdapter, err := helmAdapterFactory() // Get adapter (potentially mocked)
 	if err != nil {
@@ -532,7 +532,7 @@ func inspectHelmRelease(cmd *cobra.Command, flags *InspectFlags, releaseName, na
 	}
 
 	// Get release values
-	log.Debug("Getting values for release", releaseName)
+	log.Debug("Getting values for release", "release", releaseName)
 	releaseValues, err := helmAdapter.GetReleaseValues(context.Background(), releaseName, namespace)
 	if err != nil {
 		return &exitcodes.ExitCodeError{ // Wrap error if needed

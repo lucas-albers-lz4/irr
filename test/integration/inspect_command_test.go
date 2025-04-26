@@ -369,3 +369,41 @@ spec:
 		assert.Contains(t, stdout, "library")
 	})
 }
+
+// TestInspectCommand_HelmMode simulates running inspect as a Helm plugin.
+func TestInspectCommand_HelmMode(t *testing.T) {
+	releaseName := "inspect-helm-mode-release"
+	namespace := "helm-mode-ns"
+
+	h := NewTestHarness(t)
+	defer h.Cleanup()
+
+	// Define environment variables to simulate Helm plugin environment
+	env := map[string]string{
+		"HELM_BIN":        "helm",
+		"HELM_PLUGIN_DIR": "/fake/plugins/irr",
+		"HELM_NAMESPACE":  namespace, // Set the namespace env var too
+		// Add other relevant Helm env vars if needed for the specific code path
+	}
+
+	// Test: Run inspect command with release name and namespace args
+	// We expect this to FAIL because there's no real Tiller/Kubernetes to get the release from.
+	// However, we want to verify it TRIED to run in plugin mode.
+	args := []string{
+		"inspect",
+		releaseName,
+		"--namespace", namespace, // Also pass flag, though env var might take precedence depending on logic
+		"--log-level=debug", // Enable debug logs to check behavior
+	}
+	stdout, stderr, err := h.ExecuteIRRWithStderr(env, args...)
+
+	// Assertions
+	require.Error(t, err, "irr inspect in Helm mode should fail without a real Helm environment")
+	assert.Contains(t, stderr, "IRR running as Helm plugin", "Stderr should contain log indicating Helm plugin mode")
+	assert.Contains(t, stderr, "Running inspect in Helm plugin mode for release", "Stderr should contain log attempting Helm release inspection")
+	// Check for a specific error related to fetching the release (might vary)
+	assert.Contains(t, stderr, "release: not found", "Stderr should indicate failure to get the Helm release (release: not found)")
+
+	// Stdout might be empty or contain partial info depending on where the error occurred
+	_ = stdout // Avoid unused variable error
+}
