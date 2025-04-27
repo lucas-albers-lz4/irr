@@ -95,7 +95,7 @@ func (a *Adapter) InspectRelease(ctx context.Context, releaseName, namespace, ou
 	}
 
 	// Get chart metadata for the release
-	chartMeta, err := a.helmClient.GetReleaseChart(ctx, releaseName, namespace)
+	chartMeta, err := a.helmClient.GetChartFromRelease(ctx, releaseName, namespace)
 	if err != nil {
 		return fmt.Errorf("failed to get chart metadata for release %q: %w", releaseName, err)
 	}
@@ -200,7 +200,7 @@ func (a *Adapter) OverrideRelease(ctx context.Context, releaseName, namespace st
 	}
 
 	// Get chart metadata for the release (needed for fallback path)
-	chartMeta, err := a.helmClient.GetReleaseChart(ctx, releaseName, namespace)
+	chartMeta, err := a.helmClient.GetChartFromRelease(ctx, releaseName, namespace)
 	if err != nil {
 		return "", fmt.Errorf("failed to get release chart metadata before override: %w", err)
 	}
@@ -417,7 +417,7 @@ func (a *Adapter) ValidateRelease(ctx context.Context, releaseName, namespace st
 	}
 
 	// Get chart metadata for the release
-	chartMeta, err := a.helmClient.GetReleaseChart(ctx, releaseName, namespace)
+	chartMeta, err := a.helmClient.GetChartFromRelease(ctx, releaseName, namespace)
 	if err != nil {
 		return fmt.Errorf("failed to get chart metadata for release %q: %w", releaseName, err)
 	}
@@ -476,7 +476,7 @@ func (a *Adapter) ValidateRelease(ctx context.Context, releaseName, namespace st
 	}
 
 	// Perform validation by templating
-	_, err = a.helmClient.TemplateChart(ctx, releaseName, chartPath, values, namespace, kubeVersion)
+	_, err = a.helmClient.TemplateChart(ctx, releaseName, namespace, chartPath, values)
 	if err != nil {
 		// If templating fails with a "Chart.yaml file is missing" error, try to handle it
 		if strings.Contains(err.Error(), "Chart.yaml file is missing") {
@@ -490,7 +490,7 @@ func (a *Adapter) ValidateRelease(ctx context.Context, releaseName, namespace st
 					log.Info("Found alternative chart path: %s", altPath)
 
 					// Try templating again with the new path
-					_, err = a.helmClient.TemplateChart(ctx, releaseName, altPath, values, namespace, kubeVersion)
+					_, err = a.helmClient.TemplateChart(ctx, releaseName, namespace, altPath, values)
 					if err == nil {
 						// Success with alternative path!
 						log.Info("Successfully validated chart with alternative path")
@@ -730,7 +730,7 @@ func (a *Adapter) GetReleaseValues(ctx context.Context, releaseName, namespace s
 
 // GetChartFromRelease retrieves the chart metadata associated with a deployed release, wrapping potential errors.
 func (a *Adapter) GetChartFromRelease(ctx context.Context, releaseName, namespace string) (*ChartMetadata, error) {
-	chartMetadata, err := a.helmClient.GetReleaseChart(ctx, releaseName, namespace)
+	chartMetadata, err := a.helmClient.GetChartFromRelease(ctx, releaseName, namespace)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get release chart metadata via adapter: %w", err)
 	}
