@@ -19,6 +19,16 @@ const (
 // Variable for exec.Command to support mocking in tests
 var execCommand = exec.Command
 
+// parseHelmVersionString extracts the core semantic version (e.g., "3.14.2")
+// from the typical output of `helm version --short` (e.g., "v3.14.2+g0e1f115").
+// It removes the leading 'v' and any build metadata suffix starting with '+'.
+func parseHelmVersionString(versionStr string) string {
+	parsed := strings.TrimSpace(versionStr)
+	parsed = strings.TrimPrefix(parsed, "v")
+	parsed = strings.Split(parsed, "+")[0]
+	return parsed
+}
+
 // CheckHelmVersion checks if the installed Helm version meets our requirements
 func CheckHelmVersion() error {
 	// Get Helm version
@@ -31,10 +41,8 @@ func CheckHelmVersion() error {
 		}
 	}
 
-	// Parse version string (e.g., "v3.14.2+g0e1f115")
-	version := strings.TrimSpace(string(output))
-	version = strings.TrimPrefix(version, "v")
-	version = strings.Split(version, "+")[0]
+	// Parse version string
+	version := parseHelmVersionString(string(output))
 
 	// Compare versions
 	if !isVersionGreaterOrEqual(version, MinHelmVersion) {

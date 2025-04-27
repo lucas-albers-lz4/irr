@@ -108,8 +108,8 @@ func TestIsVersionGreaterOrEqual(t *testing.T) {
 	}
 }
 
-// Test version string parsing helpers
-func TestVersionStringParsing(t *testing.T) {
+// TestParseHelmVersionString tests the helper function for parsing helm version strings.
+func TestParseHelmVersionString(t *testing.T) {
 	testCases := []struct {
 		name     string
 		input    string
@@ -131,30 +131,42 @@ func TestVersionStringParsing(t *testing.T) {
 			expected: "3.14.2",
 		},
 		{
+			name:     "only version number",
+			input:    "3.14.2",
+			expected: "3.14.2",
+		},
+		{
+			name:     "with leading/trailing spaces",
+			input:    "  v3.14.2+foo  ",
+			expected: "3.14.2",
+		},
+		{
 			name:     "empty string",
 			input:    "",
+			expected: "",
+		},
+		{
+			name:     "just v",
+			input:    "v",
+			expected: "",
+		},
+		{
+			name:     "just metadata",
+			input:    "+meta",
+			expected: "",
+		},
+		{
+			name:     "v plus metadata",
+			input:    "v+meta",
 			expected: "",
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Extract version prefix (v)
-			result := tc.input
-			if result != "" && result[0] == 'v' {
-				result = result[1:]
-			}
-
-			// Extract base version (before +)
-			for i, c := range result {
-				if c == '+' {
-					result = result[:i]
-					break
-				}
-			}
-
+			result := parseHelmVersionString(tc.input)
 			if result != tc.expected {
-				t.Errorf("parsing %q = %q, want %q", tc.input, result, tc.expected)
+				t.Errorf("parseHelmVersionString(%q) = %q, want %q", tc.input, result, tc.expected)
 			}
 		})
 	}
