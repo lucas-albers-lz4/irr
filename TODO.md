@@ -191,5 +191,10 @@ Enhance the analyzer to correctly process subcharts by replicating Helm's value 
 - [ ] **[P0]** **Update/Add Unit Test:** Enhance `TestRunInspect` or add a new specific test case for `inspect -A --generate-config-skeleton` that:
     - Mocks multiple releases with a diverse set of unique registries (similar to the identified bug scenario).
     - Verifies that the generated skeleton file content includes *all* expected unique registries.
-- [ ] **[P0]** **Manual Verification:** Re-run the command sequences that revealed the bug (`helm list ... | bash -x` vs `inspect -A --generate...`) to confirm the fix.
+- [ ] **[P0]** **Manual Verification:** Re-run the command sequences that revealed the bug to confirm the fix.
+    - Example: Compare the JSON output of  
+      `helm list -A --no-headers | awk '{print "helm irr inspect", $1, "-n", $2, "--output-format json" }' | bash -x'`  
+      (individual) vs  
+      `helm inspect -A --generate-config-skeleton`  
+      (aggregated). The aggregated run should include all registries found in the individual runs.
 
