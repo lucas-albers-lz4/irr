@@ -82,55 +82,36 @@ func NewHelmClient() (*RealHelmClient, error) {
 func (c *RealHelmClient) GetReleaseValues(_ context.Context, releaseName, namespace string) (map[string]interface{}, error) {
 	log.Debug("Getting release values", "release", releaseName, "namespace", namespace)
 
-	// Configure namespace
-	if namespace == "" {
-		namespace = c.settings.Namespace()
+	// Ensure namespace is set (use default from settings if empty)
+	originalNamespace := c.settings.Namespace()
+	targetNamespace := namespace
+	if targetNamespace == "" {
+		targetNamespace = originalNamespace
+		log.Debug("Namespace not provided, using default from settings", "namespace", targetNamespace)
 	}
 
-	// Create a new get values action
+	// Temporarily set the namespace in the shared settings
+	c.settings.SetNamespace(targetNamespace)
+	// Ensure original namespace is restored
+	defer c.settings.SetNamespace(originalNamespace)
+	// Re-initialize the shared actionConfig with the temporary namespace setting
+	// (This assumes initializeActionConfig uses the current c.settings.Namespace)
+	if err := c.initializeActionConfig(); err != nil {
+		return nil, fmt.Errorf("failed to re-initialize helm action config for GetReleaseValues (ns: %s): %w", targetNamespace, err)
+	}
+
+	// Create a new get values action using the (now hopefully correctly scoped) shared actionConfig
 	client := action.NewGetValues(c.actionConfig)
 	client.AllValues = true // Get both user-supplied and computed values
 
 	// Execute the get values action
 	values, err := client.Run(releaseName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get values for release %q in namespace %q: %w", releaseName, namespace, err)
+		// Use the target namespace in the error message
+		return nil, fmt.Errorf("failed to get values for release %q in namespace %q: %w", releaseName, targetNamespace, err)
 	}
 
 	return values, nil
-}
-
-// GetReleaseChart fetches chart metadata from an installed Helm release
-func (c *RealHelmClient) GetReleaseChart(_ context.Context, releaseName, namespace string) (*ChartMetadata, error) {
-	log.Debug("Getting release chart info", "release", releaseName, "namespace", namespace)
-
-	// Configure namespace
-	if namespace == "" {
-		namespace = c.settings.Namespace()
-	}
-
-	// Create a new get action
-	client := action.NewGet(c.actionConfig)
-
-	// Execute the get action
-	release, err := client.Run(releaseName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get release %q in namespace %q: %w", releaseName, namespace, err)
-	}
-
-	// Extract chart metadata
-	meta := &ChartMetadata{
-		Name:    release.Chart.Metadata.Name,
-		Version: release.Chart.Metadata.Version,
-	}
-
-	// Extract repository if available
-	for _, url := range release.Chart.Metadata.Sources {
-		meta.Repository = url
-		break // Just use the first source URL as repository
-	}
-
-	return meta, nil
 }
 
 // TemplateChart renders the templates for a given chart and values.
@@ -253,7 +234,7 @@ func IsReleaseNotFoundError(err error) bool {
 	return errors.Is(err, driver.ErrReleaseNotFound)
 }
 
-// FindChartForRelease locates the chart path for a given Helm release.
+// FindChartForRelease locates the chart source corresponding to a deployed Helm release.
 func (c *RealHelmClient) FindChartForRelease(_ context.Context, releaseName, namespace string) (string, error) {
 	// First, get the release info to find the chart metadata
 	// We need a config for the 'get' action
@@ -296,14 +277,14 @@ func (c *RealHelmClient) FindChartForRelease(_ context.Context, releaseName, nam
 	return chartPath, nil
 }
 
-// ValidateRelease validates a Helm release against provided override files
+// ValidateRelease validates a release with overrides.
 func (c *RealHelmClient) ValidateRelease(_ context.Context, _, _ string, _ []string, _ string) error {
 	// Placeholder implementation until fully defined
 	log.Warn("ValidateRelease is not fully implemented yet.")
 	return nil // Added missing return
 }
 
-// getActionConfig returns a new action configuration for the given namespace
+// getActionConfig gets the action configuration, possibly initializing it.
 func (c *RealHelmClient) getActionConfig(namespace string) (*action.Configuration, error) {
 	cfg := new(action.Configuration)
 
@@ -321,7 +302,54 @@ func (c *RealHelmClient) getActionConfig(namespace string) (*action.Configuratio
 	return cfg, nil
 }
 
-// GetChartFromRelease is an alias for GetReleaseChart that follows the interface naming
-func (c *RealHelmClient) GetChartFromRelease(ctx context.Context, releaseName, namespace string) (*ChartMetadata, error) {
-	return c.GetReleaseChart(ctx, releaseName, namespace)
+// GetChartFromRelease fetches chart metadata from an installed Helm release
+func (c *RealHelmClient) GetChartFromRelease(_ context.Context, releaseName, namespace string) (*ChartMetadata, error) {
+	log.Debug("Getting release chart info", "release", releaseName, "namespace", namespace)
+
+	// Ensure namespace is set (use default from settings if empty)
+	originalNamespace := c.settings.Namespace()
+	targetNamespace := namespace
+	if targetNamespace == "" {
+		targetNamespace = originalNamespace
+		log.Debug("Namespace not provided, using default from settings", "namespace", targetNamespace)
+	}
+
+	// Temporarily set the namespace in the shared settings
+	c.settings.SetNamespace(targetNamespace)
+	// Ensure original namespace is restored
+	defer c.settings.SetNamespace(originalNamespace)
+	// Re-initialize the shared actionConfig with the temporary namespace setting
+	if err := c.initializeActionConfig(); err != nil {
+		return nil, fmt.Errorf("failed to re-initialize helm action config for GetChartFromRelease (ns: %s): %w", targetNamespace, err)
+	}
+
+	// Create a new get action using the (now hopefully correctly scoped) shared actionConfig
+	client := action.NewGet(c.actionConfig)
+
+	// Execute the get action
+	release, err := client.Run(releaseName)
+	if err != nil {
+		// Use the target namespace in the error message
+		return nil, fmt.Errorf("failed to get release %q in namespace %q: %w", releaseName, targetNamespace, err)
+	}
+
+	// Extract chart metadata
+	if release.Chart == nil || release.Chart.Metadata == nil {
+		return nil, fmt.Errorf("chart or chart metadata not found for release %q in namespace %q", releaseName, targetNamespace)
+	}
+	meta := &ChartMetadata{
+		Name:    release.Chart.Metadata.Name,
+		Version: release.Chart.Metadata.Version,
+	}
+
+	// Extract repository if available
+	// Check if Sources field exists and is not empty
+	if len(release.Chart.Metadata.Sources) > 0 {
+		meta.Repository = release.Chart.Metadata.Sources[0]
+		log.Debug("Extracted repository from chart sources", "repository", meta.Repository)
+	} else {
+		log.Debug("No repository found in chart sources")
+	}
+
+	return meta, nil
 }

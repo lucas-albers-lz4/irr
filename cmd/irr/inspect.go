@@ -1254,9 +1254,16 @@ func processAllReleases(releases []*helm.ReleaseElement, helmAdapter *helm.Adapt
 		allResults = append(allResults, result) // Keep the potentially filtered result for output
 
 		// Accumulate unique registries FROM THE UNFILTERED IMAGES for skeleton generation
-		for _, img := range unfilteredImages {
+		log.Debug("Processing release for skeleton registry aggregation", "release", release.Name, "namespace", release.Namespace, "unfiltered_image_count", len(unfilteredImages))
+		for _, img := range unfilteredImages { // Use the unfiltered list here
+			log.Debug("Checking image registry for skeleton set", "registry", img.Registry, "source_path", img.Source)
 			if img.Registry != "" { // Ensure we don't add empty registries
-				uniqueRegistries[img.Registry] = true
+				if !uniqueRegistries[img.Registry] {
+					log.Debug("Adding new unique registry to skeleton set", "registry", img.Registry)
+				}
+				uniqueRegistries[img.Registry] = true // Add registry to the map
+			} else {
+				log.Debug("Skipping image with empty registry for skeleton set", "source_path", img.Source, "repository", img.Repository)
 			}
 		}
 	}

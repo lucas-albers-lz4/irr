@@ -24,14 +24,35 @@ func (c *RealHelmClient) LoadChart(chartPath string) (*helmChart.Chart, error) {
 
 // ListReleases lists Helm releases using the actual Helm SDK.
 func (c *RealHelmClient) ListReleases(_ context.Context, allNamespaces bool) ([]*ReleaseElement, error) {
-	// Ensure actionConfig is initialized
-	if c.actionConfig == nil {
-		if err := c.initializeActionConfig(); err != nil {
-			return nil, fmt.Errorf("helm action config initialization failed: %w", err)
-		}
+	log.Debug("Listing releases", "allNamespaces", allNamespaces)
+
+	// Create a new action config for this specific list operation
+	actionConfig := new(action.Configuration)
+
+	// Determine the namespace for initialization
+	// If listing all namespaces, initialize with an empty namespace string.
+	// Otherwise, use the namespace from settings.
+	initNamespace := c.settings.Namespace()
+	if allNamespaces {
+		log.Debug("Initializing Helm action config for all namespaces (namespace=\"\")")
+		initNamespace = ""
+	} else {
+		log.Debug("Initializing Helm action config for specific namespace", "namespace", initNamespace)
 	}
 
-	listAction := action.NewList(c.actionConfig)
+	// Create a logger function for Helm
+	helmLogger := func(format string, args ...interface{}) {
+		logMsg := fmt.Sprintf(format, args...)
+		log.Debug("[Helm SDK] " + logMsg)
+	}
+
+	// Initialize the action config for this specific operation
+	if err := actionConfig.Init(c.settings.RESTClientGetter(), initNamespace, os.Getenv("HELM_DRIVER"), helmLogger); err != nil {
+		return nil, fmt.Errorf("failed to init helm action config for ListReleases: %w", err)
+	}
+
+	// Create and configure the list action
+	listAction := action.NewList(actionConfig) // Use the specifically initialized config
 	listAction.AllNamespaces = allNamespaces
 	listAction.SetStateMask() // List deployed and failed states by default
 	log.Debug("Running Helm list action", "allNamespaces", allNamespaces)
@@ -60,28 +81,41 @@ func (c *RealHelmClient) ListReleases(_ context.Context, allNamespaces bool) ([]
 }
 
 // initializeActionConfig ensures the actionConfig is ready.
+// NOTE: This might be less relevant now if ListReleases initializes its own config.
 func (c *RealHelmClient) initializeActionConfig() error {
+	// If GetReleaseValues/GetChartFromRelease are calling this after setting c.settings.Namespace,
+	// then this initialization *should* pick up the correct temporary namespace.
+	// We log the namespace being used here to confirm.
+	currentNamespaceSetting := c.settings.Namespace()
+	log.Debug("Initializing/Re-initializing shared Helm action config", "namespace_used", currentNamespaceSetting)
+
 	if c.actionConfig == nil {
-		log.Debug("Initializing Helm action config...")
+		log.Debug("Action config was nil, creating new.")
 		c.actionConfig = new(action.Configuration)
-
-		// Use the stored settings if available
-		if c.settings == nil {
-			log.Warn("Helm settings not available during action config initialization, using defaults")
-			c.settings = cli.New()
-		}
-
-		// Create a logger function for Helm
-		helmLogger := func(format string, args ...interface{}) {
-			logMsg := fmt.Sprintf(format, args...)
-			log.Debug("[Helm SDK] " + logMsg)
-		}
-
-		// Initialize the action config
-		if err := c.actionConfig.Init(c.settings.RESTClientGetter(), c.settings.Namespace(), os.Getenv("HELM_DRIVER"), helmLogger); err != nil {
-			return fmt.Errorf("failed to init helm action config: %w", err)
-		}
+	} else {
+		log.Debug("Action config exists, re-initializing.")
+		// Potentially clear or reset parts of actionConfig if re-init is needed, although Init should handle it.
 	}
+
+	// Use the stored settings if available
+	if c.settings == nil {
+		log.Warn("Helm settings not available during action config initialization, using defaults")
+		c.settings = cli.New()
+		currentNamespaceSetting = c.settings.Namespace() // Update if settings were just created
+		log.Debug("Default settings created", "default_namespace", currentNamespaceSetting)
+	}
+
+	// Create a logger function for Helm
+	helmLogger := func(format string, args ...interface{}) {
+		logMsg := fmt.Sprintf(format, args...)
+		log.Debug("[Helm SDK] " + logMsg)
+	}
+
+	// Initialize the action config using the current namespace from settings
+	if err := c.actionConfig.Init(c.settings.RESTClientGetter(), currentNamespaceSetting, os.Getenv("HELM_DRIVER"), helmLogger); err != nil {
+		return fmt.Errorf("failed to init/re-init helm action config (ns: %s): %w", currentNamespaceSetting, err)
+	}
+	log.Debug("Action config initialized/re-initialized successfully", "namespace_used", currentNamespaceSetting)
 	return nil
 }
 
