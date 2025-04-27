@@ -177,20 +177,18 @@ Enhance the analyzer to correctly process subcharts by replicating Helm's value 
 - [✓] **[COMPLETED]** **Testing Edge Cases:** Ensure test data includes releases with no images, only private/excluded registries, and malformed values.
 - [✓] **[COMPLETED]** **Documentation Example:** Include a sample of the generated skeleton file (with comments) in the documentation.
 
-### Phase 14.7: Fix Skeleton Generation for --all-namespaces [BUG]
+### Phase 14.7: Fix Skeleton Generation for --all-namespaces [BUG] [COMPLETED]
 
 **Goal:** Ensure `inspect -A --generate-config-skeleton` produces a complete skeleton file including *all* unique registries found across *all* analyzed releases.
 
 **Problem:**
-- Current implementation produces an incomplete skeleton file when using `-A`.
-- Registries identified during individual release analysis (e.g., `registry.k8s.io`, `harbor.home.arpa`, `gcr.io`, `ghcr.io` in the test case) are missing from the final aggregated skeleton file.
+- Current implementation produced an incomplete skeleton file when using `-A`.
+- Registries identified during individual release analysis were missing from the final aggregated skeleton file.
 
 **Implementation Steps:**
-- [ ] **[P0]** **Investigate Aggregation Logic:** Review the `processAllReleases` function and potentially the `createConfigSkeleton` function to identify where unique registries are being lost or incorrectly aggregated when the `-A` flag is used.
-- [ ] **[P0]** **Correct Aggregation:** Modify the logic to ensure that the set of registries used for skeleton generation accurately reflects all unique registries found across *all* successfully analyzed releases in the `-A` workflow.
-- [ ] **[P0]** **Update/Add Unit Test:** Enhance `TestRunInspect` or add a new specific test case for `inspect -A --generate-config-skeleton` that:
-    - Mocks multiple releases with a diverse set of unique registries (similar to the identified bug scenario).
-    - Verifies that the generated skeleton file content includes *all* expected unique registries.
+- [x] **[P0]** **Investigate Aggregation Logic:** Reviewed `processAllReleases`, `analyzeRelease`, `createConfigSkeleton`. Identified issue where `--source-registries` filtering in `analyzeRelease` incorrectly removed images needed for aggregation.
+- [x] **[P0]** **Correct Aggregation:** Modified `analyzeRelease` to return original unfiltered images alongside the filtered analysis result. Updated `processAllReleases` to use the unfiltered images for registry aggregation.
+- [x] **[P0]** **Update/Add Unit Test:** Added `TestInspectAllNamespacesSkeleton` to `cmd/irr/inspect_test.go` with Helm interaction mocks to verify correct aggregation from multiple releases, including error cases and sorted output.
 - [ ] **[P0]** **Manual Verification:** Re-run the command sequences that revealed the bug to confirm the fix.
     - Example: Compare the JSON output of  
       `helm list -A --no-headers | awk '{print "helm irr inspect", $1, "-n", $2, "--output-format json" }' | bash -x'`  
