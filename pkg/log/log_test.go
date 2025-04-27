@@ -118,14 +118,16 @@ func TestSetAndCurrentLevel(t *testing.T) {
 }
 
 func TestLevelBasedFiltering(t *testing.T) {
-	// No need to save/restore global level as we won't modify it.
-	// originalLevel := CurrentLevel()
-	// defer SetLevel(originalLevel)
+	// Save the original level and output to restore after test
+	originalLevel := CurrentLevel()
+	var buf bytes.Buffer
+	restoreOutput := SetOutput(&buf) // Capture output from the global logger
+	defer restoreOutput()
+	defer SetLevel(originalLevel) // Restore level last
 
 	tests := []struct {
-		name     string
-		setLevel slog.Level
-		// Remove logFuncs map, we'll call logger methods directly
+		name       string
+		setLevel   slog.Level
 		wantOutput map[slog.Level]bool // Map level to expected output status
 	}{
 		{
@@ -172,10 +174,9 @@ func TestLevelBasedFiltering(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a local buffer and logger for this test run
-			var buf bytes.Buffer
-			testHandler := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: tt.setLevel})
-			localLogger := slog.New(testHandler)
+			// Set the global log level
+			SetLevel(tt.setLevel)
+			buf.Reset() // Clear buffer for this test case
 
 			// Map levels to their names for messages
 			levelNames := map[slog.Level]string{
@@ -184,22 +185,32 @@ func TestLevelBasedFiltering(t *testing.T) {
 				slog.LevelWarn:  "Warn",
 				slog.LevelError: "Error",
 			}
+			// Map levels to the corresponding package-level logging function
+			logFuncs := map[slog.Level]func(msg string, args ...any){
+				slog.LevelDebug: Debug,
+				slog.LevelInfo:  Info,
+				slog.LevelWarn:  Warn,
+				slog.LevelError: Error,
+			}
 
-			// Call logger methods directly
-			localLogger.Debug("Test message for Debug", "level", "Debug")
-			localLogger.Info("Test message for Info", "level", "Info")
-			localLogger.Warn("Test message for Warn", "level", "Warn")
-			localLogger.Error("Test message for Error", "level", "Error")
+			// Call the package-level logging functions
+			for level, name := range levelNames {
+				logFunc := logFuncs[level]
+				logFunc(fmt.Sprintf("Test message for %s", name), "level", name)
+			}
 
 			// Assertions based on the buffer content
 			output := buf.String()
 			for level, shouldAppear := range tt.wantOutput {
 				levelName := levelNames[level]
-				uniqueMsgFragment := fmt.Sprintf("msg=\"Test message for %s\"", levelName)
-				expectedLevelSubstr := "level=" + strings.ToUpper(levelName)
+				// Use a unique part of the message for checking presence/absence
+				// Assuming JSON format for simplicity in assertion (default)
+				// Use %q for the message string to handle potential special characters
+				uniqueMsgFragment := fmt.Sprintf(`"msg":%q`, fmt.Sprintf("Test message for %s", levelName))
+				expectedLevelSubstr := fmt.Sprintf(`"level":%q`, strings.ToUpper(levelName))
 
 				if shouldAppear {
-					// Check that *a* line contains both the quoted message fragment and the correct level substring
+					// Check that *a* line contains both the message fragment and the correct level substring
 					found := false
 					for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
 						if strings.Contains(line, uniqueMsgFragment) && strings.Contains(line, expectedLevelSubstr) {
@@ -209,7 +220,7 @@ func TestLevelBasedFiltering(t *testing.T) {
 					}
 					assert.True(t, found, "Expected log for %s was not found at level %s. Output:\n%s", levelName, tt.setLevel, output)
 				} else {
-					// Check that *no* line contains the message fragment (the quoted form)
+					// Check that *no* line contains the specific message fragment
 					assert.NotContains(t, output, uniqueMsgFragment, "Unexpected log for %s was found at level %s. Output:\n%s", levelName, tt.setLevel, output)
 				}
 			}
