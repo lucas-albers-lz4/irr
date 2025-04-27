@@ -14,6 +14,10 @@ import (
 	"helm.sh/helm/v3/pkg/chartutil"
 	"helm.sh/helm/v3/pkg/cli"
 	"helm.sh/helm/v3/pkg/storage/driver"
+
+	// Use local ChartMetadata type, remove pkg/chart import if unused elsewhere
+	// "github.com/lucas-albers-lz4/irr/pkg/chart"
+	helmChart "helm.sh/helm/v3/pkg/chart"
 )
 
 // ChartMetadata contains essential metadata about a chart from a release
@@ -24,20 +28,32 @@ type ChartMetadata struct {
 	Path       string
 }
 
-// ClientInterface abstracts Helm SDK interactions
-// This allows for mocking in tests and clean separation of concerns
+// ClientInterface defines the methods needed for Helm interactions
 type ClientInterface interface {
-	// Release-related operations
-	GetReleaseValues(ctx context.Context, releaseName string, namespace string) (map[string]interface{}, error)
-	GetReleaseChart(ctx context.Context, releaseName string, namespace string) (*ChartMetadata, error)
+	// GetReleaseValues retrieves the computed values for a deployed Helm release.
+	GetReleaseValues(ctx context.Context, releaseName, namespace string) (map[string]interface{}, error)
+	// GetChartFromRelease gets the chart metadata associated with a deployed Helm release.
+	GetChartFromRelease(ctx context.Context, releaseName, namespace string) (*ChartMetadata, error)
+	// FindChartForRelease locates the chart source corresponding to a deployed Helm release.
 	FindChartForRelease(ctx context.Context, releaseName, namespace string) (string, error)
-	ValidateRelease(ctx context.Context, releaseName, namespace string, overrideFiles []string, kubeVersion string) error
-
-	// Chart operations
-	TemplateChart(ctx context.Context, releaseName string, chartPath string, values map[string]interface{}, namespace string, kubeVersion string) (string, error)
+	// TemplateChart renders the templates for a given chart and values.
+	TemplateChart(ctx context.Context, releaseName, namespace, chartPath string, values map[string]interface{}) (string, error)
+	// LoadChart loads a Helm chart from the specified path.
+	LoadChart(chartPath string) (*helmChart.Chart, error)
+	// ListReleases lists Helm releases, optionally across all namespaces.
+	ListReleases(ctx context.Context, allNamespaces bool) ([]*ReleaseElement, error)
 
 	// Environment information
 	GetCurrentNamespace() string
+}
+
+// ReleaseElement represents a single Helm release returned by ListReleases
+// Using a custom struct avoids direct dependency on helm.sh/helm/v3/pkg/release in consumers
+// if only basic info is needed, promoting looser coupling.
+type ReleaseElement struct {
+	Name      string
+	Namespace string
+	// Add other fields from release.Release if needed (e.g., Status, ChartVersion)
 }
 
 // RealHelmClient implements ClientInterface using the actual Helm SDK
@@ -117,8 +133,13 @@ func (c *RealHelmClient) GetReleaseChart(_ context.Context, releaseName, namespa
 	return meta, nil
 }
 
-// TemplateChart renders a chart with the given values
-func (c *RealHelmClient) TemplateChart(_ context.Context, releaseName, chartPath string, values map[string]interface{}, namespace, kubeVersion string) (string, error) {
+// TemplateChart renders the templates for a given chart and values.
+func (c *RealHelmClient) TemplateChart(_ context.Context, releaseName, namespace, chartPath string, values map[string]interface{}) (string, error) {
+	return c.templateChart(context.Background(), releaseName, chartPath, values, namespace, "")
+}
+
+// templateChart is the original implementation with the original signature
+func (c *RealHelmClient) templateChart(_ context.Context, releaseName, chartPath string, values map[string]interface{}, namespace, kubeVersion string) (string, error) {
 	log.Debug("Templating chart", "chartPath", chartPath, "release", releaseName, "namespace", namespace)
 
 	// --- Capture Helm SDK logs ---
@@ -298,4 +319,9 @@ func (c *RealHelmClient) getActionConfig(namespace string) (*action.Configuratio
 		return nil, fmt.Errorf("failed to initialize Helm action config: %w", err)
 	}
 	return cfg, nil
+}
+
+// GetChartFromRelease is an alias for GetReleaseChart that follows the interface naming
+func (c *RealHelmClient) GetChartFromRelease(ctx context.Context, releaseName, namespace string) (*ChartMetadata, error) {
+	return c.GetReleaseChart(ctx, releaseName, namespace)
 }
