@@ -48,9 +48,7 @@ type CompatibilityConfig struct {
 	IgnoreEmptyFields bool `yaml:"ignoreEmptyFields,omitempty"`
 }
 
-// LoadStructuredConfig loads registry mappings from a YAML file using the new structured format.
-// It returns a Config struct representing the parsed configuration, which can be converted
-// to the legacy map[string]string format if needed for backward compatibility.
+// LoadStructuredConfig loads registry mappings from a YAML file using the structured format.
 func LoadStructuredConfig(fs afero.Fs, path string, skipCWDRestriction bool) (*Config, error) {
 	// Validate file path
 	if err := validateConfigFilePath(fs, path, skipCWDRestriction); err != nil {
@@ -85,7 +83,7 @@ func LoadStructuredConfig(fs afero.Fs, path string, skipCWDRestriction bool) (*C
 func validateStructuredConfig(config *Config, path string) error {
 	// Check if the mappings list itself is empty (expected by TestLoadStructuredConfig/empty_mappings)
 	if len(config.Registries.Mappings) == 0 {
-		return fmt.Errorf("mappings file is empty: %s", path) // Match test expectation
+		return fmt.Errorf("failed to parse mappings file: mappings section is empty in %s", path) // Updated error message
 	}
 
 	// Check for duplicate source entries
@@ -155,20 +153,6 @@ func validateStructuredConfig(config *Config, path string) error {
 	return nil
 }
 
-// ConvertToLegacyFormat converts a structured Config to the legacy flat map[string]string format
-func ConvertToLegacyFormat(config *Config) map[string]string {
-	result := make(map[string]string)
-
-	// Only process enabled mappings
-	for _, mapping := range config.Registries.Mappings {
-		if mapping.Enabled {
-			result[mapping.Source] = mapping.Target
-		}
-	}
-
-	return result
-}
-
 // ToMappings converts a structured Config to the Mappings format
 func (c *Config) ToMappings() *Mappings {
 	mappings := &Mappings{
@@ -188,35 +172,30 @@ func (c *Config) ToMappings() *Mappings {
 }
 
 // LoadConfigWithFS loads registry configuration using the provided fileutil.FS.
-func LoadConfigWithFS(fs fileutil.FS, path string, skipCWDRestriction bool) (map[string]string, error) {
+func LoadConfigWithFS(fs fileutil.FS, path string, skipCWDRestriction bool) (*Config, error) {
 	if fs == nil {
 		fs = DefaultFS
 	}
 
-	// Convert to afero.Fs for backwards compatibility with existing implementation
-	afs := GetAferoFS(fs)
-
-	return LoadConfig(afs, path, skipCWDRestriction)
-}
-
-// LoadConfigDefault loads registry configuration using the default filesystem.
-func LoadConfigDefault(path string, skipCWDRestriction bool) (map[string]string, error) {
-	return LoadConfigWithFS(DefaultFS, path, skipCWDRestriction)
-}
-
-// LoadStructuredConfigWithFS loads structured registry configuration using the provided fileutil.FS.
-func LoadStructuredConfigWithFS(fs fileutil.FS, path string, skipCWDRestriction bool) (*Config, error) {
-	if fs == nil {
-		fs = DefaultFS
-	}
-
-	// Convert to afero.Fs for backwards compatibility with existing implementation
+	// Convert to afero.Fs for compatibility with existing implementation
 	afs := GetAferoFS(fs)
 
 	return LoadStructuredConfig(afs, path, skipCWDRestriction)
 }
 
+// LoadConfigDefault loads registry configuration using the default filesystem.
+func LoadConfigDefault(path string, skipCWDRestriction bool) (*Config, error) {
+	return LoadConfigWithFS(DefaultFS, path, skipCWDRestriction)
+}
+
+// LoadStructuredConfigWithFS loads structured registry configuration using the provided fileutil.FS.
+// This is kept for backward API compatibility, but now just calls LoadConfigWithFS.
+func LoadStructuredConfigWithFS(fs fileutil.FS, path string, skipCWDRestriction bool) (*Config, error) {
+	return LoadConfigWithFS(fs, path, skipCWDRestriction)
+}
+
 // LoadStructuredConfigDefault loads structured registry configuration using the default filesystem.
+// This is kept for backward API compatibility, but now just calls LoadConfigDefault.
 func LoadStructuredConfigDefault(path string, skipCWDRestriction bool) (*Config, error) {
-	return LoadStructuredConfigWithFS(DefaultFS, path, skipCWDRestriction)
+	return LoadConfigDefault(path, skipCWDRestriction)
 }

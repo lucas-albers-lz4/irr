@@ -51,14 +51,29 @@ func TestLoadConfigWithFSDirect(t *testing.T) {
 	require.NoError(t, afero.WriteFile(memFs, configFile, []byte(content), testFilePerm))
 
 	// Test LoadConfigWithFS function
-	mappings, err := LoadConfigWithFS(fs, configFile, true)
+	config, err := LoadConfigWithFS(fs, configFile, true)
 
 	// Check the results
 	require.NoError(t, err)
-	require.NotNil(t, mappings)
-	assert.Len(t, mappings, 2)
-	assert.Equal(t, "registry.example.com/docker-mirror", mappings["docker.io"])
-	assert.Equal(t, "registry.example.com/quay-mirror", mappings["quay.io"])
+	require.NotNil(t, config)
+	assert.Len(t, config.Registries.Mappings, 2)
+
+	// Find the docker.io mapping
+	var dockerMapping, quayMapping *RegMapping
+	for i := range config.Registries.Mappings {
+		mapping := &config.Registries.Mappings[i]
+		switch mapping.Source {
+		case "docker.io":
+			dockerMapping = mapping
+		case "quay.io":
+			quayMapping = mapping
+		}
+	}
+
+	require.NotNil(t, dockerMapping, "docker.io mapping not found")
+	require.NotNil(t, quayMapping, "quay.io mapping not found")
+	assert.Equal(t, "registry.example.com/docker-mirror", dockerMapping.Target)
+	assert.Equal(t, "registry.example.com/quay-mirror", quayMapping.Target)
 }
 
 // TestLoadConfigDefault tests the LoadConfigDefault function directly
@@ -92,14 +107,29 @@ func TestLoadConfigDefault(t *testing.T) {
 	require.NoError(t, afero.WriteFile(memFs, configFile, []byte(content), testFilePerm))
 
 	// Test LoadConfigDefault function
-	mappings, err := LoadConfigDefault(configFile, true)
+	config, err := LoadConfigDefault(configFile, true)
 
 	// Check the results
 	require.NoError(t, err)
-	require.NotNil(t, mappings)
-	assert.Len(t, mappings, 2)
-	assert.Equal(t, "registry.example.com/gcr-mirror", mappings["gcr.io"])
-	assert.Equal(t, "registry.example.com/github-mirror", mappings["ghcr.io"])
+	require.NotNil(t, config)
+	assert.Len(t, config.Registries.Mappings, 2)
+
+	// Find the gcr.io and ghcr.io mappings
+	var gcrMapping, ghcrMapping *RegMapping
+	for i := range config.Registries.Mappings {
+		mapping := &config.Registries.Mappings[i]
+		switch mapping.Source {
+		case "gcr.io":
+			gcrMapping = mapping
+		case "ghcr.io":
+			ghcrMapping = mapping
+		}
+	}
+
+	require.NotNil(t, gcrMapping, "gcr.io mapping not found")
+	require.NotNil(t, ghcrMapping, "ghcr.io mapping not found")
+	assert.Equal(t, "registry.example.com/gcr-mirror", gcrMapping.Target)
+	assert.Equal(t, "registry.example.com/github-mirror", ghcrMapping.Target)
 }
 
 // TestLoadConfigDefaultError tests error handling in LoadConfigDefault
@@ -116,9 +146,9 @@ func TestLoadConfigDefaultError(t *testing.T) {
 	DefaultFS = fs // Set our mock FS as the default
 
 	// Test with non-existent file
-	mappings, err := LoadConfigDefault("nonexistent.yaml", true)
+	config, err := LoadConfigDefault("nonexistent.yaml", true)
 	assert.Error(t, err)
-	assert.Nil(t, mappings)
+	assert.Nil(t, config)
 }
 
 // TestLoadStructuredConfigDefaultDirect tests the LoadStructuredConfigDefault function directly
@@ -200,20 +230,31 @@ func TestLoadConfigDefaultViaStructured(t *testing.T) {
 	require.NoError(t, memFs.MkdirAll(testConfigDir, testDirPerm))
 	require.NoError(t, afero.WriteFile(memFs, configFile, []byte(content), testFilePerm))
 
-	// Since we can't directly test LoadConfigDefault due to GetAferoFS,
-	// we'll test the underlying function it calls: LoadStructuredConfig + conversion
+	// Test LoadStructuredConfig directly
 	config, err := LoadStructuredConfig(memFs, configFile, true)
 	require.NoError(t, err)
 	require.NotNil(t, config)
 
-	// Convert to legacy format (which is what LoadConfigDefault would do)
-	mappings := ConvertToLegacyFormat(config)
-
 	// Check the results
-	require.NotNil(t, mappings)
-	assert.Len(t, mappings, 2)
-	assert.Equal(t, "registry.example.com/gcr-mirror", mappings["gcr.io"])
-	assert.Equal(t, "registry.example.com/github-mirror", mappings["ghcr.io"])
+	require.NotNil(t, config)
+	assert.Len(t, config.Registries.Mappings, 2)
+
+	// Find the gcr.io and ghcr.io mappings
+	var gcrMapping, ghcrMapping *RegMapping
+	for i := range config.Registries.Mappings {
+		mapping := &config.Registries.Mappings[i]
+		switch mapping.Source {
+		case "gcr.io":
+			gcrMapping = mapping
+		case "ghcr.io":
+			ghcrMapping = mapping
+		}
+	}
+
+	require.NotNil(t, gcrMapping, "gcr.io mapping not found")
+	require.NotNil(t, ghcrMapping, "ghcr.io mapping not found")
+	assert.Equal(t, "registry.example.com/gcr-mirror", gcrMapping.Target)
+	assert.Equal(t, "registry.example.com/github-mirror", ghcrMapping.Target)
 }
 
 // TestLoadStructuredConfigDefaultViaUnderlying tests the LoadStructuredConfigDefault function
@@ -249,13 +290,12 @@ version: "1"
 	require.NoError(t, memFs.MkdirAll(testConfigDir, testDirPerm))
 	require.NoError(t, afero.WriteFile(memFs, configFile, []byte(content), testFilePerm))
 
-	// Since we can't directly test LoadStructuredConfigDefault due to GetAferoFS,
-	// we'll test the underlying function it calls: LoadStructuredConfig
+	// Test LoadStructuredConfig directly
 	config, err := LoadStructuredConfig(memFs, configFile, true)
-
-	// Check the results
 	require.NoError(t, err)
 	require.NotNil(t, config)
+
+	// Check the results
 	assert.Equal(t, "1", config.Version)
 	assert.Len(t, config.Registries.Mappings, 2)
 	assert.Equal(t, "ecr.amazonaws.com", config.Registries.Mappings[0].Source)

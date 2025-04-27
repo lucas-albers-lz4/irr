@@ -10,6 +10,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Constants for registry sources used in tests
+const (
+	quaySource   = "quay.io"
+	dockerSource = "docker.io"
+)
+
 func TestSetFS(t *testing.T) {
 	// Save original FS
 	originalFS := DefaultFS
@@ -36,13 +42,17 @@ func TestLoadMappingsWithFS(t *testing.T) {
 	mockFS := fileutil.NewAferoFS(memFs)
 	tmpDir := TestTmpDir
 
-	// Create test file paths
+	// Create test file path
 	mappingsFile := filepath.Join(tmpDir, "mappings.yaml")
 
 	// Create test content
 	content := `
-quay.io: registry.example.com/quay-mirror
-docker.io: registry.example.com/docker-mirror
+registries:
+  mappings:
+    - source: quay.io
+      target: registry.example.com/quay-mirror
+    - source: docker.io
+      target: registry.example.com/docker-mirror
 `
 
 	// Set up the mock filesystem
@@ -57,8 +67,8 @@ docker.io: registry.example.com/docker-mirror
 	assert.Len(t, mappings.Entries, 2)
 	// Use ElementsMatch as map iteration order isn't guaranteed
 	expectedEntries := []Mapping{
-		{Source: "quay.io", Target: "registry.example.com/quay-mirror"},
-		{Source: "docker.io", Target: "registry.example.com/docker-mirror"},
+		{Source: quaySource, Target: "registry.example.com/quay-mirror"},
+		{Source: dockerSource, Target: "registry.example.com/docker-mirror"},
 	}
 	assert.ElementsMatch(t, expectedEntries, mappings.Entries)
 
@@ -75,7 +85,7 @@ func TestLoadConfigWithFS(t *testing.T) {
 	mockFS := fileutil.NewAferoFS(memFs)
 	tmpDir := TestTmpDir
 
-	// Create test file paths
+	// Create test file path
 	configFile := filepath.Join(tmpDir, "config.yaml")
 
 	// Create test content
@@ -107,11 +117,21 @@ func TestLoadConfigWithFS(t *testing.T) {
 	require.NotNil(t, configViaOriginal)
 	assert.Len(t, configViaOriginal.Registries.Mappings, 2)
 
-	// Test legacy format conversion
-	mapping := ConvertToLegacyFormat(config)
-	require.NotNil(t, mapping)
-	assert.Len(t, mapping, 2)
-	assert.Equal(t, "registry.example.com/quay-mirror", mapping["quay.io"])
+	// Test that we can find both mappings
+	var quayMapping, dockerMapping *RegMapping
+	for i := range config.Registries.Mappings {
+		mapping := &config.Registries.Mappings[i]
+		switch mapping.Source {
+		case quaySource:
+			quayMapping = mapping
+		case dockerSource:
+			dockerMapping = mapping
+		}
+	}
+	require.NotNil(t, quayMapping, quaySource+" mapping not found")
+	require.NotNil(t, dockerMapping, dockerSource+" mapping not found")
+	assert.Equal(t, "registry.example.com/quay-mirror", quayMapping.Target)
+	assert.Equal(t, "registry.example.com/docker-mirror", dockerMapping.Target)
 }
 
 func TestGetAferoFS(t *testing.T) {

@@ -28,7 +28,7 @@ func TestLoadConfig(t *testing.T) {
 	tests := []struct {
 		name          string
 		path          string
-		wantConfig    map[string]string
+		wantConfig    *Config
 		wantErr       bool
 		errorContains string
 	}{
@@ -91,7 +91,7 @@ func TestLoadConfig(t *testing.T) {
 			path:          "",
 			wantConfig:    nil,
 			wantErr:       true,
-			errorContains: "no configuration file specified",
+			errorContains: "config file path cannot be empty",
 		},
 		{
 			name:          "duplicate keys",
@@ -138,9 +138,15 @@ func TestLoadConfig(t *testing.T) {
 
 			require.NoError(t, err)
 			if tt.path == "" {
-				assert.Equal(t, EmptyPathResult, got)
+				assert.Nil(t, got)
 			} else {
-				assert.Equal(t, tt.wantConfig, got)
+				// Compare the Config objects
+				assert.Equal(t, tt.wantConfig.Registries.Mappings[0].Source, got.Registries.Mappings[0].Source)
+				assert.Equal(t, tt.wantConfig.Registries.Mappings[0].Target, got.Registries.Mappings[0].Target)
+				assert.Equal(t, tt.wantConfig.Registries.Mappings[1].Source, got.Registries.Mappings[1].Source)
+				assert.Equal(t, tt.wantConfig.Registries.Mappings[1].Target, got.Registries.Mappings[1].Target)
+				assert.Equal(t, tt.wantConfig.Registries.Mappings[2].Source, got.Registries.Mappings[2].Source)
+				assert.Equal(t, tt.wantConfig.Registries.Mappings[2].Target, got.Registries.Mappings[2].Target)
 			}
 		})
 	}
@@ -162,7 +168,7 @@ type TestFilesConfig struct {
 }
 
 // setupConfigTestFiles creates test files for configuration testing
-func setupConfigTestFiles(t *testing.T, fs afero.Fs, tmpDir string) (files TestFilesConfig, expectedConfig map[string]string) {
+func setupConfigTestFiles(t *testing.T, fs afero.Fs, tmpDir string) (files TestFilesConfig, expectedConfig *Config) {
 	// Create test file paths
 	files = TestFilesConfig{
 		validConfigFile:   filepath.Join(tmpDir, "valid-config.yaml"),
@@ -248,22 +254,26 @@ registries:
 	longKeyContent := `
 registries:
   mappings:
+    - source: docker.io
+      target: harbor.example.com/docker
     - source: ` + longKey + `
       target: harbor.example.com/long
 `
 
 	// Long value content
-	longValue := "harbor.example.com/" + strings.Repeat("x", MaxValueLength)
+	longValue := "a" + strings.Repeat("x", MaxValueLength)
 	longValueContent := `
 registries:
   mappings:
     - source: docker.io
+      target: harbor.example.com/docker
+    - source: long.example.com
       target: ` + longValue + `
 `
 
 	// Write test files
 	require.NoError(t, afero.WriteFile(fs, files.validConfigFile, []byte(validConfigContent), fileutil.ReadWriteUserReadOthers))
-	require.NoError(t, afero.WriteFile(fs, files.emptyConfigFile, []byte(""), fileutil.ReadWriteUserReadOthers))
+	require.NoError(t, afero.WriteFile(fs, files.emptyConfigFile, []byte{}, fileutil.ReadWriteUserReadOthers))
 	require.NoError(t, afero.WriteFile(fs, files.invalidYamlFile, []byte(invalidYamlContent), fileutil.ReadWriteUserReadOthers))
 	require.NoError(t, afero.WriteFile(fs, files.invalidDomainFile, []byte(invalidDomainContent), fileutil.ReadWriteUserReadOthers))
 	require.NoError(t, afero.WriteFile(fs, files.invalidValueFile, []byte(invalidValueContent), fileutil.ReadWriteUserReadOthers))
@@ -273,11 +283,15 @@ registries:
 	require.NoError(t, afero.WriteFile(fs, files.longKeyFile, []byte(longKeyContent), fileutil.ReadWriteUserReadOthers))
 	require.NoError(t, afero.WriteFile(fs, files.longValueFile, []byte(longValueContent), fileutil.ReadWriteUserReadOthers))
 
-	// Expected valid config result
-	expectedConfig = map[string]string{
-		"docker.io": "harbor.example.com/docker",
-		"quay.io":   "harbor.example.com/quay",
-		"gcr.io":    "harbor.example.com/gcr",
+	// Create expected config
+	expectedConfig = &Config{
+		Registries: RegConfig{
+			Mappings: []RegMapping{
+				{Source: "docker.io", Target: "harbor.example.com/docker", Enabled: true},
+				{Source: "quay.io", Target: "harbor.example.com/quay", Enabled: true},
+				{Source: "gcr.io", Target: "harbor.example.com/gcr", Enabled: true},
+			},
+		},
 	}
 
 	return files, expectedConfig
@@ -440,13 +454,6 @@ registries:
 		{Source: "gcr.io", Target: "harbor.example.com/gcr", Description: "GCR to Harbor", Enabled: true},
 	}
 
-	// Expected converted legacy format
-	expectedLegacyFormat := map[string]string{
-		"docker.io": "harbor.example.com/docker",
-		"quay.io":   "harbor.example.com/quay",
-		"gcr.io":    "harbor.example.com/gcr",
-	}
-
 	// Test LoadStructuredConfig
 	tests := []struct {
 		name          string
@@ -475,13 +482,13 @@ registries:
 			name:          "invalid structured config",
 			path:          invalidStructuredFile,
 			wantErr:       true,
-			errorContains: "mappings file is empty",
+			errorContains: "mappings section is empty",
 		},
 		{
 			name:          "empty mappings",
 			path:          emptyMappingsFile,
 			wantErr:       true,
-			errorContains: "mappings file is empty",
+			errorContains: "mappings section is empty",
 		},
 		{
 			name:          "invalid source domain",
@@ -520,10 +527,6 @@ registries:
 				assert.Equal(t, mapping.Enabled, got.Registries.Mappings[i].Enabled)
 			}
 
-			// Test conversion to legacy format
-			legacyFormat := ConvertToLegacyFormat(got)
-			assert.Equal(t, expectedLegacyFormat, legacyFormat)
-
 			// Test ToMappings conversion
 			mappings := got.ToMappings()
 			assert.Equal(t, len(expectedMappings), len(mappings.Entries))
@@ -534,48 +537,81 @@ registries:
 		})
 	}
 
-	// Test backward compatibility through LoadConfig
+	// Test through LoadConfig
 	t.Run("LoadConfig with structured file", func(t *testing.T) {
 		// Call LoadConfig with a structured file - should automatically parse it correctly
 		got, err := LoadConfig(fs, validStructuredFile, true)
 		require.NoError(t, err)
-		assert.Equal(t, expectedLegacyFormat, got)
+
+		// Verify it correctly loaded the structured file
+		assert.NotNil(t, got)
+		assert.Equal(t, 3, len(got.Registries.Mappings))
+		assert.Equal(t, "harbor.example.com/default", got.Registries.DefaultTarget)
 	})
 }
 
-// TestEnabledFlagBehavior tests the behavior of the enabled flag in structured config
+// TestEnabledFlagBehavior tests the behavior of the Enabled flag in registry mappings
 func TestEnabledFlagBehavior(t *testing.T) {
-	// Test case where a mapping is explicitly disabled
-	explicitlyDisabled := &Config{
-		Registries: RegConfig{
-			Mappings: []RegMapping{
-				{
-					Source:      "docker.io",
-					Target:      "harbor.example.com/docker",
-					Enabled:     true,
-					Description: "Explicitly enabled",
-				},
-				{
-					Source:      "gcr.io",
-					Target:      "harbor.example.com/gcr",
-					Enabled:     false,                 // Explicitly disabled
-					Description: "Explicitly disabled", // Adding description to help with detection
-				},
-			},
-		},
+	// Create a memory-backed filesystem for testing
+	fs := afero.NewMemMapFs()
+	tmpDir := TestTmpDir
+	configFile := filepath.Join(tmpDir, "enabled-flag.yaml")
+
+	// Create test content with explicitly disabled mapping
+	content := `
+registries:
+  mappings:
+    - source: docker.io
+      target: registry.example.com/docker
+    - source: quay.io
+      target: registry.example.com/quay
+      enabled: false
+      description: "Explicitly disabled"
+    - source: k8s.gcr.io
+      target: registry.example.com/k8s
+      enabled: true
+`
+
+	// Set up the filesystem
+	require.NoError(t, fs.MkdirAll(tmpDir, fileutil.ReadWriteExecuteUserReadExecuteOthers))
+	require.NoError(t, afero.WriteFile(fs, configFile, []byte(content), fileutil.ReadWriteUserReadOthers))
+
+	// Load the config
+	config, err := LoadStructuredConfig(fs, configFile, true)
+	require.NoError(t, err)
+	require.NotNil(t, config)
+
+	// Verify regular mappings are enabled by default
+	assert.True(t, config.Registries.Mappings[0].Enabled, "docker.io mapping should be enabled")
+
+	// Verify explicitly disabled mapping stays disabled
+	assert.False(t, config.Registries.Mappings[1].Enabled, "quay.io mapping should remain disabled")
+	assert.Equal(t, "Explicitly disabled", config.Registries.Mappings[1].Description)
+
+	// Verify explicitly enabled mapping stays enabled
+	assert.True(t, config.Registries.Mappings[2].Enabled, "k8s.gcr.io mapping should be enabled")
+
+	// Convert to Mappings - this should only include enabled entries
+	mappings := config.ToMappings()
+	require.NotNil(t, mappings)
+
+	// Should only have 2 entries (docker.io and k8s.gcr.io, not quay.io)
+	assert.Len(t, mappings.Entries, 2)
+
+	// Verify the right entries were included
+	var foundDocker, foundK8s, foundQuay bool
+	for _, m := range mappings.Entries {
+		switch m.Source {
+		case "docker.io":
+			foundDocker = true
+		case "k8s.gcr.io":
+			foundK8s = true
+		case "quay.io":
+			foundQuay = true
+		}
 	}
 
-	// Validate should not change the explicitly disabled flag
-	err := validateStructuredConfig(explicitlyDisabled, "test-path")
-	require.NoError(t, err)
-
-	// Check that explicitly disabled flag remains false
-	assert.True(t, explicitlyDisabled.Registries.Mappings[0].Enabled)
-	assert.False(t, explicitlyDisabled.Registries.Mappings[1].Enabled)
-
-	// Convert to legacy format - disabled mapping should be excluded
-	legacyMap := ConvertToLegacyFormat(explicitlyDisabled)
-	assert.Equal(t, 1, len(legacyMap))
-	assert.Equal(t, "harbor.example.com/docker", legacyMap["docker.io"])
-	assert.NotContains(t, legacyMap, "gcr.io")
+	assert.True(t, foundDocker, "docker.io should be included in mappings")
+	assert.True(t, foundK8s, "k8s.gcr.io should be included in mappings")
+	assert.False(t, foundQuay, "quay.io should NOT be included in mappings (it's disabled)")
 }
