@@ -42,28 +42,76 @@ The binary will be created at `bin/irr`.
 
 ## Usage
 
+### Recommended Workflow
+
+For first-time users or when starting with a new chart, follow these steps:
+
+1.  **Install Plugin:** Make sure you have installed the `irr` Helm plugin (see [Installation](#installation)).
+2.  **Generate Skeleton Config:** Inspect your target chart, release, or entire cluster to automatically create a configuration file listing the source registries it uses.
+    ```bash
+    # For a local chart
+    helm irr inspect --chart-path ./my-chart --generate-config-skeleton
+
+    # For an installed release
+    helm irr inspect my-release -n my-namespace --generate-config-skeleton
+
+    # For all releases in the cluster (creates a comprehensive skeleton)
+    helm irr inspect -A --generate-config-skeleton
+    ```
+    This creates a `registry-mappings.yaml` file. If the file already exists and you want to replace it with a newly generated one, add the `--overwrite-skeleton` flag to the command.
+3.  **Configure Mappings:** Use the `helm irr config` command to specify the target registry for each source registry listed in the generated `registry-mappings.yaml` file. You'll need to run this command for *each* source registry you want to map.
+    ```bash
+    # Example: After generating the skeleton, configure the target for docker.io
+    helm irr config --source docker.io --target my-registry.com/dockerhub-cache
+
+    # Example: Configure the target for quay.io
+    helm irr config --source quay.io --target my-registry.com/quayio-cache
+
+    # Run similar commands for any other source registries listed in the skeleton...
+
+    # You can view the current mappings at any time:
+    helm irr config --list
+    ```
+    This updates the `registry-mappings.yaml` file. (See [Configuring Registry Mappings](#configuring-registry-mappings) for more details, including managing the file directly if preferred).
+4.  **Generate Overrides:** Use the `override` command to generate the Helm values file based on your configured mappings. By default, `irr` reads `registry-mappings.yaml` from the current directory.
+    ```bash
+    # For a local chart
+    helm irr override --chart-path ./my-chart --output-file my-chart-overrides.yaml
+
+    # For an installed release (defaults output to <release-name>-overrides.yaml)
+    helm irr override my-release -n my-namespace
+    ```
+5.  **Apply Overrides:** Use the generated override file when installing or upgrading your Helm release.
+    ```bash
+    # Install new release
+    helm install my-release ./my-chart -f my-chart-overrides.yaml
+
+    # Upgrade existing release
+    helm upgrade my-release ./my-chart -f my-chart-overrides.yaml
+    ```
+
+**Verification Tip:** To visually confirm the image changes made by the overrides, you can compare the output of `helm template` with and without the override file. Run these commands and use a diff tool (like `diff` or `meld`) to inspect the differences:
+
+```bash
+# Template without overrides
+helm template my-release ./my-chart > template-original.yaml
+
+# Template *with* overrides
+helm template my-release ./my-chart -f my-chart-overrides.yaml > template-with-overrides.yaml
+
+# Compare the files
+diff template-original.yaml template-with-overrides.yaml
+```
+This helps ensure the overrides are modifying the image fields as expected. Note that `irr override` includes an internal validation step (`--validate` flag, enabled by default), but that primarily checks for templating *errors*, not the specific content changes.
+
 ### Basic Usage
 
-To generate an override file for a local Helm chart:
+Details on generating and applying overrides can be found in the [Recommended Workflow](#recommended-workflow) section.
+
+Alternatively, you can operate directly on an installed Helm release (ensure you specify the namespace if not `default`):
 
 ```bash
-helm irr override \
-  --chart-path ./my-chart \
-  --target-registry harbor.example.com:5000 \
-  --source-registries docker.io,quay.io \
-  --output-file overrides.yaml
-```
-
-This generates an `overrides.yaml` file that you can use with Helm:
-
-```bash
-helm install my-release ./my-chart -f overrides.yaml
-```
-
-Alternatively, you can operate on an installed Helm release (ensure you specify the namespace if not `default`):
-
-```bash
-# This will create my-release-overrides.yaml by default
+# Generate overrides for a release (defaults output to <release-name>-overrides.yaml)
 helm irr override my-release -n my-namespace \
   --target-registry harbor.example.com:5000 \
   --source-registries docker.io,quay.io
@@ -91,19 +139,7 @@ Harbor is a commonly used private registry with pull-through cache capabilities.
    - Create projects in Harbor for each source registry (e.g., `dockerio`, `quayio`)
    - Configure them as proxy caches pointing to the appropriate source registries
 
-2. Generate overrides for a chart:
-   ```bash
-   helm irr override \
-     --chart-path ./prometheus \
-     --target-registry harbor.example.com \
-     --source-registries docker.io,quay.io \
-     --output-file prometheus-overrides.yaml
-   ```
-
-3. Install the chart with the overrides:
-   ```bash
-   helm install prometheus ./prometheus -f prometheus-overrides.yaml
-   ```
+2. Follow the [Recommended Workflow](#recommended-workflow) to generate the override file using your Harbor registry details (e.g., `--target-registry harbor.example.com` in the `helm irr config` step) and apply it during `helm install` or `helm upgrade`.
 
 ## Configuring Registry Mappings
 
