@@ -754,7 +754,8 @@ func createGenerator(_ *ChartSource, config *GeneratorConfig) (GeneratorInterfac
 	}
 
 	// Create chart loader instance
-	loader := chart.NewGeneratorLoader(nil) // Use chart.NewGeneratorLoader
+	// Use chart.NewLoader from api.go instead of the removed NewGeneratorLoader
+	loader := chart.NewLoader()
 
 	// --- Create Override Generator ---
 	generator := chart.NewGenerator( // Use chart.NewGenerator

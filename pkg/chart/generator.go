@@ -14,7 +14,6 @@ import (
 	"helm.sh/helm/v3/pkg/cli"
 
 	"github.com/lucas-albers-lz4/irr/pkg/analysis"
-	"github.com/lucas-albers-lz4/irr/pkg/fileutil"
 	image "github.com/lucas-albers-lz4/irr/pkg/image"
 	log "github.com/lucas-albers-lz4/irr/pkg/log"
 	"github.com/lucas-albers-lz4/irr/pkg/override"
@@ -82,63 +81,6 @@ func (e *ThresholdError) Error() string {
 }
 func (e *ThresholdError) Unwrap() error { return e.Err }
 
-// --- Local Loader Implementation (implements analysis.ChartLoader) ---
-
-// Ensure GeneratorLoader implements analysis.ChartLoader
-var _ analysis.ChartLoader = (*GeneratorLoader)(nil)
-
-// GeneratorLoader provides functionality to load Helm charts
-type GeneratorLoader struct {
-	fs fileutil.FS // Filesystem implementation to use
-}
-
-// NewGeneratorLoader creates a new GeneratorLoader with the provided filesystem.
-// If fs is nil, it uses the default filesystem.
-func NewGeneratorLoader(fs fileutil.FS) *GeneratorLoader {
-	if fs == nil {
-		fs = fileutil.DefaultFS
-	}
-	return &GeneratorLoader{fs: fs}
-}
-
-// SetFS replaces the filesystem used by the loader and returns a cleanup function
-func (l *GeneratorLoader) SetFS(fs fileutil.FS) func() {
-	oldFS := l.fs
-	l.fs = fs
-	return func() {
-		l.fs = oldFS
-	}
-}
-
-// Load implements analysis.ChartLoader interface, returning *chart.Chart
-func (l *GeneratorLoader) Load(chartPath string) (*chart.Chart, error) {
-	log.Debug("GeneratorLoader loading chart", "path", chartPath)
-
-	// Verify the chart path exists using our injectable filesystem
-	_, err := l.fs.Stat(chartPath)
-	if err != nil {
-		return nil, fmt.Errorf("chart path stat error %s: %w", chartPath, err)
-	}
-
-	// Use helm's loader directly
-	// Note: Helm's loader uses the real filesystem, not the injected one.
-	// Future refactoring could adapt the loader to use the FS interface.
-	loadedChart, err := loader.Load(chartPath)
-	if err != nil {
-		// Wrap the error from the helm loader
-		return nil, fmt.Errorf("helm loader failed for path '%s': %w", chartPath, err)
-	}
-
-	// We need to extract values manually if helm loader doesn't merge them automatically
-	if loadedChart.Values == nil {
-		loadedChart.Values = make(map[string]interface{}) // Ensure Values is not nil
-		log.Debug("Helm chart loaded with nil Values, initialized empty map", "path", chartPath)
-	}
-
-	log.Debug("GeneratorLoader successfully loaded chart", "name", loadedChart.Name())
-	return loadedChart, nil
-}
-
 // --- Generator Implementation ---
 
 // Package chart provides functionality for working with Helm charts, including
@@ -198,7 +140,7 @@ type Generator struct {
 	excludePatterns   []string // Passed to detector context
 	knownPaths        []string // Passed to detector context
 	threshold         int
-	loader            analysis.ChartLoader    // Use analysis.ChartLoader interface
+	loader            Loader                  // Use Loader from this package
 	rulesEnabled      bool                    // Whether to apply rules
 	rulesRegistry     rules.RegistryInterface // Use the interface type here
 }
@@ -211,13 +153,14 @@ func NewGenerator(
 	mappings *registry.Mappings,
 	strict bool,
 	threshold int,
-	chartLoader analysis.ChartLoader,
+	chartLoader Loader, // Use Loader from this package
 	includePatterns, excludePatterns, knownPaths []string,
 	rulesEnabled bool,
 ) *Generator {
 	// Set up a default chart loader if none was provided
 	if chartLoader == nil {
-		chartLoader = NewGeneratorLoader(fileutil.DefaultFS)
+		// Use the constructor from api.go which uses DefaultLoader
+		chartLoader = NewLoader()
 	}
 
 	return &Generator{
@@ -234,7 +177,7 @@ func NewGenerator(
 		threshold:         threshold,
 		loader:            chartLoader,
 		rulesEnabled:      rulesEnabled,
-		rulesRegistry:     nil,
+		rulesRegistry:     nil, // Initialize rules registry later if needed
 	}
 }
 
@@ -379,21 +322,25 @@ func (g *Generator) processImage(pattern analysis.ImagePattern, overrides map[st
 
 // loadAndAnalyzeChart loads the chart and performs initial analysis.
 func (g *Generator) loadAndAnalyzeChart(result *override.File) (*chart.Chart, *analysis.ChartAnalysis, error) {
+	// Use the configured loader via the Loader interface
 	log.Debug("Generator using loader", "loader_type", fmt.Sprintf("%T", g.loader))
-	loadedChart, err := g.loader.Load(g.chartPath)
+	loadedChart, err := g.loader.Load(g.chartPath) // Use interface method
 	if err != nil {
 		log.Debug("Generator error loading chart", "chartPath", g.chartPath, "error", err)
 		// Wrap error for consistent exit code mapping
-		return nil, nil, &LoadingError{ChartPath: g.chartPath, Err: fmt.Errorf("failed to load chart: %w", err)}
+		// Consider if LoadingError is still the right type or if loader returns wrapped errors
+		return nil, nil, &LoadingError{ChartPath: g.chartPath, Err: err} // Pass err directly
 	}
 	log.Debug("Generator chart loaded", "name", loadedChart.Name(), "values_type", fmt.Sprintf("%T", loadedChart.Values))
 
 	if loadedChart.Values == nil {
 		log.Debug("Generator chart has nil values, skipping analysis", "chart", loadedChart.Name())
-		return loadedChart, nil, nil // Return chart but nil analysis result if no values
+		// No need to create analysis if no values
+		return loadedChart, nil, nil
 	}
 
-	analyzer := analysis.NewAnalyzer(g.chartPath, g.loader)
+	// Use the same loader instance for the analyzer
+	analyzer := analysis.NewAnalyzer(g.chartPath, g.loader) // Pass the loader instance
 	detectedImages, analysisErr := analyzer.Analyze()
 	if analysisErr != nil {
 		log.Warn("Analysis of chart failed", "chartPath", g.chartPath, "error", analysisErr)
