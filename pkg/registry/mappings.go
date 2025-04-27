@@ -34,9 +34,6 @@ const (
 	DockerHubRegistry = "docker.io"
 )
 
-// EmptyPathResult is a sentinel value returned when path is empty
-var EmptyPathResult = map[string]string{}
-
 // Mapping represents a single source to target registry mapping
 type Mapping struct {
 	Source string `yaml:"source"`
@@ -251,75 +248,89 @@ func isValidDomain(domain string) bool {
 		return false
 	}
 
-	// Special case handling for well-known domains
-	wellKnownDomains := map[string]bool{
-		"docker.io":           true,
-		"quay.io":             true,
-		"gcr.io":              true,
-		"k8s.gcr.io":          true,
-		"registry.k8s.io":     true,
-		"ghcr.io":             true,
-		"docker.elastic.co":   true,
-		"mcr.microsoft.com":   true,
-		"public.ecr.aws":      true,
-		"index.docker.io":     true,
-		"registry.gitlab.com": true,
-	}
-
-	if wellKnownDomains[domain] {
+	// Special cases for common registries
+	if domain == DockerHubRegistry || domain == "registry.hub.docker.com" || domain == "index.docker.io" {
 		return true
 	}
 
-	// Check for wildcard
+	// If it's a wildcard domain, it needs to have at least two parts
 	if strings.HasPrefix(domain, "*.") {
-		// For wildcards, ensure there are at least MinDomainPartsForWildcard parts after the *
-		// e.g., *.example.com (valid), *.co (invalid)
-		remaining := domain[2:] // Skip the *. prefix
-		parts := strings.Split(remaining, ".")
+		parts := strings.Split(strings.TrimPrefix(domain, "*."), ".")
 		return len(parts) >= MinDomainPartsForWildcard
 	}
 
-	// Regular domain validation
-	// Split by dot and ensure each part is valid
+	// Regular domain check - we expect properly formatted domains with multiple parts
 	parts := strings.Split(domain, ".")
+
+	// For regular domains, we expect at least two parts
+	// e.g., "docker.io", "quay.io", etc.
 	if len(parts) < MinDomainParts {
-		log.Debug("isValidDomain: domain has fewer than required parts", "domain", domain, "parts", len(parts), "required", MinDomainParts)
-		return false // Must have at least 2 parts (e.g., domain.com)
+		return false
 	}
 
+	// Check for empty parts or invalid characters
 	for _, part := range parts {
 		// Check if part is empty
-		if part == "" { // Use direct string comparison
-			log.Debug("isValidDomain: component is empty", "domain", domain)
+		if part == "" {
 			return false
 		}
 
-		// Allow digits, letters, and hyphens in parts
+		// Parts can't start or end with hyphen
+		if strings.HasPrefix(part, "-") || strings.HasSuffix(part, "-") {
+			return false
+		}
+
+		// Allow only alphanumeric and hyphen
 		for _, ch := range part {
-			// Check if the character is valid (alphanumeric or hyphen)
 			isLower := 'a' <= ch && ch <= 'z'
 			isUpper := 'A' <= ch && ch <= 'Z'
 			isDigit := '0' <= ch && ch <= '9'
 			isHyphen := ch == '-'
 
-			// Apply De Morgan's law: !(A || B || C || D) is equivalent to !A && !B && !C && !D
 			if !isLower && !isUpper && !isDigit && !isHyphen {
-				log.Debug("isValidDomain: invalid character in component", "domain", domain, "component", part, "character", string(ch))
 				return false
 			}
 		}
+	}
 
-		// Parts can't start or end with hyphen
-		if part[0] == '-' || part[len(part)-1] == '-' {
-			log.Debug("isValidDomain: component starts or ends with hyphen", "domain", domain, "component", part)
-			return false
+	// IP address check (simplified)
+	// If all parts are digits, it might be an IP address.
+	allDigits := true
+	for _, part := range parts {
+		if !isAllDigits(part) {
+			allDigits = false
+			break
+		}
+	}
+	if allDigits && len(parts) == 4 {
+		// Looks like IPv4, check validity of each octet (0-255)
+		valid := true
+		for _, part := range parts {
+			val, err := strconv.Atoi(part)
+			if err != nil || val < 0 || val > 255 {
+				valid = false
+				break
+			}
+		}
+		if valid {
+			return true
 		}
 	}
 
 	return true
 }
 
-// LoadMappingsWithFS loads registry mappings using the provided fileutil.FS.
+// isAllDigits checks if a string contains only digits
+func isAllDigits(s string) bool {
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// LoadMappingsWithFS loads registry mappings using the provided fileutil.FS
 func LoadMappingsWithFS(fs fileutil.FS, path string, skipCWDRestriction bool) (*Mappings, error) {
 	if fs == nil {
 		fs = DefaultFS
@@ -331,7 +342,7 @@ func LoadMappingsWithFS(fs fileutil.FS, path string, skipCWDRestriction bool) (*
 	return LoadMappings(afs, path, skipCWDRestriction)
 }
 
-// LoadMappingsDefault loads registry mappings using the default filesystem.
+// LoadMappingsDefault loads registry mappings using the default filesystem
 func LoadMappingsDefault(path string, skipCWDRestriction bool) (*Mappings, error) {
 	return LoadMappingsWithFS(DefaultFS, path, skipCWDRestriction)
 }
