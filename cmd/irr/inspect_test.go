@@ -570,4 +570,98 @@ func TestInspectAllNamespacesSkeleton(t *testing.T) {
 	mockHelmClient.AssertNotCalled(t, "GetChartFromRelease", mock.Anything, "release-5", "ns-d")
 }
 
+// TestInspectAllNamespacesSkeletonWithFilter verifies that `inspect -A --generate-config-skeleton`
+// correctly aggregates registries even when `--source-registries` is used for filtering output.
+func TestInspectAllNamespacesSkeletonWithFilter(t *testing.T) {
+	cleanup := setupInspectTest(t) // Sets up mock FS and test mode
+	defer cleanup()
+
+	// --- Mock Helm Interaction ---
+	// Same mock setup as TestInspectAllNamespacesSkeleton
+	mockReleases := []*helm.ReleaseElement{
+		{Name: "release-1", Namespace: "ns-a"}, // docker.io
+		{Name: "release-2", Namespace: "ns-b"}, // quay.io
+		{Name: "release-3", Namespace: "ns-a"}, // gcr.io, docker.io
+	}
+	mockHelmClient := &helm.MockHelmClient{}
+	mockHelmClient.On("ListReleases", mock.Anything, true).Return(mockReleases, nil)
+	mockHelmClient.SetupMockRelease("release-1", "ns-a", map[string]interface{}{"image": "docker.io/library/nginx:latest"}, &helm.ChartMetadata{Name: "chart1", Version: "1.0"})
+	mockHelmClient.SetupMockRelease("release-2", "ns-b", map[string]interface{}{"image": "quay.io/prometheus/node-exporter:v1"}, &helm.ChartMetadata{Name: "chart2", Version: "1.0"})
+	mockHelmClient.SetupMockRelease(
+		"release-3",
+		"ns-a",
+		map[string]interface{}{
+			"image":   "gcr.io/google-containers/pause:3.2",
+			"sidecar": "docker.io/library/alpine:edge",
+		},
+		&helm.ChartMetadata{Name: "chart3", Version: "1.0"},
+	)
+	mockHelmClient.On("GetChartFromRelease", mock.Anything, "release-1", "ns-a").Return(&helm.ChartMetadata{Name: "chart1", Version: "1.0"}, nil)
+	mockHelmClient.On("GetChartFromRelease", mock.Anything, "release-2", "ns-b").Return(&helm.ChartMetadata{Name: "chart2", Version: "1.0"}, nil)
+	mockHelmClient.On("GetChartFromRelease", mock.Anything, "release-3", "ns-a").Return(&helm.ChartMetadata{Name: "chart3", Version: "1.0"}, nil)
+
+	// --- Inject Mocks ---
+	originalHelmClientFactory := helmClientFactory
+	helmClientFactory = func() (helm.ClientInterface, error) {
+		return mockHelmClient, nil
+	}
+	defer func() { helmClientFactory = originalHelmClientFactory }()
+
+	originalHelmAdapterFactory := helmAdapterFactory
+	helmAdapterFactory = func() (*helm.Adapter, error) {
+		adapter := helm.NewAdapter(mockHelmClient, AppFs, true)
+		return adapter, nil
+	}
+	defer func() { helmAdapterFactory = originalHelmAdapterFactory }()
+
+	// --- Execute Command with --source-registries ---
+	cmd := newInspectCmd()
+	args := []string{
+		"-A",
+		"--generate-config-skeleton",
+		"--output-file", "skeleton-filtered.yaml",
+		"--overwrite-skeleton",
+		"--source-registries", "docker.io", // Add the filter flag
+	}
+	cmd.SetArgs(args)
+	out := new(bytes.Buffer)
+	errOut := new(bytes.Buffer)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+
+	err := cmd.Execute()
+	require.NoError(t, err, "Command execution failed unexpectedly. Stdout: %s, Stderr: %s", out.String(), errOut.String())
+
+	// --- Verify Output ---
+	skeletonPath := "skeleton-filtered.yaml"
+	exists, err := afero.Exists(AppFs, skeletonPath)
+	require.NoError(t, err)
+	require.True(t, exists, "Expected skeleton file '%s' was not created", skeletonPath)
+
+	contentBytes, err := afero.ReadFile(AppFs, skeletonPath)
+	require.NoError(t, err)
+	content := string(contentBytes)
+
+	// Assert that ALL unique registries are present, despite the filter
+	assert.Contains(t, content, "source: docker.io", "Skeleton missing docker.io")
+	assert.Contains(t, content, "source: quay.io", "Skeleton missing quay.io")
+	assert.Contains(t, content, "source: gcr.io", "Skeleton missing gcr.io")
+
+	// Assert that registries are sorted
+	dockerIndex := bytes.Index(contentBytes, []byte("source: docker.io"))
+	gcrIndex := bytes.Index(contentBytes, []byte("source: gcr.io"))
+	quayIndex := bytes.Index(contentBytes, []byte("source: quay.io"))
+	assert.True(t, dockerIndex < gcrIndex, "Registries not sorted correctly (docker.io vs gcr.io)")
+	assert.True(t, gcrIndex < quayIndex, "Registries not sorted correctly (gcr.io vs quay.io)")
+
+	// --- Verify Mock Calls ---
+	mockHelmClient.AssertCalled(t, "ListReleases", mock.Anything, true)
+	mockHelmClient.AssertCalled(t, "GetReleaseValues", mock.Anything, "release-1", "ns-a")
+	mockHelmClient.AssertCalled(t, "GetChartFromRelease", mock.Anything, "release-1", "ns-a")
+	mockHelmClient.AssertCalled(t, "GetReleaseValues", mock.Anything, "release-2", "ns-b")
+	mockHelmClient.AssertCalled(t, "GetChartFromRelease", mock.Anything, "release-2", "ns-b")
+	mockHelmClient.AssertCalled(t, "GetReleaseValues", mock.Anything, "release-3", "ns-a")
+	mockHelmClient.AssertCalled(t, "GetChartFromRelease", mock.Anything, "release-3", "ns-a")
+}
+
 // TestRunInspect tests the RunInspect function.
