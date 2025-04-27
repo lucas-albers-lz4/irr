@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/lucas-albers-lz4/irr/pkg/log"
+	"github.com/lucas-albers-lz4/irr/pkg/override"
 	"helm.sh/helm/v3/pkg/chart"
 )
 
@@ -82,6 +83,11 @@ func (h *BitnamiFallbackHandler) ShouldRetryWithSecurityBypass(err error) bool {
 
 // ApplySecurityBypass adds the global.security.allowInsecureImages=true parameter to overrides
 func (h *BitnamiFallbackHandler) ApplySecurityBypass(overrides map[string]interface{}) error {
-	// Use the existing setValueAtPath function to set the parameter
-	return setValueAtPath(overrides, "global.security.allowInsecureImages", true)
+	path := "global.security.allowInsecureImages"
+	pathParts := ParsePath(path)
+	value := true
+
+	log.Debug("Applying Bitnami security bypass parameter", "path", path, "value", value)
+	// Use the override package's SetValueAtPath function to set the parameter
+	return override.SetValueAtPath(overrides, pathParts, value)
 }

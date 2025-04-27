@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/lucas-albers-lz4/irr/pkg/log"
+	"github.com/lucas-albers-lz4/irr/pkg/override"
 	"helm.sh/helm/v3/pkg/chart"
 )
 
@@ -103,9 +104,16 @@ func ApplyRulesToMap(rules []Rule, ch *chart.Chart, overrideMap map[string]inter
 					"rule_name", rule.Name(),
 					"param_path", param.Path,
 					"param_value", param.Value)
-				// Split the path by dots and set the value in the nested map
-				if err := setValueAtPath(overrideMap, param.Path, param.Value); err != nil {
-					return appliedAny, fmt.Errorf("failed to set parameter %s: %w", param.Path, err)
+
+				// NOTE: We need to pass the path parts to override.SetValueAtPath.
+				// Since override doesn't export its robust SplitPathWithEscapes, we use the simpler
+				// internal one for now, acknowledging its limitations.
+				// TODO: Refactor override package to export SplitPathWithEscapes or use a shared path utility.
+				pathParts := ParsePath(param.Path) // Using local ParsePath for now
+
+				// Set the value using the override package's utility
+				if err := override.SetValueAtPath(overrideMap, pathParts, param.Value); err != nil {
+					return appliedAny, fmt.Errorf("failed to set parameter %s for rule %s: %w", param.Path, rule.Name(), err)
 				}
 
 				log.Debug("Applied parameter to chart",
@@ -121,61 +129,10 @@ func ApplyRulesToMap(rules []Rule, ch *chart.Chart, overrideMap map[string]inter
 	return appliedAny, nil
 }
 
-// setValueAtPath sets a value at the specified dot-notation path in a nested map
-func setValueAtPath(m map[string]interface{}, path string, value interface{}) error {
-	// For now, use a simple implementation. In a real implementation,
-	// this would use a more robust method or reuse code from elsewhere in the codebase.
-
-	// We can enhance this later with a proper implementation that handles arrays,
-	// creates nested maps as needed, etc.
-
-	// This is just a placeholder implementation to demonstrate the concept
-	parts := splitPath(path)
-	return setValueInMap(m, parts, value)
-}
-
-// splitPath splits a dot-notation path into parts
-func splitPath(path string) []string {
-	// This is a simplified implementation
-	// In a real implementation, this would handle escaping, arrays, etc.
+// ParsePath splits a dot-notation path into parts (basic implementation)
+// TODO: Replace with a more robust implementation, possibly from override package if exported.
+func ParsePath(path string) []string {
 	return strings.Split(path, ".")
-}
-
-// setValueInMap sets a value in a nested map based on path parts
-func setValueInMap(m map[string]interface{}, parts []string, value interface{}) error {
-	// Add nil check for map
-	if m == nil {
-		return fmt.Errorf("cannot set value in nil map")
-	}
-
-	if len(parts) == 0 {
-		return fmt.Errorf("empty path")
-	}
-
-	if len(parts) == 1 {
-		// We've reached the final part, set the value
-		m[parts[0]] = value
-		return nil
-	}
-
-	// We need to traverse deeper
-	key := parts[0]
-	rest := parts[1:]
-
-	// If the key doesn't exist or isn't a map, create a new map
-	if m[key] == nil {
-		m[key] = make(map[string]interface{})
-	}
-
-	// Convert to map[string]interface{} if possible
-	subMap, ok := m[key].(map[string]interface{})
-	if !ok {
-		// Key exists but isn't a map
-		return fmt.Errorf("path element %q is not a map", key)
-	}
-
-	// Recursively set in the sub-map
-	return setValueInMap(subMap, rest, value)
 }
 
 // GetPriority returns the rule's priority (higher numbers have higher priority)

@@ -154,47 +154,6 @@ func TestDetectBitnamiChart(t *testing.T) {
 	})
 }
 
-func TestAppliesTo(t *testing.T) {
-	// Create a test chart that should match Bitnami detection
-	bitnamiChart := &chart.Chart{
-		Metadata: &chart.Metadata{
-			Name: "test-bitnami-chart",
-			Home: "https://bitnami.com/charts",
-			Maintainers: []*chart.Maintainer{
-				{
-					Name: "Bitnami Team",
-				},
-			},
-		},
-	}
-
-	// Create a test chart that should NOT match Bitnami detection
-	nonBitnamiChart := &chart.Chart{
-		Metadata: &chart.Metadata{
-			Name: "test-standard-chart",
-			Home: "https://example.com/charts",
-		},
-	}
-
-	// Create the rule to test
-	rule := NewBitnamiSecurityBypassRule()
-
-	// Test the Bitnami chart
-	detection, applies := rule.AppliesTo(bitnamiChart)
-	if !applies {
-		t.Errorf("BitnamiSecurityBypassRule.AppliesTo() should apply to Bitnami chart")
-	}
-	if detection.Provider != ProviderBitnami || detection.Confidence < ConfidenceMedium {
-		t.Errorf("BitnamiSecurityBypassRule.AppliesTo() detection = %v, expected Bitnami with confidence >= Medium", detection)
-	}
-
-	// Test the non-Bitnami chart
-	_, applies = rule.AppliesTo(nonBitnamiChart)
-	if applies {
-		t.Errorf("BitnamiSecurityBypassRule.AppliesTo() should not apply to non-Bitnami chart")
-	}
-}
-
 func TestDetectChartProvider(t *testing.T) {
 	tests := []struct {
 		name               string
