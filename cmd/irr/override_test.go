@@ -47,11 +47,26 @@ func (m *MockHelmClient) GetReleaseValues(_ context.Context, _, _ string) (map[s
 }
 
 // GetChartFromRelease mocks retrieving a chart from a release
-func (m *MockHelmClient) GetChartFromRelease(_ context.Context, _, _ string) (*helmchart.Chart, error) {
+func (m *MockHelmClient) GetChartFromRelease(_ context.Context, _, _ string) (*helm.ChartMetadata, error) {
 	if m.GetReleaseError != nil {
 		return nil, m.GetReleaseError
 	}
-	return m.ReleaseChart, nil
+
+	// Convert Chart to ChartMetadata
+	if m.ReleaseChart != nil && m.ReleaseChart.Metadata != nil {
+		return &helm.ChartMetadata{
+			Name:    m.ReleaseChart.Metadata.Name,
+			Version: m.ReleaseChart.Metadata.Version,
+			Path:    m.LoadChartFromPath,
+		}, nil
+	}
+
+	// Default metadata if none is available
+	return &helm.ChartMetadata{
+		Name:    "mock-chart",
+		Version: "1.0.0",
+		Path:    m.LoadChartFromPath,
+	}, nil
 }
 
 // GetReleaseMetadata mocks retrieving metadata from a release
@@ -66,7 +81,7 @@ func (m *MockHelmClient) GetReleaseMetadata(_ context.Context, _, _ string) (*he
 }
 
 // TemplateChart mocks chart templating
-func (m *MockHelmClient) TemplateChart(_ context.Context, _, _ string, _ map[string]interface{}, _, _ string) (string, error) {
+func (m *MockHelmClient) TemplateChart(_ context.Context, _ /* releaseName */, _ /* namespace */, _ /* chartPath */ string, _ /* values */ map[string]interface{}) (string, error) {
 	if m.TemplateError != nil {
 		return "", m.TemplateError
 	}
@@ -108,6 +123,20 @@ func (m *MockHelmClient) FindChartForRelease(_ context.Context, _, _ string) (st
 // ValidateRelease mocks validating a release with custom values
 func (m *MockHelmClient) ValidateRelease(_ context.Context, _, _ string, _ []string, _ string) error {
 	return m.ValidateError
+}
+
+// LoadChart mocks loading a chart from a path
+func (m *MockHelmClient) LoadChart(_ /* chartPath */ string) (*helmchart.Chart, error) {
+	if m.LoadChartError != nil {
+		return nil, m.LoadChartError
+	}
+	return m.ReleaseChart, nil
+}
+
+// ListReleases implements helm.ClientInterface and returns an empty list of releases
+func (m *MockHelmClient) ListReleases(_ context.Context, _ bool) ([]*helm.ReleaseElement, error) {
+	// For simplicity in tests, return an empty list or could be enhanced to return mock releases
+	return []*helm.ReleaseElement{}, nil
 }
 
 // MockHelmAdapter mocks the behavior of helm.Adapter for command-level tests
