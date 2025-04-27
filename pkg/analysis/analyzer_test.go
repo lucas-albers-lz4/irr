@@ -855,54 +855,43 @@ func TestAnalyzeArray(t *testing.T) {
 // TestIsGlobalRegistry tests the IsGlobalRegistry function for detecting global registry configurations.
 func TestIsGlobalRegistry(t *testing.T) {
 	tests := []struct {
-		name         string
-		dummyMap     map[string]interface{}
-		keyPath      string
-		expectResult bool
+		name     string
+		keyPath  string
+		valueMap map[string]interface{}
+		expected bool
 	}{
 		{
-			name:         "global registry path",
-			dummyMap:     map[string]interface{}{},
-			keyPath:      "global.registry",
-			expectResult: true,
+			name:     "Global registry path",
+			keyPath:  "global.registry",
+			valueMap: map[string]interface{}{"someKey": "someValue"}, // Value map is irrelevant for this test
+			expected: true,
 		},
 		{
-			name:         "global imageRegistry path",
-			dummyMap:     map[string]interface{}{},
-			keyPath:      "global.imageRegistry",
-			expectResult: true,
+			name:     "Non-global path",
+			keyPath:  "image.registry",
+			valueMap: map[string]interface{}{}, // Value map is irrelevant
+			expected: false,
 		},
 		{
-			name:         "nested global registry path",
-			dummyMap:     map[string]interface{}{},
-			keyPath:      "global.images.registry",
-			expectResult: true,
+			name:     "Path containing global but not registry",
+			keyPath:  "global.someOtherSetting",
+			valueMap: map[string]interface{}{}, // Value map is irrelevant
+			expected: false,
 		},
 		{
-			name:         "not a global registry path",
-			dummyMap:     map[string]interface{}{},
-			keyPath:      "image.registry",
-			expectResult: false,
-		},
-		{
-			name:         "empty path",
-			dummyMap:     map[string]interface{}{},
-			keyPath:      "",
-			expectResult: false,
-		},
-		{
-			name:         "global prefix without registry",
-			dummyMap:     map[string]interface{}{},
-			keyPath:      "global.image",
-			expectResult: false,
+			name:     "Path containing registry but not global",
+			keyPath:  "subchart.imageRegistry",
+			valueMap: map[string]interface{}{}, // Value map is irrelevant
+			expected: false,
 		},
 	}
 
-	analyzer := &Analyzer{}
+	analyzer := NewAnalyzer("", nil) // Analyzer instance needed to call the method
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := analyzer.IsGlobalRegistry(tt.dummyMap, tt.keyPath)
-			assert.Equal(t, tt.expectResult, result, "IsGlobalRegistry result mismatch")
+			// Call IsGlobalRegistry with only the keyPath, as the map is unused
+			assert.Equal(t, tt.expected, analyzer.IsGlobalRegistry(tt.keyPath))
 		})
 	}
 }

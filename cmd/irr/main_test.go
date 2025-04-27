@@ -170,7 +170,7 @@ func TestLogHelmEnvironment(t *testing.T) {
 	})
 }
 
-func TestExecute(t *testing.T) {
+func TestStartupLoggingMode(t *testing.T) {
 	// Save original log level and restore
 	originalLevel := log.CurrentLevel()
 	defer log.SetLevel(originalLevel)

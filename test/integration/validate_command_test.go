@@ -1,3 +1,5 @@
+//go:build integration
+
 // Package integration contains integration tests for the irr CLI tool.
 package integration
 
@@ -191,7 +193,7 @@ func TestValidateWithMissingValuesFile(t *testing.T) {
 	assert.Contains(t, stderr, "values file not found", "Error should mention values file")
 }
 
-func TestValidateWithStrictFlag(t *testing.T) {
+func TestOverrideWithStrictFlagUnsupportedChart(t *testing.T) {
 	harness := NewTestHarness(t)
 	defer harness.Cleanup()
 
