@@ -146,11 +146,6 @@ func GenerateYAMLOverrides(overrides map[string]interface{}, format string) ([]b
 	return nil, fmt.Errorf("invalid format: %s", format)
 }
 
-// ConstructPath constructs the path for the override structure
-func ConstructPath(path []string) []string {
-	return path
-}
-
 // GenerateYAML generates YAML output for the override structure
 func GenerateYAML(overrides map[string]interface{}) ([]byte, error) {
 	// Wrap the error from the external YAML library

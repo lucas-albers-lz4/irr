@@ -2,7 +2,6 @@
 package override
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"reflect"
@@ -107,77 +106,6 @@ func TestGenerateOverrides(t *testing.T) {
 			if !reflect.DeepEqual(result, tt.expected) {
 				t.Errorf("GenerateOverrides() = %v, want %v", result, tt.expected)
 			}
-		})
-	}
-}
-
-func TestSubchartAliasPathConstruction(t *testing.T) {
-	tests := []struct {
-		name     string
-		path     []string
-		expected []string
-	}{
-		{
-			name:     "simple alias",
-			path:     []string{"subchart", "image"},
-			expected: []string{"subchart", "image"},
-		},
-		{
-			name:     "nested alias",
-			path:     []string{"subchart", "nested", "image"},
-			expected: []string{"subchart", "nested", "image"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := tt.path
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestYAMLGeneration(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    map[string]interface{}
-		expected string
-	}{
-		{
-			name: "simple override yaml",
-			input: map[string]interface{}{
-				"image": map[string]interface{}{
-					"repository": "dockerio/nginx",
-				},
-			},
-			expected: `image:
-  repository: dockerio/nginx
-`,
-		},
-		{
-			name: "complex override yaml",
-			input: map[string]interface{}{
-				"subchart": map[string]interface{}{
-					"image": map[string]interface{}{
-						"repository": "quayio/prometheus/node-exporter",
-					},
-				},
-			},
-			expected: `subchart:
-  image:
-    repository: quayio/prometheus/node-exporter
-`,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var buf bytes.Buffer
-			enc := yaml.NewEncoder(&buf)
-			enc.SetIndent(2)
-			err := enc.Encode(tt.input)
-			assert.NoError(t, err)
-			assert.Equal(t, tt.expected, buf.String())
 		})
 	}
 }
@@ -1011,42 +939,6 @@ invalid: : yaml
 	}
 }
 
-func TestConstructPath(t *testing.T) {
-	tests := []struct {
-		name     string
-		path     []string
-		expected []string
-	}{
-		{
-			name:     "simple path",
-			path:     []string{"image"},
-			expected: []string{"image"},
-		},
-		{
-			name:     "nested path",
-			path:     []string{"nested", "image"},
-			expected: []string{"nested", "image"},
-		},
-		{
-			name:     "empty path",
-			path:     []string{},
-			expected: []string{},
-		},
-		{
-			name:     "path with array index",
-			path:     []string{"containers[0]", "image"},
-			expected: []string{"containers[0]", "image"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := ConstructPath(tt.path)
-			assert.Equal(t, tt.expected, result, "Path should be unchanged")
-		})
-	}
-}
-
 func TestNormalizeRegistry(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -1531,4 +1423,12 @@ func TestFlattenValueWithoutDots(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSetValueAtPath_Simple(t *testing.T) {
+	// ... existing code ...
+}
+
+func Test_splitPathWithEscapes(t *testing.T) {
+	// ... existing code ...
 }
