@@ -38,9 +38,3 @@ func GetAferoFS(fs fileutil.FS) afero.Fs {
 	// from the fileutil.FS interface, but we don't have access to that
 	return afero.NewMemMapFs()
 }
-
-// Deprecated: NewAferoFS provides a more robust implementation.
-// Wraps an afero.Fs to satisfy the fileutil.FS interface.
-type aferoFSWrapper struct {
-	afs afero.Fs
-}

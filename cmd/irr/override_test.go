@@ -1034,6 +1034,6 @@ func TestValidateUnmappableRegistries(t *testing.T) {
 	}
 }
 
-func TestMain(m *testing.M) {
+func TestMain(_ *testing.M) {
 	// ... (rest of the code remains unchanged)
 }
