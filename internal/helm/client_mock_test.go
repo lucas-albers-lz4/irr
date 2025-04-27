@@ -138,3 +138,71 @@ func TestMockValidateRelease(t *testing.T) {
 		assert.Equal(t, 1, mockClient.ValidateCallCount, "ValidateCallCount should be 1 when returning configured error")
 	})
 }
+
+func TestMockListReleases(t *testing.T) {
+	t.Run("Return mock releases", func(t *testing.T) {
+		// Create a new mock client
+		mockClient := NewMockHelmClient()
+
+		// Set up mock releases
+		expectedReleases := []*ReleaseElement{
+			{
+				Name:      "release1",
+				Namespace: "default",
+			},
+			{
+				Name:      "release2",
+				Namespace: "test",
+			},
+		}
+		mockClient.SetupMockReleases(expectedReleases)
+
+		// Call ListReleases
+		releases, err := mockClient.ListReleases(context.Background(), true)
+
+		// Verify results
+		require.NoError(t, err)
+		assert.Equal(t, expectedReleases, releases, "Should return the configured mock releases")
+		assert.Equal(t, 1, mockClient.ListReleasesCallCount, "ListReleasesCallCount should be incremented")
+	})
+
+	t.Run("Error case", func(t *testing.T) {
+		// Create a new mock client with error
+		mockClient := NewMockHelmClient()
+		expectedError := fmt.Errorf("failed to list releases")
+		mockClient.ListReleasesError = expectedError
+
+		// Call ListReleases
+		releases, err := mockClient.ListReleases(context.Background(), true)
+
+		// Verify error is returned
+		assert.ErrorIs(t, err, expectedError)
+		assert.Nil(t, releases)
+		assert.Equal(t, 1, mockClient.ListReleasesCallCount, "ListReleasesCallCount should be incremented")
+	})
+}
+
+func TestMockSetupMockReleases(t *testing.T) {
+	mockClient := NewMockHelmClient()
+	expectedReleases := []*ReleaseElement{
+		{
+			Name:      "release1",
+			Namespace: "default",
+		},
+		{
+			Name:      "release2",
+			Namespace: "test",
+		},
+	}
+
+	// Call the helper method
+	mockClient.SetupMockReleases(expectedReleases)
+
+	// Verify the releases are stored correctly
+	assert.Equal(t, expectedReleases, mockClient.MockReleases, "MockReleases should contain the configured releases")
+
+	// Verify we can retrieve them via ListReleases
+	releases, err := mockClient.ListReleases(context.Background(), true)
+	require.NoError(t, err)
+	assert.Equal(t, expectedReleases, releases, "ListReleases should return the configured releases")
+}

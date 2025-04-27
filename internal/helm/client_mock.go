@@ -6,6 +6,7 @@ import (
 
 	log "github.com/lucas-albers-lz4/irr/pkg/log"
 	"github.com/stretchr/testify/mock"
+	"helm.sh/helm/v3/pkg/chart"
 )
 
 // MockHelmClient implements ClientInterface for testing
@@ -16,6 +17,7 @@ type MockHelmClient struct {
 	ReleaseCharts    map[string]*ChartMetadata         // releaseName -> chart metadata
 	TemplateResults  map[string]string                 // chartPath -> manifest
 	CurrentNamespace string
+	MockReleases     []*ReleaseElement // List of mock releases for ListReleases
 
 	// Track calls for assertions
 	GetValuesCallCount    int
@@ -24,14 +26,16 @@ type MockHelmClient struct {
 	GetNamespaceCallCount int
 	FindChartCallCount    int
 	ValidateCallCount     int
+	ListReleasesCallCount int
 
 	// Error simulation
-	GetValuesError   error
-	GetChartError    error
-	TemplateError    error
-	FindChartError   error
-	ValidateError    error
-	FindChartResults map[string]string // releaseKey -> chartPath
+	GetValuesError    error
+	GetChartError     error
+	TemplateError     error
+	FindChartError    error
+	ValidateError     error
+	ListReleasesError error
+	FindChartResults  map[string]string // releaseKey -> chartPath
 
 	// Track calls
 	TemplateChartCalled bool
@@ -47,6 +51,7 @@ func NewMockHelmClient() *MockHelmClient {
 		TemplateResults:  make(map[string]string),
 		FindChartResults: make(map[string]string),
 		CurrentNamespace: "default",
+		MockReleases:     []*ReleaseElement{},
 	}
 }
 
@@ -71,8 +76,8 @@ func (m *MockHelmClient) GetReleaseValues(_ context.Context, releaseName, namesp
 	return values, nil
 }
 
-// GetReleaseChart returns mocked chart metadata for a release
-func (m *MockHelmClient) GetReleaseChart(_ context.Context, releaseName, namespace string) (*ChartMetadata, error) {
+// GetChartFromRelease implements ClientInterface.GetChartFromRelease
+func (m *MockHelmClient) GetChartFromRelease(_ context.Context, releaseName, namespace string) (*ChartMetadata, error) {
 	m.GetChartCallCount++
 
 	if m.GetChartError != nil {
@@ -84,16 +89,16 @@ func (m *MockHelmClient) GetReleaseChart(_ context.Context, releaseName, namespa
 		releaseKey = fmt.Sprintf("%s/%s", namespace, releaseName)
 	}
 
-	chart, exists := m.ReleaseCharts[releaseKey]
+	chartMeta, exists := m.ReleaseCharts[releaseKey]
 	if !exists {
 		return nil, fmt.Errorf("release %q not found", releaseKey)
 	}
 
-	return chart, nil
+	return chartMeta, nil
 }
 
 // TemplateChart mocks the TemplateChart method
-func (m *MockHelmClient) TemplateChart(_ context.Context, releaseName, chartPath string, _ map[string]interface{}, namespace, _ string) (string, error) {
+func (m *MockHelmClient) TemplateChart(_ context.Context, releaseName, namespace, chartPath string, _ /* values */ map[string]interface{}) (string, error) {
 	m.TemplateChartCalled = true // Mark as called
 
 	// Return preconfigured error first, if any
@@ -192,5 +197,52 @@ func (m *MockHelmClient) SetupMockChartPath(releaseName, namespace, chartPath st
 		releaseKey = fmt.Sprintf("%s/%s", namespace, releaseName)
 	}
 
+	if m.FindChartResults == nil {
+		m.FindChartResults = make(map[string]string)
+	}
 	m.FindChartResults[releaseKey] = chartPath
+}
+
+// ListReleases returns a mocked list of Helm releases
+func (m *MockHelmClient) ListReleases(_ context.Context, allNamespaces bool) ([]*ReleaseElement, error) {
+	m.ListReleasesCallCount++
+
+	if m.ListReleasesError != nil {
+		return nil, m.ListReleasesError
+	}
+
+	// If allNamespaces is false, filter to only return releases from the current namespace
+	if !allNamespaces {
+		filteredReleases := make([]*ReleaseElement, 0)
+		for _, release := range m.MockReleases {
+			if release.Namespace == m.CurrentNamespace {
+				filteredReleases = append(filteredReleases, release)
+			}
+		}
+		return filteredReleases, nil
+	}
+
+	// Return all mock releases
+	return m.MockReleases, nil
+}
+
+// SetupMockReleases is a helper method to configure mock releases for ListReleases
+func (m *MockHelmClient) SetupMockReleases(releases []*ReleaseElement) {
+	m.MockReleases = releases
+}
+
+// LoadChart is a mock implementation of the LoadChart method
+func (m *MockHelmClient) LoadChart(_ /* chartPath */ string) (*chart.Chart, error) {
+	// This is a mock implementation, so we can return a simple mock chart
+	return &chart.Chart{
+		Metadata: &chart.Metadata{
+			Name:    "mock-chart",
+			Version: "1.0.0",
+		},
+	}, nil
+}
+
+// GetReleaseChart is an alias for GetChartFromRelease to maintain backward compatibility
+func (m *MockHelmClient) GetReleaseChart(_ context.Context, releaseName, namespace string) (*ChartMetadata, error) {
+	return m.GetChartFromRelease(context.Background(), releaseName, namespace) // Use context.Background() or a relevant context
 }
