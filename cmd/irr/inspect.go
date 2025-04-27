@@ -17,6 +17,7 @@ import (
 	"helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/chartutil"
 
+	"github.com/lucas-albers-lz4/irr/internal/helm"
 	"github.com/lucas-albers-lz4/irr/pkg/analyzer"
 	"github.com/lucas-albers-lz4/irr/pkg/exitcodes"
 	"github.com/lucas-albers-lz4/irr/pkg/fileutil"
@@ -24,6 +25,7 @@ import (
 	log "github.com/lucas-albers-lz4/irr/pkg/log"
 	"github.com/lucas-albers-lz4/irr/pkg/registry"
 	"github.com/spf13/cobra"
+	// Added Helm imports
 )
 
 // ChartInfo represents basic chart information
@@ -60,6 +62,8 @@ type InspectFlags struct {
 	GenerateConfigSkeleton bool
 	AnalyzerConfig         *analyzer.Config
 	SourceRegistries       []string
+	AllNamespaces          bool
+	OverwriteSkeleton      bool
 	// Add filesystem dependency if needed for loading logic outside runInspect
 	// Fs                     afero.Fs
 }
@@ -71,6 +75,22 @@ const (
 	outputFormatJSON              = "json"
 	defaultNamespace              = "default" // Added const for default namespace
 )
+
+// ReleaseAnalysisResult represents the analysis result for a single Helm release
+type ReleaseAnalysisResult struct {
+	ReleaseName string        `json:"releaseName" yaml:"releaseName"`
+	Namespace   string        `json:"namespace" yaml:"namespace"`
+	Analysis    ImageAnalysis `json:"analysis" yaml:"analysis"`
+}
+
+// createHelmClient creates a new instance of the Helm client
+func createHelmClient() (helm.ClientInterface, error) {
+	client, err := helm.NewHelmClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Helm client: %w", err)
+	}
+	return client, nil
+}
 
 // newInspectCmd creates a new inspect command
 func newInspectCmd() *cobra.Command {
@@ -91,7 +111,9 @@ This command analyzes the chart's values.yaml and templates to find image refere
 	cmd.Flags().StringSlice("exclude-pattern", nil, "Glob patterns for values paths to exclude during analysis")
 	cmd.Flags().StringSliceP("source-registries", "r", []string{}, "Source registries to filter results (optional)")
 	cmd.Flags().String("release-name", "", "Release name for Helm plugin mode")
-	cmd.Flags().String("namespace", "default", `Kubernetes namespace for the release (defaults to "default")`)
+	cmd.Flags().StringP("namespace", "n", "default", `Kubernetes namespace for the release (defaults to "default")`)
+	cmd.Flags().BoolP("all-namespaces", "A", false, "Inspect Helm releases across all namespaces (conflicts with --chart-path, --release-name, --namespace)")
+	cmd.Flags().Bool("overwrite-skeleton", false, "Overwrite the skeleton file if it already exists (only applies when using --generate-config-skeleton)")
 
 	return cmd
 }
@@ -227,7 +249,41 @@ func writeOutput(cmd *cobra.Command, analysis *ImageAnalysis, flags *InspectFlag
 		if skeletonFile == "" {
 			skeletonFile = DefaultConfigSkeletonFilename
 		}
+
+		// Check if the skeleton file exists
+		exists, err := afero.Exists(AppFs, skeletonFile)
+		if err != nil {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitIOError,
+				Err:  fmt.Errorf("failed to check if skeleton file exists: %w", err),
+			}
+		}
+
+		// If the file exists and overwriteSkeleton is false, return an error
+		if exists && !flags.OverwriteSkeleton {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitIOError,
+				Err:  fmt.Errorf("output file %s already exists; use --overwrite-skeleton to overwrite", skeletonFile),
+			}
+		}
+
+		// If overwriteSkeleton is true, we'll continue and overwrite the file
+		if exists && flags.OverwriteSkeleton {
+			log.Info("Overwriting existing skeleton file", "path", skeletonFile)
+		}
+
 		if err := createConfigSkeleton(analysis.Images, skeletonFile); err != nil {
+			// Special handling for file exists error - should not happen now with the checks above
+			var exitErr *exitcodes.ExitCodeError
+			if errors.As(err, &exitErr) && strings.Contains(exitErr.Err.Error(), "already exists") {
+				// This case should not occur now, but kept for robustness
+				return &exitcodes.ExitCodeError{
+					Code: exitcodes.ExitIOError,
+					Err:  fmt.Errorf("output file %s already exists; use --overwrite-skeleton to overwrite", skeletonFile),
+				}
+			}
+
+			// Other errors from createConfigSkeleton
 			return &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitIOError,
 				Err:  fmt.Errorf("failed to create config skeleton: %w", err),
@@ -299,6 +355,12 @@ func runInspect(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// New code: If --all-namespaces flag is set, use the all-namespaces flow
+	if flags.AllNamespaces {
+		return inspectAllNamespaces(cmd, flags)
+	}
+
+	// Existing code for single release/chart flow
 	// Decide execution path based on args/plugin mode
 	if releaseNameProvided {
 		// Assume plugin mode if release name is given (validated inside inspectHelmRelease)
@@ -622,8 +684,59 @@ func getInspectFlags(cmd *cobra.Command, releaseNameProvided bool) (*InspectFlag
 		}
 	}
 
-	// Only require chart-path if we're not using a release name in plugin mode
-	if chartPath == "" && !releaseNameProvided {
+	// Get release-name flag
+	releaseName, err := cmd.Flags().GetString("release-name")
+	if err != nil {
+		return nil, &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get release-name flag: %w", err),
+		}
+	}
+
+	// Get namespace flag
+	namespace, err := cmd.Flags().GetString("namespace")
+	if err != nil {
+		return nil, &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get namespace flag: %w", err),
+		}
+	}
+
+	// Get all-namespaces flag
+	allNamespaces, err := cmd.Flags().GetBool("all-namespaces")
+	if err != nil {
+		return nil, &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get all-namespaces flag: %w", err),
+		}
+	}
+
+	// If all-namespaces is true, validate that it doesn't conflict with other flags
+	if allNamespaces {
+		if chartPath != "" {
+			return nil, &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitInputConfigurationError,
+				Err:  fmt.Errorf("--all-namespaces cannot be used together with --chart-path"),
+			}
+		}
+
+		if releaseName != "" {
+			return nil, &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitInputConfigurationError,
+				Err:  fmt.Errorf("--all-namespaces cannot be used together with --release-name"),
+			}
+		}
+
+		if namespace != defaultNamespace {
+			return nil, &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitInputConfigurationError,
+				Err:  fmt.Errorf("--all-namespaces cannot be used together with --namespace"),
+			}
+		}
+	}
+
+	// Only require chart-path if we're not using a release name in plugin mode or all-namespaces
+	if chartPath == "" && !releaseNameProvided && !allNamespaces {
 		return nil, &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitMissingRequiredFlag,
 			Err:  fmt.Errorf("required flag \"chart-path\" not set"),
@@ -632,15 +745,6 @@ func getInspectFlags(cmd *cobra.Command, releaseNameProvided bool) (*InspectFlag
 
 	// If we have a chart path, validate it
 	if chartPath != "" {
-		// Normalize chart path - REMOVED filepath.Abs as it breaks mock FS testing
-		// chartPath, err = filepath.Abs(chartPath)
-		// if err != nil {
-		// 	return nil, &exitcodes.ExitCodeError{
-		// 		Code: exitcodes.ExitInputConfigurationError,
-		// 		Err:  fmt.Errorf("failed to get absolute path for chart: %w", err),
-		// 	}
-		// }
-
 		// Check if chart exists using the AppFs
 		_, err = AppFs.Stat(chartPath)
 		if err != nil {
@@ -699,6 +803,23 @@ func getInspectFlags(cmd *cobra.Command, releaseNameProvided bool) (*InspectFlag
 		}
 	}
 
+	// Get overwrite-skeleton flag
+	overwriteSkeleton, err := cmd.Flags().GetBool("overwrite-skeleton")
+	if err != nil {
+		return nil, &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get overwrite-skeleton flag: %w", err),
+		}
+	}
+
+	// Validate overwrite-skeleton is only used with generate-config-skeleton
+	if overwriteSkeleton && !generateConfigSkeleton {
+		return nil, &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("--overwrite-skeleton requires --generate-config-skeleton"),
+		}
+	}
+
 	// Get analysis patterns
 	includePatterns, excludePatterns, err := getAnalysisPatterns(cmd)
 	if err != nil {
@@ -726,6 +847,8 @@ func getInspectFlags(cmd *cobra.Command, releaseNameProvided bool) (*InspectFlag
 		GenerateConfigSkeleton: generateConfigSkeleton,
 		AnalyzerConfig:         analyzerConfig,
 		SourceRegistries:       sourceRegistries,
+		AllNamespaces:          allNamespaces,
+		OverwriteSkeleton:      overwriteSkeleton,
 	}, nil
 }
 
@@ -900,6 +1023,9 @@ func createConfigSkeleton(images []ImageInfo, outputFile string) error {
 		log.Info("No output file specified, using default:", outputFile)
 	}
 
+	// Note: File existence check is now done in writeOutput function
+	// so we don't need to check here
+
 	// Ensure the directory exists before trying to write the file
 	dir := filepath.Dir(outputFile)
 	if dir != "" && dir != "." {
@@ -941,8 +1067,8 @@ func createConfigSkeleton(images []ImageInfo, outputFile string) error {
 		Version: "1.0",
 		Registries: registry.RegConfig{
 			Mappings:      mappings,
-			DefaultTarget: "registry.local/default",
-			StrictMode:    false,
+			DefaultTarget: "registry.local/default", // Example default target
+			StrictMode:    false,                    // Default to false for better usability
 		},
 		Compatibility: registry.CompatibilityConfig{
 			IgnoreEmptyFields: true,
@@ -994,4 +1120,292 @@ func createConfigSkeleton(images []ImageInfo, outputFile string) error {
 
 	log.Info("Update the target registry paths and use with 'irr config' to set up your configuration")
 	return nil
+}
+
+// getAllReleases returns all Helm releases across all namespaces
+func getAllReleases() ([]*helm.ReleaseElement, *helm.Adapter, error) {
+	// Create a Helm adapter for interacting with the cluster
+	helmAdapter, err := helmAdapterFactory()
+	if err != nil {
+		return nil, nil, err // Assumes factory returns ExitCodeError on failure
+	}
+	// Add explicit nil check for helmAdapter to satisfy nilaway and prevent potential panics
+	if helmAdapter == nil {
+		return nil, nil, &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitGeneralRuntimeError,
+			Err:  errors.New("internal error: helmAdapterFactory returned nil adapter without error"),
+		}
+	}
+
+	// List all releases across all namespaces
+	client, err := createHelmClient()
+	if err != nil {
+		return nil, helmAdapter, &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitHelmCommandFailed,
+			Err:  fmt.Errorf("failed to create Helm client: %w", err),
+		}
+	}
+
+	log.Debug("Listing all Helm releases across all namespaces")
+	releases, err := client.ListReleases(context.Background(), true)
+	if err != nil {
+		return nil, helmAdapter, &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitHelmCommandFailed,
+			Err:  fmt.Errorf("failed to list Helm releases: %w", err),
+		}
+	}
+
+	log.Info("Found", len(releases), "releases across all namespaces")
+	return releases, helmAdapter, nil
+}
+
+// analyzeRelease analyzes a single Helm release and returns the analysis result
+func analyzeRelease(release *helm.ReleaseElement, helmAdapter *helm.Adapter, flags *InspectFlags) (*ReleaseAnalysisResult, error) {
+	log.Info("Analyzing release", "name", release.Name, "namespace", release.Namespace)
+
+	// Get release values
+	values, err := helmAdapter.GetReleaseValues(context.Background(), release.Name, release.Namespace)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get values for release %s/%s: %w", release.Namespace, release.Name, err)
+	}
+
+	// Get chart metadata
+	chartMetadata, err := helmAdapter.GetChartFromRelease(context.Background(), release.Name, release.Namespace)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get chart info for release %s/%s: %w", release.Namespace, release.Name, err)
+	}
+
+	// Create chart info from metadata
+	chartInfo := ChartInfo{
+		Name:    chartMetadata.Name,
+		Version: chartMetadata.Version,
+		Path:    fmt.Sprintf("helm-release://%s/%s", release.Namespace, release.Name),
+	}
+
+	// Analyze the release values using the provided analyzer config
+	log.Debug("Analyzing release values for", "name", release.Name, "namespace", release.Namespace)
+	analysisPatterns, analysisErr := analyzer.AnalyzeHelmValues(values, flags.AnalyzerConfig)
+	if analysisErr != nil {
+		return nil, fmt.Errorf("analysis failed for release %s/%s: %w", release.Namespace, release.Name, analysisErr)
+	}
+
+	// Process image patterns found in values
+	images, skipped := processImagePatterns(analysisPatterns)
+
+	// Create analysis result
+	analysis := ImageAnalysis{
+		Chart:         chartInfo,
+		Images:        images,
+		ImagePatterns: analysisPatterns,
+		Skipped:       skipped,
+	}
+
+	// Apply source registry filtering if needed
+	if len(flags.SourceRegistries) > 0 {
+		// Create a map for O(1) lookups
+		registryMap := make(map[string]bool)
+		for _, reg := range flags.SourceRegistries {
+			normalized := image.NormalizeRegistry(reg)
+			registryMap[normalized] = true
+		}
+
+		// Filter images
+		filteredImages := make([]ImageInfo, 0)
+		for _, img := range analysis.Images {
+			normalizedRegistry := image.NormalizeRegistry(img.Registry)
+			if registryMap[normalizedRegistry] {
+				filteredImages = append(filteredImages, img)
+			}
+		}
+
+		// Update the analysis with filtered images
+		analysis.Images = filteredImages
+	}
+
+	return &ReleaseAnalysisResult{
+		ReleaseName: release.Name,
+		Namespace:   release.Namespace,
+		Analysis:    analysis,
+	}, nil
+}
+
+// processAllReleases processes all releases and returns the aggregated results
+func processAllReleases(releases []*helm.ReleaseElement, helmAdapter *helm.Adapter, flags *InspectFlags) ([]*ReleaseAnalysisResult, []string, []ImageInfo, error) {
+	var allResults []*ReleaseAnalysisResult
+	var skippedReleases []string
+	uniqueRegistries := make(map[string]bool)
+
+	// Process each release
+	for _, release := range releases {
+		result, err := analyzeRelease(release, helmAdapter, flags)
+		if err != nil {
+			log.Warn("Failed to analyze release", "name", release.Name, "namespace", release.Namespace, "error", err)
+			skippedReleases = append(skippedReleases, fmt.Sprintf("%s/%s", release.Namespace, release.Name))
+			continue
+		}
+
+		allResults = append(allResults, result)
+
+		// Accumulate unique registries
+		for _, img := range result.Analysis.Images {
+			uniqueRegistries[img.Registry] = true
+		}
+	}
+
+	// Handle no results case
+	if len(allResults) == 0 && len(uniqueRegistries) == 0 {
+		msg := "No releases were successfully analyzed"
+		if len(skippedReleases) > 0 {
+			msg += fmt.Sprintf(". %d releases were skipped due to errors", len(skippedReleases))
+		}
+		log.Warn(msg)
+		return nil, skippedReleases, nil, errors.New(msg)
+	}
+
+	// Create images list for skeleton generation
+	var skeletonImages []ImageInfo
+	for registry := range uniqueRegistries {
+		skeletonImages = append(skeletonImages, ImageInfo{
+			Registry: registry,
+		})
+	}
+
+	return allResults, skippedReleases, skeletonImages, nil
+}
+
+// outputMultiReleaseAnalysis formats and outputs the analysis results for multiple releases
+func outputMultiReleaseAnalysis(cmd *cobra.Command, results []*ReleaseAnalysisResult, skipped []string, flags *InspectFlags) error {
+	// Create a combined output structure
+	type CombinedAnalysisResult struct {
+		Releases []*ReleaseAnalysisResult `json:"releases" yaml:"releases"`
+		Skipped  []string                 `json:"skipped,omitempty" yaml:"skipped,omitempty"`
+	}
+
+	combinedResult := CombinedAnalysisResult{
+		Releases: results,
+		Skipped:  skipped,
+	}
+
+	// Determine output format (yaml or json)
+	var output []byte
+	var marshalErr error
+
+	switch strings.ToLower(flags.OutputFormat) {
+	case "json":
+		output, marshalErr = json.Marshal(combinedResult)
+		if marshalErr != nil {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitGeneralRuntimeError,
+				Err:  fmt.Errorf("failed to marshal analysis to JSON: %w", marshalErr),
+			}
+		}
+	default:
+		// Default to YAML
+		output, marshalErr = yaml.Marshal(combinedResult)
+		if marshalErr != nil {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitGeneralRuntimeError,
+				Err:  fmt.Errorf("failed to marshal analysis to YAML: %w", marshalErr),
+			}
+		}
+	}
+
+	// Write to file or stdout
+	if flags.OutputFile != "" {
+		if err := afero.WriteFile(AppFs, flags.OutputFile, output, fileutil.ReadWriteUserPermission); err != nil {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitIOError,
+				Err:  fmt.Errorf("failed to write analysis to file: %w", err),
+			}
+		}
+		log.Info("Analysis written to", flags.OutputFile)
+	} else {
+		// Use the command's out buffer instead of fmt.Println directly
+		if _, err := fmt.Fprintln(cmd.OutOrStdout(), string(output)); err != nil {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitIOError,
+				Err:  fmt.Errorf("failed to write analysis to stdout: %w", err),
+			}
+		}
+	}
+
+	// Log summary information
+	if len(skipped) > 0 {
+		log.Warn("Some releases were skipped during analysis:", "count", len(skipped))
+		for _, skippedRelease := range skipped {
+			log.Warn("  - " + skippedRelease)
+		}
+	}
+
+	log.Info("Successfully analyzed", len(results), "releases")
+	return nil
+}
+
+// inspectAllNamespaces handles inspection of all Helm releases across all namespaces
+func inspectAllNamespaces(cmd *cobra.Command, flags *InspectFlags) error {
+	log.Info("Inspecting all Helm releases across all namespaces...")
+
+	// Get all releases
+	releases, helmAdapter, err := getAllReleases()
+	if err != nil {
+		return err
+	}
+
+	// Process all releases
+	results, skippedReleases, skeletonImages, err := processAllReleases(releases, helmAdapter, flags)
+	if err != nil && !flags.GenerateConfigSkeleton {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitChartProcessingFailed,
+			Err:  err,
+		}
+	}
+
+	// Handle skeleton generation
+	if flags.GenerateConfigSkeleton {
+		log.Info("Generating config skeleton from all releases...")
+
+		// If we have no images but we're in skeleton mode, return an error
+		if len(skeletonImages) == 0 {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitChartProcessingFailed,
+				Err:  errors.New("no registries found for skeleton generation"),
+			}
+		}
+
+		// Generate skeleton file
+		skeletonFile := flags.OutputFile
+		if skeletonFile == "" {
+			skeletonFile = DefaultConfigSkeletonFilename
+		}
+
+		// Check if the skeleton file exists
+		exists, err := afero.Exists(AppFs, skeletonFile)
+		if err != nil {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitIOError,
+				Err:  fmt.Errorf("failed to check if skeleton file exists: %w", err),
+			}
+		}
+
+		// If the file exists and overwriteSkeleton is false, return an error
+		if exists && !flags.OverwriteSkeleton {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitIOError,
+				Err:  fmt.Errorf("output file %s already exists; use --overwrite-skeleton to overwrite", skeletonFile),
+			}
+		}
+
+		if err := createConfigSkeleton(skeletonImages, skeletonFile); err != nil {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitIOError,
+				Err:  fmt.Errorf("failed to create config skeleton: %w", err),
+			}
+		}
+
+		log.Info("Config skeleton generated successfully", "file", skeletonFile)
+		return nil
+	}
+
+	// Output analysis results
+	return outputMultiReleaseAnalysis(cmd, results, skippedReleases, flags)
 }

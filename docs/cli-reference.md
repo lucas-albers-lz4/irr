@@ -93,6 +93,8 @@ irr override --chart-path ./my-chart --registry-file registry-mappings.yaml # Us
 
 Inspects a Helm chart for image references with enhanced analysis and configuration generation capabilities.
 
+**Note on Plugin Mode:** When running `irr inspect` as a Helm plugin (e.g., `helm irr inspect <release-name>`), Helm's global flags like `-n`/`--namespace` are processed by Helm itself before invoking the plugin. Therefore, you *can* use `-n <namespace>` effectively, even though `-n` isn't listed as a short flag specific to the `irr inspect` command itself. The `--all-namespaces` (`-A`) flag is specific to `irr` and provides cluster-wide inspection.
+
 ```bash
 irr inspect --chart-path CHART_PATH [--source-registries REGISTRIES]
 ```
@@ -104,7 +106,9 @@ irr inspect --chart-path CHART_PATH [--source-registries REGISTRIES]
 | `--chart-path`               | Path to the Helm chart (required if not using release name)     |                          | `--chart-path ./my-chart`                   |
 | `--release-name`             | Release name for Helm plugin mode                               |                          | `--release-name my-release`                 |
 | `--namespace`                | Kubernetes namespace for the release                            | `default`                | `--namespace production`                      |
+| `-A`, `--all-namespaces`     | Inspect Helm releases across all namespaces                     | false                    | `--all-namespaces`                         |
 | `--generate-config-skeleton` | Generate skeleton config file (`registry-mappings.yaml` default) | false                    | `--generate-config-skeleton`                |
+| `--overwrite-skeleton`       | Overwrite existing skeleton file                                | false                    | `--overwrite-skeleton`                     |
 | `--output-format`            | Output format for analysis data (`stdout`/`--output-file`)       | `yaml`                   | `--output-format json`                      |
 | `--output-file`              | Output file path for analysis or skeleton                       | `stdout`                 | `--output-file analysis.yaml`               |
 | `--include-pattern`          | Glob patterns for values paths to include during analysis       |                          | `--include-pattern "*.image"`               |
@@ -133,6 +137,28 @@ Generates `registry-mappings.yaml` with detected registries.
 irr inspect --chart-path ./my-chart --generate-config-skeleton
 # (Edit registry-mappings.yaml targets)
 # (Use 'irr config' to refine if needed)
+```
+
+### Inspect All Namespaces
+
+Inspect Helm releases across all namespaces in the cluster. Useful for auditing all images in use.
+
+```bash
+irr inspect --all-namespaces
+```
+
+### Generate Config Skeleton from All Namespaces
+
+Generate skeleton file with all unique registries from all releases across all namespaces.
+
+```bash
+irr inspect --all-namespaces --generate-config-skeleton
+```
+
+### Generate Config Skeleton and Overwrite Existing File
+
+```bash
+irr inspect --chart-path ./my-chart --generate-config-skeleton --overwrite-skeleton
 ```
 
 ### Advanced Inspection with Pattern Filters
