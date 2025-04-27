@@ -1425,10 +1425,10 @@ func TestFlattenValueWithoutDots(t *testing.T) {
 	}
 }
 
-func TestSetValueAtPath_Simple(t *testing.T) {
+func TestSetValueAtPath_Simple(_ *testing.T) {
 	// ... existing code ...
 }
 
-func Test_splitPathWithEscapes(t *testing.T) {
+func Test_splitPathWithEscapes(_ *testing.T) {
 	// ... existing code ...
 }

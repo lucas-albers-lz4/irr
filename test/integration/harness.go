@@ -943,45 +943,6 @@ func (h *TestHarness) BuildIRR() {
 	h.t.Logf("BuildIRR successful.")
 }
 
-// buildIrrBinary builds the irr binary for testing and returns its path.
-// It ensures the build happens only once per test run (via buildOnce).
-// The binary is placed in <project_root>/bin/irr.
-// Note: This function does not use t.Helper() or t.Logf() as it might be called from TestMain.
-func buildIrrBinary() error { // Removed t *testing.T argument
-	rootDir, err := getProjectRoot()
-	if err != nil {
-		return fmt.Errorf("failed to find project root: %w", err)
-	}
-
-	binDir := filepath.Join(rootDir, "bin")
-	// Use 0755 for bin directory as it needs execute permissions
-	err = os.MkdirAll(binDir, TestDirPermissions) // #nosec G301
-	if err != nil {
-		return fmt.Errorf("failed to create bin directory %s: %w", binDir, err)
-	}
-
-	binPath := filepath.Join(binDir, "irr")
-	fmt.Printf("Building irr binary at: %s\n", binPath) // Use fmt.Printf
-	// #nosec G204 -- Building the project's own binary is safe.
-	cmd := exec.Command("go", "build", "-o", binPath, "./cmd/irr")
-	cmd.Dir = rootDir // Run build from project root
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		// Check if it's an ExitError using errors.As
-		var exitErr *exec.ExitError
-		switch {
-		case errors.As(err, &exitErr):
-			// Include exit code in the error message for better context
-			return fmt.Errorf("go build failed with exit code %d: %w\nOutput:\n%s", exitErr.ExitCode(), err, string(output))
-		default:
-			// Generic build failure
-			return fmt.Errorf("go build failed: %w\nOutput:\n%s", err, string(output))
-		}
-	}
-	fmt.Printf("Build successful.\n") // Use fmt.Printf
-	return nil
-}
-
 // ValidateFullyQualifiedOverrides validates that all images are fully qualified with the specified target registry
 func (h *TestHarness) ValidateFullyQualifiedOverrides(targetRegistry string, targets []string) {
 	// Read the overrides file

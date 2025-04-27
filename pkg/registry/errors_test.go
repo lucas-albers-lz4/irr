@@ -10,6 +10,12 @@ import (
 
 const testMappingFilePath = "/path/to/mappings.yaml"
 
+// PathError is an interface for errors that contain a file path
+type PathError interface {
+	error // Embed the standard error interface
+	GetPath() string
+}
+
 // testWrapperFunction is a helper to test wrapper functions that wrap errors
 func testWrapperFunction(t *testing.T, path, errorMsg string, innerErr error,
 	wrapFunc func(string, error) error, expectedErrType interface{}) {
@@ -54,15 +60,15 @@ func testWrapperFunction(t *testing.T, path, errorMsg string, innerErr error,
 		// This default case might be overly generic or unnecessary if all expected
 		// types are handled explicitly. For now, keep it as a fallback.
 		t.Logf("Falling back to default case for type %T", expectedErrType)
-		if typedErr, ok := err.(interface {
-			Error() string
-			Unwrap() error
-		}); ok {
-			// Try to get path if possible, might fail depending on the actual type
-			if pathGetter, pathOk := err.(interface{ GetPath() string }); pathOk {
-				assert.Equal(t, path, pathGetter.GetPath())
-			}
-			assert.Equal(t, innerErr, typedErr.Unwrap())
+
+		var pathErr PathError // Use the defined interface type
+		if errors.As(err, &pathErr) {
+			assert.Equal(t, path, pathErr.GetPath())
+		}
+
+		var unwrapErr interface{ Unwrap() error }
+		if errors.As(err, &unwrapErr) {
+			assert.Equal(t, innerErr, unwrapErr.Unwrap())
 		} else {
 			// If it doesn't fit the Unwrap interface, maybe it doesn't wrap?
 			// Or the type assertion itself failed.

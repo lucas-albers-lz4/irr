@@ -19,6 +19,10 @@ const (
 
 	// testFilePerm is the permission used for test files
 	testFilePerm = 0o644
+
+	// Constants for registry sources used in tests
+	// dockerSource = "docker.io"
+	// quaySource   = "quay.io"
 )
 
 // TestLoadConfigWithFSDirect tests the LoadConfigWithFS function directly
@@ -63,9 +67,9 @@ func TestLoadConfigWithFSDirect(t *testing.T) {
 	for i := range config.Registries.Mappings {
 		mapping := &config.Registries.Mappings[i]
 		switch mapping.Source {
-		case "docker.io":
+		case dockerSource:
 			dockerMapping = mapping
-		case "quay.io":
+		case quaySource:
 			quayMapping = mapping
 		}
 	}

@@ -602,7 +602,7 @@ registries:
 	var foundDocker, foundK8s, foundQuay bool
 	for _, m := range mappings.Entries {
 		switch m.Source {
-		case "docker.io":
+		case DockerHubRegistry:
 			foundDocker = true
 		case "k8s.gcr.io":
 			foundK8s = true

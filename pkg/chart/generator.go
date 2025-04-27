@@ -31,13 +31,13 @@ const (
 	PrivateFilePermissions = 0o600
 	// FilePermissions defines the permission mode for temporary override files
 	FilePermissions = 0o600
-	// ExpectedMappingParts defines the number of parts expected after splitting a config mapping value.
+	// ExpectedMappingParts defines the number of parts expected after splitting a config mapping value (e.g., "source=target").
 	ExpectedMappingParts = 2
 	// PercentageMultiplier is used when calculating success rates as percentages
 	PercentageMultiplier = 100.0
-	// ExpectedParts is the constant for the magic number 2 in strings.SplitN
+	// ExpectedParts is used for splitting strings into exactly two parts, typically for key:value or repo:tag pairs.
 	ExpectedParts = 2
-	// maxErrorParts defines the maximum parts for splitting image strings with tags/digests.
+	// maxErrorParts defines the maximum parts for splitting image strings that caused errors, usually for tag/digest separation.
 	maxErrorParts = 2
 )
 
@@ -247,11 +247,10 @@ func (g *Generator) filterEligibleImages(detectedImages []analysis.ImagePattern)
 	return eligibleImages
 }
 
-// determineTargetPathAndRegistry calculates the target registry and new path for an image reference.
-// It checks registry mappings to determine the target registry and uses the path strategy
-// to generate the appropriate path.
+// determineTargetPathAndRegistry calculates the target registry and the new repository path
+// for a given image reference based on the configured registry mappings and path strategy.
+// It applies mappings first, then uses the path strategy to construct the final path.
 func (g *Generator) determineTargetPathAndRegistry(imgRef *image.Reference) (targetReg, newPath string, err error) {
-	// Default to configured target registry
 	targetReg = g.targetRegistry
 
 	// Check for registry mappings
@@ -271,8 +270,13 @@ func (g *Generator) determineTargetPathAndRegistry(imgRef *image.Reference) (tar
 	return targetReg, newPath, nil
 }
 
-// processImage takes an image pattern, processes it, and updates the overrides map.
-// It returns success status, any unsupported structure info, and any processing error.
+// processImage attempts to generate and apply an override for a single image pattern.
+// Steps involved:
+// 1. Parse the image pattern (string or map) into an image.Reference.
+// 2. Determine the target registry and repository path using mappings and strategy.
+// 3. Create the override structure (map or string).
+// 4. Set the override value at the correct path in the main overrides map.
+// Returns: success bool, unsupported *override.UnsupportedStructure, err error
 func (g *Generator) processImage(pattern analysis.ImagePattern, overrides map[string]interface{}) (bool, *override.UnsupportedStructure, error) {
 	log.Debug("Processing image pattern", "path", pattern.Path, "value", pattern.Value)
 
@@ -559,8 +563,12 @@ func (g *Generator) Generate() (*override.File, error) {
 	return result, nil // Success
 }
 
-// initRulesRegistry initializes the rules registry if it's not already set.
+// initRulesRegistry initializes the rules registry if rules are enabled and the registry is not already set.
+// This ensures the registry is ready before being used in ApplyRules.
 func (g *Generator) initRulesRegistry() {
+	if !g.rulesEnabled || g.rulesRegistry != nil {
+		return // Rules disabled or registry already initialized
+	}
 	if g.rulesRegistry == nil {
 		log.Debug("Generator: Initializing default rules registry.")
 		g.rulesRegistry = rules.NewRegistry() // Assuming default initialization
@@ -568,9 +576,11 @@ func (g *Generator) initRulesRegistry() {
 	}
 }
 
-// ValidateHelmTemplate checks if a chart can be rendered with given overrides.
+// ValidateHelmTemplate runs `helm template` on the chart with the provided overrides
+// to check for rendering errors or invalid configurations introduced by the overrides.
+// It returns an error if the template command fails.
 func ValidateHelmTemplate(chartPath string, overrides []byte) error {
-	log.Info("Validating Helm template with generated overrides", "chartPath", chartPath)
+	log.Debug("Validating Helm template", "chartPath", chartPath)
 	// Call the internal function (or its mock via the variable)
 	err := validateHelmTemplateInternalFunc(chartPath, overrides)
 	if err != nil {
@@ -601,7 +611,9 @@ func ValidateHelmTemplate(chartPath string, overrides []byte) error {
 // variable to allow mocking in tests.
 var validateHelmTemplateInternalFunc = validateHelmTemplateInternal
 
-// validateHelmTemplateInternal performs the actual Helm template rendering.
+// validateHelmTemplateInternal performs the actual execution of the `helm template` command.
+// It creates a temporary file for the overrides and runs Helm.
+// This function is wrapped by ValidateHelmTemplate for potential mocking.
 func validateHelmTemplateInternal(chartPath string, overrides []byte) error {
 	// Setup Helm environment settings
 	settings := cli.New() // Use default settings
@@ -717,37 +729,28 @@ func validateHelmTemplateInternal(chartPath string, overrides []byte) error {
 	return nil
 }
 
-// findValueByPath searches for a value in a nested map structure using a dot-separated path.
-// TODO: Enhance this to handle array indices if needed.
+// findValueByPath traverses a nested map using a slice of path segments
+// and returns the value found at that path.
+// It returns the value and a boolean indicating if the path was found.
 func findValueByPath(data map[string]interface{}, path []string) (interface{}, bool) {
-	// If the path is empty, return the original data map
-	if len(path) == 0 {
-		return data, true
-	}
-
-	var current interface{} = data
-	for i, key := range path {
+	current := interface{}(data)
+	for i, part := range path { // Keep index i for potential error messages
 		mapData, ok := current.(map[string]interface{})
 		if !ok {
+			log.Debug("findValueByPath: Cannot traverse non-map value", "path_segment_index", i, "path_part", part, "current_type", fmt.Sprintf("%T", current))
 			return nil, false // Path segment does not lead to a map
 		}
-		value, exists := mapData[key]
+		value, exists := mapData[part]
 		if !exists {
+			log.Debug("findValueByPath: Key not found", "path_segment_index", i, "path_part", part)
 			return nil, false // Key not found at this level
-		}
-		if i == len(path)-1 {
-			return value, true // Reached the end of the path
 		}
 		current = value
 	}
-	// This point should ideally not be reached if the loop completes, as the last iteration returns.
-	// However, if the path is valid but leads nowhere (e.g., intermediate value isn't a map),
-	// the loop exits earlier returning nil, false. If it finishes, it means path was empty (handled above)
-	// or something unexpected occurred. Return false for safety.
-	return nil, false
+	return current, true
 }
 
-// OverridesToYAML converts the override map to a YAML byte slice.
+// OverridesToYAML marshals the provided overrides map into YAML format.
 func OverridesToYAML(overrides map[string]interface{}) ([]byte, error) {
 	log.Debug("Marshaling overrides to YAML")
 	yamlBytes, err := yaml.Marshal(overrides)
@@ -757,7 +760,7 @@ func OverridesToYAML(overrides map[string]interface{}) ([]byte, error) {
 	return yamlBytes, nil
 }
 
-// ProcessingError wraps multiple errors encountered during image processing in strict mode.
+// ProcessingError represents an aggregation of errors encountered during processing.
 type ProcessingError struct {
 	Errors []error
 	Count  int
@@ -774,7 +777,9 @@ func (e *ProcessingError) Error() string {
 
 // --- Override Generation Logic ---
 
-// Corrected createOverride function - using map access for Structure
+// createOverride constructs the override value based on the detected pattern type.
+// For map patterns, it creates a map with registry, repository, and tag.
+// For string patterns, it creates the full image reference string.
 func (g *Generator) createOverride(pattern analysis.ImagePattern, imgRef *image.Reference, targetReg, newPath string) interface{} {
 	if imgRef == nil {
 		log.Error("[createOverride Internal Error] imgRef is nil", "pattern_path", pattern.Path) // pattern.Path is likely string here
@@ -822,7 +827,10 @@ func (g *Generator) createOverride(pattern analysis.ImagePattern, imgRef *image.
 	}
 }
 
-// Corrected setOverridePath function - splitting path string
+// setOverridePath navigates the nested overrides map according to the path specified
+// in the ImagePattern and sets the final overrideValue at that location.
+// It handles the creation of intermediate map structures if they don't exist.
+// Returns an error if a path conflict occurs (e.g., trying to set a map key on a non-map value).
 func (g *Generator) setOverridePath(overrides map[string]interface{}, pattern analysis.ImagePattern, overrideValue interface{}) error {
 	// Split the path string into components
 	pathParts := strings.Split(pattern.Path, ".")                                            // Assume dot notation based on previous usage
@@ -862,10 +870,9 @@ func (g *Generator) setOverridePath(overrides map[string]interface{}, pattern an
 }
 
 // processImagePattern parses the image reference string from an ImagePattern.
-// It uses the image package's parser and includes heuristics for common issues.
-// Renamed from previous processImagePattern to avoid confusion with processImage loop function.
-// func processImagePattern(pattern analysis.ImagePattern) (*image.Reference, error) { // Original definition
-// Added g *Generator receiver to access logging and potentially config later if needed
+// It uses the image package's parser and includes heuristics for common issues,
+// such as potentially missing tags, to improve robustness.
+// Returns a parsed image.Reference or an error if parsing fails even with heuristics.
 func (g *Generator) processImagePattern(pattern analysis.ImagePattern) (*image.Reference, error) {
 	log.Debug("Processing image pattern", "path", pattern.Path, "value", pattern.Value)
 

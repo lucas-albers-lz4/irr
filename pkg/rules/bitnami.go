@@ -1,6 +1,7 @@
 package rules
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/lucas-albers-lz4/irr/pkg/log"
@@ -89,5 +90,9 @@ func (h *BitnamiFallbackHandler) ApplySecurityBypass(overrides map[string]interf
 
 	log.Debug("Applying Bitnami security bypass parameter", "path", path, "value", value)
 	// Use the override package's SetValueAtPath function to set the parameter
-	return override.SetValueAtPath(overrides, pathParts, value)
+	err := override.SetValueAtPath(overrides, pathParts, value)
+	if err != nil {
+		return fmt.Errorf("failed to apply Bitnami security bypass rule at path %s: %w", path, err)
+	}
+	return nil
 }
