@@ -7,27 +7,20 @@
 - Phase 3 (Output Behavior) should be completed before implementing strict mode in Phase 3.5
 
 ## Phase 0: Configuration Setup (P0: Critical Usability) [COMPLETED]
-- [x] **[COMPLETED]** Implement `helm irr config` command and analyze error code usage.
 
 ## Phase 1: Flag Cleanup (P0: User Experience Enhancements) [COMPLETED]
-- [x] **[COMPLETED]** Remove unused/confusing flags and verify cleanup.
 
 ## Phase 2: Flag Consistency and Defaults (P0: User Experience Enhancements) [COMPLETED]
-- [x] **[COMPLETED]** Unify `--chart-path`/`--release-name`, implement mode-specific flags, standardize `--namespace`, make `--source-registries` optional.
 
 ## Phase 3: Output File Behavior Standardization (P0: User Experience Enhancements) [COMPLETED]
-- [x] **[COMPLETED]** Standardize `--output-file` behavior and file operation error handling.
 
 ## Phase 3.5: Streamlined Workflow Implementation (P1: User Experience Enhancements) [COMPLETED]
-- [x] **[COMPLETED]** Enhance registry handling, standardize override naming, handle unrecognized registries, integrate validation, improve K8s version handling, and implement consistent error codes.
 
 ## Testing Strategy for CLI Enhancements (Completed Phases Summarized) [COMPLETED]
-- [x] **[COMPLETED]** Tests for Phases 0-3.5 (config, registry detection, file naming, strict mode, error handling) completed.
 
 ## Phase 4: Documentation Updates (P0: User Experience Enhancements) [COMPLETED]
-- [x] **[COMPLETED]** Update documentation for all CLI changes (flags, defaults, behavior, output).
 
-### Implementation Notes
+### Implementation Notes [COMPLETED]
 - We've restructured the chart loading mechanism to properly use the chart.NewLoader() function, which improves code organization and maintainability
 - We've fixed the strategy flag handling to keep it available but with sensible defaults, making the interface cleaner without removing functionality
 - The integration tests now pass consistently after fixing implementation issues with chart sources and required flags
@@ -75,10 +68,10 @@
 ##END REMINDER On the Implementation Process:
 
 ## Phase 5: Remove Legacy Registry Format (P1: Technical Debt Reduction) [COMPLETED]
-- [x] **[COMPLETED]** Successfully removed support for the legacy key-value registry format (`map[string]string`) and standardized on the structured format (`registry.Config`) across the codebase, including core packages, CLI commands, tests, and documentation. This reduced technical debt and improved code clarity.
+- Successfully removed support for the legacy key-value registry format (`map[string]string`) and standardized on the structured format (`registry.Config`).
 
 ## Phase 6: Remove IRR_DEBUG Support [COMPLETED]
-- [x] **[COMPLETED]** Eliminate the redundant legacy `IRR_DEBUG` environment variable. `LOG_LEVEL` is now the sole control for log verbosity.
+- Eliminated the redundant legacy `IRR_DEBUG` environment variable. `LOG_LEVEL` is now the sole control for log verbosity.
 
 ## Phase 7: Image Pattern Detection Improvements (Revised Focus)
 
@@ -92,10 +85,8 @@ Improve the analyzer's ability to detect and process image references in complex
 ### Implementation Steps
 
 #### Phase 7.1: Debugging and Analysis [COMPLETED]
-- [x] **[COMPLETED]** Add debugging output to trace image detection.
 
 #### Phase 7.2: Image Pattern Detection Improvements [COMPLETED]
-- [x] **[COMPLETED]** Fix ingress-nginx admission webhook image detection.
 
 #### Phase 7.3: Additional Chart Coverage
 - [x] **[P1]** Expand test coverage to more complex charts
@@ -116,7 +107,7 @@ Improve the analyzer's ability to detect and process image references in complex
 - [ ] **[P1]** Compare pass rates and fix any tests failing only in debug mode.
 
 ## Phase 8: Fix Bitnami Chart Detection and Rules Processing [COMPLETED]
-- [x] **[COMPLETED]** Ensure robust Bitnami chart detection for real-world variations and correct application of Bitnami-specific rules.
+- Ensured robust Bitnami chart detection and correct application of Bitnami-specific rules.
 
 ## Phase 9: Implement Subchart Discrepancy Warning (User Feedback Stop-Gap)
 
@@ -166,60 +157,39 @@ Enhance the analyzer to correctly process subcharts by replicating Helm's value 
 (Keep recommendations as they guide future work)
 
 ## Phase 11: Decouple Override Validation [COMPLETED]
-- [x] **[COMPLETED]** Introduce `--no-validate` flag to `irr override` to skip internal Helm template validation, improving testability for charts requiring extra values.
+- Introduced `--no-validate` flag to `irr override`.
 
-## Phase 12: Enhance Override Robustness for Live Release Value Errors
+## Phase 12: Enhance Override Robustness for Live Release Value Errors [COMPLETED]
+- Improved handling of problematic strings in live release values, including fallback to default values with a warning.
 
-**Goal:** Improve `helm irr override <release_name>` handling of specific live value analysis errors (problematic strings).
+## Phase 13: Code Documentation Review and Alignment [COMPLETED]
+- Reviewed and aligned Go code documentation with current functionality.
 
-**Completed Steps:**
-- [x] **[P0]** Detect and report errors when live value analysis encounters problematic strings (e.g., parsing non-image strings like args).
-- [x] **[P0]** Log the problematic path/value causing the failure.
-- [x] **[P0]** Include a recommendation in the error message to use `--exclude-pattern`.
+## Phase 14: Add --all-namespaces (-A) Flag to `inspect` [COMPLETED]
+- Added `-A`/`--all-namespaces` and `--overwrite-skeleton` flags to `irr inspect`.
+- Enabled cluster-wide image inspection and skeleton generation.
 
-**Remaining Steps (Fallback Mechanism):**
-- [x] **[P1]** **Attempt Default Analysis:** If the *specific* problematic string error occurs, locate the chart in cache and analyze its *default* `values.yaml`.
-- [x] **[P1]** **Generate Partial Overrides:** If default analysis succeeds, generate overrides based *only* on default values.
-- [x] **[P1]** **Issue Prominent Warning:** If fallback occurs, clearly warn user that overrides are based on defaults and may be incomplete due to errors in live values.
-- [x] **[P1]** **Handle Default Analysis Failure:** If fallback analysis *also* fails, report that error.
+### Phase 14.6: Implementation Refinements
+- [✓] **[COMPLETED]** **Output Structure:** Ensure standard `inspect -A` output (YAML/JSON) is clearly grouped by namespace/release. Document this structure with an example.
+- [✓] **[COMPLETED]** **Partial Failures:** Handle errors inspecting individual releases gracefully (log error, skip release, continue processing others). Summarize skipped releases at the end.
+    - *Implementation Detail:* Log errors using `log.Warnf` or similar, including release context. Consider exiting 0 if *any* releases succeed, even with partial failures.
+- [✓] **[COMPLETED]** **CLI Help:** Review and refine the help text for `-A` and related flags for maximum clarity.
+- [✓] **[COMPLETED]** **Testing Edge Cases:** Ensure test data includes releases with no images, only private/excluded registries, and malformed values.
+- [✓] **[COMPLETED]** **Documentation Example:** Include a sample of the generated skeleton file (with comments) in the documentation.
 
-**Rationale:**
-- Prioritizes accuracy (live analysis), increases robustness (handles common string errors), provides partial results instead of failure, guides user (`--exclude-pattern`).
+### Phase 14.7: Fix Skeleton Generation for --all-namespaces [BUG]
 
-**Investigation Notes (TestOverrideRelease_Fallback Failure):**
-*   **Fallback Trigger Not Firing?**
-    *   Detector change: Image detector might no longer classify the test's problematic string (`not-an-image-but-looks-like.one:v1`) as an `UnsupportedImage` or generate the specific trigger error (`ErrAnalysisFailedDueToProblematicStrings`).
-    *   Handler change: `handleUnsupportedMatches` might no longer return the specific trigger error even if it receives unsupported matches.
-*   **Fallback Triggered but Fails Internally?**
-    *   Chart path issue: Mock `FindChartForRelease` returning wrong path, or `loader.Load` failing on the mock filesystem path/files.
-    *   Default value analysis failure: Second run of detector on default values might be failing (issue in mock `values.yaml` or detector sensitivity).
-*   **Incorrect Mock Interaction?**
-    *   Is the correct `MockHelmClient` (with problematic live values and fallback path) being injected via `helmAdapterFactory`?
-*   **Assertion Mismatches?**
-    *   YAML formatting differences causing `assert.YAMLEq` to fail.
-    *   Warning message wording/format in `stderr` might have drifted, failing `assert.Contains`.
+**Goal:** Ensure `inspect -A --generate-config-skeleton` produces a complete skeleton file including *all* unique registries found across *all* analyzed releases.
 
-**Follow-up Investigation (2023-07-27):**
-*   **Skipped Test:** `TestOverrideRelease_Fallback` is temporarily skipped until investigation is complete.
-*   **Real-world Example Validation:** The fallback mechanism was confirmed to work in real-world scenarios with `cert-manager` when using `--no-validate`.
-*   **Root Issue Analysis:**
-    *   The live values in cert-manager contain CLI arguments (`--dns01-recursive-nameservers=192.168.1.2:53`) that get incorrectly identified as image references.
-    *   Fallback correctly generates overrides based on default chart values, but validation fails because it tries to template the chart with both overrides and original problematic values.
-    *   Using `--no-validate` bypasses this issue, which is the correct behavior (test already includes this flag).
-*   **Next Steps:**
-    *   Investigate why test fails despite `--no-validate` flag being set.
-    *   Verify differences between test mock objects and real-world objects (esp. chart loading and detection).
-    *   Fix the test to accurately simulate real-world behavior or adjust expectations.
+**Problem:**
+- Current implementation produces an incomplete skeleton file when using `-A`.
+- Registries identified during individual release analysis (e.g., `registry.k8s.io`, `harbor.home.arpa`, `gcr.io`, `ghcr.io` in the test case) are missing from the final aggregated skeleton file.
 
-Phase 13.
-
-## Phase 13: Code Documentation Review and Alignment (COMPLETE)
-
-**Goal:** Ensure all Go code documentation (godoc, comments) accurately reflects current functionality, removing or correcting outdated information.
-
-**Process:** Review files package by package or by logical area. For each checklist item (which may cover one or two files, e.g., `foo.go` and `foo_test.go`):
-1. Read code and documentation.
-2. Compare documentation to functionality.
-3. Identify and correct/remove discrepancies.
-4. **After completing the review for an item, run `make lint` and `make test-quiet` to ensure no issues were introduced.**
+**Implementation Steps:**
+- [ ] **[P0]** **Investigate Aggregation Logic:** Review the `processAllReleases` function and potentially the `createConfigSkeleton` function to identify where unique registries are being lost or incorrectly aggregated when the `-A` flag is used.
+- [ ] **[P0]** **Correct Aggregation:** Modify the logic to ensure that the set of registries used for skeleton generation accurately reflects all unique registries found across *all* successfully analyzed releases in the `-A` workflow.
+- [ ] **[P0]** **Update/Add Unit Test:** Enhance `TestRunInspect` or add a new specific test case for `inspect -A --generate-config-skeleton` that:
+    - Mocks multiple releases with a diverse set of unique registries (similar to the identified bug scenario).
+    - Verifies that the generated skeleton file content includes *all* expected unique registries.
+- [ ] **[P0]** **Manual Verification:** Re-run the command sequences that revealed the bug (`helm list ... | bash -x` vs `inspect -A --generate...`) to confirm the fix.
 
