@@ -453,25 +453,13 @@ func TestRegistryMappingFile(t *testing.T) {
 	h := NewTestHarness(t)
 	defer h.Cleanup()
 
+	// Use the structured format for the mappings file
+	mappingsFile := h.CreateRegistryMappingsFile("structured")
+
+	// Setup a minimal test chart
 	setupMinimalTestChart(t, h)
 	targetReg := "test.registry.io"
 	sourceRegs := []string{"docker.io"}
-
-	// Create a registry mappings file with fully structured format
-	mappingContent := `version: "1.0"
-registries:
-  mappings:
-  - source: docker.io
-    target: registry.example.com/dockerio
-    enabled: true
-    description: "Docker Hub mapping"
-  defaultTarget: registry.example.com/default
-  strictMode: false
-compatibility:
-  ignoreEmptyFields: true
-`
-
-	mappingFile := h.CreateRegistryMappingsFile(mappingContent)
 
 	// Run the override command with the mappings file
 	output, stderr, err := h.ExecuteIRRWithStderr(nil,
@@ -479,7 +467,7 @@ compatibility:
 		"--chart-path", h.chartPath,
 		"--target-registry", targetReg,
 		"--source-registries", strings.Join(sourceRegs, ","),
-		"--config", mappingFile,
+		"--config", mappingsFile,
 		"--output-file", h.overridePath,
 	)
 	require.NoError(t, err, "override command should succeed with registry mappings file")
@@ -506,46 +494,45 @@ compatibility:
 }
 
 func TestConfigFileMappings(t *testing.T) {
+	t.Parallel()
 	h := NewTestHarness(t)
 	defer h.Cleanup()
 
-	// Create a config file with mappings
-	configContent := `docker.io: registry.example.com/docker
-quay.io: registry.example.com/quay
-`
-	configPath := h.CreateRegistryMappingsFile(configContent)
-
-	// Run override command with the config file to see if it works
+	// Create a chart for testing
 	setupMinimalTestChart(t, h)
 
-	// Create an output file path
-	outputFile := filepath.Join(h.tempDir, "config-test-overrides.yaml")
+	// Create a mappings file with structured format
+	// The mappingsFile variable is not used downstream, so no need to assign it
+	h.CreateRegistryMappingsFile("structured")
 
-	// Execute the override command
-	output, stderr, err := h.ExecuteIRRWithStderr(nil,
+	// Execute the override command with the mappings file
+	_, err := h.ExecuteIRR(nil,
 		"override",
 		"--chart-path", h.chartPath,
-		"--target-registry", "registry.example.com",
+		"--target-registry", "test.registry.io",
 		"--source-registries", "docker.io",
-		"--config", configPath,
-		"--output-file", outputFile,
-	)
-	require.NoError(t, err, "override command should succeed with config file")
-	t.Logf("Override output: %s", output)
-	t.Logf("Stderr: %s", stderr)
+		"--config", h.mappingsPath,
+		"--output-file", h.overridePath)
+	assert.NoError(t, err, "override command with structured mappings should succeed")
 
-	// Verify that the override file was created
-	require.FileExists(t, outputFile, "Override file should be created")
+	// Verify the override file exists
+	assert.FileExists(t, h.overridePath)
 
-	// Read the override file content
-	// #nosec G304
-	overrideBytes, err := os.ReadFile(outputFile)
-	require.NoError(t, err, "Should be able to read generated override file")
+	// Read the override file contents
+	overrideBytes, err := os.ReadFile(h.overridePath)
+	assert.NoError(t, err, "should be able to read override file")
 
-	// Check for the target registry in the output
-	content := string(overrideBytes)
-	assert.Contains(t, content, "registry.example.com", "Override should include the target registry")
-	assert.Contains(t, content, "docker", "Override should include the mapped repository prefix")
+	// Unmarshal the generated YAML
+	var overrides map[string]interface{}
+	err = yaml.Unmarshal(overrideBytes, &overrides)
+	require.NoError(t, err, "Failed to parse overrides from file content")
+
+	t.Logf("Parsed overrides map: %v", overrides)
+
+	// Assert that the overrides include basic expected keys
+	assert.NotEmpty(t, overrides, "Overrides shouldn't be empty")
+	assert.Contains(t, string(overrideBytes), "registry.example.com", "Override should include the target registry from mapping file")
+	assert.Contains(t, string(overrideBytes), "docker", "Override should include the docker repository prefix")
 }
 
 // TestClickhouseOperator tests the IRR tool's ability to process complex charts with multiple images
@@ -832,3 +819,5 @@ func TestInvalidRegistryMappingFile(t *testing.T) {
 // and implemented as TestCertManager with the component-group testing approach.
 
 // TestOverrideDryRun has been moved to override_command_test.g
+
+// Detailed testing of registry mapping file formats is handled in registry_test.go

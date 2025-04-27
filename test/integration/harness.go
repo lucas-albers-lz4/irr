@@ -17,7 +17,6 @@ import (
 	"github.com/lucas-albers-lz4/irr/pkg/image"
 	"github.com/lucas-albers-lz4/irr/pkg/log"
 	"github.com/lucas-albers-lz4/irr/pkg/registry"
-	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
@@ -37,11 +36,22 @@ const (
 	unknownCWDPlaceholder = "(unknown)"
 ) // <-- Ensure this closing parenthesis is here
 
-const envSplitCount = 2
-
-const legacyMappingContent = `docker.io: registry.example.com/docker
-quay.io: registry.example.com/quay
+const (
+	envSplitCount = 2
+	// StandardStructuredMappingContent is a sample structured registry mapping file content.
+	StandardStructuredMappingContent = `version: "1.0"
+registries:
+  mappings:
+  - source: docker.io
+    target: registry.example.com/docker
+    enabled: true
+  - source: quay.io
+    target: registry.example.com/quay
+    enabled: true
+  defaultTarget: registry.example.com/default
+  strictMode: false
 `
+)
 
 // Global variables for build optimization
 
@@ -340,22 +350,15 @@ func (h *TestHarness) loadMappings() (*registry.Mappings, error) {
 		_, statErr := os.Stat(h.mappingsPath)
 		switch {
 		case statErr == nil:
-			// Load using the structured format by default
+			// Load using the structured format
 			structConfig, loadErr := registry.LoadStructuredConfigDefault(h.mappingsPath, true)
 			if loadErr != nil {
-				// Fall back to legacy format if structured format fails
-				h.logger.Info(fmt.Sprintf("Failed to load as structured format, trying legacy format: %v", loadErr))
-				loadedMappings, legacyErr := registry.LoadMappings(afero.NewOsFs(), h.mappingsPath, true)
-				if legacyErr != nil {
-					return nil, fmt.Errorf("failed to load mappings file %s for validation: %w", h.mappingsPath, legacyErr)
-				}
-				mappings = loadedMappings
-				h.logger.Info(fmt.Sprintf("Successfully loaded mappings (legacy format) from %s", h.mappingsPath))
-			} else {
-				// Convert structured config to mappings format
-				mappings = structConfig.ToMappings()
-				h.logger.Info(fmt.Sprintf("Successfully loaded mappings (structured format) from %s", h.mappingsPath))
+				// Return the error - no fallback to legacy format anymore
+				return nil, fmt.Errorf("failed to load mappings file %s: %w", h.mappingsPath, loadErr)
 			}
+			// Convert structured config to mappings format
+			mappings = structConfig.ToMappings()
+			h.logger.Info(fmt.Sprintf("Successfully loaded mappings (structured format) from %s", h.mappingsPath))
 		case os.IsNotExist(statErr):
 			h.logger.Info(fmt.Sprintf("Mappings file %s does not exist, proceeding without mappings.", h.mappingsPath))
 		default:
@@ -1008,9 +1011,24 @@ func (h *TestHarness) ValidateWithRegistryPrefix(targetRegistry string) {
 func (h *TestHarness) CreateRegistryMappingsFile(mappingType string) string {
 	var content string
 
-	switch mappingType {
-	case "structured":
-		content = `version: "1.0"
+	// Determine content based on mappingType
+	switch {
+	case mappingType == "":
+		// Handle empty string as a special case
+		content = ""
+		h.logger.Info("Creating empty registry mappings file")
+	case strings.HasPrefix(mappingType, "version:"),
+		strings.HasPrefix(mappingType, "registries:"),
+		strings.HasPrefix(mappingType, "compatibility:"),
+		strings.Contains(mappingType, "\n"):
+		// If it looks like YAML content, use it directly
+		content = mappingType
+		h.logger.Info("Using direct YAML content as registry mappings file")
+	default:
+		// Otherwise, treat it as a predefined mapping type
+		switch mappingType {
+		case "structured":
+			content = `version: "1.0"
 registries:
   mappings:
   - source: docker.io
@@ -1026,26 +1044,19 @@ registries:
 compatibility:
   ignoreEmptyFields: true
 `
-	case "legacy":
-		content = `docker.io: registry.example.com/docker
-quay.io: registry.example.com/quay
-`
-	case "empty":
-		content = ``
-	case "invalid_structured_format_-_missing_required_fields":
-		content = `version: "1.0"
+		case "empty":
+			content = ""
+		case "invalid_structured_format_-_missing_required_fields":
+			content = `version: "1.0"
 registries:
   # Missing mappings section
   defaultTarget: registry.example.com/default
   strictMode: false
 `
-	default:
-		// If content is provided directly, use it
-		if mappingType != "" {
-			content = mappingType
-		} else {
-			// Default to legacy format
-			content = legacyMappingContent
+		case "structured-only":
+			content = StandardStructuredMappingContent
+		default:
+			h.t.Fatalf("unknown mapping type: %s", mappingType)
 		}
 	}
 
@@ -1053,11 +1064,12 @@ registries:
 	h.logger.Info(fmt.Sprintf("Registry mappings file content verification:\n%s", content))
 
 	mappingsPath := filepath.Join(h.tempDir, "registry-mappings.yaml")
-	err := os.WriteFile(mappingsPath, []byte(content), fileutil.ReadWriteUserPermission)
-	if err != nil {
+	// Declare and assign err in one step
+	if err := os.WriteFile(mappingsPath, []byte(content), fileutil.ReadWriteUserPermission); err != nil {
 		h.t.Fatalf("Failed to write registry mappings file: %v", err)
 	}
 
+	h.mappingsPath = mappingsPath
 	return mappingsPath
 }
 

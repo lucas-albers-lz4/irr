@@ -54,8 +54,8 @@ compatibility:
 			mappingContent: `docker.io: registry.example.com/docker
 quay.io: registry.example.com/quay
 `,
-			shouldSucceed: true,     // Changed from false to true as we now support legacy format
-			expectedText:  "docker", // The expected text should contain "docker" for the repository
+			shouldSucceed:  false,                           // Changed to false because legacy format is no longer supported
+			errorSubstring: "failed to parse mappings file", // Updated error substring
 		},
 		{
 			name: "malformed YAML format",
