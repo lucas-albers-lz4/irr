@@ -709,7 +709,6 @@ func TestInspectAllNamespacesStandardOutput(t *testing.T) {
 
 	// --- Verify Output ---
 	outputYAML := outBuf.String()
-	// t.Log(outputYAML) // Uncomment for debugging output
 
 	// Parse the YAML output
 	var result struct {
@@ -809,7 +808,6 @@ func TestInspectAllNamespacesWithFilterStandardOutput(t *testing.T) {
 
 	// --- Verify Output ---
 	outputYAML := outBuf.String()
-	// t.Log(outputYAML) // Uncomment for debugging
 
 	// Parse the YAML output
 	var result struct {
