@@ -21,6 +21,10 @@
 #
 registries:
     mappings:
+        - source: docker.io
+          target: registry.local/docker-io
+          description: Mapping for docker.io
+          enabled: true
         - source: quay.io
           target: registry.local/quay-io
           description: Mapping for quay.io
