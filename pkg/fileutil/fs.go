@@ -63,18 +63,21 @@ func NewAferoFS(fs afero.Fs) *AferoFS {
 }
 
 // GetUnderlyingFs extracts the underlying filesystem from wrapped Afero filesystems.
-// This is mainly used for testing purposes.
+// IMPORTANT: This implementation is primarily for test scenarios where the underlying
+// FS is known or assumed to be afero.MemMapFs when wrapped. It currently does NOT
+// use reflection to robustly unwrap arbitrary nested filesystems.
 func GetUnderlyingFs(fs afero.Fs) afero.Fs {
 	// Handle BasePathFs
 	if bpfs, ok := fs.(*afero.BasePathFs); ok {
-		// Use reflection to access the unexported source field
-		// For test purposes, we need to unwrap to innermost fs
+		// Recursively call GetUnderlyingFs on the source FS.
+		// WARNING: Relies on a potentially fragile helper to access the source.
 		return GetUnderlyingFs(extractSourceFromBasePathFs(bpfs))
 	}
 
 	// Handle ReadOnlyFs
 	if rofs, ok := fs.(*afero.ReadOnlyFs); ok {
-		// Use reflection to access the unexported source field
+		// Recursively call GetUnderlyingFs on the source FS.
+		// WARNING: Relies on a potentially fragile helper to access the source.
 		return GetUnderlyingFs(extractSourceFromReadOnlyFs(rofs))
 	}
 
@@ -82,21 +85,23 @@ func GetUnderlyingFs(fs afero.Fs) afero.Fs {
 	return fs
 }
 
-// extractSourceFromBasePathFs extracts the source filesystem from a BasePathFs using reflection.
-// This is a test helper and shouldn't be used in production code.
-// Currently returns a new MemMapFs, assuming tests expect that type.
+// extractSourceFromBasePathFs attempts to extract the source filesystem from a BasePathFs.
+// WARNING: This implementation currently assumes the underlying FS is MemMapFs for tests
+// and returns a new instance. It does NOT robustly extract the actual source FS.
 func extractSourceFromBasePathFs(_ *afero.BasePathFs) afero.Fs {
-	// For testing, since we know BasePathFs in our tests wraps a MemMapFs,
-	// we can simply create a new MemMapFs that the test is expecting.
+	// For testing, since we know BasePathFs in our tests often wraps a MemMapFs,
+	// we currently return a new MemMapFs as expected by some tests.
+	// TODO: Implement robust unwrapping if needed beyond current test scope.
 	return afero.NewMemMapFs()
 }
 
-// extractSourceFromReadOnlyFs extracts the source filesystem from a ReadOnlyFs using reflection.
-// This is a test helper and shouldn't be used in production code.
-// Currently returns a new MemMapFs, assuming tests expect that type.
+// extractSourceFromReadOnlyFs attempts to extract the source filesystem from a ReadOnlyFs.
+// WARNING: This implementation currently assumes the underlying FS is MemMapFs for tests
+// and returns a new instance. It does NOT robustly extract the actual source FS.
 func extractSourceFromReadOnlyFs(_ *afero.ReadOnlyFs) afero.Fs {
-	// For testing, since we know ReadOnlyFs in our tests wraps a MemMapFs,
-	// we can simply create a new MemMapFs that the test is expecting.
+	// For testing, since we know ReadOnlyFs in our tests often wraps a MemMapFs,
+	// we currently return a new MemMapFs as expected by some tests.
+	// TODO: Implement robust unwrapping if needed beyond current test scope.
 	return afero.NewMemMapFs()
 }
 

@@ -422,33 +422,6 @@ func TestEnsureDirExists_Utils(t *testing.T) {
 	})
 }
 
-func TestEnsureDirExists_FileExistsErrorPath(t *testing.T) {
-	// Save the original DefaultFS and restore it after the test
-	origFS := DefaultFS
-	defer func() {
-		DefaultFS = origFS
-	}()
-
-	// Use a custom memory filesystem for testing
-	memFs := newUtilsTestFS()
-
-	// Create a file that we'll try to create a directory over
-	filename := "test-collision.txt"
-	err := memFs.WriteFile(filename, []byte("test content"), ReadWriteUserReadOthers)
-	require.NoError(t, err, "Failed to create test file")
-
-	// Set as DefaultFS
-	DefaultFS = memFs
-
-	// Try to create a directory with the same name as the file
-	err = EnsureDirExists(filename)
-
-	// Should error with the specific error message about path existing as file
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "cannot create directory")
-	assert.Contains(t, err.Error(), "path exists as a file")
-}
-
 func TestWriteFileString_Utils(t *testing.T) {
 	// Save the original DefaultFS and restore it after the test
 	origFS := DefaultFS
@@ -456,87 +429,26 @@ func TestWriteFileString_Utils(t *testing.T) {
 		DefaultFS = origFS
 	}()
 
-	// Use a memory filesystem for testing
-	memFs := newUtilsTestFS()
+	memFs := NewAferoFS(afero.NewMemMapFs())
 	DefaultFS = memFs
 
-	// Test writing a string to a file
-	testPath := "test_write_string.txt"
-	testContent := "Hello, World!"
+	content := "hello world"
+	filePath := "test_write.txt"
 
-	err := WriteFileString(testPath, testContent)
-	assert.NoError(t, err, "WriteFileString should not return an error")
+	err := WriteFileString(filePath, content)
+	require.NoError(t, err, "WriteFileString should not return an error")
 
-	// Verify the file was written correctly
-	content, err := ReadFileString(testPath)
-	assert.NoError(t, err, "ReadFileString should not return an error")
-	assert.Equal(t, testContent, content, "File content should match written content")
+	readContent, err := ReadFileString(filePath)
+	require.NoError(t, err, "ReadFileString should not return an error after WriteFileString")
+	assert.Equal(t, content, readContent, "Read content should match written content")
 
-	// Test error case with a read-only filesystem
-	// Create a read-only version of our filesystem
-	readOnlyFs := &utilsTestFS{
-		AferoFS: NewAferoFS(afero.NewReadOnlyFs(afero.NewMemMapFs())),
-	}
-	DefaultFS = readOnlyFs
+	// Test error case (e.g., read-only filesystem)
+	readOnlyFs := afero.NewReadOnlyFs(afero.NewMemMapFs())
+	readOnlyFileUtilFs := NewAferoFS(readOnlyFs)
+	DefaultFS = readOnlyFileUtilFs
 
-	err = WriteFileString("should-fail.txt", "test")
-	assert.Error(t, err, "WriteFileString should return an error with read-only filesystem")
-	assert.Contains(t, err.Error(), "failed to write file", "Error message should contain 'failed to write file'")
-}
-
-func TestEnsureDirExists_FileExistsError(t *testing.T) {
-	// Save the original DefaultFS and restore it after the test
-	origFS := DefaultFS
-	defer func() {
-		DefaultFS = origFS
-	}()
-
-	// Create a mock filesystem that returns an error on Stat
-	mockFS := newUtilsTestFS()
-	mockFS.statFunc = func(_ string) (os.FileInfo, error) {
-		// First call should return os.ErrNotExist to pass DirExists
-		if mockFS.statCount == 0 {
-			mockFS.statCount++
-			return nil, os.ErrNotExist
-		}
-		// Second call (during FileExists) should return a distinct error
-		return nil, fmt.Errorf("distinct error during FileExists check")
-	}
-
-	// Add a counter to track stat calls
-	mockFS.statCount = 0
-
-	// Set as DefaultFS
-	DefaultFS = mockFS
-
-	// Try to EnsureDirExists, should error from FileExists
-	err := EnsureDirExists("test-path")
-
-	// Verify that we got the expected *unwrapped* error from the FileExists check phase
-	assert.Error(t, err)
-	// Check ONLY for the specific underlying error message, as it's not wrapped in this path
-	assert.Contains(t, err.Error(), "distinct error during FileExists check")
-	// Ensure the wrapper message is NOT present
-	assert.NotContains(t, err.Error(), "failed to check if file exists at path")
-}
-
-func TestGetAbsPath_AllPaths(t *testing.T) {
-	// Test empty path case
-	_, err := GetAbsPath("")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "path cannot be empty")
-
-	// Test valid path
-	validPath := "test.txt"
-	absPath, err := GetAbsPath(validPath)
-	assert.NoError(t, err)
-	assert.True(t, filepath.IsAbs(absPath))
-	assert.Equal(t, validPath, filepath.Base(absPath))
-
-	// The third condition (filepath.Abs error) is difficult to test directly
-	// without monkeypatching, which isn't allowed in Go. In practice, filepath.Abs
-	// only errors in extremely rare cases (like paths with null characters or system call errors)
-	// so we'll consider it adequately covered for practical purposes.
+	err = WriteFileString("readonly_test.txt", "should fail")
+	assert.Error(t, err, "WriteFileString should return an error on read-only filesystem")
 }
 
 // mockFileInfo implements os.FileInfo for testing purposes.

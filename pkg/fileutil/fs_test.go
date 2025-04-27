@@ -11,6 +11,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const (
+	testFileName = "test_fs_file.txt"
+	testDirName  = "test_fs_dir"
+)
+
 func TestNewAferoFS(t *testing.T) {
 	// Test with nil fs
 	fs := NewAferoFS(nil)
