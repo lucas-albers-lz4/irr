@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 // --- Mock Factories (Global for Test Overrides) ---
@@ -662,6 +663,186 @@ func TestInspectAllNamespacesSkeletonWithFilter(t *testing.T) {
 	mockHelmClient.AssertCalled(t, "GetChartFromRelease", mock.Anything, "release-2", "ns-b")
 	mockHelmClient.AssertCalled(t, "GetReleaseValues", mock.Anything, "release-3", "ns-a")
 	mockHelmClient.AssertCalled(t, "GetChartFromRelease", mock.Anything, "release-3", "ns-a")
+}
+
+// TestInspectAllNamespacesStandardOutput verifies that `inspect -A` produces correct
+// standard YAML output containing releases from multiple namespaces.
+func TestInspectAllNamespacesStandardOutput(t *testing.T) {
+	cleanup := setupInspectTest(t)
+	defer cleanup()
+
+	// --- Mock Helm Interaction ---
+	mockReleases := []*helm.ReleaseElement{
+		{Name: "release-1", Namespace: "ns-a"}, // docker.io
+		{Name: "release-2", Namespace: "ns-b"}, // quay.io
+		{Name: "release-3", Namespace: "ns-a"}, // gcr.io
+	}
+	mockHelmClient := &helm.MockHelmClient{}
+	mockHelmClient.On("ListReleases", mock.Anything, true).Return(mockReleases, nil)
+	mockHelmClient.SetupMockRelease("release-1", "ns-a", map[string]interface{}{"image": "docker.io/library/nginx:latest"}, &helm.ChartMetadata{Name: "chart1", Version: "1.0"})
+	mockHelmClient.SetupMockRelease("release-2", "ns-b", map[string]interface{}{"app": "quay.io/prometheus/node-exporter:v1"}, &helm.ChartMetadata{Name: "chart2", Version: "1.0"})
+	mockHelmClient.SetupMockRelease("release-3", "ns-a", map[string]interface{}{"job": map[string]interface{}{"image": "gcr.io/google-containers/pause:3.2"}}, &helm.ChartMetadata{Name: "chart3", Version: "1.0"})
+	mockHelmClient.On("GetChartFromRelease", mock.Anything, mock.Anything, mock.Anything).Return(&helm.ChartMetadata{Name: "mock-chart", Version: "1.0"}, nil) // Simplified GetChart mock
+
+	// --- Inject Mocks ---
+	originalHelmClientFactory := helmClientFactory
+	helmClientFactory = func() (helm.ClientInterface, error) { return mockHelmClient, nil }
+	defer func() { helmClientFactory = originalHelmClientFactory }()
+	originalHelmAdapterFactory := helmAdapterFactory
+	helmAdapterFactory = func() (*helm.Adapter, error) { return helm.NewAdapter(mockHelmClient, AppFs, true), nil }
+	defer func() { helmAdapterFactory = originalHelmAdapterFactory }()
+
+	// --- Execute Command ---
+	cmd := newInspectCmd()
+	args := []string{
+		"-A",
+		"-o", "yaml", // Explicitly request YAML output
+	}
+	cmd.SetArgs(args)
+	outBuf := new(bytes.Buffer)
+	errBuf := new(bytes.Buffer)
+	cmd.SetOut(outBuf)
+	cmd.SetErr(errBuf)
+
+	err := cmd.Execute()
+	require.NoError(t, err, "Command execution failed unexpectedly. Stderr: %s", errBuf.String())
+
+	// --- Verify Output ---
+	outputYAML := outBuf.String()
+	// t.Log(outputYAML) // Uncomment for debugging output
+
+	// Parse the YAML output
+	var result struct {
+		Releases []ReleaseAnalysisResult `yaml:"releases"`
+		Skipped  []string                `yaml:"skipped,omitempty"`
+	}
+	err = yaml.Unmarshal([]byte(outputYAML), &result)
+	require.NoError(t, err, "Failed to unmarshal YAML output")
+	require.Len(t, result.Releases, 3, "Expected 3 releases in the output")
+
+	// Check specific releases and their images
+	foundR1, foundR2, foundR3 := false, false, false
+	for _, rel := range result.Releases {
+		switch rel.ReleaseName {
+		case "release-1":
+			assert.Equal(t, "ns-a", rel.Namespace)
+			require.NotEmpty(t, rel.Analysis.Images, "Release 1 should have images")
+			assert.Equal(t, "docker.io", rel.Analysis.Images[0].Registry)
+			assert.Equal(t, "library/nginx", rel.Analysis.Images[0].Repository)
+			foundR1 = true
+		case "release-2":
+			assert.Equal(t, "ns-b", rel.Namespace)
+			require.NotEmpty(t, rel.Analysis.Images, "Release 2 should have images")
+			assert.Equal(t, "quay.io", rel.Analysis.Images[0].Registry)
+			assert.Equal(t, "prometheus/node-exporter", rel.Analysis.Images[0].Repository)
+			foundR2 = true
+		case "release-3":
+			assert.Equal(t, "ns-a", rel.Namespace)
+			require.NotEmpty(t, rel.Analysis.Images, "Release 3 should have images")
+			assert.Equal(t, "gcr.io", rel.Analysis.Images[0].Registry)
+			assert.Equal(t, "google-containers/pause", rel.Analysis.Images[0].Repository)
+			foundR3 = true
+		}
+	}
+	assert.True(t, foundR1, "Release-1 not found in output")
+	assert.True(t, foundR2, "Release-2 not found in output")
+	assert.True(t, foundR3, "Release-3 not found in output")
+}
+
+// TestInspectAllNamespacesWithFilterStandardOutput verifies that `inspect -A --source-registries`
+// correctly filters the standard YAML output across multiple namespaces.
+func TestInspectAllNamespacesWithFilterStandardOutput(t *testing.T) {
+	cleanup := setupInspectTest(t)
+	defer cleanup()
+
+	// --- Mock Helm Interaction ---
+	mockReleases := []*helm.ReleaseElement{
+		{Name: "release-a1", Namespace: "ns-a"}, // docker.io, quay.io
+		{Name: "release-b1", Namespace: "ns-b"}, // docker.io, gcr.io
+		{Name: "release-c1", Namespace: "ns-c"}, // quay.io only
+	}
+	mockHelmClient := &helm.MockHelmClient{}
+	mockHelmClient.On("ListReleases", mock.Anything, true).Return(mockReleases, nil)
+	mockHelmClient.SetupMockRelease("release-a1", "ns-a",
+		map[string]interface{}{
+			"image1": "docker.io/image-a:1",
+			"image2": "quay.io/image-q:1",
+		},
+		&helm.ChartMetadata{Name: "charta", Version: "1.0"},
+	)
+	mockHelmClient.SetupMockRelease("release-b1", "ns-b",
+		map[string]interface{}{
+			"main": "docker.io/image-b:2",
+			"side": "gcr.io/image-g:2",
+		},
+		&helm.ChartMetadata{Name: "chartb", Version: "1.0"},
+	)
+	mockHelmClient.SetupMockRelease("release-c1", "ns-c",
+		map[string]interface{}{"app": "quay.io/image-c:3"},
+		&helm.ChartMetadata{Name: "chartc", Version: "1.0"},
+	)
+	mockHelmClient.On("GetChartFromRelease", mock.Anything, mock.Anything, mock.Anything).Return(&helm.ChartMetadata{Name: "mock-chart", Version: "1.0"}, nil)
+
+	// --- Inject Mocks ---
+	originalHelmClientFactory := helmClientFactory
+	helmClientFactory = func() (helm.ClientInterface, error) { return mockHelmClient, nil }
+	defer func() { helmClientFactory = originalHelmClientFactory }()
+	originalHelmAdapterFactory := helmAdapterFactory
+	helmAdapterFactory = func() (*helm.Adapter, error) { return helm.NewAdapter(mockHelmClient, AppFs, true), nil }
+	defer func() { helmAdapterFactory = originalHelmAdapterFactory }()
+
+	// --- Execute Command ---
+	cmd := newInspectCmd()
+	args := []string{
+		"-A",
+		"-o", "yaml",
+		"--source-registries", "docker.io", // Filter for docker.io
+	}
+	cmd.SetArgs(args)
+	outBuf := new(bytes.Buffer)
+	errBuf := new(bytes.Buffer)
+	cmd.SetOut(outBuf)
+	cmd.SetErr(errBuf)
+
+	err := cmd.Execute()
+	require.NoError(t, err, "Command execution failed unexpectedly. Stderr: %s", errBuf.String())
+
+	// --- Verify Output ---
+	outputYAML := outBuf.String()
+	// t.Log(outputYAML) // Uncomment for debugging
+
+	// Parse the YAML output
+	var result struct {
+		Releases []ReleaseAnalysisResult `yaml:"releases"`
+		Skipped  []string                `yaml:"skipped,omitempty"`
+	}
+	err = yaml.Unmarshal([]byte(outputYAML), &result)
+	require.NoError(t, err, "Failed to unmarshal YAML output")
+
+	// Expecting only releases A1 and B1 (filtered)
+	require.Len(t, result.Releases, 2, "Expected only 2 releases after filtering")
+
+	foundA1, foundB1 := false, false
+	for _, rel := range result.Releases {
+		switch rel.ReleaseName {
+		case "release-a1":
+			assert.Equal(t, "ns-a", rel.Namespace)
+			require.Len(t, rel.Analysis.Images, 1, "Release A1 should have exactly 1 image after filtering")
+			assert.Equal(t, "docker.io", rel.Analysis.Images[0].Registry)
+			assert.Equal(t, "image-a", rel.Analysis.Images[0].Repository)
+			foundA1 = true
+		case "release-b1":
+			assert.Equal(t, "ns-b", rel.Namespace)
+			require.Len(t, rel.Analysis.Images, 1, "Release B1 should have exactly 1 image after filtering")
+			assert.Equal(t, "docker.io", rel.Analysis.Images[0].Registry)
+			assert.Equal(t, "image-b", rel.Analysis.Images[0].Repository)
+			foundB1 = true
+		default:
+			t.Errorf("Unexpected release found in filtered output: %s/%s", rel.Namespace, rel.ReleaseName)
+		}
+	}
+	assert.True(t, foundA1, "Release-a1 not found in filtered output")
+	assert.True(t, foundB1, "Release-b1 not found in filtered output")
 }
 
 // TestRunInspect tests the RunInspect function.
