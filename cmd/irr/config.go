@@ -100,7 +100,8 @@ func configCmdRun(_ *cobra.Command, _ []string) error {
 
 // listMappings lists all configured registry mappings
 func listMappings() error {
-	mappings, err := registry.LoadMappings(AppFs, configFile, integrationTestMode)
+	// Use LoadStructuredConfig instead of LoadMappings
+	config, err := registry.LoadStructuredConfig(AppFs, configFile, integrationTestMode)
 	if err != nil {
 		// If file doesn't exist, log info and return nil (not an error for list)
 		var notExistErr *registry.ErrMappingFileNotExist
@@ -121,6 +122,9 @@ func listMappings() error {
 			Err:  fmt.Errorf("failed to load mappings from '%s': %w", configFile, err),
 		}
 	}
+
+	// Convert to Mappings format for consistency with rest of function
+	mappings := config.ToMappings()
 
 	// Check if no mappings exist after successful load
 	if mappings == nil || len(mappings.Entries) == 0 {

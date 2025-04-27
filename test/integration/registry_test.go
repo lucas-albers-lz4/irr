@@ -190,15 +190,12 @@ func TestCreateRegistryMappingsFile(t *testing.T) {
 			// Verify file exists
 			_, err := os.Stat(mappingsPath)
 			if err != nil {
-				// Don't use require for this, as we have our own custom logging
 				t.Fatalf("Failed to stat mappings file: %v", err)
 			}
 
 			// Log success
 			if tt.mappingType == "structured" {
 				t.Logf("Successfully loaded mappings (structured format) from %s", mappingsPath)
-			} else {
-				t.Logf("Successfully loaded mappings (legacy format) from %s", mappingsPath)
 			}
 		})
 	}

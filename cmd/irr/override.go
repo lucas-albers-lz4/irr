@@ -68,8 +68,6 @@ type GeneratorConfig struct {
 	Strategy strategy.PathStrategy
 	// Mappings contains registry mapping configurations
 	Mappings *registry.Mappings
-	// ConfigMappings contains registry mappings from the --config flag
-	ConfigMappings map[string]string
 	// StrictMode enables strict validation (fails on any error)
 	StrictMode bool
 	// IncludePatterns contains glob patterns for values paths to include
@@ -568,23 +566,21 @@ func skipCWDCheck() bool {
 
 // loadRegistryMappings loads registry mappings from config and registry files
 func loadRegistryMappings(cmd *cobra.Command, config *GeneratorConfig) error {
-	// Add nil check for safety
 	if config == nil {
-		return errors.New("internal error: loadRegistryMappings called with nil config")
+		return errors.New("loadRegistryMappings: config parameter is nil")
 	}
-	configFile, err := cmd.Flags().GetString("config")
+	configFile, err := getStringFlag(cmd, "config")
 	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get config flag: %w", err),
-		}
+		return err
 	}
 	if configFile != "" {
 		log.Info("Loading registry mappings from config file", "file", configFile)
 		// Pass the result of skipCWDCheck() here to control path validation
 		shouldSkipCheck := skipCWDCheck()
-		log.Debug("Calling registry.LoadMappings", "configFile", configFile, "skipCWDRestriction", shouldSkipCheck)
-		mappings, err := registry.LoadMappings(AppFs, configFile, shouldSkipCheck)
+		log.Debug("Calling registry.LoadStructuredConfig", "configFile", configFile, "skipCWDRestriction", shouldSkipCheck)
+
+		// Use LoadStructuredConfig instead of LoadMappings
+		configObj, err := registry.LoadStructuredConfig(AppFs, configFile, shouldSkipCheck)
 		if err != nil {
 			if os.IsNotExist(err) {
 				return &exitcodes.ExitCodeError{
@@ -592,14 +588,16 @@ func loadRegistryMappings(cmd *cobra.Command, config *GeneratorConfig) error {
 					Err:  fmt.Errorf("config file not found: %s", configFile),
 				}
 			}
-			// Wrap the error from LoadMappings
+			// Wrap the error from LoadStructuredConfig
 			return &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitInputConfigurationError,
 				Err:  fmt.Errorf("failed to load config file '%s': %w", configFile, err),
 			}
 		}
-		config.Mappings = mappings
-		log.Debug("Successfully loaded mappings from file", "count", len(mappings.Entries))
+
+		// Convert to Mappings format
+		config.Mappings = configObj.ToMappings()
+		log.Debug("Successfully loaded mappings from file", "count", len(config.Mappings.Entries))
 	}
 	return nil
 }
@@ -633,8 +631,8 @@ func validateUnmappableRegistries(config *GeneratorConfig) error {
 		return nil
 	}
 
-	// Check if *any* mappings exist (either from file or configMap)
-	hasMappings := (config.Mappings != nil && len(config.Mappings.Entries) > 0) || len(config.ConfigMappings) > 0
+	// Check if mappings exist
+	hasMappings := (config.Mappings != nil && len(config.Mappings.Entries) > 0)
 
 	// If NO mappings exist at all, check all source registries.
 	if !hasMappings {
@@ -665,11 +663,6 @@ func validateUnmappableRegistries(config *GeneratorConfig) error {
 					found = true
 					break
 				}
-			}
-		}
-		if !found && config.ConfigMappings != nil {
-			if _, exists := config.ConfigMappings[sourceReg]; exists {
-				found = true
 			}
 		}
 		if !found {
@@ -771,7 +764,6 @@ func createGenerator(_ *ChartSource, config *GeneratorConfig) (GeneratorInterfac
 		config.ExcludeRegistries,
 		config.Strategy,
 		config.Mappings,
-		config.ConfigMappings,
 		config.StrictMode,
 		0,      // Threshold parameter is not used anymore
 		loader, // Use the loader we created

@@ -84,7 +84,6 @@ func TestSetRulesEnabled(t *testing.T) {
 		[]string{},
 		&mockPathStrategy{},
 		nil, // nil mappings is valid
-		nil,
 		false,
 		0,
 		nil,
@@ -104,7 +103,13 @@ func TestSetRulesEnabled(t *testing.T) {
 		[]string{},
 		[]string{},
 		&mockPathStrategy{},
-		nil, nil, false, 0, nil, nil, nil, nil,
+		nil,
+		false,
+		0,
+		nil,
+		nil,
+		nil,
+		nil,
 		false, // Explicitly disable rules
 	)
 	assert.False(t, generatorDisabled.rulesEnabled, "Rules should be disabled when passed false")
@@ -116,7 +121,13 @@ func TestSetRulesEnabled(t *testing.T) {
 		[]string{},
 		[]string{},
 		&mockPathStrategy{},
-		nil, nil, false, 0, nil, nil, nil, nil,
+		nil,
+		false,
+		0,
+		nil,
+		nil,
+		nil,
+		nil,
 		true, // Explicitly enable rules
 	)
 	assert.True(t, generatorEnabled.rulesEnabled, "Rules should be enabled when passed true")
@@ -133,7 +144,6 @@ func TestGenerateWithRulesEnabled(t *testing.T) {
 		[]string{},
 		&mockPathStrategy{},
 		nil, // nil mappings is valid
-		nil,
 		false,
 		0,
 		nil,
@@ -181,7 +191,6 @@ func TestGenerateWithRulesDisabled(t *testing.T) {
 		[]string{},
 		mockStrategy,
 		nil, // nil mappings is valid
-		nil,
 		false,
 		0,
 		mockLoader,
@@ -218,7 +227,6 @@ func TestInitRulesRegistry(t *testing.T) {
 		[]string{},
 		&mockPathStrategy{},
 		nil, // nil mappings is valid
-		nil,
 		false,
 		0,
 		nil,
@@ -293,11 +301,13 @@ func TestGenerateWithRulesTypeAssertion(t *testing.T) {
 		[]string{"docker.io"}, // sourceRegistries must include docker.io
 		[]string{},
 		mockStrategy,
-		nil, map[string]string{}, // Mappings
-		false, // Strict mode
-		0,     // Threshold
+		nil,
+		false,
+		0,
 		mockLoader,
-		nil, nil, nil, // Pattern/path overrides
+		nil,
+		nil,
+		nil,
 		true, // Rules enabled
 	)
 	generator.rulesRegistry = mockRegistry // Inject mock rules registry

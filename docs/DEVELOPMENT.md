@@ -161,46 +161,26 @@ When an image reference matches an excluded registry, it will be skipped during 
 
 ### 6.1.6 Registry Mapping Format
 
-The tool supports registry mappings provided via a configuration file (typically passed with `--registry-file`). This allows redirecting specific source registries to different target paths or registries. Two YAML formats are supported for defining these mappings:
+The tool supports registry mappings provided via a configuration file (typically passed with `--registry-file`). This allows redirecting specific source registries to different target paths or registries. Only the structured YAML format is supported:
 
-1.  **Structured Format (Preferred):**
-    *   Uses a top-level `mappings:` key.
+1.  **Structured Format (Required):**
+    *   Uses a top-level `registries:` key, containing a `mappings:` key.
     *   Contains a list of mapping objects, each with `source` and `target` keys.
-    *   This format is recommended, especially if mappings are part of a larger configuration file.
 
     ```yaml
     # Example: Structured Format
-    mappings:
-      - source: docker.io
-        target: my-registry.example.com/docker-mirror
-      - source: quay.io
-        target: my-registry.example.com/quay-mirror
-      - source: gcr.io
-        target: different-registry.example.com/google-containers
+    registries:
+      mappings:
+        - source: docker.io
+          target: my-registry.example.com/docker-mirror
+        - source: quay.io
+          target: my-registry.example.com/quay-mirror
+        - source: gcr.io
+          target: different-registry.example.com/google-containers
+      # Optional fields for more control:
+      # defaultTarget: "your-fallback-registry.com/generic-prefix"
+      # strictMode: false # Set to true to fail if a source registry isn't explicitly mapped
     ```
-
-2.  **Legacy Format (Simple Key-Value):**
-    *   A simple map at the root of the YAML file.
-    *   Keys represent source registries, and values represent their corresponding targets.
-    *   Supported for backward compatibility.
-
-    ```yaml
-    # Example: Legacy Key-Value Format
-    docker.io: my-registry.example.com/docker-mirror
-    quay.io: my-registry.example.com/quay-mirror
-    ```
-
-The tool attempts to parse the structured format first. If that fails or the `mappings` key is not found, it will attempt to parse the file as the legacy key-value format.
-
-
-**Path Handling Requirements**
-- Registry mapping files must be specified with absolute paths or relative paths within the working directory
-- The tool validates paths to prevent directory traversal attacks
-- Paths must use `.yaml` or `.yml` extensions
-- Uses `afero.Fs` interface for filesystem operations to support:
-  - Real filesystem in production (`afero.OsFs`)
-  - In-memory filesystem for testing (`afero.MemMapFs`)
-  - Proper permission handling (0o644 for files, 0o755 for directories)
 
 ### 6.1.7 Testing Strategy
 The codebase follows these testing principles:

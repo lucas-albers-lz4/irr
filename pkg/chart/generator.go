@@ -193,7 +193,6 @@ type Generator struct {
 	excludeRegistries []string
 	pathStrategy      strategy.PathStrategy
 	mappings          *registry.Mappings
-	configMappings    map[string]string
 	strict            bool
 	includePatterns   []string // Passed to detector context
 	excludePatterns   []string // Passed to detector context
@@ -210,7 +209,6 @@ func NewGenerator(
 	sourceRegistries, excludeRegistries []string,
 	pathStrategy strategy.PathStrategy,
 	mappings *registry.Mappings,
-	configMappings map[string]string,
 	strict bool,
 	threshold int,
 	chartLoader analysis.ChartLoader,
@@ -229,7 +227,6 @@ func NewGenerator(
 		excludeRegistries: excludeRegistries,
 		pathStrategy:      pathStrategy,
 		mappings:          mappings,
-		configMappings:    configMappings,
 		strict:            strict,
 		includePatterns:   includePatterns,
 		excludePatterns:   excludePatterns,
@@ -308,46 +305,13 @@ func (g *Generator) filterEligibleImages(detectedImages []analysis.ImagePattern)
 }
 
 // determineTargetPathAndRegistry calculates the target registry and new path for an image reference.
-// It first checks for config mappings, then falls back to registry mappings if needed
+// It checks registry mappings to determine the target registry and uses the path strategy
+// to generate the appropriate path.
 func (g *Generator) determineTargetPathAndRegistry(imgRef *image.Reference) (targetReg, newPath string, err error) {
 	// Default to configured target registry
 	targetReg = g.targetRegistry
 
-	// First check configMappings from --config flag
-	if g.configMappings != nil {
-		// Normalize the registry name for lookup
-		normalizedRegistry := image.NormalizeRegistry(imgRef.Registry)
-
-		// Special case for Docker Hub library images
-		if normalizedRegistry == "docker.io" && strings.HasPrefix(imgRef.Repository, "library/") {
-			log.Debug("Docker Hub library image detected", "image", imgRef.String())
-		}
-
-		if mappedValue, ok := g.configMappings[normalizedRegistry]; ok {
-			log.Debug("Found config mapping", "registry", normalizedRegistry, "mapping", mappedValue)
-
-			// Split the mappedValue at the first slash to get registry and repository prefix
-			// We expect exactly two parts: the target registry and the prefix path
-			parts := strings.SplitN(mappedValue, "/", ExpectedMappingParts)
-			if len(parts) == ExpectedMappingParts {
-				targetReg = parts[0]
-
-				// Update the path to include the repository prefix from the mapped value
-				// The strategy will handle the full path generation
-				pathOnly, err := g.pathStrategy.GeneratePath(imgRef, targetReg)
-				if err != nil {
-					return "", "", fmt.Errorf("path generation failed for '%s': %w", imgRef.String(), err)
-				}
-
-				// Prepend the repository prefix from the config mapping
-				newPath = parts[1] + "/" + pathOnly
-				log.Debug("Generated new path using config mapping", "new_path", newPath, "original", imgRef.Original)
-				return targetReg, newPath, nil
-			}
-		}
-	}
-
-	// If no config mapping was found or applied, check regular mappings
+	// Check for registry mappings
 	if g.mappings != nil {
 		if mappedTarget := g.mappings.GetTargetRegistry(imgRef.Registry); mappedTarget != "" {
 			targetReg = mappedTarget // Use mapped target if found

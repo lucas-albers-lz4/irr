@@ -149,17 +149,24 @@ func (h *TestHarness) Cleanup() {
 
 // createDefaultRegistryMappingFile creates a default mapping file in the harness temp dir.
 func (h *TestHarness) createDefaultRegistryMappingFile() (mappingsPath string, err error) {
-	mappings := map[string]string{
-		"docker.io":          "quay.io/instrumenta",
-		"k8s.gcr.io":         "quay.io/instrumenta",
-		"registry.k8s.io":    "quay.io/instrumenta",
-		"quay.io/jetstack":   "quay.io/instrumenta",
-		"ghcr.io/prometheus": "quay.io/instrumenta",
-		"grafana":            "quay.io/instrumenta",
+	// Create a structured Config object instead of a map[string]string
+	structuredConfig := registry.Config{
+		Version: "1.0",
+		Registries: registry.RegConfig{
+			Mappings: []registry.RegMapping{
+				{Source: "docker.io", Target: "quay.io/instrumenta", Enabled: true},
+				{Source: "k8s.gcr.io", Target: "quay.io/instrumenta", Enabled: true},
+				{Source: "registry.k8s.io", Target: "quay.io/instrumenta", Enabled: true},
+				{Source: "quay.io/jetstack", Target: "quay.io/instrumenta", Enabled: true},
+				{Source: "ghcr.io/prometheus", Target: "quay.io/instrumenta", Enabled: true},
+				{Source: "grafana", Target: "quay.io/instrumenta", Enabled: true},
+			},
+		},
 	}
-	mappingsData, err := yaml.Marshal(mappings)
+
+	mappingsData, err := yaml.Marshal(structuredConfig)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal default registry mappings: %w", err)
+		return "", fmt.Errorf("failed to marshal structured registry mappings: %w", err)
 	}
 
 	mappingsPath = filepath.Join(h.tempDir, "default-registry-mappings.yaml")
@@ -343,7 +350,6 @@ func (h *TestHarness) ValidateOverrides() error {
 
 // loadMappings loads the registry mappings from the file specified at h.mappingsPath.
 // This method prioritizes the structured format (containing version, registries, compatibility sections)
-// but falls back to legacy formats for backward compatibility.
 func (h *TestHarness) loadMappings() (*registry.Mappings, error) {
 	mappings := &registry.Mappings{}
 	if h.mappingsPath != "" {
