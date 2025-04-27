@@ -1,3 +1,5 @@
+//go:build integration
+
 // Package integration contains integration tests for verifying test infrastructure.
 package integration
 
