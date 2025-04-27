@@ -34,6 +34,25 @@ update-pyproject:
 	@sed -i.bak 's/^version = .*/version = "$(VERSION)"/' pyproject.toml && rm -f pyproject.toml.bak || \
 	(echo "sed command failed, possibly due to OS differences. Trying Linux sed syntax..."; \
 	sed -i 's/^version = .*/version = "$(VERSION)"/' pyproject.toml)
+	@echo "Checking consistency with release workflow example version..."
+	@WORKFLOW_VERSION_EXAMPLE_V=$$(grep "description:.*Version to release" .github/workflows/release.yml | sed -n 's/.*(e\.g\., \(v[0-9.]*\)).*/\1/p'); \
+	if [ -n "$${WORKFLOW_VERSION_EXAMPLE_V}" ]; then \
+		WORKFLOW_VERSION_EXAMPLE=$$(echo $${WORKFLOW_VERSION_EXAMPLE_V} | sed 's/^v//'); \
+		if [ "$(VERSION)" != "$${WORKFLOW_VERSION_EXAMPLE}" ]; then \
+			echo ""; \
+			echo "####################################################################"; \
+			echo "# WARNING: Version Mismatch!"; \
+			echo "# plugin.yaml version ($(VERSION)) does not match the example version"; \
+			echo "# ($${WORKFLOW_VERSION_EXAMPLE_V}) in .github/workflows/release.yml."; \
+			echo "# Please update the example version in the workflow description."; \
+			echo "####################################################################"; \
+			echo ""; \
+		else \
+			echo "Release workflow example version ($${WORKFLOW_VERSION_EXAMPLE_V}) matches plugin.yaml ($(VERSION))."; \
+		fi; \
+	else \
+		echo "Could not find example version in .github/workflows/release.yml to check."; \
+	fi
 
 # Simplified dist target for packaging - Explicit builds for each platform
 dist: update-pyproject

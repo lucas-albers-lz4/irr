@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release (e.g., v0.0.7)'
+        description: 'Version to release (e.g., v0.0.8)'
         required: true
 
 permissions: {}  # Set default permissions to none
