@@ -27,13 +27,21 @@ func TestConfigCommand_List(t *testing.T) {
 	AppFs = memFs
 	defer func() { AppFs = oldFs }()
 
-	// Use legacy key-value format for simplicity in command tests
-	initialContent := `
-first.registry.com: first.target.com/repo
-second.registry.com: second.target.com/repo
-`
-	filePath := "test-mappings.yaml"
-	err := afero.WriteFile(memFs, filePath, []byte(initialContent), fileutil.ReadWriteUserPermission)
+	// Create a valid STRUCTURED mapping file
+	initialConfig := registry.Config{
+		Version: "1.0",
+		Registries: registry.RegConfig{
+			Mappings: []registry.RegMapping{
+				{Source: "first.registry.com", Target: "first.target.com/repo", Enabled: true},
+				{Source: "second.registry.com", Target: "second.target.com/repo", Enabled: true},
+			},
+		},
+	}
+	initialContentBytes, err := yaml.Marshal(initialConfig)
+	require.NoError(t, err)
+
+	filePath := testMappingsFile // Use const
+	err = afero.WriteFile(memFs, filePath, initialContentBytes, fileutil.ReadWriteUserPermission)
 	require.NoError(t, err)
 
 	// Verify the file exists in the mock filesystem
@@ -90,8 +98,8 @@ func TestConfigCommand_ListEmptyOrNonExistent(t *testing.T) {
 	require.NoError(t, err)
 	configFile = emptyStructFilePath
 	err = listMappings()
-	require.Error(t, err, "Listing empty structured file should error due to registry validation")
-	assert.Contains(t, err.Error(), "mappings file is empty", "Error message should indicate empty structured file")
+	// Now expect NO error, as listMappings handles empty structured files gracefully
+	require.NoError(t, err, "Listing empty structured file should now succeed")
 
 	// Note: We can't easily assert stdout content here, but we verified no error occurs.
 }
@@ -137,7 +145,7 @@ func TestConfigCommand_AddMapping_EmptyStructuredFile(t *testing.T) {
 	emptyConfig := registry.Config{
 		Version: "1.0",
 		Registries: registry.RegConfig{
-			Mappings: []registry.RegMapping{}, // Empty mappings slice
+			Mappings: []registry.RegMapping{}, // Ensure mappings is empty
 		},
 	}
 	emptyContentBytes, err := yaml.Marshal(emptyConfig)
@@ -154,8 +162,11 @@ func TestConfigCommand_AddMapping_EmptyStructuredFile(t *testing.T) {
 
 	// Call the function directly
 	err = addUpdateMapping()
-	require.Error(t, err, "Adding to an empty structured file should error due to registry validation")
-	assert.Contains(t, err.Error(), "mappings file is empty", "Error message should indicate empty structured file")
+	// Expect an error because LoadStructuredConfig might return an error for empty mappings,
+	// or saveMappings might fail validation.
+	require.Error(t, err, "Adding to an empty structured file should error")
+	// Check for a relevant error message (could be about empty file or failed load)
+	assert.Contains(t, err.Error(), "failed to load mappings", "Error message should indicate failure loading/validating empty file")
 }
 
 func TestConfigCommand_UpdateMapping(t *testing.T) {

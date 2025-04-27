@@ -3,6 +3,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
 	"errors"
 
@@ -107,6 +108,13 @@ func listMappings() error {
 			log.Info("No mappings found (file does not exist)", "file", configFile)
 			return nil // Return nil as the file not existing isn't an error for listing.
 		}
+
+		// Check specifically for the validation error indicating an empty mappings section
+		if strings.Contains(err.Error(), "mappings section is empty") {
+			log.Info("No mappings configured (file has empty mappings section)", "file", configFile)
+			return nil // Treat as success (no mappings found)
+		}
+
 		// For other errors during loading, return them wrapped
 		return &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitIOError,
@@ -132,7 +140,6 @@ func listMappings() error {
 // removeMapping removes a mapping for the specified source registry
 func removeMapping() error {
 	// Load existing mappings
-	// Need to handle both structured and legacy loading, similar to addUpdateMapping
 	var mappings *registry.Mappings
 	var err error
 	var loadedConfig *registry.Config // Store the loaded structured config
@@ -147,26 +154,21 @@ func removeMapping() error {
 
 	if exists {
 		loadedConfig, err = registry.LoadStructuredConfig(AppFs, configFile, integrationTestMode)
-		if err == nil {
-			mappings = loadedConfig.ToMappings()
-			log.Debug("Loaded existing config in structured format for removal")
-		} else {
-			log.Debug("Failed to load structured for removal, trying legacy/fallback", "error", err)
-			mappings, err = registry.LoadMappings(AppFs, configFile, integrationTestMode)
-			if err != nil {
-				var notExistErr *registry.ErrMappingFileNotExist
-				if errors.As(err, &notExistErr) {
-					log.Info("Mappings file does not exist, nothing to remove", "file", configFile)
-					return nil // Not an error if file doesn't exist
-				}
-				return &exitcodes.ExitCodeError{
-					Code: exitcodes.ExitIOError,
-					Err:  fmt.Errorf("failed to load mappings from '%s': %w", configFile, err),
-				}
+		if err != nil {
+			var notExistErr *registry.ErrMappingFileNotExist
+			if errors.As(err, &notExistErr) {
+				log.Info("Mappings file does not exist, nothing to remove", "file", configFile)
+				return nil // Not an error if file doesn't exist
 			}
-			log.Debug("Loaded existing config using legacy/fallback LoadMappings for removal")
-			loadedConfig = nil // Ensure we use default structure if loaded via legacy
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitIOError,
+				Err:  fmt.Errorf("failed to load mappings from '%s': %w", configFile, err),
+			}
 		}
+
+		// Convert structured to Mappings object for internal processing
+		mappings = loadedConfig.ToMappings()
+		log.Debug("Loaded existing config in structured format for removal")
 	} else {
 		// File doesn't exist
 		log.Info("Mappings file does not exist, nothing to remove", "file", configFile)
@@ -232,27 +234,18 @@ func addUpdateMapping() error {
 	}
 
 	if exists {
-		// Try loading structured first
+		// Try loading structured format
 		loadedConfig, err = registry.LoadStructuredConfig(AppFs, configFile, integrationTestMode)
-		if err == nil {
-			// Convert structured to Mappings object for internal processing
-			mappings = loadedConfig.ToMappings()
-			log.Debug("Loaded existing config in structured format")
-		} else {
-			// If structured failed, try legacy Mappings (LoadMappings handles fallback internally)
-			log.Debug("Failed to load as structured, trying legacy/fallback LoadMappings", "error", err)
-			mappings, err = registry.LoadMappings(AppFs, configFile, integrationTestMode)
-			if err != nil {
-				// If both fail, return the error
-				return &exitcodes.ExitCodeError{
-					Code: exitcodes.ExitIOError,
-					Err:  fmt.Errorf("failed to load mappings from '%s': %w", configFile, err),
-				}
+		if err != nil {
+			// If loading fails, return the error
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitIOError,
+				Err:  fmt.Errorf("failed to load mappings from '%s': %w", configFile, err),
 			}
-			log.Debug("Loaded existing config using legacy/fallback LoadMappings")
-			// If loaded via legacy, ensure loadedConfig is nil so save logic uses a fresh structure
-			loadedConfig = nil
 		}
+		// Convert structured to Mappings object for internal processing
+		mappings = loadedConfig.ToMappings()
+		log.Debug("Loaded existing config in structured format")
 	}
 
 	// Initialize new mappings if none exist or file didn't exist
