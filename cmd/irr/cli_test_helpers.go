@@ -41,11 +41,34 @@ func (m *MockHelmClient) GetValues(_ context.Context, _, _ string) (map[string]i
 	return m.ReleaseValues, nil
 }
 
-func (m *MockHelmClient) GetChartFromRelease(_ context.Context, _, _ string) (*helmchart.Chart, error) {
+func (m *MockHelmClient) GetChartFromRelease(_ context.Context, _, _ string) (*helm.ChartMetadata, error) {
 	if m.GetReleaseError != nil {
 		return nil, m.GetReleaseError
 	}
-	return m.ReleaseChart, nil
+
+	// Convert Chart to ChartMetadata
+	var meta *helm.ChartMetadata
+	if m.ReleaseChart != nil && m.ReleaseChart.Metadata != nil {
+		meta = &helm.ChartMetadata{
+			Name:    m.ReleaseChart.Metadata.Name,
+			Version: m.ReleaseChart.Metadata.Version,
+			Path:    m.LoadChartFromPath,
+		}
+
+		// Extract repository if available
+		if m.ReleaseChart.Metadata.Sources != nil && len(m.ReleaseChart.Metadata.Sources) > 0 {
+			meta.Repository = m.ReleaseChart.Metadata.Sources[0]
+		}
+	} else {
+		// Default metadata if none is available
+		meta = &helm.ChartMetadata{
+			Name:    "mock-chart",
+			Version: "1.0.0",
+			Path:    m.LoadChartFromPath,
+		}
+	}
+
+	return meta, nil
 }
 
 func (m *MockHelmClient) GetReleaseMetadata(_ context.Context, _, _ string) (*helmchart.Metadata, error) {
@@ -58,7 +81,7 @@ func (m *MockHelmClient) GetReleaseMetadata(_ context.Context, _, _ string) (*he
 	return m.ReleaseChart.Metadata, nil
 }
 
-func (m *MockHelmClient) TemplateChart(_ context.Context, _, _ string, _ map[string]interface{}, _, _ string) (string, error) {
+func (m *MockHelmClient) TemplateChart(_ context.Context, releaseName, namespace, chartPath string, values map[string]interface{}) (string, error) {
 	if m.TemplateError != nil {
 		return "", m.TemplateError
 	}
@@ -107,6 +130,19 @@ func (m *MockHelmClient) GetReleaseValues(_ context.Context, _, _ string) (map[s
 		return nil, m.GetValuesError
 	}
 	return m.ReleaseValues, nil
+}
+
+func (m *MockHelmClient) LoadChart(chartPath string) (*helmchart.Chart, error) {
+	if m.LoadChartError != nil {
+		return nil, m.LoadChartError
+	}
+	return m.ReleaseChart, nil
+}
+
+// ListReleases implements helm.ClientInterface and returns an empty list of releases
+func (m *MockHelmClient) ListReleases(_ context.Context, _ bool) ([]*helm.ReleaseElement, error) {
+	// For simplicity in tests, return an empty list or could be enhanced to return mock releases
+	return []*helm.ReleaseElement{}, nil
 }
 
 // executeCommand is a helper function for testing Cobra commands
