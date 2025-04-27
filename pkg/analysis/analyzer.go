@@ -30,14 +30,10 @@ const (
 	// --- Parsing Helpers ---
 	// maxSplitTwo is used when splitting strings into at most two parts
 	maxSplitTwo = 2
-	// sha256Prefix is the prefix for SHA256 digests.
-	// sha256Prefix = "sha256:" // Removed: unused
-	// maxPathSegments limits path segment checks (heuristic).
-	// maxPathSegments = 5 // Removed: unused
-	// colonSplitParts is used for splitting image strings by colon.
-	colonSplitParts = 2
 	// minimumSplitParts defines the minimum number of parts expected when checking if a string looks like repo/name:tag
 	minimumSplitParts = 2
+	// tagSplitParts defines the number of parts expected when splitting by the first colon for tag detection.
+	tagSplitParts = 2
 )
 
 // ChartLoader defines the interface for loading Helm charts.
@@ -505,152 +501,82 @@ func (a *Analyzer) analyzeMapItemInArray(v map[string]interface{}, itemPath stri
 	return nil
 }
 
-// isImageMap determines if a map represents an image definition.
-// An image map typically contains repository and tag fields, and optionally a registry field.
-//
-// Parameters:
-//   - val: Map to check for image pattern
-//
-// Returns:
-//   - true if the map appears to define a container image
+// isImageMap checks if a map likely represents a Helm image definition.
+// It primarily checks for the presence of a "repository" key, and optionally
+// "registry" and "tag" or "digest" keys.
 func (a *Analyzer) isImageMap(val map[string]interface{}) bool {
-	// Must have repository. Registry and Tag are optional.
-	if repoVal, ok := val["repository"]; ok {
-		if _, isString := repoVal.(string); isString {
-			// Found a 'repository' key with a string value.
-			// Consider this sufficient for it to be a potential image map.
-			// Further validation (e.g., checking tag/digest presence or defaulting)
-			// can happen during the image reference parsing stage.
-			return true
-		}
+	_, hasRepo := val["repository"]
+	// Basic check: must have a repository key
+	if !hasRepo {
+		return false
 	}
-	return false
+	return true
 }
 
-// IsGlobalRegistry checks if a map represents a global registry configuration.
-// The keyPath parameter is used to determine if the path matches global registry patterns.
-//
-// This function is intended for future use in advanced detection logic.
-// Currently, detection of global patterns is handled in the analyzeValues function.
-func (a *Analyzer) IsGlobalRegistry(_ map[string]interface{}, keyPath string) bool {
-	// Implementation based on keyPath
-	return strings.HasPrefix(keyPath, "global.") &&
-		(strings.Contains(keyPath, ".registry") ||
-			strings.HasSuffix(keyPath, ".imageRegistry"))
+// IsGlobalRegistry determines if a given path likely points to a global registry configuration.
+// It checks if the path starts with "global." and contains "registry".
+// Note: The first map parameter was removed as it was unused.
+func (a *Analyzer) IsGlobalRegistry(keyPath string) bool {
+	lowerPath := strings.ToLower(keyPath)
+	return strings.HasPrefix(lowerPath, "global.") && strings.Contains(lowerPath, "registry")
 }
 
-// isImageString determines if a string value appears to be a container image reference.
-// It checks for common image reference patterns like "registry/repo:tag".
-//
-// Parameters:
-//   - val: String to check
-//
-// Returns:
-//   - true if the string appears to be an image reference
+// isImageString uses heuristics to check if a string likely represents a container image reference.
+// It looks for common patterns like the presence of a slash (/), a colon (:), or a digest prefix (@sha256:).
 func (a *Analyzer) isImageString(val string) bool {
-	// Simple heuristic to catch most image references
+	// Heuristics to check if the string looks like an image reference
+	hasSlash := strings.Contains(val, "/")
+	hasColon := strings.Contains(val, ":")
+	hasDigest := strings.Contains(val, "@sha256:")
 
-	// Common registry prefixes that are likely to be image references
-	commonRegistries := []string{
-		"docker.io/",
-		"registry.k8s.io/",
-		"gcr.io/",
-		"quay.io/",
-		"ghcr.io/",
-		"k8s.gcr.io/",
-		"mcr.microsoft.com/",
-	}
-
-	// Check against common registry prefixes
-	for _, registry := range commonRegistries {
-		if strings.HasPrefix(val, registry) {
-			return true
-		}
-	}
-
-	// Check for strings that explicitly contain "image" keywords - this is a stronger signal
-	if strings.Contains(strings.ToLower(val), "image") &&
-		(strings.Contains(val, "/") || strings.Contains(val, ":")) {
+	// Heuristic Checks:
+	// 1. Contains a digest?
+	if hasDigest {
+		log.Debug("isImageString: Match (Digest)", "value", val)
 		return true
 	}
 
-	// Basic check for image reference format: repo/name[:tag][@digest]
-	parts := strings.Split(val, "/")
-
-	// If it has at least one slash and the last part contains either a colon or digest marker
-	// This catches both "docker.io/bitnami/nginx:latest" and "bitnami/nginx:latest"
-	if len(parts) >= minimumSplitParts {
-		lastPart := parts[len(parts)-1]
-		return strings.Contains(lastPart, ":") || strings.Contains(lastPart, "@")
+	// 2. Contains slash AND colon? (registry/repo:tag or repo/sub:tag)
+	if hasSlash && hasColon {
+		log.Debug("isImageString: Match (Slash and Colon)", "value", val)
+		return true
 	}
 
-	// If the string could be a short-form Docker Hub reference like "nginx:latest"
-	if len(parts) == 1 && strings.Contains(val, ":") {
-		// Split by colon to see if the right side looks like a version
-		colonParts := strings.Split(val, ":")
-		if len(colonParts) == colonSplitParts {
-			// Check if the part after colon looks like a version or tag (simple heuristic)
-			tag := colonParts[1]
-			// Simple patterns like "nginx:latest" should be recognized as images
-			if tag != "" && len(tag) <= 128 {
-				// Check if the repository part looks like an image name
-				repo := colonParts[0]
-				// Common simple image names
-				commonRepos := []string{"nginx", "busybox", "alpine", "ubuntu", "debian", "centos", "fedora", "redis", "mysql", "postgres", "mongo"}
-				for _, commonRepo := range commonRepos {
-					if strings.EqualFold(repo, commonRepo) {
-						return true
-					}
+	// 3. Contains colon BUT NO slash? (e.g., nginx:latest, needs tag check)
+	if hasColon && !hasSlash {
+		parts := strings.SplitN(val, ":", tagSplitParts)
+		if len(parts) == tagSplitParts {
+			tag := parts[1]
+			// Check if tag looks like a version/common tag to avoid matching key:value
+			if tag != "" && len(tag) < 128 { // Basic length check
+				// Regex similar to former isVersionLike
+				matched, err := regexp.MatchString(`^v?\d+(\.\d+)*(-[a-zA-Z0-9.-]+)?$|^latest$|^stable$|^main$|^master$`, tag)
+				if err != nil {
+					// Log the regex error but consider it non-matching
+					log.Warn("isImageString: Error checking tag pattern regex", "tag", tag, "error", err)
+					return false
 				}
-
-				// If the pattern looks like a semantic version
-				if isVersionLike(tag) {
+				if matched {
+					log.Debug("isImageString: Match (Colon only, valid tag)", "value", val)
 					return true
 				}
 			}
 		}
 	}
 
+	log.Debug("isImageString: No Match", "value", val)
 	return false
 }
 
-// isVersionLike checks if a string looks like a version number
-func isVersionLike(s string) bool {
-	// Check for semver-like patterns (1.2.3, v1.2, etc.)
-	matched, err := regexp.MatchString(`^v?\d+(\.\d+)*(-[a-zA-Z0-9.]+)?$`, s)
-	if err != nil {
-		return false
-	}
-	if matched {
-		return true
-	}
-
-	// Check for simple numeric versions
-	matched, err = regexp.MatchString(`^\d+$`, s)
-	if err != nil {
-		return false
-	}
-	if matched {
-		return true
-	}
-
-	// Check for common tag patterns like "latest", "stable", etc.
-	commonTags := []string{"latest", "stable", "main", "master", "release", "alpha", "beta", "dev"}
-	for _, tag := range commonTags {
-		if strings.EqualFold(s, tag) {
-			return true
-		}
-	}
-
-	return false
-}
-
-// ParseImageString breaks an image string into its components.
-// For example, "docker.io/nginx:1.23" would return "docker.io", "nginx", "1.23".
-//
-// This function is intended for future use in advanced image parsing.
-// Currently, image parsing is handled at the generation stage rather than analysis.
+// ParseImageString attempts to parse a string into registry, repository, and tag components.
+// It handles default registry (docker.io) and tag (latest) values if they are not explicit.
+// It also handles the docker.io/library/ prefix for official images.
+// Note: This does not handle digests (@sha256:...). Use a more comprehensive parser if digests are needed.
 func (a *Analyzer) ParseImageString(val string) (registry, repository, tag string) {
+	// Default values
+	// registry = DefaultRegistry // Removed ineffectual assignment
+	// tag = DefaultTag // Removed ineffectual assignment
+
 	// Simple implementation for string format "registry/repository:tag"
 	parts := strings.Split(val, "/")
 	if len(parts) == 1 {
@@ -660,7 +586,7 @@ func (a *Analyzer) ParseImageString(val string) (registry, repository, tag strin
 		if len(repoParts) > 1 {
 			tag = repoParts[1]
 		} else {
-			tag = DefaultTag
+			tag = DefaultTag // Explicitly set default if no tag
 		}
 		registry = DefaultRegistry // Default registry
 	} else {
@@ -678,40 +604,39 @@ func (a *Analyzer) ParseImageString(val string) (registry, repository, tag strin
 		if len(repoParts) > 1 {
 			tag = repoParts[1]
 		} else {
-			tag = DefaultTag
+			tag = DefaultTag // Explicitly set default if no tag
 		}
 	}
 
 	return registry, repository, tag
 }
 
-// mergeAnalysis combines the results of two chart analyzes.
-// This is useful when analyzing chart dependencies and consolidating the results.
-//
-// Parameters:
-//   - a: Analysis instance to merge into
-//   - b: Analysis instance to merge from
+// mergeAnalysis merges the results from another ChartAnalysis (b) into the current one (a).
+// It combines the ImagePatterns and GlobalPatterns lists.
 func (a *ChartAnalysis) mergeAnalysis(b *ChartAnalysis) {
-	// Example implementation (update as needed):
+	if b == nil {
+		return
+	}
 	a.ImagePatterns = append(a.ImagePatterns, b.ImagePatterns...)
 	a.GlobalPatterns = append(a.GlobalPatterns, b.GlobalPatterns...)
 }
 
-// ensureString converts an interface{} to a string if possible.
-// Handles strings directly and attempts to convert numbers (int, float64).
+// ensureString safely converts an interface{} value to a string.
+// It handles nil, string, int, and float64 types, returning the string
+// representation and a boolean indicating success.
 func ensureString(v interface{}) (string, bool) {
-	switch val := v.(type) {
+	switch s := v.(type) {
 	case string:
-		return val, true
+		return s, true
 	case int:
-		return strconv.Itoa(val), true
+		return strconv.Itoa(s), true
 	case float64:
 		// Check if float represents an integer
-		if val == float64(int(val)) {
-			return strconv.Itoa(int(val)), true // Format as int
+		if s == float64(int(s)) {
+			return strconv.Itoa(int(s)), true // Format as int
 		}
 		// Otherwise format as float (using 'g' might still be okay, or choose specific format)
-		return strconv.FormatFloat(val, 'g', -1, 64), true
+		return strconv.FormatFloat(s, 'g', -1, 64), true
 	default:
 		// Add other numeric types if needed (e.g., int64, float32)
 		log.Warn("ensureString: Cannot convert value to string", "type", fmt.Sprintf("%T", v))
@@ -719,7 +644,10 @@ func ensureString(v interface{}) (string, bool) {
 	}
 }
 
-// Split repo path into max two parts
+// splitRepoPath splits a repository path string by the first slash.
+// It is used to separate potential registry prefixes from the repository name.
+// Example: "docker.io/nginx" -> ["docker.io", "nginx"]
+// Example: "nginx" -> ["nginx"]
 func splitRepoPath(repo string) []string {
 	return strings.SplitN(repo, "/", maxSplitTwo)
 }

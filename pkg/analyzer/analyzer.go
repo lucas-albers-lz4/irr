@@ -116,6 +116,10 @@ func analyzeValuesRecursive(path string, value interface{}, patterns *[]ImagePat
 }
 
 // analyzeMapValue handles the analysis logic for map values.
+// It first checks if the map represents a structured image definition
+// (containing at least a 'repository' key). If it is, it records the pattern
+// and stops recursion for that branch. If not, it recursively calls
+// analyzeValuesRecursive for each key-value pair within the map.
 func analyzeMapValue(path string, val reflect.Value, patterns *[]ImagePattern, config *Config) {
 	// Check if the map key type is string, required for Helm values traversal.
 	if val.Type().Key().Kind() != reflect.String {

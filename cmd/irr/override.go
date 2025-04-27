@@ -120,12 +120,7 @@ func newOverrideCmd() *cobra.Command {
 			"- When using Harbor as a pull-through cache, ensure your target paths match your Harbor project configuration.`,
 		Args: cobra.MaximumNArgs(1),
 		PreRunE: func(cmd *cobra.Command, args []string) error {
-			// --- DEBUGGING ---
-			log.Debug("Override PreRunE: START")
-			log.Debug("Override PreRunE: Args", "args", args, "len", len(args))
 			detectedPluginMode := isRunningAsHelmPlugin() // Call detection function directly
-			log.Debug("Override PreRunE: isRunningAsHelmPlugin", "value", detectedPluginMode)
-			// --- END DEBUGGING ---
 
 			// Check if we're in plugin mode with a release name
 			// Use the directly detected plugin mode status instead of the potentially stale global variable
@@ -139,12 +134,6 @@ func newOverrideCmd() *cobra.Command {
 				}
 			}
 			chartPathProvided := chartPath != ""
-
-			// --- DEBUGGING ---
-			log.Debug("Override PreRunE: hasReleaseName", "value", hasReleaseName)
-			log.Debug("Override PreRunE: chartPath", "value", chartPath)
-			log.Debug("Override PreRunE: chartPathProvided", "value", chartPathProvided)
-			// --- END DEBUGGING ---
 
 			// Get required flags for later checks
 			targetRegistry, err := cmd.Flags().GetString("target-registry")

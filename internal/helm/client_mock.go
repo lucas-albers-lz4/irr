@@ -11,7 +11,7 @@ import (
 
 // MockHelmClient implements ClientInterface for testing
 type MockHelmClient struct {
-	mock.Mock // Embed testify mock
+	mock.Mock
 	// Mock responses
 	ReleaseValues    map[string]map[string]interface{} // releaseName -> values
 	ReleaseCharts    map[string]*ChartMetadata         // releaseName -> chart metadata

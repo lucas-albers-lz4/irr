@@ -22,9 +22,9 @@ type RepositoryManager struct {
 }
 
 type repoCache struct {
-	repos    *repo.File
-	indexes  map[string]*repo.IndexFile
-	lastSync time.Time
+	repos    *repo.File                 // Cached repository file (repositories.yaml)
+	indexes  map[string]*repo.IndexFile // Cached index files for each repository name
+	lastSync time.Time                  // Timestamp of the last successful sync (applies to both repos and indexes)
 	mu       sync.RWMutex
 }
 
