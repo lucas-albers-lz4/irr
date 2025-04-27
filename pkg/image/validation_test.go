@@ -147,8 +147,15 @@ func TestIsValidTag(t *testing.T) {
 			name: "very long tag",
 			tag: "a" + "0123456789" + "0123456789" + "0123456789" + "0123456789" + "0123456789" +
 				"0123456789" + "0123456789" + "0123456789" + "0123456789" + "0123456789" + "0123456789" +
-				"0123456789" + "x", // 130 chars
-			expected: true, // The current implementation doesn't enforce the 128 character limit
+				"0123456789" + "x", // 122 chars
+			expected: true, // Should pass length check (below max 128)
+		},
+		{
+			name: "tag exceeding length limit",
+			tag: "a" + "0123456789" + "0123456789" + "0123456789" + "0123456789" + "0123456789" +
+				"0123456789" + "0123456789" + "0123456789" + "0123456789" + "0123456789" + "0123456789" +
+				"0123456789" + "0123456789" + "x", // 132 chars
+			expected: false, // Should fail length check (exceeds max 128)
 		},
 		{
 			name: "max length tag",

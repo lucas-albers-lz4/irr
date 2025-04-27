@@ -2,6 +2,8 @@ package image
 
 import (
 	"regexp"
+
+	log "github.com/lucas-albers-lz4/irr/pkg/log"
 )
 
 // isValidRegistryName checks if a string is potentially a valid registry name component.
@@ -123,19 +125,28 @@ func IsValidTag(tag string) bool {
 		// MaxTagLength is the maximum allowed length for a container image tag
 		MaxTagLength = 128
 	)
+	log.Debug("IsValidTag called", "tag", tag, "len", len(tag), "MaxLen", MaxTagLength)
 
 	if tag == "" {
+		log.Debug("IsValidTag returning false (empty tag)")
 		return false // Tag cannot be empty
 	}
+
+	// Check length constraint first
 	if len(tag) > MaxTagLength {
+		log.Debug("IsValidTag returning false (tag too long)", "len", len(tag), "MaxLen", MaxTagLength)
 		return false // Tag length exceeds limit
 	}
-	// Pattern for valid tags: word characters (alphanumeric + underscore) plus period and hyphen.
-	// Must start with a word character or number.
+
+	// Length is valid, now check the pattern
 	const pattern = `^[a-zA-Z0-9][\w.-]*$`
 	// errcheck: regexp.MatchString error is always nil for constant patterns, safe to ignore.
 	matched, err := regexp.MatchString(pattern, tag)
 	_ = err // Explicitly ignore the nil error to satisfy errcheck
+	log.Debug("IsValidTag regex check result", "matched", matched)
+
+	// Return true only if the pattern matched (length check already passed)
+	log.Debug("IsValidTag final return", "result", matched)
 	return matched
 }
 
