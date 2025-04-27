@@ -13,7 +13,13 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+)
+
+// --- Mock Factories (Global for Test Overrides) ---
+var (
+	helmClientFactory func() (helm.ClientInterface, error) = createHelmClient
 )
 
 // REMOVED TestDetectChartInCurrentDirectory function as it tested outdated logic.
@@ -362,8 +368,6 @@ func TestInspectPluginMode(t *testing.T) {
 	cleanup := setupInspectTest(t)
 	defer cleanup()
 
-	mockFs := AppFs // AppFs is already afero.Fs, assertion removed
-
 	// Save original helm adapter factory and restore after
 	originalHelmFactory := helmAdapterFactory
 	defer func() { helmAdapterFactory = originalHelmFactory }()
@@ -380,7 +384,7 @@ func TestInspectPluginMode(t *testing.T) {
 
 	helmAdapterFactory = func() (*helm.Adapter, error) {
 		// Return an adapter using the configured mock client
-		return helm.NewAdapter(mockClient, mockFs, true), nil
+		return helm.NewAdapter(mockClient, AppFs, true), nil
 	}
 
 	// Create the inspect command
@@ -439,11 +443,131 @@ func TestInspectInvalidOutputFormat(t *testing.T) {
 	err := cmd.Execute()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid output format")
-
-	// Verify exit code
+	// Corrected Exit Code Check
 	var exitErr *exitcodes.ExitCodeError
 	require.ErrorAs(t, err, &exitErr, "Error should be an ExitCodeError")
-	assert.Equal(t, exitcodes.ExitInputConfigurationError, exitErr.Code)
+	assert.Equal(t, exitcodes.ExitInputConfigurationError, exitErr.Code, "Expected input config error code")
+}
+
+// TestInspectAllNamespacesSkeleton verifies that `inspect -A --generate-config-skeleton`
+// correctly aggregates registries from all releases.
+func TestInspectAllNamespacesSkeleton(t *testing.T) {
+	cleanup := setupInspectTest(t) // Sets up mock FS and test mode
+	defer cleanup()
+
+	// --- Mock Helm Interaction ---
+
+	// Mock Helm Releases
+	mockReleases := []*helm.ReleaseElement{
+		{Name: "release-1", Namespace: "ns-a"},
+		{Name: "release-2", Namespace: "ns-b"},
+		{Name: "release-3", Namespace: "ns-a"},
+		{Name: "release-4", Namespace: "ns-c"}, // Release with no images
+		{Name: "release-5", Namespace: "ns-d"}, // Release that will fail analysis
+	}
+
+	// Mock Helm Client (from internal/helm)
+	mockHelmClient := &helm.MockHelmClient{} // Correct mock type
+	mockHelmClient.On("ListReleases", mock.Anything, true).Return(mockReleases, nil)
+
+	// Mock necessary GetReleaseValues calls (used by adapter -> analyzeRelease)
+	mockHelmClient.SetupMockRelease("release-1", "ns-a", map[string]interface{}{"image": "docker.io/library/nginx:latest"}, &helm.ChartMetadata{Name: "chart1", Version: "1.0"})
+	mockHelmClient.SetupMockRelease("release-2", "ns-b", map[string]interface{}{"image": "quay.io/prometheus/node-exporter:v1"}, &helm.ChartMetadata{Name: "chart2", Version: "1.0"})
+	mockHelmClient.SetupMockRelease(
+		"release-3",
+		"ns-a",
+		map[string]interface{}{
+			"image":   "gcr.io/google-containers/pause:3.2",
+			"sidecar": "docker.io/library/alpine:edge",
+		},
+		&helm.ChartMetadata{Name: "chart3", Version: "1.0"},
+	)
+	mockHelmClient.SetupMockRelease("release-4", "ns-c", map[string]interface{}{"some": "value"}, &helm.ChartMetadata{Name: "chart4", Version: "1.0"}) // No image
+	// Simulate GetValues error for release-5 using the mock's error field
+	mockHelmClient.GetValuesError = fmt.Errorf("simulated error getting values for release-5")
+
+	// Also mock GetChartFromRelease as it's called by analyzeRelease for successful cases
+	mockHelmClient.On("GetChartFromRelease", mock.Anything, "release-1", "ns-a").Return(&helm.ChartMetadata{Name: "chart1", Version: "1.0"}, nil)
+	mockHelmClient.On("GetChartFromRelease", mock.Anything, "release-2", "ns-b").Return(&helm.ChartMetadata{Name: "chart2", Version: "1.0"}, nil)
+	mockHelmClient.On("GetChartFromRelease", mock.Anything, "release-3", "ns-a").Return(&helm.ChartMetadata{Name: "chart3", Version: "1.0"}, nil)
+	mockHelmClient.On("GetChartFromRelease", mock.Anything, "release-4", "ns-c").Return(&helm.ChartMetadata{Name: "chart4", Version: "1.0"}, nil)
+	// No mock needed for release-5 GetChartFromRelease as GetReleaseValues should fail first
+
+	// Inject Mocks using the package-level factory variables
+	originalHelmClientFactory := helmClientFactory
+	helmClientFactory = func() (helm.ClientInterface, error) {
+		return mockHelmClient, nil
+	}
+	defer func() { helmClientFactory = originalHelmClientFactory }()
+
+	originalHelmAdapterFactory := helmAdapterFactory
+	// Override adapter factory to return a real adapter constructed with the mock client and mock FS
+	// Match the expected signature: func() (*helm.Adapter, error)
+	helmAdapterFactory = func() (*helm.Adapter, error) {
+		adapter := helm.NewAdapter(mockHelmClient, AppFs, true) // Use mocks, assume isPlugin=true
+		return adapter, nil                                     // Return concrete adapter pointer and nil error
+	}
+	defer func() { helmAdapterFactory = originalHelmAdapterFactory }()
+
+	// --- Execute Command ---
+	cmd := newInspectCmd()
+	args := []string{
+		"-A",
+		"--generate-config-skeleton",
+		"--output-file", "skeleton.yaml",
+		"--overwrite-skeleton", // Prevent error if file exists in mock fs
+	}
+	cmd.SetArgs(args)
+	out := new(bytes.Buffer)
+	errOut := new(bytes.Buffer)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+
+	err := cmd.Execute()
+	// Expect GetReleaseValues to fail for release-5, but the overall command should succeed
+	// because skeleton generation proceeds even with partial failures.
+	require.NoError(t, err, "Command execution failed unexpectedly. Stdout: %s, Stderr: %s", out.String(), errOut.String())
+
+	// --- Verify Output ---
+
+	// Verify skeleton file content
+	skeletonPath := "skeleton.yaml"
+	exists, err := afero.Exists(AppFs, skeletonPath)
+	require.NoError(t, err)
+	require.True(t, exists, "Expected skeleton file '%s' was not created", skeletonPath)
+
+	contentBytes, err := afero.ReadFile(AppFs, skeletonPath)
+	require.NoError(t, err)
+	content := string(contentBytes)
+
+	// Assert that all unique registries are present
+	assert.Contains(t, content, "source: docker.io", "Skeleton missing docker.io")
+	assert.Contains(t, content, "source: quay.io", "Skeleton missing quay.io")
+	assert.Contains(t, content, "source: gcr.io", "Skeleton missing gcr.io")
+
+	// Assert that registries are sorted
+	dockerIndex := bytes.Index(contentBytes, []byte("source: docker.io"))
+	gcrIndex := bytes.Index(contentBytes, []byte("source: gcr.io"))
+	quayIndex := bytes.Index(contentBytes, []byte("source: quay.io"))
+
+	assert.True(t, dockerIndex < gcrIndex, "Registries not sorted correctly (docker.io vs gcr.io)")
+	assert.True(t, gcrIndex < quayIndex, "Registries not sorted correctly (gcr.io vs quay.io)")
+
+	// Verify mocks were called (adjust counts as needed)
+	mockHelmClient.AssertCalled(t, "ListReleases", mock.Anything, true)
+	// GetReleaseValues and GetChartFromRelease are called inside analyzeRelease, which is called by processAllReleases
+	// Check that they were called for the successful releases
+	mockHelmClient.AssertCalled(t, "GetReleaseValues", mock.Anything, "release-1", "ns-a")
+	mockHelmClient.AssertCalled(t, "GetChartFromRelease", mock.Anything, "release-1", "ns-a")
+	mockHelmClient.AssertCalled(t, "GetReleaseValues", mock.Anything, "release-2", "ns-b")
+	mockHelmClient.AssertCalled(t, "GetChartFromRelease", mock.Anything, "release-2", "ns-b")
+	mockHelmClient.AssertCalled(t, "GetReleaseValues", mock.Anything, "release-3", "ns-a")
+	mockHelmClient.AssertCalled(t, "GetChartFromRelease", mock.Anything, "release-3", "ns-a")
+	mockHelmClient.AssertCalled(t, "GetReleaseValues", mock.Anything, "release-4", "ns-c")
+	mockHelmClient.AssertCalled(t, "GetChartFromRelease", mock.Anything, "release-4", "ns-c")
+	// Assert GetReleaseValues was called for the failing one, but GetChartFromRelease was not
+	mockHelmClient.AssertCalled(t, "GetReleaseValues", mock.Anything, "release-5", "ns-d")
+	mockHelmClient.AssertNotCalled(t, "GetChartFromRelease", mock.Anything, "release-5", "ns-d")
 }
 
 // TestRunInspect tests the RunInspect function.
