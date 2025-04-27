@@ -1159,20 +1159,20 @@ func getAllReleases() ([]*helm.ReleaseElement, *helm.Adapter, error) {
 	return releases, helmAdapter, nil
 }
 
-// analyzeRelease analyzes a single Helm release and returns the analysis result
-func analyzeRelease(release *helm.ReleaseElement, helmAdapter *helm.Adapter, flags *InspectFlags) (*ReleaseAnalysisResult, error) {
+// analyzeRelease analyzes a single Helm release and returns the analysis result and the original unfiltered images
+func analyzeRelease(release *helm.ReleaseElement, helmAdapter *helm.Adapter, flags *InspectFlags) (*ReleaseAnalysisResult, []ImageInfo, error) {
 	log.Info("Analyzing release", "name", release.Name, "namespace", release.Namespace)
 
 	// Get release values
 	values, err := helmAdapter.GetReleaseValues(context.Background(), release.Name, release.Namespace)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get values for release %s/%s: %w", release.Namespace, release.Name, err)
+		return nil, nil, fmt.Errorf("failed to get values for release %s/%s: %w", release.Namespace, release.Name, err)
 	}
 
 	// Get chart metadata
 	chartMetadata, err := helmAdapter.GetChartFromRelease(context.Background(), release.Name, release.Namespace)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get chart info for release %s/%s: %w", release.Namespace, release.Name, err)
+		return nil, nil, fmt.Errorf("failed to get chart info for release %s/%s: %w", release.Namespace, release.Name, err)
 	}
 
 	// Create chart info from metadata
@@ -1186,21 +1186,26 @@ func analyzeRelease(release *helm.ReleaseElement, helmAdapter *helm.Adapter, fla
 	log.Debug("Analyzing release values for", "name", release.Name, "namespace", release.Namespace)
 	analysisPatterns, analysisErr := analyzer.AnalyzeHelmValues(values, flags.AnalyzerConfig)
 	if analysisErr != nil {
-		return nil, fmt.Errorf("analysis failed for release %s/%s: %w", release.Namespace, release.Name, analysisErr)
+		return nil, nil, fmt.Errorf("analysis failed for release %s/%s: %w", release.Namespace, release.Name, analysisErr)
 	}
 
 	// Process image patterns found in values
-	images, skipped := processImagePatterns(analysisPatterns)
+	originalImages, skipped := processImagePatterns(analysisPatterns)
 
-	// Create analysis result
+	// Create analysis result structure
 	analysis := ImageAnalysis{
 		Chart:         chartInfo,
-		Images:        images,
+		Images:        originalImages, // Start with original images
 		ImagePatterns: analysisPatterns,
 		Skipped:       skipped,
 	}
 
-	// Apply source registry filtering if needed
+	// --- Filtering Logic ---
+	// Keep a copy of original images for skeleton generation, even if filtered for output
+	unfilteredImagesForSkeleton := make([]ImageInfo, len(originalImages))
+	copy(unfilteredImagesForSkeleton, originalImages)
+
+	// Apply source registry filtering if needed FOR THE OUTPUT ANALYSIS
 	if len(flags.SourceRegistries) > 0 {
 		// Create a map for O(1) lookups
 		registryMap := make(map[string]bool)
@@ -1209,24 +1214,25 @@ func analyzeRelease(release *helm.ReleaseElement, helmAdapter *helm.Adapter, fla
 			registryMap[normalized] = true
 		}
 
-		// Filter images
-		filteredImages := make([]ImageInfo, 0)
-		for _, img := range analysis.Images {
+		// Filter images for the output
+		filteredImagesForOutput := make([]ImageInfo, 0)
+		for _, img := range originalImages { // Iterate original images
 			normalizedRegistry := image.NormalizeRegistry(img.Registry)
 			if registryMap[normalizedRegistry] {
-				filteredImages = append(filteredImages, img)
+				filteredImagesForOutput = append(filteredImagesForOutput, img)
 			}
 		}
 
-		// Update the analysis with filtered images
-		analysis.Images = filteredImages
+		// Update the analysis.Images field ONLY for the output result
+		analysis.Images = filteredImagesForOutput
 	}
 
+	// Return the potentially filtered analysis result AND the original unfiltered images
 	return &ReleaseAnalysisResult{
 		ReleaseName: release.Name,
 		Namespace:   release.Namespace,
 		Analysis:    analysis,
-	}, nil
+	}, unfilteredImagesForSkeleton, nil // Return unfiltered images here
 }
 
 // processAllReleases processes all releases and returns the aggregated results
@@ -1237,38 +1243,47 @@ func processAllReleases(releases []*helm.ReleaseElement, helmAdapter *helm.Adapt
 
 	// Process each release
 	for _, release := range releases {
-		result, err := analyzeRelease(release, helmAdapter, flags)
+		// Call analyzeRelease, which now returns unfiltered images as well
+		result, unfilteredImages, err := analyzeRelease(release, helmAdapter, flags)
 		if err != nil {
 			log.Warn("Failed to analyze release", "name", release.Name, "namespace", release.Namespace, "error", err)
 			skippedReleases = append(skippedReleases, fmt.Sprintf("%s/%s", release.Namespace, release.Name))
 			continue
 		}
 
-		allResults = append(allResults, result)
+		allResults = append(allResults, result) // Keep the potentially filtered result for output
 
-		// Accumulate unique registries
-		for _, img := range result.Analysis.Images {
-			uniqueRegistries[img.Registry] = true
+		// Accumulate unique registries FROM THE UNFILTERED IMAGES for skeleton generation
+		for _, img := range unfilteredImages {
+			if img.Registry != "" { // Ensure we don't add empty registries
+				uniqueRegistries[img.Registry] = true
+			}
 		}
 	}
 
-	// Handle no results case
+	// Handle no results case (check uniqueRegistries as well)
 	if len(allResults) == 0 && len(uniqueRegistries) == 0 {
-		msg := "No releases were successfully analyzed"
+		msg := "No releases were successfully analyzed or no registries found"
 		if len(skippedReleases) > 0 {
 			msg += fmt.Sprintf(". %d releases were skipped due to errors", len(skippedReleases))
 		}
 		log.Warn(msg)
+		// Return nil for skeletonImages here as well
 		return nil, skippedReleases, nil, errors.New(msg)
 	}
 
-	// Create images list for skeleton generation
+	// Create images list for skeleton generation from the unique registries map
 	var skeletonImages []ImageInfo
 	for registry := range uniqueRegistries {
 		skeletonImages = append(skeletonImages, ImageInfo{
 			Registry: registry,
 		})
 	}
+
+	// Sort skeleton images by registry for consistent output
+	sort.Slice(skeletonImages, func(i, j int) bool {
+		return skeletonImages[i].Registry < skeletonImages[j].Registry
+	})
 
 	return allResults, skippedReleases, skeletonImages, nil
 }
