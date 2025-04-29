@@ -211,40 +211,54 @@ Enhance the analyzer to correctly process Helm charts with subcharts, ensuring t
 - [ ] **[P1]** **Error Handling Summary:**
     - Reminder: Fatal errors during Helm loading, value merging, or template rendering should log the specific error and exit non-zero. YAML parsing errors within the rendered stream or the image count discrepancy warning itself should only log warnings and allow the command to complete with exit code 0.
 
-#### Phase 9.2: Refactor Analyzer for Full Subchart Support (The Correct Fix)
-- [x] **[P2]** **Research & Design Helm Value Computation:**
+#### Phase 9.2: Subchart Discrepancy Analysis
+- **Goal:** Systematically analyze charts exhibiting the subchart discrepancy warning, categorize root causes, and document findings to inform the Phase 9.3 refactor.
+- **Implementation Steps:**
+    - [ ] **[P1]** **Complete `test-charts.py --operation subchart` Implementation:** 
+        - Execute `helm template` and capture its output.
+        - Execute `helm show values --json` and capture its output.
+        - Parse the original `irr inspect` output.
+        - Implement logic to extract image lists from both `irr inspect` and the full `helm template` output.
+        - Compare image lists.
+        - Append structured results (chart name, analyzer images, template images, discrepancy counts, etc.) to a JSON file (e.g., `subchart_analysis_results.json`).
+    - [ ] **[P1]** **Run Analysis:** Execute `python test/tools/test-charts.py --operation subchart ...` across a diverse set of charts known to produce warnings.
+    - [ ] **[P1]** **Categorize Findings:** Analyze results to determine causes (e.g., unused values, non-Deployment/StatefulSet resources, true subchart defaults, conditional logic, other).
+    - [ ] **[P1]** **Document Analysis:** Summarize findings, common patterns, prevalence of categories, and edge cases to inform Phase 9.3.
+
+#### Phase 9.3: Refactor Analyzer for Full Subchart Support (The Correct Fix)
+- [ ] **[P2]** **Research & Design Helm Value Computation:**
     - Deeply investigate Helm Go SDK functions for loading charts (`chart/loader.Load`), handling dependencies, and merging values (`pkg/cli/values.Options`, `pkg/chartutil.CoalesceValues`).
     - Prototype code to programmatically replicate Helm's value computation process for a given chart and user-provided value files, resulting in a final, merged values map representing what Helm uses for templating.
     - *Crucial Design Point:* Determine how to track the origin of each value within the merged map (e.g., did it come from the parent `values.yaml`, a specific subchart's `values.yaml`, or a user file?). This origin information is essential for generating correctly structured overrides later.
-- [x] **[P2]** **Refactor Analyzer Input:**
+- [ ] **[P2]** **Refactor Analyzer Input:**
     - Modify the analyzer's primary entry function (e.g., `AnalyzeHelmValues` or potentially a new function like `AnalyzeChartContext`).
     - Instead of just `map[string]interface{}` representing a single values file, the input should represent the fully computed/merged values for the chart context (from step 1).
     - The function signature might also need to accept information about value origins (design from step 1) if that's how source path tracking is implemented.
-- [x] **[P2]** **Adapt Analyzer Traversal & Source Path Logic:**
+- [ ] **[P2]** **Adapt Analyzer Traversal & Source Path Logic:**
     - The core recursive analysis functions (`analyzeMapValue`, `analyzeStringValue`) might largely remain the same if they operate correctly on the merged values map.
     - **Critical Enhancement:** Modify the logic that records `ImagePattern` (or equivalent). When an image is detected, it must now correctly determine and store its *effective source path* suitable for override generation. This involves using the value origin tracking (from step 1) to construct the correct path (e.g., an image from the `grafana` subchart needs a path starting with `grafana.`).
-- [x] **[P2]** **Update Command Usage:**
+- [ ] **[P2]** **Update Command Usage:**
     - Modify `cmd/irr/inspect.go` and `cmd/irr/override.go`.
     - Remove the simple loading of a single values file.
     - Implement the Helm chart loading and value computation logic designed in step 1.
     - Call the refactored analyzer (step 2) with the computed values and necessary context.
     - Ensure `override` correctly uses the enhanced source path information (step 3) to structure the generated YAML override file (e.g., placing Grafana image overrides under a top-level `grafana:` key).
-- [x] **[P2]** **Add Comprehensive Tests:**
+- [ ] **[P2]** **Add Comprehensive Tests:**
     - Create/enhance integration tests in `test/integration/` specifically for umbrella charts.
     - Use `kube-prometheus-stack` and potentially other charts with multiple nesting levels.
     - Verify `inspect` output now includes images defined only in subchart defaults.
     - Verify `override` generates correctly structured files, applying overrides to the appropriate subchart keys (e.g., `grafana: { image: ... }`, `kube-state-metrics: { image: ... }`).
-- [x] **[P2]** **Update Documentation:**
+- [ ] **[P2]** **Update Documentation:**
     - Remove documented limitations regarding subchart analysis.
     - Ensure examples demonstrate usage with complex umbrella charts.
 
-#### Phase 9.3: Review/Remove Warning Mechanism
-- [x] **[P3]** **Evaluate Necessity:**
-    - Once Phase 9.2 is complete and validated through extensive testing, determine if the warning mechanism from Phase 9.1 still provides value or is now redundant.
-- [x] **[P3]** **Conditional Removal:**
-    - If the refactored analyzer (Phase 9.2) is proven reliable for subchart value analysis, remove the Helm template comparison code, the `--no-subchart-check` flag, associated tests, and documentation related to the warning mechanism.
+#### Phase 9.4: Review/Remove Warning Mechanism
+- [ ] **[P3]** **Evaluate Necessity:**
+    - Once Phase 9.3 is complete and validated through extensive testing, determine if the warning mechanism from Phase 9.1 still provides value or is now redundant.
+- [ ] **[P3]** **Conditional Removal:**
+    - If the refactored analyzer (Phase 9.3) is proven reliable for subchart value analysis, remove the Helm template comparison code, the `--no-subchart-check` flag, associated tests, and documentation related to the warning mechanism.
 
-### Acceptance Criteria (Phase 9.2)
+### Acceptance Criteria (Phase 9.3)
 - `irr inspect` correctly identifies images defined in both parent and subchart values, reporting accurate source paths reflecting subchart context (e.g., `grafana.image`).
 - `irr override` correctly generates overrides for images originating from both parent and subchart values, placing them under the correct top-level keys in the output file (e.g., `grafana: { image: ... }`).
 - Tests confirm accurate behavior for multiple levels of subchart nesting and various value override scenarios.
