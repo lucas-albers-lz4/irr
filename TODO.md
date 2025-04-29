@@ -212,18 +212,32 @@ Enhance the analyzer to correctly process Helm charts with subcharts, ensuring t
     - Reminder: Fatal errors during Helm loading, value merging, or template rendering should log the specific error and exit non-zero. YAML parsing errors within the rendered stream or the image count discrepancy warning itself should only log warnings and allow the command to complete with exit code 0.
 
 #### Phase 9.2: Subchart Discrepancy Analysis
-- **Goal:** Systematically analyze charts exhibiting the subchart discrepancy warning, categorize root causes, and document findings to inform the Phase 9.3 refactor.
+- **Goal:** Systematically analyze charts exhibiting discrepancies between `irr inspect` output and `helm template` rendering, categorize root causes at scale, and document findings to inform the Phase 9.3 refactor.
 - **Implementation Steps:**
-    - [ ] **[P1]** **Complete `test-charts.py --operation subchart` Implementation:** 
-        - Execute `helm template` and capture its output.
-        - Execute `helm show values --json` and capture its output.
-        - Parse the original `irr inspect` output.
-        - Implement logic to extract image lists from both `irr inspect` and the full `helm template` output.
-        - Compare image lists.
-        - Append structured results (chart name, analyzer images, template images, discrepancy counts, etc.) to a JSON file (e.g., `subchart_analysis_results.json`).
-    - [ ] **[P1]** **Run Analysis:** Execute `python test/tools/test-charts.py --operation subchart ...` across a diverse set of charts known to produce warnings.
-    - [ ] **[P1]** **Categorize Findings:** Analyze results to determine causes (e.g., unused values, non-Deployment/StatefulSet resources, true subchart defaults, conditional logic, other).
-    - [ ] **[P1]** **Document Analysis:** Summarize findings, common patterns, prevalence of categories, and edge cases to inform Phase 9.3.
+    - [ ] **[P1]** **Enhance `test-charts.py --operation subchart` Implementation:**
+        - Iterate through target charts (e.g., `test/chart-cache`).
+        - For each chart:
+            - Execute `irr inspect <chart> --output=json` (or parse text output), capture `analyzer_images` and any execution errors.
+            - Execute `helm template <release_name> <chart> --skip-tests`, capture full `rendered_yaml` and any execution errors.
+            - Safely parse `rendered_yaml`, handling document-level errors gracefully.
+            - For each valid K8s manifest document:
+                - Extract resource `kind`.
+                - Extract all image references from known paths, associating each image with its `kind`.
+            - Aggregate unique `template_images` and maintain a mapping of `image -> {kinds...}`.
+        - Compare `analyzer_images` vs `template_images` to find `only_in_analyzer` and `only_in_template`.
+        - Determine primary discrepancy category: `Match`, `Analyzer Extra`, `Template Extra`, `Mixed`, or various `Error` states.
+        - Append detailed, structured JSON record per chart to `subchart_analysis_results.json`, including:
+            - `chart_name`, `status`, counts, `images_only_in_analyzer`.
+            - `images_only_in_template_with_kinds`: List of `{"image": "...", "kinds": ["kind1", ...]}`.
+            - Error logs if applicable.
+    - [ ] **[P1]** **Run Analysis:** Execute the enhanced `python test/tools/test-charts.py --operation subchart ...` across all relevant charts (e.g., ~300 charts in cache).
+    - [ ] **[P1]** **Analyze Results & Categorize Findings:**
+        - Parse `subchart_analysis_results.json`.
+        - Aggregate statistics: Count charts per `status`.
+        - For `Template Extra` / `Mixed`, aggregate `kind`s associated with missed images to identify systemic blind spots (e.g., "missed images primarily occur in CronJobs").
+        - Identify common images/patterns in discrepancies.
+        - Review error patterns.
+    - [ ] **[P1]** **Document Analysis:** Summarize quantitative findings (e.g., "X% of charts miss images, primarily in Kind Y and Z"), common patterns, prevalence of categories, and edge cases. This summary directly informs the requirements and focus for the Phase 9.3 refactor.
 
 #### Phase 9.3: Refactor Analyzer for Full Subchart Support (The Correct Fix)
 - [ ] **[P2]** **Research & Design Helm Value Computation:**
