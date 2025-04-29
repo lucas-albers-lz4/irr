@@ -786,6 +786,153 @@ async def test_chart_override_with_internal_validate(chart_info, target_registry
         debug_log.close()
 
 
+async def test_chart_inspect(chart_info, target_registry, irr_binary, session, args):
+    """Test the inspect operation for a single chart."""
+    # target_registry is ignored in this function but kept for signature consistency
+    chart_name, chart_path = chart_info
+    # Define output and log files specific to inspect
+    stdout_file = DETAILED_LOGS_DIR / f"{chart_name}-inspect-stdout.log"
+    stderr_file = DETAILED_LOGS_DIR / f"{chart_name}-inspect-stderr.log"
+    detailed_log_file = DETAILED_LOGS_DIR / f"{chart_name}-inspect.log"
+
+    stdout_file.parent.mkdir(parents=True, exist_ok=True)
+
+    def log_debug(msg):
+        with open(detailed_log_file, "a", encoding="utf-8") as f:
+            f.write(f"[{datetime.now()}] DEBUG: {msg}\n")
+        if args.debug:
+            print(f"  DEBUG: {msg}")
+
+    log_debug(f"Starting inspect for chart: {chart_name} ({chart_path})")
+
+    start_time = time.monotonic()
+    validation_duration = 0 # Not applicable here, but keep consistent structure
+
+    try:
+        # --- Chart Path Handling --- #
+        chart_path = Path(chart_path)
+        if not chart_path.exists():
+            raise FileNotFoundError(f"Chart path does not exist: {chart_path}")
+        log_debug(f"Using chart path: {chart_path}")
+
+        # --- Construct Inspect Command --- #
+        inspect_cmd = [
+            str(irr_binary),
+            "inspect",
+            "--chart-path",
+            str(chart_path),
+            # Add other relevant inspect flags if needed, e.g., --output-format
+            # Defaulting to YAML output
+        ]
+        # Add debug flag if specified in script args
+        if args.debug:
+            inspect_cmd.append("--debug")
+
+        log_debug(f"Running inspect command: {' '.join(inspect_cmd)}")
+
+        # --- Execute Inspect Command --- #
+        process = await asyncio.create_subprocess_exec(
+            *inspect_cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(
+            process.communicate(),
+            timeout=args.timeout, # Use configured timeout
+        )
+        stdout = stdout_bytes.decode("utf-8", errors="ignore")
+        stderr = stderr_bytes.decode("utf-8", errors="ignore")
+        return_code = process.returncode
+
+        with open(stdout_file, "w", encoding="utf-8") as f:
+            f.write(stdout)
+        with open(stderr_file, "w", encoding="utf-8") as f:
+            f.write(stderr)
+
+        end_time = time.monotonic()
+        inspect_duration = end_time - start_time # Use a specific duration variable
+        log_debug(f"Inspect command finished with code {return_code} in {inspect_duration:.2f}s")
+
+        # --- Process Results --- #
+        if return_code == 0:
+            # Attempt to parse YAML output for basic validation
+            try:
+                yaml.safe_load(stdout)
+                log_debug("Inspect successful and output parsed as YAML.")
+                # Classification is not directly available/relevant here like in validate
+                classification = "UNKNOWN" # Or determine if needed
+                return TestResult(
+                    chart_name=chart_name,
+                    chart_path=chart_path,
+                    classification=classification,
+                    status="SUCCESS",
+                    category="",
+                    details="Inspect command successful and output is valid YAML.",
+                    override_duration=0, # Not applicable
+                    validation_duration=inspect_duration, # Use inspect duration here
+                )
+            except yaml.YAMLError as e:
+                error_details = f"Inspect command succeeded (code 0) but output is not valid YAML: {e}\nOutput:\n{stdout[:500]}..."
+                log_debug(f"Error: {error_details}")
+                return TestResult(
+                    chart_name=chart_name,
+                    chart_path=chart_path,
+                    classification="UNKNOWN",
+                    status="INSPECT_OUTPUT_ERROR",
+                    category="YAML_ERROR",
+                    details=error_details,
+                    override_duration=0,
+                    validation_duration=inspect_duration,
+                )
+        else:
+            error_details = stderr.strip() or stdout.strip()
+            error_category = categorize_error(error_details)
+            log_debug(f"Inspect failed. Category: {error_category}, Details: {error_details[:500]}...")
+            return TestResult(
+                chart_name=chart_name,
+                chart_path=chart_path,
+                classification="UNKNOWN",
+                status="INSPECT_ERROR", # Specific status for inspect failure
+                category=error_category,
+                details=error_details,
+                override_duration=0,
+                validation_duration=inspect_duration,
+            )
+
+    except asyncio.TimeoutError:
+        end_time = time.monotonic()
+        inspect_duration = end_time - start_time
+        log_debug(f"Inspect command timed out after {inspect_duration:.2f}s")
+        return TestResult(
+            chart_name=chart_name,
+            chart_path=chart_path,
+            classification="UNKNOWN",
+            status="TIMEOUT_ERROR",
+            category="TIMEOUT_ERROR",
+            details=f"Inspect timed out after {args.timeout} seconds",
+            override_duration=0,
+            validation_duration=inspect_duration,
+        )
+    except Exception as e:
+        end_time = time.monotonic()
+        inspect_duration = end_time - start_time
+        error_details = f"Unexpected error during inspect: {e}"
+        log_debug(error_details)
+        import traceback
+        with open(detailed_log_file, "a", encoding="utf-8") as f:
+             traceback.print_exc(file=f)
+        return TestResult(
+            chart_name=chart_name,
+            chart_path=chart_path,
+            classification="UNKNOWN",
+            status="UNKNOWN_ERROR",
+            category="UNKNOWN_ERROR",
+            details=error_details,
+            override_duration=0,
+            validation_duration=inspect_duration,
+        )
+
+
 async def test_chart_validate(chart_info, target_registry, irr_binary, session, args):
     """Test the validation (template) process for a single chart."""
     chart_name = chart_info["chart_name"]
@@ -1470,9 +1617,9 @@ async def main():
     )
     parser.add_argument(
         "--operation",
-        choices=["override", "validate", "both", "override-with-internal-validate"],
+        choices=["override", "validate", "both", "override-with-internal-validate", "inspect"],
         default="both",
-        help="Operation to test: override (no internal validation), validate (external), both, or override-with-internal-validate",
+        help="Operation to test: override (no internal validation), validate (external), both, override-with-internal-validate, or inspect",
     )
     parser.add_argument(
         "--debug", action="store_true", help="Enable debug output to console"
@@ -1602,45 +1749,58 @@ async def main():
     all_results = []
     executed_operation = None # Track which operation ran
 
-    if args.operation in ["override", "both", "override-with-internal-validate"]:
-        operation_to_run = None
-        if args.operation == "override":
-            print(
-                f"\n--- Starting Override Generation (No Internal Validation) for {len(charts_to_process_info)} charts ---"
-            )
-            operation_to_run = test_chart_override
-            executed_operation = "override"
-        elif args.operation == "override-with-internal-validate":
-            print(
-                f"\n--- Starting Override Generation (With Internal Validation) for {len(charts_to_process_info)} charts ---"
-            )
-            operation_to_run = test_chart_override_with_internal_validate # Call the new function
-            executed_operation = "override-with-internal-validate"
-        elif args.operation == "both": # 'both' still runs the standard override first
-            print(
-                f"\n--- Starting Override Generation (No Internal Validation) for {len(charts_to_process_info)} charts (part of 'both') ---"
-            )
-            operation_to_run = test_chart_override
-            executed_operation = "override" # Track that override ran first
+    # Determine which function to run based on the operation
+    operation_func = None
+    operation_description = ""
 
-        if operation_to_run:
-            tasks = []
-            limiter = asyncio.Semaphore(args.max_workers)
+    if args.operation == "override":
+        operation_func = test_chart_override
+        operation_description = "Override Generation (No Internal Validation)"
+        executed_operation = "override"
+    elif args.operation == "override-with-internal-validate":
+        operation_func = test_chart_override_with_internal_validate
+        operation_description = "Override Generation (With Internal Validation)"
+        executed_operation = "override-with-internal-validate"
+    elif args.operation == "inspect":
+        operation_func = test_chart_inspect
+        operation_description = "Inspect Operation"
+        executed_operation = "inspect"
+    elif args.operation == "both":
+        # "both" implies override first, then validate
+        operation_func = test_chart_override # Run override first
+        operation_description = "Override Generation (part of 'both')"
+        executed_operation = "override"
+    elif args.operation == "validate":
+        # If only validate is requested, we don't run an initial operation here
+        operation_description = "Validation Only"
+        executed_operation = "validate"
 
-            async def run_override_task_with_limit(chart_info):
-                async with limiter:
-                    return await operation_to_run( # Use the selected function
-                        chart_info, args.target_registry, irr_binary, None, args
-                    )
+    # Run the initial operation if needed (override, override-with-internal-validate, inspect, or first part of both)
+    if operation_func:
+        print(f"\n--- Starting {operation_description} for {len(charts_to_process_info)} charts ---")
+        tasks = []
+        limiter = asyncio.Semaphore(args.max_workers)
 
-            for chart_name, chart_path in charts_to_process_info:
-                task = asyncio.create_task(
-                    run_override_task_with_limit((chart_name, chart_path))
+        async def run_task_with_limit(chart_info, op_func):
+            async with limiter:
+                # Inspect doesn't need target_registry, pass None
+                target_reg = args.target_registry if op_func != test_chart_inspect else None
+                return await op_func(
+                    chart_info, target_reg, irr_binary, None, args
                 )
-                tasks.append(task)
 
-            override_results = await asyncio.gather(*tasks, return_exceptions=True)
-            all_results.extend([r for r in override_results if isinstance(r, TestResult)])
+        for chart_name, chart_path in charts_to_process_info:
+            task = asyncio.create_task(
+                run_task_with_limit((chart_name, chart_path), operation_func)
+            )
+            tasks.append(task)
+
+        initial_results = await asyncio.gather(*tasks, return_exceptions=True)
+        # Store results from the initial operation
+        # For 'both', these are the override results
+        all_results.extend([r for r in initial_results if isinstance(r, TestResult)])
+        if args.operation == "both":
+             override_results = initial_results # Keep track for validate step
 
     # --- Validation Step (Only if 'validate' or 'both' is chosen) ---
     if args.operation in ["validate", "both"]:
