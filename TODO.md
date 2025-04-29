@@ -198,6 +198,42 @@ _Objective: Ensure the analyzer can fully replicate Helm's value merging, includ
         - [ ]   Remove documented subchart limitations (`README.md`, `docs/LIMITATIONS.md`, etc.).
         - [ ]   Update examples (`docs/CLI-REFERENCE.md`, tutorials) if necessary to show complex chart usage.
 
+
+### Hints for Refactoring `cmd/irr/inspect.go` (from previous attempt):
+
+**1. Fix Imports (Top Priority):**
+   - **Remove:** `k8s.io/helm/pkg/chartutil`, `sigs.k8s.io/yaml.v3`
+   - **Ensure:** `helm.sh/helm/v3/pkg/chartutil`, `gopkg.in/yaml.v3`, `os` are imported.
+   - **Alias:** Use `internalhelm "github.com/lucas-albers-lz4/irr/internal/helm"` to prevent conflicts and clarify calls.
+
+**2. Eliminate Redeclarations:**
+   - **Delete** duplicate/placeholder definitions for functions:
+     - `createHelmClient`
+     - `newInspectCmd`
+     - `processImagePatterns`
+     - `runInspect`
+     - `inspectChartPath`
+   - **Delete** duplicate `helmAdapterFactory` variable definition.
+   - Ensure only *one* correct definition remains for each symbol.
+
+**3. Resolve Undefined Symbols:**
+   - **Replace:** `helm.NewHelmChartLoaderComputer` with `internalhelm.NewHelmChartLoaderComputer`.
+   - **Locate/Define:** Package-level `var` or `const` for `defaultIncludePatterns` and `defaultExcludePatterns`.
+   - **Verify Logging Setup:** Confirm `log.SetupLogging` call in `PersistentPreRunE` uses correct flag scope (`logLevel`, `logFormat`).
+   - **Confirm YAML Usage:** `yaml.Marshal` requires the correct `gopkg.in/yaml.v3` import.
+
+**4. Remove Obsolete Code:**
+   - **Delete:** The entire `helmAdapterFactory` placeholder variable block (it causes type errors: `nil` as `Adapter`).
+   - **Remove:** `Namespace` field from `InspectFlags` struct and its assignment in `getInspectFlags`.
+
+**5. Update Command Definition (`newInspectCmd`):**
+   - **Add Flags:** Include standard Helm value flags: `--values`, `--set`, `--set-string`, `--set-file`.
+   - **Verify Value Passing:** Ensure `inspectChartPath` correctly collects these flag values and passes them to `internalhelm.NewHelmChartLoaderComputer(...).LoadAndComputeVals`.
+
+**Key Insight:** Previous failures likely stemmed from edit conflicts or incorrect context. Address imports and duplicates cleanly *first* before fixing other errors. Use the `internalhelm` alias consistently for the chart loader.
+
+
+
 #### Phase 9.4: Review/Remove Warning Mechanism
 - [ ] **[P3]** **Evaluate Necessity:**
     - Once Phase 9.3 is complete and validated through extensive testing, determine if the warning mechanism from Phase 9.1 still provides value or is now redundant.
