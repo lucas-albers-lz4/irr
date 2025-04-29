@@ -821,6 +821,7 @@ async def test_chart_inspect(chart_info, target_registry, irr_binary, session, a
             "inspect",
             "--chart-path",
             str(chart_path),
+            "--output-format", "json", # Request JSON output
             # Add other relevant inspect flags if needed, e.g., --output-format
             # Defaulting to YAML output
         ]
@@ -1233,6 +1234,175 @@ async def test_chart_validate(chart_info, target_registry, irr_binary, session, 
             )
 
 
+async def test_chart_subchart_analysis(chart_info, target_registry, irr_binary, session, args):
+    """Runs inspect, checks for subchart discrepancy, and gathers data if found."""
+    chart_name, chart_path = chart_info
+    # Define output and log files specific to subchart analysis
+    inspect_stdout_file = DETAILED_LOGS_DIR / f"{chart_name}-subchart-inspect-stdout.log"
+    inspect_stderr_file = DETAILED_LOGS_DIR / f"{chart_name}-subchart-inspect-stderr.log"
+    template_stdout_file = DETAILED_LOGS_DIR / f"{chart_name}-subchart-template-stdout.log"
+    template_stderr_file = DETAILED_LOGS_DIR / f"{chart_name}-subchart-template-stderr.log"
+    show_values_stdout_file = DETAILED_LOGS_DIR / f"{chart_name}-subchart-show_values-stdout.log"
+    show_values_stderr_file = DETAILED_LOGS_DIR / f"{chart_name}-subchart-show_values-stderr.log"
+    detailed_log_file = DETAILED_LOGS_DIR / f"{chart_name}-subchart-analysis.log"
+
+    # Ensure logs dir exists
+    detailed_log_file.parent.mkdir(parents=True, exist_ok=True)
+
+    # Use a lock for writing to the shared JSON results file
+    results_lock = asyncio.Lock()
+    subchart_results_file = TEST_OUTPUT_DIR / "subchart_analysis_results.json"
+
+    def log_debug(msg):
+        with open(detailed_log_file, "a", encoding="utf-8") as f:
+            f.write(f"[{datetime.now()}] DEBUG: {msg}\n")
+        if args.debug:
+            # Simple console logging for now
+            print(f"  DEBUG [{chart_name}]: {msg}")
+
+    log_debug(f"Starting subchart analysis for: {chart_name} ({chart_path})")
+    start_time = time.monotonic()
+
+    try:
+        # --- 1. Run irr inspect --- 
+        log_debug("Running initial irr inspect...")
+        inspect_cmd = [
+            str(irr_binary),
+            "inspect",
+            "--chart-path",
+            str(chart_path),
+            "--output-format", "json", # Request JSON output
+        ]
+        if args.debug:
+            inspect_cmd.append("--debug")
+
+        process = await asyncio.create_subprocess_exec(
+            *inspect_cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(
+            process.communicate(),
+            timeout=args.timeout,
+        )
+        inspect_stdout = stdout_bytes.decode("utf-8", errors="ignore")
+        inspect_stderr = stderr_bytes.decode("utf-8", errors="ignore")
+        inspect_rc = process.returncode
+
+        # Save inspect output
+        with open(inspect_stdout_file, "w", encoding="utf-8") as f: f.write(inspect_stdout)
+        with open(inspect_stderr_file, "w", encoding="utf-8") as f: f.write(inspect_stderr)
+
+        if inspect_rc != 0:
+             log_debug(f"Initial irr inspect failed with code {inspect_rc}")
+             # Decide if this is a failure for the subchart operation or just log and continue?
+             # For now, let's treat it as a failure for this chart.
+             raise RuntimeError(f"irr inspect failed: {inspect_stderr[:500]}")
+
+        # --- 2. Check for Discrepancy Warning --- 
+        discrepancy_found = False
+        analyzer_count, template_count = 0, 0 # Default counts
+        warning_line = ""
+        # More robust check: search the entire stderr string
+        if 'check="subchart_discrepancy"' in inspect_stderr:
+            discrepancy_found = True
+            # Try to find the specific line for logging/parsing counts
+            for line in inspect_stderr.splitlines():
+                if 'check="subchart_discrepancy"' in line:
+                    warning_line = line
+                    log_debug(f"Discrepancy warning found: {line}")
+                    # Attempt to parse counts from the log line (basic parsing)
+                    try:
+                        # Simple string splitting might be fragile with JSON logs
+                        # Consider regex or JSON parsing if needed, but try this first
+                        parts = line.split()
+                        for part in parts:
+                            if part.startswith("analyzer_image_count="):
+                                count_str = part.split("=")[1].strip('",')
+                                analyzer_count = int(count_str)
+                            elif part.startswith("template_image_count="):
+                                count_str = part.split("=")[1].strip('",')
+                                template_count = int(count_str)
+                    except Exception as e:
+                        log_debug(f"Could not parse counts from warning line: {e} - Line: {line}")
+                    break # Found the line, no need to check further
+        
+        if not discrepancy_found:
+            log_debug("No subchart discrepancy warning found.")
+            # Return success as the check passed (no discrepancy)
+            return TestResult(
+                chart_name=chart_name,
+                chart_path=chart_path,
+                classification="UNKNOWN", # Classification not determined here
+                status="SUCCESS",
+                category="",
+                details="No subchart discrepancy detected by irr inspect.",
+                override_duration=0, # Not applicable
+                validation_duration=time.monotonic() - start_time, 
+            )
+
+        # --- 3. Warning Found - Gather More Data --- 
+        log_debug("Discrepancy found, gathering helm template and show values output...")
+        
+        # Reuse classification logic
+        # Ensure chart_path is a Path object
+        chart_path_obj = Path(chart_path)
+        classification = get_chart_classification(chart_path_obj) if chart_path_obj.is_dir() else "UNKNOWN"
+        values_content = get_values_content(classification, target_registry)
+        
+        # Write temp values file
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as temp_values_file:
+            temp_values_path = temp_values_file.name
+            temp_values_file.write(values_content)
+        log_debug(f"Generated temporary values file for helm: {temp_values_path}")
+
+        # Run helm template
+        helm_template_cmd = ["helm", "template", chart_name, str(chart_path), "--values", temp_values_path]
+        # Run helm show values
+        helm_show_values_cmd = ["helm", "show", "values", str(chart_path), "--json"]
+        
+        # Execute helm commands (add error handling)
+        # TODO: Execute helm template, capture output
+        # TODO: Execute helm show values, capture output
+        # TODO: Parse irr inspect output
+        # TODO: Parse helm template output, extract all images
+        # TODO: Compare image lists
+        # TODO: Append detailed results to subchart_analysis_results.json (using lock)
+        
+        # Clean up temp values file
+        os.remove(temp_values_path)
+
+        log_debug("Subchart analysis data gathering complete (placeholder).")
+        # Placeholder success - replace with actual results
+        return TestResult(
+            chart_name=chart_name,
+            chart_path=chart_path,
+            classification=classification,
+            status="SUCCESS", # Indicate analysis completed
+            category="",
+            details=f"Subchart discrepancy found (analyzer={analyzer_count}, template={template_count}). Data gathering placeholder.",
+            override_duration=0, 
+            validation_duration=time.monotonic() - start_time, 
+        )
+
+    except Exception as e:
+        log_debug(f"Error during subchart analysis: {e}")
+        import traceback
+        with open(detailed_log_file, "a", encoding="utf-8") as f:
+            traceback.print_exc(file=f)
+        # Return failure
+        return TestResult(
+            chart_name=chart_name,
+            chart_path=chart_path,
+            classification="UNKNOWN",
+            status="SUBCHART_ANALYSIS_ERROR",
+            category="UNKNOWN_ERROR", # Or categorize based on exception
+            details=f"Unexpected error during subchart analysis: {str(e)[:500]}...",
+            override_duration=0,
+            validation_duration=time.monotonic() - start_time, 
+        )
+
+
 # Repository management functions
 def add_helm_repositories():
     """Add Helm repositories."""
@@ -1617,9 +1787,9 @@ async def main():
     )
     parser.add_argument(
         "--operation",
-        choices=["override", "validate", "both", "override-with-internal-validate", "inspect"],
+        choices=["override", "validate", "both", "override-with-internal-validate", "inspect", "subchart"],
         default="both",
-        help="Operation to test: override (no internal validation), validate (external), both, override-with-internal-validate, or inspect",
+        help="Operation to test: override, validate, both, override-with-internal-validate, inspect, or subchart (analyze discrepancies)",
     )
     parser.add_argument(
         "--debug", action="store_true", help="Enable debug output to console"
@@ -1765,6 +1935,10 @@ async def main():
         operation_func = test_chart_inspect
         operation_description = "Inspect Operation"
         executed_operation = "inspect"
+    elif args.operation == "subchart":
+        operation_func = test_chart_subchart_analysis
+        operation_description = "Subchart Discrepancy Analysis"
+        executed_operation = "subchart"
     elif args.operation == "both":
         # "both" implies override first, then validate
         operation_func = test_chart_override # Run override first
