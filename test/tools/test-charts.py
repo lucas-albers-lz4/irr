@@ -22,7 +22,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict, Set
 
 import yaml
 
@@ -1218,23 +1218,113 @@ async def test_chart_validate(chart_info, target_registry, irr_binary, session, 
             )
 
 
+# --- Helper Functions for Subchart Analysis --- #
+
+# Define known image paths for common K8s kinds
+KNOWN_IMAGE_PATHS = {
+    "Pod": [
+        "spec.containers[*].image",
+        "spec.initContainers[*].image",
+        "spec.ephemeralContainers[*].image",
+    ],
+    "Deployment": [
+        "spec.template.spec.containers[*].image",
+        "spec.template.spec.initContainers[*].image",
+        "spec.template.spec.ephemeralContainers[*].image",
+    ],
+    "StatefulSet": [
+        "spec.template.spec.containers[*].image",
+        "spec.template.spec.initContainers[*].image",
+        "spec.template.spec.ephemeralContainers[*].image",
+    ],
+    "DaemonSet": [
+        "spec.template.spec.containers[*].image",
+        "spec.template.spec.initContainers[*].image",
+        "spec.template.spec.ephemeralContainers[*].image",
+    ],
+    "Job": [
+        "spec.template.spec.containers[*].image",
+        "spec.template.spec.initContainers[*].image",
+        "spec.template.spec.ephemeralContainers[*].image",
+    ],
+    "CronJob": [
+        "spec.jobTemplate.spec.template.spec.containers[*].image",
+        "spec.jobTemplate.spec.template.spec.initContainers[*].image",
+        "spec.jobTemplate.spec.template.spec.ephemeralContainers[*].image",
+    ],
+    # Add others like ReplicaSet, ReplicationController if needed
+}
+
+def _safe_get(data, path_parts, found_images):
+    """Recursively navigate dict/list structure and extract images."""
+    current = data
+    for i, part in enumerate(path_parts):
+        if isinstance(current, dict):
+            if part == "[*]":
+                 # This part should handle list iteration, called from the outer loop
+                 # This specific function expects a direct key or index
+                 return # Should not happen if called correctly
+            current = current.get(part)
+            if current is None:
+                return # Path doesn't exist
+        elif isinstance(current, list) and part == "[*]":
+            remaining_path = path_parts[i+1:]
+            for item in current:
+                 # Ensure item is a dict before recursing if path expects keys
+                 if isinstance(item, dict):
+                     _safe_get(item, remaining_path, found_images)
+                 # else: item is not a dict, cannot traverse further down this path branch
+            return # Handled list iteration, stop processing this branch
+        else:
+            # Trying to access dict key on non-dict, or list index mismatch etc.
+            return # Invalid path for this structure
+
+    # If we reached the end of the path, check if it's an image string
+    if isinstance(current, str) and current: # Check if non-empty string
+        # Basic check to avoid adding non-image-like strings (optional refinement)
+        # Heuristic: Must contain either / or : to be considered image-like
+        # Avoids matching simple strings like "true", "enabled", etc.
+        if '/' in current or ':' in current:
+             found_images.add(current)
+
+def extract_images_from_doc(doc: dict) -> Set[str]:
+    """Extracts image strings from a parsed K8s manifest document."""
+    found_images: Set[str] = set()
+    kind = doc.get("kind")
+
+    if not isinstance(doc, dict):
+        return found_images # Skip if doc is not a dictionary
+
+    # Use Kind if available, otherwise use Pod paths as a fallback guess
+    # This helps catch images in basic Pod specs even if Kind is missing/different
+    paths_to_check = KNOWN_IMAGE_PATHS.get(kind, KNOWN_IMAGE_PATHS.get("Pod", []))
+
+    for path_str in paths_to_check:
+        path_parts = path_str.split('.')
+        _safe_get(doc, path_parts, found_images)
+
+    return found_images
+
+
 async def test_chart_subchart_analysis(chart_info, target_registry, irr_binary, session, args):
     """Runs inspect, checks for subchart discrepancy, and gathers data if found."""
     chart_name, chart_path = chart_info
+    chart_path_obj = Path(chart_path) # Ensure Path object
     # Define output and log files specific to subchart analysis
     inspect_stdout_file = DETAILED_LOGS_DIR / f"{chart_name}-subchart-inspect-stdout.log"
     inspect_stderr_file = DETAILED_LOGS_DIR / f"{chart_name}-subchart-inspect-stderr.log"
     template_stdout_file = DETAILED_LOGS_DIR / f"{chart_name}-subchart-template-stdout.log"
     template_stderr_file = DETAILED_LOGS_DIR / f"{chart_name}-subchart-template-stderr.log"
-    show_values_stdout_file = DETAILED_LOGS_DIR / f"{chart_name}-subchart-show_values-stdout.log"
-    show_values_stderr_file = DETAILED_LOGS_DIR / f"{chart_name}-subchart-show_values-stderr.log"
+    # show_values_stdout_file = DETAILED_LOGS_DIR / f"{chart_name}-subchart-show_values-stdout.log" # Keep for now, might remove later
+    # show_values_stderr_file = DETAILED_LOGS_DIR / f"{chart_name}-subchart-show_values-stderr.log" # Keep for now, might remove later
     detailed_log_file = DETAILED_LOGS_DIR / f"{chart_name}-subchart-analysis.log"
 
     # Ensure logs dir exists
     detailed_log_file.parent.mkdir(parents=True, exist_ok=True)
 
     # Use a lock for writing to the shared JSON results file
-    results_lock = asyncio.Lock()
+    # results_lock = asyncio.Lock() # Will uncomment when writing results
+    results_lock = asyncio.Lock() # Defined lock for file writing
     subchart_results_file = TEST_OUTPUT_DIR / "subchart_analysis_results.json"
 
     def log_debug(msg):
@@ -1244,17 +1334,18 @@ async def test_chart_subchart_analysis(chart_info, target_registry, irr_binary, 
             # Simple console logging for now
             print(f"  DEBUG [{chart_name}]: {msg}")
 
-    log_debug(f"Starting subchart analysis for: {chart_name} ({chart_path})")
+    log_debug(f"Starting subchart analysis for: {chart_name} ({chart_path_obj})")
     start_time = time.monotonic()
+    analyzer_images_data = {} # Store parsed JSON from inspect
 
     try:
-        # --- 1. Run irr inspect --- 
+        # --- 1. Run irr inspect ---
         log_debug("Running initial irr inspect...")
         inspect_cmd = [
             str(irr_binary),
             "inspect",
             "--chart-path",
-            str(chart_path),
+            str(chart_path_obj),
             "--output-format", "json", # Request JSON output
         ]
         if args.debug:
@@ -1279,22 +1370,37 @@ async def test_chart_subchart_analysis(chart_info, target_registry, irr_binary, 
 
         if inspect_rc != 0:
              log_debug(f"Initial irr inspect failed with code {inspect_rc}")
-             # Decide if this is a failure for the subchart operation or just log and continue?
-             # For now, let's treat it as a failure for this chart.
              raise RuntimeError(f"irr inspect failed: {inspect_stderr[:500]}")
 
-        # --- 2. Check for Discrepancy Warning --- 
-        discrepancy_found = False
-        analyzer_count, template_count = 0, 0 # Default counts
+        # --- 1.5 Parse irr inspect JSON output ---
+        try:
+            analyzer_images_data = json.loads(inspect_stdout)
+            # Extract image strings into a set for easier comparison later
+            analyzer_images_set = set()
+            if isinstance(analyzer_images_data.get('images'), list):
+                for img_info in analyzer_images_data['images']:
+                    if isinstance(img_info, dict) and 'image' in img_info:
+                        analyzer_images_set.add(img_info['image'])
+            log_debug(f"Found {len(analyzer_images_set)} unique images via irr inspect.")
+        except json.JSONDecodeError as e:
+            log_debug(f"Failed to parse irr inspect JSON output: {e}")
+            # Treat as an error for this analysis
+            raise RuntimeError(f"Could not parse irr inspect JSON: {e}")
+
+
+        # --- 2. Check for Discrepancy Warning ---
+        # This check remains useful as a secondary indicator, even if we parse JSON now.
+        discrepancy_warning_found = False
+        analyzer_count_from_warning, template_count_from_warning = 0, 0 # Default counts from warning msg
         warning_line = ""
         # More robust check: search the entire stderr string
         if 'check="subchart_discrepancy"' in inspect_stderr:
-            discrepancy_found = True
+            discrepancy_warning_found = True
             # Try to find the specific line for logging/parsing counts
             for line in inspect_stderr.splitlines():
                 if 'check="subchart_discrepancy"' in line:
                     warning_line = line
-                    log_debug(f"Discrepancy warning found: {line}")
+                    log_debug(f"Discrepancy warning found in stderr: {line}")
                     # Attempt to parse counts from the log line (basic parsing)
                     try:
                         # Simple string splitting might be fragile with JSON logs
@@ -1303,70 +1409,232 @@ async def test_chart_subchart_analysis(chart_info, target_registry, irr_binary, 
                         for part in parts:
                             if part.startswith("analyzer_image_count="):
                                 count_str = part.split("=")[1].strip('",')
-                                analyzer_count = int(count_str)
+                                analyzer_count_from_warning = int(count_str)
                             elif part.startswith("template_image_count="):
                                 count_str = part.split("=")[1].strip('",')
-                                template_count = int(count_str)
+                                template_count_from_warning = int(count_str)
                     except Exception as e:
                         log_debug(f"Could not parse counts from warning line: {e} - Line: {line}")
                     break # Found the line, no need to check further
-        
-        if not discrepancy_found:
-            log_debug("No subchart discrepancy warning found.")
-            # Return success as the check passed (no discrepancy)
-            return TestResult(
-                chart_name=chart_name,
-                chart_path=chart_path,
-                classification="UNKNOWN", # Classification not determined here
-                status="SUCCESS",
-                category="",
-                details="No subchart discrepancy detected by irr inspect.",
-                override_duration=0, # Not applicable
-                validation_duration=time.monotonic() - start_time, 
-            )
 
-        # --- 3. Warning Found - Gather More Data --- 
-        log_debug("Discrepancy found, gathering helm template and show values output...")
-        
-        # Reuse classification logic
-        # Ensure chart_path is a Path object
-        chart_path_obj = Path(chart_path)
+        # --- 3. Gather Helm Template Data ---
+        log_debug("Gathering helm template output...")
+        rendered_yaml = ""
+        helm_template_stderr = ""
+        helm_template_rc = -1 # Initialize return code
+
+        # Use classification logic and temp values file
         classification = get_chart_classification(chart_path_obj) if chart_path_obj.is_dir() else "UNKNOWN"
         values_content = get_values_content(classification, target_registry)
-        
-        # Write temp values file
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as temp_values_file:
-            temp_values_path = temp_values_file.name
-            temp_values_file.write(values_content)
-        log_debug(f"Generated temporary values file for helm: {temp_values_path}")
+        temp_values_path = None # Initialize path
 
-        # Run helm template
-        helm_template_cmd = ["helm", "template", chart_name, str(chart_path), "--values", temp_values_path]
-        # Run helm show values
-        helm_show_values_cmd = ["helm", "show", "values", str(chart_path), "--json"]
-        
-        # Execute helm commands (add error handling)
-        # TODO: Execute helm template, capture output
-        # TODO: Execute helm show values, capture output
-        # TODO: Parse irr inspect output
-        # TODO: Parse helm template output, extract all images
-        # TODO: Compare image lists
-        # TODO: Append detailed results to subchart_analysis_results.json (using lock)
-        
-        # Clean up temp values file
-        os.remove(temp_values_path)
+        try:
+            # Write temp values file
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, encoding='utf-8') as temp_values_file:
+                temp_values_path = temp_values_file.name
+                temp_values_file.write(values_content)
+            log_debug(f"Generated temporary values file for helm: {temp_values_path}")
 
-        log_debug("Subchart analysis data gathering complete (placeholder).")
-        # Placeholder success - replace with actual results
+            # Determine release name (reuse logic from validate)
+            release_name = chart_name.split("/")[-1].replace(" ", "-")
+            helm_template_cmd = [
+                "helm",
+                "template",
+                f"rel-{release_name}", # Use a simple release name
+                 str(chart_path_obj),
+                 "--values", temp_values_path,
+                 "--skip-tests", # Skip tests for cleaner output
+                 # Consider adding --kube-version if needed later
+            ]
+            log_debug(f"Running helm template command: {' '.join(helm_template_cmd)}")
+
+            helm_process = await asyncio.create_subprocess_exec(
+                *helm_template_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            helm_stdout_bytes, helm_stderr_bytes = await asyncio.wait_for(
+                helm_process.communicate(),
+                timeout=args.timeout * 2, # Give template more time
+            )
+            rendered_yaml = helm_stdout_bytes.decode("utf-8", errors="ignore")
+            helm_template_stderr = helm_stderr_bytes.decode("utf-8", errors="ignore")
+            helm_template_rc = helm_process.returncode
+
+            # Save helm template output
+            with open(template_stdout_file, "w", encoding="utf-8") as f: f.write(rendered_yaml)
+            with open(template_stderr_file, "w", encoding="utf-8") as f: f.write(helm_template_stderr)
+
+            if helm_template_rc != 0:
+                log_debug(f"Helm template command failed with code {helm_template_rc}. Stderr: {helm_template_stderr[:500]}")
+                # Continue analysis, but log the error. The comparison will likely show discrepancies.
+            else:
+                log_debug("Helm template command successful.")
+
+        except asyncio.TimeoutError:
+             log_debug(f"Helm template command timed out after {args.timeout * 2} seconds.")
+             # Continue analysis, logging the timeout. Comparison won't have template data.
+        except Exception as e:
+            log_debug(f"Error running helm template: {e}")
+            # Continue analysis, logging the error.
+        finally:
+            # Clean up temp values file
+            if temp_values_path and os.path.exists(temp_values_path):
+                os.remove(temp_values_path)
+                log_debug(f"Removed temporary values file: {temp_values_path}")
+
+
+        # --- 4. Parse Helm Template Output & Extract Images ---
+        log_debug("Parsing helm template output and extracting images...")
+        template_images_map: Dict[str, Set[str]] = defaultdict(set) # image -> set(kinds)
+        yaml_parsing_errors = []
+
+        if helm_template_rc == 0 and rendered_yaml:
+            try:
+                documents = yaml.safe_load_all(rendered_yaml)
+                doc_index = 0
+                for doc in documents:
+                    doc_index += 1
+                    if not isinstance(doc, dict):
+                        # Skip non-dictionary documents (like comments, nulls)
+                        continue
+                    try:
+                        kind = doc.get("kind")
+                        # TODO: Implement recursive image extraction from doc based on kind
+                        # For now, just log the kind found
+                        # if kind:
+                        #     log_debug(f"  Processing document {doc_index} with kind: {kind}")
+                        # Placeholder:
+                        # extracted_images = extract_images_from_doc(doc)
+                        # for image in extracted_images:
+                        #    template_images_map[image].add(kind or "UnknownKind")
+
+                        extracted_images = extract_images_from_doc(doc)
+                        if extracted_images:
+                             log_debug(f"  Extracted {len(extracted_images)} images from doc {doc_index} (Kind: {kind or 'Unknown'})")
+                             current_kind_str = kind or "UnknownKind"
+                             for image in extracted_images:
+                                 template_images_map[image].add(current_kind_str)
+
+                    except Exception as e:
+                        log_debug(f"Error processing document {doc_index}: {e}")
+                        yaml_parsing_errors.append(f"Doc {doc_index}: {e}")
+            except yaml.YAMLError as e:
+                log_debug(f"Error parsing helm template YAML stream: {e}")
+                yaml_parsing_errors.append(f"YAML Stream Error: {e}")
+        else:
+            log_debug("Skipping template parsing due to helm template failure or empty output.")
+
+        template_images_set = set(template_images_map.keys())
+        # log_debug(f"Found {len(template_images_set)} unique images via helm template (placeholder). Actual extraction pending.")
+        log_debug(f"Found {len(template_images_set)} unique images via helm template.")
+
+        # --- 5. Compare Image Sets ---
+        images_only_in_analyzer = analyzer_images_set - template_images_set
+        images_only_in_template = template_images_set - analyzer_images_set
+        common_images = analyzer_images_set.intersection(template_images_set)
+
+        log_debug(f"Comparison: Common={len(common_images)}, AnalyzerOnly={len(images_only_in_analyzer)}, TemplateOnly={len(images_only_in_template)}")
+
+        # --- 6. Determine Status & Prepare Results ---
+        analysis_status = "UNKNOWN"
+        if helm_template_rc != 0:
+             analysis_status = "ERROR_TEMPLATE_EXEC"
+        elif yaml_parsing_errors:
+             analysis_status = "ERROR_TEMPLATE_PARSE"
+        elif not images_only_in_analyzer and not images_only_in_template:
+             analysis_status = "MATCH"
+        elif images_only_in_analyzer and not images_only_in_template:
+             analysis_status = "ANALYZER_EXTRA"
+        elif not images_only_in_analyzer and images_only_in_template:
+             analysis_status = "TEMPLATE_EXTRA"
+        else: # Both have unique images
+             analysis_status = "MIXED"
+
+        # Prepare result dictionary (structure based on Phase 9.2 plan)
+        result_data = {
+            "chart_name": chart_name,
+            "chart_path": str(chart_path_obj),
+            "classification": classification,
+            "timestamp": datetime.now().isoformat(),
+            "status": analysis_status,
+            "analyzer_image_count": len(analyzer_images_set),
+            "template_image_count": len(template_images_set),
+            "images_common_count": len(common_images),
+            "images_only_in_analyzer": sorted(list(images_only_in_analyzer)),
+            "images_only_in_template_with_kinds": [
+                {"image": img, "kinds": sorted(list(template_images_map[img]))}
+                for img in sorted(list(images_only_in_template))
+            ], # Placeholder, needs actual kinds -> Now uses actual map
+            "helm_template_return_code": helm_template_rc,
+            "helm_template_stderr": helm_template_stderr.strip(),
+            "yaml_parsing_errors": yaml_parsing_errors,
+            "inspect_return_code": inspect_rc,
+            "inspect_stderr": inspect_stderr.strip(),
+            "discrepancy_warning_found": discrepancy_warning_found,
+            "warning_analyzer_count": analyzer_count_from_warning,
+            "warning_template_count": template_count_from_warning,
+        }
+
+
+        # --- 7. Append Results to JSON File (using lock) ---
+        log_debug("Appending result to JSON file...") # Removed placeholder text
+        # TODO: Implement file writing with asyncio.Lock
+        async with results_lock:
+            try:
+                # Read existing data (if file exists)
+                existing_data = []
+                if subchart_results_file.exists() and subchart_results_file.stat().st_size > 0:
+                    with open(subchart_results_file, "r", encoding="utf-8") as f:
+                        try:
+                            existing_data = json.load(f)
+                            if not isinstance(existing_data, list):
+                                log_debug(f"Warning: Results file {subchart_results_file} is not a list. Overwriting.")
+                                existing_data = []
+                        except json.JSONDecodeError:
+                            log_debug(f"Warning: Could not decode existing results file {subchart_results_file}. Overwriting.")
+                            existing_data = []
+                elif subchart_results_file.exists():
+                     log_debug(f"Results file {subchart_results_file} exists but is empty. Initializing.")
+                     existing_data = []
+
+                # Append new result
+                existing_data.append(result_data)
+
+                # Write back to file
+                with open(subchart_results_file, "w", encoding="utf-8") as f:
+                    json.dump(existing_data, f, indent=2)
+                log_debug(f"Successfully appended result for {chart_name} to {subchart_results_file}")
+
+            except Exception as e:
+                log_debug(f"Error writing results to {subchart_results_file}: {e}")
+
+
+        # --- 8. Return Overall Result ---
+        # Decide what TestResult status to return based on analysis_status
+        final_status = "SUCCESS" # Assume success unless a critical error occurred
+        final_category = ""
+        final_details = f"Subchart analysis completed. Status: {analysis_status}."
+
+        if analysis_status.startswith("ERROR"):
+             final_status = "SUBCHART_ANALYSIS_ERROR"
+             final_category = analysis_status # Use the specific error status
+             final_details = f"Subchart analysis failed. Status: {analysis_status}. Check logs."
+        elif analysis_status != "MATCH":
+             # If mismatch, add details but consider it a success for the operation itself
+             final_details += f" Discrepancy found: AnalyzerOnly={len(images_only_in_analyzer)}, TemplateOnly={len(images_only_in_template)}."
+
+
+        log_debug(f"Subchart analysis finished. Final Status: {final_status}, Details: {final_details[:100]}...")
         return TestResult(
             chart_name=chart_name,
-            chart_path=chart_path,
+            chart_path=chart_path_obj,
             classification=classification,
-            status="SUCCESS", # Indicate analysis completed
-            category="",
-            details=f"Subchart discrepancy found (analyzer={analyzer_count}, template={template_count}). Data gathering placeholder.",
-            override_duration=0, 
-            validation_duration=time.monotonic() - start_time, 
+            status=final_status,
+            category=final_category,
+            details=final_details,
+            override_duration=0, # Not applicable
+            validation_duration=time.monotonic() - start_time,
         )
 
     except Exception as e:
@@ -1377,13 +1645,13 @@ async def test_chart_subchart_analysis(chart_info, target_registry, irr_binary, 
         # Return failure
         return TestResult(
             chart_name=chart_name,
-            chart_path=chart_path,
+            chart_path=chart_path_obj, # Use Path object
             classification="UNKNOWN",
             status="SUBCHART_ANALYSIS_ERROR",
             category="UNKNOWN_ERROR", # Or categorize based on exception
             details=f"Unexpected error during subchart analysis: {str(e)[:500]}...",
             override_duration=0,
-            validation_duration=time.monotonic() - start_time, 
+            validation_duration=time.monotonic() - start_time,
         )
 
 
@@ -1787,6 +2055,9 @@ async def main():
         help="Timeout in seconds for chart operations",
     )
 
+    # Add lock for subchart analysis results file if needed
+    # subchart_results_lock = asyncio.Lock() # Defined within the function now
+
     args = parser.parse_args()
 
     # Ensure output directories exist
@@ -1911,7 +2182,7 @@ async def main():
             if override_file_path.exists():
                 # Get classification for this chart - default to "UNKNOWN" if not determined
                 classification = (
-                    get_chart_classification(chart_path)
+                    get_chart_classification(Path(chart_path)) # Ensure path object
                     if os.path.isdir(chart_path)
                     else "UNKNOWN"
                 )
