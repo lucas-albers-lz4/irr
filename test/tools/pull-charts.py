@@ -158,32 +158,44 @@ def pull_chart(chart: str) -> bool:
         print(f"  ✓ Already cached: {cached_chart}")
         return True
 
-    # Get Docker auth token and check rate limits
+    # Get Docker auth token
     docker_auth = get_docker_auth_token()
     token = docker_auth[1] if docker_auth else None
-    rate_info = check_docker_rate_limits(token)
+    rate_info = None # Will be checked inside the loop before first attempt
 
-    if rate_info["remaining"] <= 0:
-        reset_time = rate_info["reset"].strftime("%Y-%m-%d %H:%M:%S")
-        print(f"  ⚠ Rate limit exceeded. Resets at {reset_time}")
-        wait_time = (rate_info["reset"] - datetime.now()).total_seconds()
-        if wait_time > 0:
-            print(f"  Waiting {int(wait_time)} seconds for rate limit reset...")
-            time.sleep(wait_time + 1)  # Add 1 second buffer
-            rate_info = check_docker_rate_limits(token)  # Refresh rate info
-
-    # Add retry logic for rate limits with increased delays
+    # Retry logic configuration
     max_retries = 3
-    base_delay = 10  # seconds
+    base_delay = 5  # Start with a 5-second base delay
+    last_exception = None
 
     for attempt in range(max_retries):
+        # Refresh rate limit info before each attempt (especially after waiting)
+        rate_info = check_docker_rate_limits(token)
+
         try:
             if attempt > 0:
-                print(f"  Retry attempt {attempt + 1} for {chart}")
-                retry_delay = base_delay * (2**attempt)  # Exponential backoff
+                retry_delay = base_delay * (2 ** (attempt -1)) # Exponential backoff (5, 10, 20...)
+                print(f"  Retry attempt {attempt + 1}/{max_retries} for {chart} after delay of {retry_delay}s...")
                 time.sleep(retry_delay)
-                # Refresh rate limits after waiting
+                # Re-check limits after delay
                 rate_info = check_docker_rate_limits(token)
+
+            # Check rate limits before proceeding
+            if rate_info["remaining"] <= 0:
+                reset_time = rate_info["reset"].strftime("%Y-%m-%d %H:%M:%S")
+                print(f"  ⚠ Rate limit potentially exceeded. Resets at {reset_time}")
+                wait_time = (rate_info["reset"] - datetime.now()).total_seconds()
+                if wait_time > 0:
+                    # Only wait if it's not the last attempt
+                    if attempt < max_retries - 1:
+                        print(f"  Waiting {int(wait_time)} seconds for rate limit reset...")
+                        time.sleep(wait_time + 1)  # Add 1 second buffer
+                        continue # Go to next attempt after waiting
+                    else:
+                        print(f"  Rate limit exceeded on final attempt.")
+                        # Store exception and let it fall through to the end
+                        last_exception = RateLimitExceeded(f"Rate limit exceeded on final attempt. Resets at {reset_time}")
+                        break # Exit loop, will return False
 
             # Try local mirror first (if configured)
             if os.environ.get("HELM_REGISTRY_MIRROR"):
@@ -197,28 +209,40 @@ def pull_chart(chart: str) -> bool:
                         "--registry-config",
                         os.environ["HELM_REGISTRY_MIRROR"],
                     ]
-                    print("  Trying local mirror...")
+                    print(f"  Attempting pull from local mirror (Attempt {attempt + 1}/{max_retries})...")
                     rate_limited_pull(mirror_cmd, stdout_file, stderr_file, rate_info)
                     # If we get here, mirror succeeded
                     cached_chart = get_cached_chart(chart_name)
                     if cached_chart:
                         print(f"  ✓ Successfully pulled from mirror: {cached_chart}")
                         return True
-                except subprocess.CalledProcessError:
-                    print("  ✗ Mirror pull failed, falling back to Docker Hub")
+                except subprocess.CalledProcessError as e:
+                    print(f"  ✗ Mirror pull failed on attempt {attempt + 1}: {e}")
+                    # Continue to try Docker Hub if mirror fails
+                    pass # Don't store this as last_exception yet, try main pull
 
             # Build pull command with authentication if available
             pull_cmd = ["helm", "pull", chart, "--destination", str(CHART_CACHE_DIR)]
+            temp_config_name = None
 
             if docker_auth:
-                username, token = docker_auth
-                encoded_auth = encode_docker_auth(username, token)
+                username, auth_token = docker_auth # Renamed token to avoid conflict
+                # Check if auth_token is likely base64 or a raw token
+                try:
+                    # Assume it might be raw, try encoding
+                    base64.b64decode(auth_token)
+                    encoded_auth = auth_token # It's already base64
+                except Exception:
+                     # It's likely a raw token, encode it
+                    encoded_auth = encode_docker_auth(username, auth_token)
+
                 registry_json = {
                     "auths": {
                         "https://index.docker.io/v1/": {
                             "auth": encoded_auth,
+                            # Helm might need username/password OR auth, provide all?
                             "username": username,
-                            "password": token,
+                            "password": auth_token, # Pass the raw token here if needed
                         }
                     }
                 }
@@ -227,17 +251,19 @@ def pull_chart(chart: str) -> bool:
                     mode="w", suffix=".json", delete=False
                 ) as temp_config:
                     json.dump(registry_json, temp_config)
-                    pull_cmd.extend(["--registry-config", temp_config.name])
+                    temp_config_name = temp_config.name # Store name for cleanup
+                    pull_cmd.extend(["--registry-config", temp_config_name])
                     print(
-                        f"  Using Docker Hub authentication (Rate limit: {rate_info['remaining']}/{rate_info['limit']} remaining)"
+                        f"  Using Docker Hub authentication (Attempt {attempt + 1}/{max_retries}) (Rate limit: {rate_info['remaining']}/{rate_info['limit']} remaining)"
                     )
 
             # Pull the chart with rate limiting
+            print(f"  Attempting pull from primary source (Attempt {attempt + 1}/{max_retries})...")
             rate_limited_pull(pull_cmd, stdout_file, stderr_file, rate_info)
 
             # Clean up temp config if used
-            if docker_auth:
-                os.unlink(temp_config.name)
+            if temp_config_name:
+                os.unlink(temp_config_name)
 
             # Verify the chart was downloaded
             cached_chart = get_cached_chart(chart_name)
@@ -245,32 +271,60 @@ def pull_chart(chart: str) -> bool:
                 print(f"  ✓ Successfully pulled: {cached_chart}")
                 return True
             else:
-                print(f"  ✗ Failed to find downloaded chart for {chart}")
-                return False
+                # Should not happen if rate_limited_pull didn't raise error, but handle defensively
+                print(f"  ✗ Pull command succeeded but chart not found (Attempt {attempt + 1})")
+                last_exception = FileNotFoundError(f"Pull command succeeded but chart not found for {chart}")
+                # Allow retry loop to continue
 
-        except subprocess.CalledProcessError:
+        except subprocess.CalledProcessError as e:
+            last_exception = e
             with open(stderr_file, "r") as f:
                 error_content = f.read()
+                print(f"  ✗ Attempt {attempt + 1} failed (CalledProcessError): {error_content.strip()}")
+                # Check specifically for rate limit errors to potentially wait longer
                 if "429" in error_content or "toomanyrequests" in error_content:
-                    # Refresh rate limits
-                    rate_info = check_docker_rate_limits(token)
+                    rate_info = check_docker_rate_limits(token) # Refresh limits
                     if rate_info["remaining"] <= 0:
                         reset_time = rate_info["reset"].strftime("%Y-%m-%d %H:%M:%S")
-                        print(f"  ⚠ Rate limit exceeded. Resets at {reset_time}")
-                        wait_time = (
-                            rate_info["reset"] - datetime.now()
-                        ).total_seconds()
+                        wait_time = (rate_info["reset"] - datetime.now()).total_seconds()
                         if wait_time > 0 and attempt < max_retries - 1:
-                            print(
-                                f"  Waiting {int(wait_time)} seconds for rate limit reset..."
-                            )
-                            time.sleep(wait_time + 1)  # Add 1 second buffer
-                            continue
-                print(f"  ✗ Failed to pull chart: {error_content.strip()}")
-            return False
+                             print(f"  Rate limit error detected. Waiting {int(wait_time)} seconds for reset before next retry...")
+                             time.sleep(wait_time + 1)
+                             # Loop will continue after wait
+                        else:
+                            print("  Rate limit error on final attempt or wait time is negative.")
+                            # Ensure loop terminates if it's the last attempt
+                            if attempt >= max_retries - 1:
+                                break
+
         except Exception as e:
-            print(f"  ✗ Error pulling chart: {str(e)}")
-            return False
+            last_exception = e
+            print(f"  ✗ Attempt {attempt + 1} failed (Exception): {str(e)}")
+            # Allow retry loop to continue unless it's the last attempt
+
+        finally:
+             # Ensure temp config is cleaned up even if exceptions occur mid-pull attempt
+            if 'temp_config_name' in locals() and temp_config_name and os.path.exists(temp_config_name):
+                try:
+                    os.unlink(temp_config_name)
+                    temp_config_name = None # Reset for next potential loop
+                except OSError as unlink_err:
+                    print(f"  Warning: Failed to delete temp config {temp_config_name}: {unlink_err}")
+
+
+    # If loop finishes without returning True, it means all retries failed
+    print(f"  ✗ Failed to pull chart {chart} after {max_retries} attempts.")
+    if last_exception:
+         # Log the last known error
+        stderr_file.parent.mkdir(parents=True, exist_ok=True) # Ensure log dir exists
+        with open(stderr_file, "a") as f: # Append final error summary
+             f.write(f"\n--- FINAL FAILURE after {max_retries} attempts ---\n")
+             f.write(f"Last Exception Type: {type(last_exception).__name__}\n")
+             f.write(str(last_exception))
+             if hasattr(last_exception, 'stderr') and last_exception.stderr:
+                 f.write(f"\nStderr:\n{last_exception.stderr}")
+
+    return False
 
 
 def add_helm_repositories():
@@ -334,22 +388,56 @@ def update_helm_repositories():
 
 
 def list_charts() -> List[str]:
-    """List available charts from all repositories."""
-    result = subprocess.run(
-        ["helm", "search", "repo", "-l"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        check=True,
-    )
+    """List available charts from all repositories using JSON output."""
+    print("  Running helm search repo -l --output json to get chart list...")
+    try:
+        result = subprocess.run(
+            ["helm", "search", "repo", "-l", "--output", "json"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True,
+        )
+    except FileNotFoundError:
+        print("Error: 'helm' command not found. Please ensure Helm is installed and in your PATH.")
+        return []
+    except subprocess.CalledProcessError as e:
+        print(f"Error running helm search: {e}")
+        print(f"Stderr: {e.stderr}")
+        return []
 
+    print("  Parsing helm search JSON output...")
     charts = []
-    for line in result.stdout.splitlines()[1:]:  # Skip header line
-        parts = line.split()
-        if parts:
-            charts.append(parts[0])
+    malformed_entries = 0
+    try:
+        search_data = json.loads(result.stdout)
+        if not isinstance(search_data, list):
+             print(f"Warning: Expected a JSON list from helm search, but got {type(search_data)}. Output:\n{result.stdout}")
+             return []
 
-    return sorted(set(charts))
+        for entry in search_data:
+            if isinstance(entry, dict) and 'name' in entry:
+                chart_name = entry['name'].strip()
+                if chart_name and '/' in chart_name and not chart_name.endswith('/'):
+                    charts.append(chart_name)
+                else:
+                     print(f"  Warning: Parsed name '{chart_name}' from entry {entry} does not look like valid repo/chart format. Skipping.")
+                     malformed_entries += 1
+            else:
+                print(f"  Warning: Skipping malformed entry in JSON output: {entry}")
+                malformed_entries += 1
+
+    except json.JSONDecodeError as e:
+        print(f"Error decoding JSON from helm search: {e}")
+        print(f"Helm stdout was:\n{result.stdout}")
+        return []
+
+    if malformed_entries > 0:
+        print(f"Warning: Skipped {malformed_entries} entries due to parsing or format issues.")
+
+    unique_charts = sorted(list(set(charts)))
+    print(f"  Successfully parsed {len(unique_charts)} unique chart names from JSON output.")
+    return unique_charts
 
 
 def main():
