@@ -13,9 +13,11 @@ import (
 
 	"github.com/spf13/afero"
 	"gopkg.in/yaml.v3"
+	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/chartutil"
+	"helm.sh/helm/v3/pkg/cli/values"
 
 	"github.com/lucas-albers-lz4/irr/internal/helm"
 	"github.com/lucas-albers-lz4/irr/pkg/analyzer"
@@ -64,6 +66,7 @@ type InspectFlags struct {
 	SourceRegistries       []string
 	AllNamespaces          bool
 	OverwriteSkeleton      bool
+	NoSubchartCheck        bool
 	// Add filesystem dependency if needed for loading logic outside runInspect
 	// Fs                     afero.Fs
 }
@@ -114,6 +117,8 @@ This command analyzes the chart's values.yaml and templates to find image refere
 	cmd.Flags().StringP("namespace", "n", "default", `Kubernetes namespace for the release (defaults to "default")`)
 	cmd.Flags().BoolP("all-namespaces", "A", false, "Inspect Helm releases across all namespaces (conflicts with --chart-path, --release-name, --namespace)")
 	cmd.Flags().Bool("overwrite-skeleton", false, "Overwrite the skeleton file if it already exists (only applies when using --generate-config-skeleton)")
+	cmd.Flags().Bool("no-subchart-check", false, "Skip checking for subchart image discrepancies")
+	cmd.Flags().StringSlice("values", nil, "Specify values in a YAML file or a URL (can specify multiple)")
 
 	return cmd
 }
@@ -396,6 +401,15 @@ func runInspect(cmd *cobra.Command, args []string) error {
 		// Log filtering action
 		log.Info("Filtering results to only include registries", "registries", strings.Join(flags.SourceRegistries, ", "))
 		filterImagesBySourceRegistries(cmd, flags, analysis) // Modifies analysis in place
+	}
+
+	// Perform subchart check if not explicitly disabled
+	if !flags.NoSubchartCheck && chartPath != "" {
+		// Check for subchart discrepancies
+		if err := checkSubchartDiscrepancy(cmd, chartPath, analysis); err != nil {
+			// Just log the error, don't fail the command
+			log.Warn("Failed to check for subchart discrepancies: %s", err)
+		}
 	}
 
 	// --- Informational Output (Moved Before writeOutput) ---
@@ -812,6 +826,15 @@ func getInspectFlags(cmd *cobra.Command, releaseNameProvided bool) (*InspectFlag
 		}
 	}
 
+	// Get no-subchart-check flag
+	noSubchartCheck, err := cmd.Flags().GetBool("no-subchart-check")
+	if err != nil {
+		return nil, &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get no-subchart-check flag: %w", err),
+		}
+	}
+
 	// Validate overwrite-skeleton is only used with generate-config-skeleton
 	if overwriteSkeleton && !generateConfigSkeleton {
 		return nil, &exitcodes.ExitCodeError{
@@ -849,6 +872,7 @@ func getInspectFlags(cmd *cobra.Command, releaseNameProvided bool) (*InspectFlag
 		SourceRegistries:       sourceRegistries,
 		AllNamespaces:          allNamespaces,
 		OverwriteSkeleton:      overwriteSkeleton,
+		NoSubchartCheck:        noSubchartCheck,
 	}, nil
 }
 
@@ -1164,7 +1188,7 @@ func analyzeRelease(release *helm.ReleaseElement, helmAdapter *helm.Adapter, fla
 	log.Info("Analyzing release", "name", release.Name, "namespace", release.Namespace)
 
 	// Get release values
-	values, err := helmAdapter.GetReleaseValues(context.Background(), release.Name, release.Namespace)
+	releaseValues, err := helmAdapter.GetReleaseValues(context.Background(), release.Name, release.Namespace)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get values for release %s/%s: %w", release.Namespace, release.Name, err)
 	}
@@ -1184,7 +1208,7 @@ func analyzeRelease(release *helm.ReleaseElement, helmAdapter *helm.Adapter, fla
 
 	// Analyze the release values using the provided analyzer config
 	log.Debug("Analyzing release values for", "name", release.Name, "namespace", release.Namespace)
-	analysisPatterns, analysisErr := analyzer.AnalyzeHelmValues(values, flags.AnalyzerConfig)
+	analysisPatterns, analysisErr := analyzer.AnalyzeHelmValues(releaseValues, flags.AnalyzerConfig)
 	if analysisErr != nil {
 		return nil, nil, fmt.Errorf("analysis failed for release %s/%s: %w", release.Namespace, release.Name, analysisErr)
 	}
@@ -1430,4 +1454,160 @@ func inspectAllNamespaces(cmd *cobra.Command, flags *InspectFlags) error {
 
 	// Output analysis results
 	return outputMultiReleaseAnalysis(cmd, results, skippedReleases, flags)
+}
+
+// checkSubchartDiscrepancy checks for discrepancies between the analyzer's image count
+// and the images found in rendered chart templates (specifically from Deployments and StatefulSets).
+// It returns an error only for fatal issues like chart loading errors, not for discrepancies.
+func checkSubchartDiscrepancy(cmd *cobra.Command, chartPath string, analysis *ImageAnalysis) error {
+	log.Debug("Checking for subchart image discrepancies")
+
+	// Get values files from command line
+	valueOpts := &values.Options{}
+	valuesFiles, err := cmd.Flags().GetStringSlice("values")
+	if err != nil {
+		return fmt.Errorf("failed to get values files: %w", err)
+	}
+	valueOpts.ValueFiles = valuesFiles
+
+	// Load the chart
+	loadedChart, err := loader.Load(chartPath)
+	if err != nil {
+		return fmt.Errorf("failed to load chart for subchart check: %w", err)
+	}
+
+	// Read values from files
+	vals := map[string]interface{}{}
+	for _, valueFile := range valueOpts.ValueFiles {
+		currentValues, err := chartutil.ReadValuesFile(valueFile)
+		if err != nil {
+			return fmt.Errorf("failed to read values file %s: %w", valueFile, err)
+		}
+		// Merge with existing values
+		vals = chartutil.CoalesceTables(vals, currentValues.AsMap())
+	}
+
+	// Merge with chart's default values
+	vals = chartutil.CoalesceTables(loadedChart.Values, vals)
+
+	// Render chart templates
+	actionConfig := new(action.Configuration)
+	installAction := action.NewInstall(actionConfig)
+	installAction.DryRun = true
+	installAction.ReleaseName = "irr-subchart-check"
+	installAction.Namespace = "default"
+	installAction.ClientOnly = true
+
+	// Render the templates
+	release, err := installAction.Run(loadedChart, vals)
+	if err != nil {
+		return fmt.Errorf("failed to render chart templates: %w", err)
+	}
+
+	// Extract images from rendered templates
+	templateImages := make(map[string]struct{})
+	manifests := release.Manifest
+
+	// Split manifests into separate YAML documents
+	decoder := yaml.NewDecoder(strings.NewReader(manifests))
+	for {
+		var doc map[string]interface{}
+		err := decoder.Decode(&doc)
+		if err != nil {
+			// If we've reached the end of the documents, break
+			if err.Error() == "EOF" {
+				break
+			}
+			// Log parsing errors as warnings but continue with other documents
+			log.Warn("Error parsing rendered template document: %s", err)
+			continue
+		}
+
+		// Skip empty documents
+		if len(doc) == 0 {
+			continue
+		}
+
+		// Check if this is a Deployment or StatefulSet
+		kind, ok := doc["kind"].(string)
+		if !ok || (kind != "Deployment" && kind != "StatefulSet") {
+			continue
+		}
+
+		// Extract images using safe traversal
+		extractImagesFromResource(doc, templateImages)
+	}
+
+	// Compare image counts
+	analyzerImageCount := len(analysis.Images)
+	templateImageCount := len(templateImages)
+
+	// Circuit breaker check - using constant instead of magic number
+	const maxImageThreshold = 300
+	if templateImageCount > maxImageThreshold {
+		log.Debug("Template image count exceeds threshold (%d), skipping comparison", templateImageCount)
+		return nil
+	}
+
+	// Issue warning if counts differ
+	if analyzerImageCount != templateImageCount {
+		log.Warn("Subchart image discrepancy detected",
+			"check", "subchart_discrepancy",
+			"analyzer_image_count", analyzerImageCount,
+			"template_image_count", templateImageCount,
+			"message", "The analyzer found different number of images than the rendered templates. "+
+				"This may indicate images defined in subchart default values that were not detected. "+
+				"Consider using the --no-subchart-check flag to skip this check.")
+	}
+
+	return nil
+}
+
+// extractImagesFromResource safely extracts image references from a Kubernetes resource.
+// It traverses the resource structure to find container image fields in pods.
+func extractImagesFromResource(resource map[string]interface{}, images map[string]struct{}) {
+	// Try to get to spec.template.spec for pod template
+	spec, ok := resource["spec"].(map[string]interface{})
+	if !ok {
+		return
+	}
+
+	template, ok := spec["template"].(map[string]interface{})
+	if !ok {
+		return
+	}
+
+	podSpec, ok := template["spec"].(map[string]interface{})
+	if !ok {
+		return
+	}
+
+	// Extract images from containers
+	extractImagesFromContainers(podSpec, "containers", images)
+
+	// Extract images from initContainers
+	extractImagesFromContainers(podSpec, "initContainers", images)
+}
+
+// extractImagesFromContainers extracts image references from container lists
+func extractImagesFromContainers(podSpec map[string]interface{}, containerType string, images map[string]struct{}) {
+	containers, ok := podSpec[containerType].([]interface{})
+	if !ok {
+		return
+	}
+
+	for _, c := range containers {
+		container, ok := c.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		imageValue, ok := container["image"].(string)
+		if !ok || imageValue == "" {
+			continue
+		}
+
+		// Add image to the set
+		images[imageValue] = struct{}{}
+	}
 }

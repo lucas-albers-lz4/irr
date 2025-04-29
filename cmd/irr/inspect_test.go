@@ -184,6 +184,8 @@ func mockInspectCmd(output *ImageAnalysis, flags *InspectFlags) *cobra.Command {
 	cmd.Flags().StringSlice("exclude-pattern", []string{}, "Glob patterns for values paths to exclude")
 	cmd.Flags().String("namespace", "default", "Kubernetes namespace for the release")
 	cmd.Flags().String("release-name", "", "Release name for Helm plugin mode")
+	cmd.Flags().Bool("no-subchart-check", false, "Skip checking for subchart image discrepancies")
+	cmd.Flags().StringSlice("values", []string{}, "Values files to use for analysis or chart rendering")
 
 	return cmd
 }

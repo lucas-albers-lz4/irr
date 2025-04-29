@@ -122,6 +122,7 @@ irr inspect -A [--output-format FORMAT]
 | `--exclude-pattern`          | Glob patterns for values paths to exclude during analysis       |                          | `--exclude-pattern "*.test.*"`              |
 | `--known-image-paths`        | Specific dot-notation paths known to contain images             |                          | `--known-image-paths "containers[].image"` |
 | `-r`, `--source-registries`  | Source registries to filter results (optional)                  |                          | `--source-registries docker.io,quay.io`     |
+| `--no-subchart-check`        | Skip checking for subchart image discrepancies                  | false                    | `--no-subchart-check`                       |
 | `-h`, `--help`               | Show help for inspect                                           |                          | `--help`                                    |
 
 ### Basic Inspection

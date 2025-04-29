@@ -114,6 +114,22 @@ registry: my-registry.example.com:5000
 - Verify the port is included in --target-registry if needed
 - Check the generated path sanitization (ports are handled specially)
 
+### Subchart Detection Issues
+
+#### Subchart Image Discrepancy Warning
+
+**Issue:** Warning about subchart image discrepancies
+```
+WARN subchart_discrepancy analyzer_image_count=10 template_image_count=15 message=The analyzer found different number of images than the rendered templates. This may indicate images defined in subchart default values that were not detected. Consider using the --no-subchart-check flag to skip this check.
+```
+
+**Solution:**
+- This is expected behavior for charts with subcharts whose default values define additional images
+- The analyzer only examines top-level chart values, while Helm merges in subchart defaults when rendering templates
+- Use `--no-subchart-check` to disable this warning if you're aware of the limitation
+- For complete subchart image detection, consider examining each subchart individually
+- The warning does not cause the command to fail, it's informational only
+
 ### Command Line Issues
 
 #### Path Strategy Selection
