@@ -87,38 +87,7 @@ Improve the analyzer's ability to detect and process image references in complex
 #### Phase 7.1: Debugging and Analysis [COMPLETED]
 
 #### Phase 7.2: Image Pattern Detection Improvements [COMPLETED]
-
-#### Phase 7.3: Additional Chart Coverage
-- [x] **[P1]** Expand test coverage to more complex charts
-  - [ ] Review and enable previously skipped test cases
-  - [x] Add tests for charts with init containers
-  - [x] Add tests for charts with sidecars and admission webhooks
-  - [x] Add tests for edge cases including unusual nesting levels and camel-cased fields
-  - [x] Add proper handling for template-string image references
-  - [ ] Fix simplified-prometheus-stack test case
-
-#### Phase 7.4: Kube-State-Metrics Handling Fix (Generator-Level) **[NEXT P0]**
-- [x] **[P0]** Fix linter errors in `pkg/generator/generator.go` related to `detector.DetectImages` call.
-- [/] **[P0]** Validate `normalizeKubeStateMetricsOverrides` function in `pkg/generator/kube_state_metrics.go` for correct identification and structure (implementation review complete, pending test validation).
-- [ ] **[P0]** Refine `TestKubePrometheusStack` for `kube-state-metrics` assertions without workarounds.
-
-## Phase 7.5: Debug Environment Test Validation
-- [ ] **[P1]** Run the full test suite with `LOG_LEVEL=DEBUG` enabled *after* Phase 7.4 is complete and verified.
-- [ ] **[P1]** Compare pass rates and fix any tests failing only in debug mode.
-
 ## Phase 8: Fix Bitnami Chart Detection and Rules Processing [COMPLETED]
-- Ensured robust Bitnami chart detection and correct application of Bitnami-specific rules.
-
-
-
-### Overview
-Enhance the analyzer to correctly process subcharts by replicating Helm's value computation logic (loading dependencies, merging values).
-
-### Motivation
-- Provide truly accurate results for umbrella charts.
-- Eliminate the need for the Phase 9 warning.
-- Address core analyzer limitation.
-- **Note:** High complexity, requires careful design regarding value origins for override generation.
 
 ### Implementation Steps
 - [ ] **[P2]** Research & Design Helm Value Computation replication.
@@ -159,112 +128,75 @@ Enhance the analyzer to correctly process Helm charts with subcharts, ensuring t
 ### Implementation Steps
 
 #### Phase 9.1: Implement Discrepancy Warning (User Feedback Stop-Gap)
-- [ ] **[P1]** **Setup Helm Environment:**
-    - In `cmd/irr/inspect.go`, ensure necessary Helm SDK packages are imported (e.g., `action`, `loader`, `cli`, `cli/values`, `chartutil`).
-    - Create Helm environment settings (`helm.EnvSettings`).
-- [ ] **[P1]** **Add Control Flag:**
-    - Define the `--no-subchart-check` boolean flag (default `false`) using `cobra`.
-    - Retrieve the flag's value during command execution.
-- [ ] **[P1]** **Conditional Check Execution:**
-    - Implement the following steps only if `--no-subchart-check` is *not* provided by the user.
-- [ ] **[P1]** **Load Chart and Values via Helm SDK:**
-    - Use `loader.Load(chartPath)` to load the chart. Handle errors gracefully (log error, exit non-zero).
-    - Prepare value options (`values.Options`) based on user-provided `--values` flags.
-    - Use Helm's logic (e.g., `chartutil.CoalesceValues` or similar) to merge provided values with the chart's default `values.yaml`. Handle value merging errors (log error, exit non-zero).
-- [ ] **[P1]** **Render Chart Templates via Helm SDK:**
-    - Instantiate `action.NewInstall` using the Helm environment settings.
-    - Configure the install action for dry-run, client-only rendering (e.g., `inst.DryRun = true`, `inst.ClientOnly = true`, use fixed dummy values like `ReleaseName: "irr-subchart-check"`, `Namespace: "default"`).
-    - Execute `inst.Run(chart, mergedValues)` to render the templates.
-    - Capture the resulting multi-document YAML string.
-    - Handle template execution errors robustly (log error, exit non-zero).
-- [ ] **[P1]** **Parse Rendered Manifests (Limited Scope):**
-    - Use a YAML parser (`gopkg.in/yaml.v3` recommended) to split the multi-document YAML string.
-    - Iterate through each document:
-        - Attempt to parse the document into a generic structure (e.g., `map[string]interface{}`). If parsing fails, log a warning including the specific error, treat the doc as having 0 images, and continue to the next document.
-        - Check `kind`: If `Deployment` or `StatefulSet`, use *safe traversal techniques* (explicitly check for nil maps/slices at each level) when accessing nested fields (e.g., `spec.template.spec...image`) to extract unique image reference strings, preventing panics.
-        - Store unique image strings (e.g., in a `map[string]struct{}`).
-    - *Note: This limited parsing scope (Deployments/StatefulSets) is intentional for this stop-gap phase.*
-- [ ] **[P1]** **Compare Image Counts:**
-    - Get the count of unique images found by the *existing* `analyzer.AnalyzeHelmValues` mechanism (run this analysis as usual).
-    - Compare this count with the number of unique image strings extracted from the rendered Deployments/StatefulSets (from the previous step).
-    - *Note: Implement a circuit breaker: if the number of images extracted from rendered templates exceeds 300, skip the comparison and do not issue the warning, logging a debug message instead.*
-- [ ] **[P1]** **Issue Warning on Mismatch (No Exit Code Change):**
-    - If the counts differ (and the circuit breaker was not triggered), use `log.Warnf` (or `slog` equivalent) to output a clear message at the `WARN` level, including structured attributes:
-        - Add a specific key like `check="subchart_discrepancy"` to allow easy machine filtering (e.g., via `jq`).
-        - Include the counts like `analyzer_image_count=X`, `template_image_count=Y`.
-    - The human-readable message part should state the counts (analyzer vs. template), explain the likely cause (subchart defaults), mention the limited scope (Deployments/StatefulSets), and reference the `--no-subchart-check` flag. It should *not* list specific image names.
-    - **Crucially:** This warning itself **does not** trigger a non-zero exit code.
-- [ ] **[P1]** **Add Integration Tests:**
-    - In `test/integration/inspect_test.go` (or similar):
-        - **Success Case (Match):** Chart where counts match -> No warning, exit 0.
-        - **Warning Case (Mismatch):** Umbrella chart (e.g., `kube-prometheus-stack`) -> Warning logged, exit 0.
-        - **Disabled Case (Mismatch):** Umbrella chart with `--no-subchart-check` -> No warning logged, exit 0.
-        - **Error Case (Chart Load Fail):** Invalid chart path -> Error logged, exit non-zero.
-        - **Error Case (Render Fail):** Chart with template syntax error -> Error logged, exit non-zero.
-        - **Error Case (Value Fail):** Invalid values file -> Error logged, exit non-zero.
-        - **Edge Case (No Deploy/SS):** Chart with no Deployments/StatefulSets -> No warning, exit 0.
-        - **Edge Case (No Images):** Chart with Deployments/StatefulSets but no images -> No warning, exit 0.
-        - **Edge Case (YAML Doc Error):** Chart rendering one valid Deployment and one malformed document -> Warning for parse error logged, count comparison based on valid doc, exit 0 (unless counts mismatch).
-- [ ] **[P1]** **Update Documentation:**
-    - Update `docs/CLI-REFERENCE.md` with the `--no-subchart-check` flag details.
-    - Add/update a section in `docs/TROUBLESHOOTING.md` explaining the warning, its limited scope, the flag, emphasizing exit code behavior, and include an *example of the warning message format*.
-- [ ] **[P1]** **Error Handling Summary:**
-    - Reminder: Fatal errors during Helm loading, value merging, or template rendering should log the specific error and exit non-zero. YAML parsing errors within the rendered stream or the image count discrepancy warning itself should only log warnings and allow the command to complete with exit code 0.
 
-#### Phase 9.2: Subchart Discrepancy Analysis
+#### Phase 9.2: Subchart Discrepancy Analysis [COMPLETED]
 - **Goal:** Systematically analyze charts exhibiting discrepancies between `irr inspect` output and `helm template` rendering, categorize root causes at scale, and document findings to inform the Phase 9.3 refactor.
-- **Implementation Steps:**
-    - [ ] **[P1]** **Enhance `test-charts.py --operation subchart` Implementation:**
-        - Iterate through target charts (e.g., `test/chart-cache`).
-        - For each chart:
-            - Execute `irr inspect <chart> --output=json` (or parse text output), capture `analyzer_images` and any execution errors.
-            - Execute `helm template <release_name> <chart> --skip-tests`, capture full `rendered_yaml` and any execution errors.
-            - Safely parse `rendered_yaml`, handling document-level errors gracefully.
-            - For each valid K8s manifest document:
-                - Extract resource `kind`.
-                - Extract all image references from known paths, associating each image with its `kind`.
-            - Aggregate unique `template_images` and maintain a mapping of `image -> {kinds...}`.
-        - Compare `analyzer_images` vs `template_images` to find `only_in_analyzer` and `only_in_template`.
-        - Determine primary discrepancy category: `Match`, `Analyzer Extra`, `Template Extra`, `Mixed`, or various `Error` states.
-        - Append detailed, structured JSON record per chart to `subchart_analysis_results.json`, including:
-            - `chart_name`, `status`, counts, `images_only_in_analyzer`.
-            - `images_only_in_template_with_kinds`: List of `{"image": "...", "kinds": ["kind1", ...]}`.
-            - Error logs if applicable.
-    - [ ] **[P1]** **Run Analysis:** Execute the enhanced `python test/tools/test-charts.py --operation subchart ...` across all relevant charts (e.g., ~300 charts in cache).
-    - [ ] **[P1]** **Analyze Results & Categorize Findings:**
-        - Parse `subchart_analysis_results.json`.
-        - Aggregate statistics: Count charts per `status`.
-        - For `Template Extra` / `Mixed`, aggregate `kind`s associated with missed images to identify systemic blind spots (e.g., "missed images primarily occur in CronJobs").
-        - Identify common images/patterns in discrepancies.
-        - Review error patterns.
-    - [ ] **[P1]** **Document Analysis:** Summarize quantitative findings (e.g., "X% of charts miss images, primarily in Kind Y and Z"), common patterns, prevalence of categories, and edge cases. This summary directly informs the requirements and focus for the Phase 9.3 refactor.
+    - **Conclusion:** While the current analyzer seems adequate for many charts processed successfully by the test, the ~4.4% error rate highlights that the analysis method has limitations. The errors prevent analysis on a subset of charts, potentially masking issues. Therefore, the need for Phase 9.3 (replicating Helm's full value merging) remains critical for robust and accurate handling of all charts, especially complex ones with subcharts. Improving test default values could also reduce errors.
 
 #### Phase 9.3: Refactor Analyzer for Full Subchart Support (The Correct Fix)
-- [ ] **[P2]** **Research & Design Helm Value Computation:**
-    - Deeply investigate Helm Go SDK functions for loading charts (`chart/loader.Load`), handling dependencies, and merging values (`pkg/cli/values.Options`, `pkg/chartutil.CoalesceValues`).
-    - Prototype code to programmatically replicate Helm's value computation process for a given chart and user-provided value files, resulting in a final, merged values map representing what Helm uses for templating.
-    - *Crucial Design Point:* Determine how to track the origin of each value within the merged map (e.g., did it come from the parent `values.yaml`, a specific subchart's `values.yaml`, or a user file?). This origin information is essential for generating correctly structured overrides later.
-- [ ] **[P2]** **Refactor Analyzer Input:**
-    - Modify the analyzer's primary entry function (e.g., `AnalyzeHelmValues` or potentially a new function like `AnalyzeChartContext`).
-    - Instead of just `map[string]interface{}` representing a single values file, the input should represent the fully computed/merged values for the chart context (from step 1).
-    - The function signature might also need to accept information about value origins (design from step 1) if that's how source path tracking is implemented.
-- [ ] **[P2]** **Adapt Analyzer Traversal & Source Path Logic:**
-    - The core recursive analysis functions (`analyzeMapValue`, `analyzeStringValue`) might largely remain the same if they operate correctly on the merged values map.
-    - **Critical Enhancement:** Modify the logic that records `ImagePattern` (or equivalent). When an image is detected, it must now correctly determine and store its *effective source path* suitable for override generation. This involves using the value origin tracking (from step 1) to construct the correct path (e.g., an image from the `grafana` subchart needs a path starting with `grafana.`).
-- [ ] **[P2]** **Update Command Usage:**
-    - Modify `cmd/irr/inspect.go` and `cmd/irr/override.go`.
-    - Remove the simple loading of a single values file.
-    - Implement the Helm chart loading and value computation logic designed in step 1.
-    - Call the refactored analyzer (step 2) with the computed values and necessary context.
-    - Ensure `override` correctly uses the enhanced source path information (step 3) to structure the generated YAML override file (e.g., placing Grafana image overrides under a top-level `grafana:` key).
-- [ ] **[P2]** **Add Comprehensive Tests:**
-    - Create/enhance integration tests in `test/integration/` specifically for umbrella charts.
-    - Use `kube-prometheus-stack` and potentially other charts with multiple nesting levels.
-    - Verify `inspect` output now includes images defined only in subchart defaults.
-    - Verify `override` generates correctly structured files, applying overrides to the appropriate subchart keys (e.g., `grafana: { image: ... }`, `kube-state-metrics: { image: ... }`).
-- [ ] **[P2]** **Update Documentation:**
-    - Remove documented limitations regarding subchart analysis.
-    - Ensure examples demonstrate usage with complex umbrella charts.
+_Objective: Ensure the analyzer can fully replicate Helm's value merging, including subcharts, to enable accurate image path detection and override generation._
+
+- [ ]   **Phase 9.3.1: [P2] Prototype Helm Value Merging & Origin Tracking**
+    - [ ]   **Goal:** Confirm understanding of Helm SDK value computation sequence and select an origin-tracking method.
+    - [ ]   **Tasks:**
+        - [ ]   Use `loader.Load`, `values.Options{}.MergeValues`, `chartutil.CoalesceValues` on a simple parent-child chart (e.g., `test-data/charts/parent-test`).
+        - [ ]   Verify handling of basic overrides, globals, and aliases (`parent-test` might need slight modification or use another simple chart if it lacks aliases).
+        - [ ]   Evaluate origin-tracking options (parallel map, value wrapping) based on prototype results and select the most feasible approach.
+        - [ ]   Document findings and the chosen origin tracking mechanism.
+- [ ]   **Phase 9.3.2: [P2] Design Final Value Computation Logic**
+    - [ ]   **Goal:** Define the precise process and data structures for replicating Helm's value computation, incorporating findings from the prototype.
+    - [ ]   **Tasks:**
+        - [ ]   Finalize the Go data structures for representing merged values and tracked origins.
+        - [ ]   Document the step-by-step logic for loading a chart and its dependencies, processing user values (`-f`, `--set`), and coalescing all values correctly, including handling `dependencies`, globals, and aliases.
+- [ ]   **Phase 9.3.3: [P2] Define Analysis Context Input Structure**
+    - [ ]   **Goal:** Specify the input required by the refactored analyzer.
+    - [ ]   **Tasks:**
+        - [ ]   Define the Go struct (e.g., `ChartAnalysisContext`) that will encapsulate the merged values and origin information.
+        - [ ]   Update the primary analysis function signature (e.g., `analyzer.AnalyzeContext`) to accept this new struct.
+- [ ]   **Phase 9.3.4: [P2] Analyze Merged Value Structure & Define Alias Handling**
+    - [ ]   **Goal:** Ensure the traversal logic can handle Helm's output and define how aliases impact source paths.
+    - [ ]   **Tasks:**
+        - [ ]   Examine the structure of the values map returned by the prototype (Phase 9.3.1) for potential edge cases (complex types, lists) affecting `analyzeMapValue`, `analyzeStringValue`, etc.
+        - [ ]   Define the precise logic for constructing the `SourcePath` when a value originates from a subchart accessed via an alias.
+- [ ]   **Phase 9.3.5: [P2] Adapt Analyzer Traversal & Source Path Logic**
+    - [ ]   **Goal:** Update image detection to use origin info for correct source paths.
+    - [ ]   **Tasks:**
+        - [ ]   Modify recursive analysis functions (`analyzeMapValue`, etc.).
+        - [ ]   Implement logic to consult the origin data when an image is found.
+        - [ ]   Construct the final `SourcePath`, prepending subchart names/aliases based on origin. Handle potential edge cases identified in 9.3.4.
+- [ ]   **Phase 9.3.6: [P2] Define Chart Loading Utility Interface**
+    - [ ]   **Goal:** Specify the contract for the reusable chart loading/computation component.
+    - [ ]   **Tasks:**
+        - [ ]   Define the Go interface (function signature(s), input/output structs, error handling) for the utility package/function (e.g., in `pkg/helm` or a new `pkg/chartutiladapter`).
+- [ ]   **Phase 9.3.7: [P2] Implement and Integrate Chart Loading Utility**
+    - [ ]   **Goal:** Build the utility function and integrate it into commands.
+    - [ ]   **Tasks:**
+        - [ ]   Implement the utility function defined in 9.3.6, orchestrating the Helm SDK calls based on the design in 9.3.2.
+        - [ ]   Modify `cmd/irr/inspect.go` and `cmd/irr/override.go`:
+            - [ ]   Remove old value file loading.
+            - [ ]   Use `pkg/cli/values` to process flags.
+            - [ ]   Call the new utility function to get the `ChartAnalysisContext`.
+            - [ ]   Pass this context to the refactored `analyzer.AnalyzeContext` (from 9.3.3).
+        - [ ]   Ensure `override.go` correctly uses the enhanced `SourcePath` (from 9.3.5) for output YAML structure.
+        - [ ]   **Note:** Remember that the `override` command logic must ultimately distinguish between Type 1 (Deployment-Critical) and Type 2 (Test/Validation-Only) parameters, including only Type 1 in the final output. See `docs/SOLVER.md` for details on this categorization.
+- [ ]   **Phase 9.3.8: [P2] Identify Specific Test Case Charts**
+    - [ ]   **Goal:** Select concrete charts for validation.
+    - [ ]   **Tasks:**
+        - [ ]   Confirm `test-data/charts/kube-prometheus-stack` as a primary complex test case.
+        - [ ]   Select `test-data/charts/parent-test` (or similar) for basic subchart testing.
+        - [ ]   Consider adding one more public chart known for complex dependencies if needed (e.g., check Bitnami catalog later if `kube-prometheus-stack` proves insufficient for edge cases).
+- [ ]   **Phase 9.3.9: [P2] Add Comprehensive Tests**
+    - [ ]   **Goal:** Verify end-to-end correctness.
+    - [ ]   **Tasks:**
+        - [ ]   Create/enhance integration tests in `test/integration/` using charts identified in 9.3.8.
+        - [ ]   Cover scenarios: simple chart, single/multi-level subcharts, subchart default images, parent overrides, user overrides, globals, aliases, disabled subcharts.
+        - [ ]   **Inspect Verification:** Assert correct source paths (e.g., `image`, `child.image`, `aliasedChild.image`).
+        - [ ]   **Override Verification:** Assert correctly structured YAML output.
+- [ ]   **Phase 9.3.10: [P2] Update Documentation**
+    - [ ]   **Goal:** Reflect the new capabilities.
+    - [ ]   **Tasks:**
+        - [ ]   Remove documented subchart limitations (`README.md`, `docs/LIMITATIONS.md`, etc.).
+        - [ ]   Update examples (`docs/CLI-REFERENCE.md`, tutorials) if necessary to show complex chart usage.
 
 #### Phase 9.4: Review/Remove Warning Mechanism
 - [ ] **[P3]** **Evaluate Necessity:**
