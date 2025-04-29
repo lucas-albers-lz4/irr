@@ -10,7 +10,6 @@ It does NOT pull charts from repositories.
 import argparse
 import asyncio
 import csv
-import importlib.util
 import json
 import os
 import re
@@ -26,21 +25,6 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 import yaml
-
-# --- Import Solver Module ---
-try:
-    # Handle importing solver.py using importlib
-    solver_path = Path(__file__).parent / "solver.py"
-    if solver_path.exists():
-        spec = importlib.util.spec_from_file_location("solver", solver_path)
-        solver_module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(solver_module)
-        ChartSolver = solver_module.ChartSolver  # Get the class
-    else:
-        ChartSolver = None  # Define as None if solver doesn't exist
-except ImportError as e:
-    print(f"Warning: Could not import solver module: {e}")
-    ChartSolver = None
 
 # Define configuration
 BASE_DIR = Path(__file__).parent.parent.parent.absolute()
@@ -1803,38 +1787,6 @@ async def main():
         help="Timeout in seconds for chart operations",
     )
 
-    # Solver-specific arguments
-    parser.add_argument("--solver-mode", action="store_true", help="Run in solver mode")
-    parser.add_argument(
-        "--solver-parallel",
-        type=int,
-        default=os.cpu_count(),
-        help="Number of parallel solver workers",
-    )
-    parser.add_argument(
-        "--solver-resume", action="store_true", help="Resume from previous solver run"
-    )
-    parser.add_argument(
-        "--solver-output",
-        default="solver-results.json",
-        help="Output file for solver results",
-    )
-    parser.add_argument(
-        "--solver-threshold",
-        type=float,
-        default=0.95,
-        help="Minimum success rate threshold",
-    )
-    parser.add_argument(
-        "--solver-max-attempts", type=int, default=25, help="Maximum attempts per chart"
-    )
-    parser.add_argument(
-        "--solver-strategy",
-        choices=["exhaustive", "binary", "genetic"],
-        default="binary",
-        help="Solver strategy",
-    )
-
     args = parser.parse_args()
 
     # Ensure output directories exist
@@ -1880,40 +1832,6 @@ async def main():
     if not charts_to_process_info:
         print("No charts available to test after processing phase.")
         sys.exit(0)
-
-    # Check if running in solver mode
-    if args.solver_mode:
-        print("\n--- Running in Solver Mode ---")
-        if not charts_to_process_info:
-            print("Error: Solver mode requires charts to process.")
-            sys.exit(1)
-
-        if ChartSolver is None:
-            print(f"Error: Solver module ({solver_path}) not found or failed to load.")
-            sys.exit(1)
-
-        try:
-            # Use the solver to find minimal configurations
-            solver = ChartSolver(
-                max_workers=args.solver_parallel,
-                output_dir=TEST_OUTPUT_DIR,
-                debug=args.debug,
-                checkpoint_interval=50,
-                solver_output=args.solver_output,
-            )
-            print(f"Starting solver with {len(charts_to_process_info)} charts...")
-            # Set the chart_paths attribute before calling solve
-            solver.chart_paths = charts_to_process_info
-            solver.solve(charts_to_process_info)
-
-            print("Solver execution completed.")
-            sys.exit(0)
-        except Exception as e:
-            print(f"Error running solver: {e}")
-            import traceback
-
-            traceback.print_exc()
-            sys.exit(1)
 
     # --- Test Execution ---
     all_results = []
