@@ -117,7 +117,7 @@ func TestCertManager(t *testing.T) {
 			args = append(args, additionalArgs...)
 
 			// Execute the command
-			output, err := harness.ExecuteIRR(args...)
+			output, err := harness.ExecuteIRR(nil, args...)
 			if err != nil {
 				if group.isCritical {
 					t.Errorf("[%s] Failed to execute irr override command: %v\nOutput:\n%s", group.name, err, output)

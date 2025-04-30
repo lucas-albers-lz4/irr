@@ -496,33 +496,13 @@ func setupGeneratorConfig(cmd *cobra.Command, _ string) (config GeneratorConfig,
 	return config, nil
 }
 
-func setupPathStrategy(cmd *cobra.Command, config *GeneratorConfig) error {
+func setupPathStrategy(_ *cobra.Command, config *GeneratorConfig) error {
 	// Add nil check for safety, although runOverride should prevent this call with nil config
 	if config == nil {
 		return errors.New("internal error: setupPathStrategy called with nil config")
 	}
-	pathStrategy, err := cmd.Flags().GetString("path-strategy")
-	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get path-strategy flag: %w", err),
-		}
-	}
-	switch pathStrategy {
-	case "prefix-source-registry":
-		config.Strategy, err = strategy.GetStrategy(pathStrategy, nil)
-		if err != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitCodeInvalidStrategy,
-				Err:  fmt.Errorf("failed to create path strategy: %w", err),
-			}
-		}
-	default:
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitCodeInvalidStrategy,
-			Err:  fmt.Errorf("unsupported path strategy: %s", pathStrategy),
-		}
-	}
+	// The --path-strategy flag has been removed. Always use the default.
+	config.Strategy = strategy.NewPrefixSourceRegistryStrategy()
 	return nil
 }
 

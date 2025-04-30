@@ -94,8 +94,8 @@ func (a *ContextAwareAnalyzer) analyzeSingleValue(key string, value interface{},
 
 // analyzeMapValue handles analysis of map values for image references.
 func (a *ContextAwareAnalyzer) analyzeMapValue(val map[string]interface{}, currentPath string, chartAnalysis *analysis.ChartAnalysis) error {
-	// Check if the map represents an image definition using the stricter heuristic
-	if a.isImageMap(val) {
+	// Use the refined check to see if this map *directly* defines an image
+	if a.isDirectImageMapDefinition(val) {
 		// Extract and normalize image values
 		registry, repository, tag := a.normalizeImageValues(val)
 
@@ -116,11 +116,17 @@ func (a *ContextAwareAnalyzer) analyzeMapValue(val map[string]interface{}, curre
 
 		// Add the pattern to the analysis
 		chartAnalysis.ImagePatterns = append(chartAnalysis.ImagePatterns, pattern)
-		// DO NOT return here. Continue analysis into the map's children.
+
+		// If it IS an image map definition, we *might* still need to recurse
+		// if other keys exist alongside repository/tag/registry.
+		// Let's recurse anyway for now, analyzeValues handles individual fields.
+		// The isDirectImageMapDefinition check prevents infinite loops for simple image maps.
+		log.Debug("analyzeMapValue: identified as direct image map, but recursing anyway", "path", currentPath)
 	}
 
-	// Always recurse into the map's children, regardless of whether it was an image map pattern.
-	// This ensures individual string values like 'repository' and 'tag' are analyzed.
+	// Always recurse into child map values, analyzeValues handles skipping non-map/string/array leaves.
+	// The isDirectImageMapDefinition check above is primarily to *detect* the pattern,
+	// not necessarily to stop all recursion for that map.
 	return a.analyzeValues(val, currentPath, chartAnalysis)
 }
 
@@ -168,14 +174,42 @@ func (a *ContextAwareAnalyzer) analyzeArrayValue(val []interface{}, currentPath 
 	return nil
 }
 
-// isImageMap checks if a map likely represents a Helm image definition.
-// A stricter check requiring both repository and tag.
-func (a *ContextAwareAnalyzer) isImageMap(val map[string]interface{}) bool {
-	_, hasRepo := val["repository"]
-	_, hasTag := val["tag"]
-	// Basic check: must have repository and tag keys
-	// Consider adding registry check or ensuring values are strings if needed.
-	return hasRepo && hasTag
+// isDirectImageMapDefinition provides a stricter check to identify maps that
+// directly define an image using standard keys.
+func (a *ContextAwareAnalyzer) isDirectImageMapDefinition(val map[string]interface{}) bool {
+	repoVal, hasRepo := val["repository"]
+	tagVal, hasTag := val["tag"]
+
+	// Must have repository key
+	if !hasRepo {
+		return false
+	}
+	// Repository value must be a non-empty string
+	repoStr, repoIsString := repoVal.(string)
+	if !repoIsString || repoStr == "" {
+		return false
+	}
+
+	// Must have tag key (for now, ignoring digest)
+	if !hasTag {
+		return false
+	}
+	// Tag value must be a non-empty string
+	tagStr, tagIsString := tagVal.(string)
+	if !tagIsString || tagStr == "" {
+		return false
+	}
+
+	// Optional: Check registry if present
+	if regVal, hasReg := val["registry"]; hasReg {
+		regStr, regIsString := regVal.(string)
+		if !regIsString || regStr == "" {
+			return false // Registry present but empty or wrong type
+		}
+	}
+
+	// Passed all checks
+	return true
 }
 
 // isImageString uses heuristics to check if a string likely represents a container image reference.
@@ -195,54 +229,45 @@ func (a *ContextAwareAnalyzer) isImageString(key, val string) bool {
 
 // normalizeImageValues extracts and normalizes image components from a map.
 func (a *ContextAwareAnalyzer) normalizeImageValues(val map[string]interface{}) (registry, repository, tag string) {
-	// Default values
+	// Defaults
 	registry = DefaultRegistry
-	tag = defaultImageTag // Use constant
-	var repoStr string    // Temporary variable for raw repository string
+	repository = ""
+	tag = defaultImageTag
 
-	// Extract raw values from map
+	// Prioritize values directly from the map
 	if r, ok := val["registry"].(string); ok && r != "" {
 		registry = r
 	}
 	if repoVal, ok := val["repository"].(string); ok && repoVal != "" {
-		repoStr = repoVal
-	} else {
-		// If repository key is missing or empty, cannot proceed
-		log.Warn("normalizeImageValues: 'repository' key missing or empty in image map", "map", val)
-		return "", "", ""
+		repository = repoVal // Use repository directly from map
 	}
-	if t, ok := val["tag"].(string); ok && t != "" {
-		tag = t
+	if tagVal, ok := val["tag"].(string); ok && tagVal != "" {
+		tag = tagVal // Use tag directly from map
 	}
 
-	// Attempt to parse the raw repository string itself, as it might contain registry/tag info
-	// This handles cases where Helm might have coalesced a full string into the repo field
-	// or if the map only contained { repository: "myreg/myrepo:mytag" }.
-	parsedReg, parsedRepo, parsedTag := a.parseImageString(repoStr)
+	// Basic check: If repository is missing, it's not a valid image map for our purposes
+	if repository == "" {
+		log.Warn("normalizeImageValues: 'repository' key missing or empty", "map", val)
+		return "", "", "" // Cannot proceed without repository
+	}
 
-	if parsedRepo != "" { // Check if parsing the repo string yielded a repository component
-		repository = parsedRepo // Use the parsed repository
-		if parsedReg != "" {
-			// If the repo string contained a registry, it overrides any explicit 'registry' key from the map
-			// (or the default 'docker.io') because it's more specific.
-			registry = parsedReg
+	// REFINED TAG LOGIC:
+	// If tag wasn't explicitly in map, AND repo string looks like it might contain a tag
+	if tag == defaultImageTag && strings.Contains(repository, ":") {
+		_, parsedRepo, parsedTag := a.parseImageString(repository)
+		if parsedRepo != "" && parsedTag != "" {
+			log.Debug("normalizeImageValues: Using tag parsed from repository string", "parsedTag", parsedTag)
+			repository = parsedRepo // Update repo if tag was embedded
+			tag = parsedTag         // Use tag found in repo string
 		}
-		if parsedTag != "" && tag == defaultImageTag { // Use constant comparison
-			tag = parsedTag
-		}
-	} else {
-		// If parsing repoStr failed (e.g., it was just "myrepo"), use repoStr as is.
-		repository = repoStr
-		// Keep registry/tag extracted from map (or defaults).
 	}
 
-	// Final normalization for registry (e.g., add library/ for docker.io)
+	// Final normalization (e.g., docker.io/library/) - Apply AFTER deciding repo/tag
 	if registry == DefaultRegistry && !strings.Contains(repository, "/") {
 		repository = "library/" + repository
 	}
 
-	log.Debug("normalizeImageValues result", "registry", registry, "repository", repository, "tag", tag)
-	return // Return potentially updated registry, repository, tag
+	return registry, repository, tag
 }
 
 // parseImageString attempts to parse a string into image components.
@@ -271,10 +296,10 @@ func (a *ContextAwareAnalyzer) parseImageString(val string) (registry, repositor
 		} else {
 			// Likely just a repository path, default to docker.io
 			registry = DefaultRegistry
-			repository = val
+			repository = val // Use the full original value as repo path if first part is not a registry
 		}
 
-		// Handle tag
+		// Handle tag (extract from the repository part if present)
 		if strings.Contains(repository, ":") {
 			repoParts := strings.Split(repository, ":")
 			repository = repoParts[0]
@@ -288,7 +313,6 @@ func (a *ContextAwareAnalyzer) parseImageString(val string) (registry, repositor
 	if registry == DefaultRegistry && !strings.Contains(repository, "/") {
 		repository = "library/" + repository
 	}
-
 	return registry, repository, tag
 }
 

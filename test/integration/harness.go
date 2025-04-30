@@ -622,55 +622,56 @@ func (h *TestHarness) buildEnv(envOverrides map[string]string) []string {
 }
 
 // ExecuteIRR runs the irr command with the given arguments and returns its stdout. #nosec G204 -- Arguments are controlled by test harness, not user input
-func (h *TestHarness) ExecuteIRR(envOverrides map[string]string, args ...string) (output string, err error) {
-	cmdArgs := args
-	// #nosec G204 -- Arguments are controlled by test harness, not user input
-	cmd := exec.Command(h.getBinaryPath(), cmdArgs...)
-	cmd.Env = h.buildEnv(envOverrides)
+func (h *TestHarness) ExecuteIRR(env map[string]string, args ...string) (string, error) {
+	cmdPath := h.getIrrBinaryPath()
+	cmdArgs := append([]string{}, args...) // Create a mutable copy
 
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	log.Info("Executing command (capturing stdout)", "command", cmdPath, "args", cmdArgs)
 
-	// Log the command being executed (excluding environment variables for brevity)
-	h.logger.Info("Executing command", "command", cmd.Path, "args", cmd.Args)
+	cmd := exec.Command(cmdPath, cmdArgs...) // #nosec G204 Need to run the built binary
 
-	err = cmd.Run()
-
-	stdoutStr := stdout.String()
-	stderrStr := stderr.String()
-
-	if err != nil {
-		// Log stderr for debugging failed commands
-		h.logger.Info(fmt.Sprintf("Command failed: %v\nStderr:\n%s", err, stderrStr))
-
-		// Check if it's an ExitError to provide more context
-		var exitError *exec.ExitError
-		if errors.As(err, &exitError) {
-			// Return a more specific error including the exit code and stderr
-			return stdoutStr, fmt.Errorf("command exited with status %d: %w\nstderr: %s", exitError.ExitCode(), err, stderrStr)
-		}
-		// Return the original error if it's not an ExitError
-		return stdoutStr, fmt.Errorf("command execution failed: %w\nstderr: %s", err, stderrStr)
+	// Set environment variables if provided
+	cmd.Env = os.Environ() // Initialize with current environment
+	if env != nil {
+		cmd.Env = append(cmd.Env, h.getEnvSlice(env)...) // Append ONLY custom vars
+		log.Debug("Setting custom environment variables", "env", env)
 	}
 
-	return stdoutStr, nil
+	outputBytes, err := cmd.CombinedOutput() // Use CombinedOutput to get stderr in case of error
+	output := string(outputBytes)
+
+	if err != nil {
+		// Log the error and output for easier debugging in tests
+		log.Info("Command failed", "error", err, "output", output)
+		// Return a combined error message including output content
+		return output, fmt.Errorf("%w\\nOutput:\\n%s", err, output)
+	}
+
+	log.Debug("Command succeeded", "output_len", len(output))
+	return output, nil
 }
 
-// ExecuteIRRWithStderr runs the irr command and returns both stdout and stderr. #nosec G204 -- Arguments are controlled by test harness, not user input
-func (h *TestHarness) ExecuteIRRWithStderr(envOverrides map[string]string, args ...string) (stdout, stderr string, err error) {
-	cmdArgs := args
-	// #nosec G204 -- Arguments are controlled by test harness, not user input
-	cmd := exec.Command(h.getBinaryPath(), cmdArgs...)
-	cmd.Env = h.buildEnv(envOverrides)
-	cmd.Dir = h.rootDir // Set the working directory to the project root
+// ExecuteIRRWithStderr executes the IRR command with the given arguments,
+// capturing both stdout and stderr separately.
+// It also accepts an optional map of environment variables to set for the command execution.
+func (h *TestHarness) ExecuteIRRWithStderr(env map[string]string, args ...string) (stdout, stderr string, err error) {
+	cmdPath := h.getIrrBinaryPath()
+	cmdArgs := append([]string{}, args...) // Create a mutable copy
+
+	log.Info("Executing command (capturing stderr)", "command", cmdPath, "args", cmdArgs)
+
+	cmd := exec.Command(cmdPath, cmdArgs...) // #nosec G204 Need to run the built binary
+
+	// Set environment variables if provided
+	cmd.Env = os.Environ() // Initialize with current environment
+	if env != nil {
+		cmd.Env = append(cmd.Env, h.getEnvSlice(env)...) // Append ONLY custom vars
+		log.Debug("Setting custom environment variables", "env", env)
+	}
 
 	var stdoutBuf, stderrBuf bytes.Buffer
 	cmd.Stdout = &stdoutBuf
 	cmd.Stderr = &stderrBuf
-
-	// Log the command being executed (excluding environment variables for brevity)
-	h.logger.Info("Executing command (capturing stderr)", "command", cmd.Path, "args", cmd.Args)
 
 	err = cmd.Run()
 
@@ -678,20 +679,31 @@ func (h *TestHarness) ExecuteIRRWithStderr(envOverrides map[string]string, args 
 	stderr = stderrBuf.String()
 
 	if err != nil {
-		// Log the error, but return stderr separately
-		h.logger.Info(fmt.Sprintf("Command failed: %v\nStderr:\n%s", err, stderr))
-
-		// Check if it's an ExitError to potentially wrap it
-		var exitError *exec.ExitError
-		if errors.As(err, &exitError) {
-			// Return a wrapped error including the exit code, keeping original error info
-			return stdout, stderr, fmt.Errorf("command exited with status %d: %w", exitError.ExitCode(), err)
-		}
-		// Return the original error if it's not an ExitError
-		return stdout, stderr, fmt.Errorf("command execution failed: %w", err)
+		// Log the error along with stdout/stderr for context
+		log.Info("Command failed", "error", err, "stderr", stderr)
+		// Return a combined error message including stderr content
+		return stdout, stderr, fmt.Errorf("%w\\nStderr:\\n%s", err, stderr)
 	}
 
+	log.Debug("Command succeeded", "stdout_len", len(stdout), "stderr_len", len(stderr))
 	return stdout, stderr, nil
+}
+
+// getIrrBinaryPath returns the path to the built IRR binary.
+func (h *TestHarness) getIrrBinaryPath() string {
+	return filepath.Join(h.rootDir, "bin", "irr")
+}
+
+// getEnvSlice converts a map to a slice of "key=value" strings suitable for exec.Cmd.Env.
+// It always includes IRR_TESTING=true.
+func (h *TestHarness) getEnvSlice(customEnv map[string]string) []string {
+	var envSlice []string
+	// The range loop handles nil maps gracefully (it won't execute).
+	// So the nil check `if customEnv != nil` is redundant.
+	for k, v := range customEnv {
+		envSlice = append(envSlice, fmt.Sprintf("%s=%s", k, v))
+	}
+	return envSlice
 }
 
 // ExecuteHelm runs the helm binary with the given arguments.

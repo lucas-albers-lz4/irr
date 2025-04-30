@@ -113,7 +113,7 @@ func TestInspectParentChart(t *testing.T) {
 	defer harness.Cleanup()
 
 	// Use the existing parent-test chart for better coverage
-	parentTestChartPath := testutil.GetChartPath(t, "parent-test") // Use testutil helper
+	parentTestChartPath := testutil.GetChartPath("parent-test") // Use testutil helper
 
 	// Ensure the chart path exists before proceeding
 	_, err := os.Stat(parentTestChartPath)
@@ -126,9 +126,8 @@ func TestInspectParentChart(t *testing.T) {
 		"--chart-path", parentTestChartPath,
 		"--output-format", "yaml",
 		"--output-file", outputFile, // Output to file for easier parsing
-		"--log-level=error",
 	}
-	_, _ /*stderr*/, err = harness.ExecuteIRRWithStderr(nil, args...)
+	_, _ /*stderr*/, err = harness.ExecuteIRRWithStderr(map[string]string{"LOG_LEVEL": "debug"}, args...)
 	require.NoError(t, err)
 
 	// Verify the output file exists and parse it
@@ -170,6 +169,10 @@ func TestInspectParentChart(t *testing.T) {
 		}
 		foundImages[normalizedRef] = img.SourcePath
 	}
+
+	// --- DEBUGGING ---
+	// t.Logf("Found images map: %v", foundImages) // Commented out debug log
+	// --- END DEBUGGING ---
 
 	for ref, expectedPath := range expectedImages {
 		actualPath, ok := foundImages[ref]

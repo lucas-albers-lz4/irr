@@ -49,7 +49,7 @@ func TestOverrideParentChart(t *testing.T) {
 	defer harness.Cleanup()
 
 	// Use the existing parent-test chart
-	parentTestChartPath := testutil.GetChartPath(t, "parent-test")
+	parentTestChartPath := testutil.GetChartPath("parent-test")
 	_, err := os.Stat(parentTestChartPath)
 	require.NoError(t, err, "parent-test chart should exist")
 
@@ -60,10 +60,10 @@ func TestOverrideParentChart(t *testing.T) {
 		"--chart-path", parentTestChartPath,
 		"--output-file", outputFile,
 		"--target-registry", "test-registry.io/my-project", // Example target
-		"--log-level=error",
+		"--source-registries", "docker.io,quay.io,registry.k8s.io,ghcr.io,custom-repo,parent,prom", // Add relevant source registries
 	}
-	_, _, err = harness.ExecuteIRRWithStderr(nil, args...)
-	require.NoError(t, err)
+	stdout, stderr, err := harness.ExecuteIRRWithStderr(nil, args...)
+	require.NoError(t, err, "Command failed. Stderr: %s\nStdout: %s", stderr, stdout) // Improved error message
 
 	// Verify the output file exists and parse it
 	require.FileExists(t, outputFile, "Output file should exist")

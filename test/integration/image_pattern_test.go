@@ -254,23 +254,17 @@ image:
 				"--source-registries", strings.Join(h.sourceRegs, ","),
 				"--output-file", outputFile,
 				"--debug", // Enable debug output for better diagnostics
-				"--output-format", "yaml",
 			)
 
+			// Fail immediately if the override command errors out
 			// We allow errors in edge cases, but we want to see what happened
-			if err != nil {
-				t.Logf("Override command failed with error: %v\nOutput: %s\nStderr: %s", err, output, stderr)
-				return
-			}
+			require.NoError(t, err, "Override command failed for %s.\nOutput: %s\nStderr: %s", tt.name, output, stderr)
 
 			// If the override completed successfully, check the output
-			if _, err := os.Stat(outputFile); err == nil {
+			if _, statErr := os.Stat(outputFile); statErr == nil {
 				// #nosec G304 -- outputFile is generated in a secure test temp directory, not user-controlled
 				overrideBytes, err := os.ReadFile(outputFile)
-				if err != nil {
-					t.Logf("Failed to read override file: %v", err)
-					return
-				}
+				require.NoError(t, err, "Failed to read override file")
 
 				// Log the content of the override file for debugging
 				t.Logf("Override content for %s: %s", tt.name, string(overrideBytes))

@@ -5,7 +5,6 @@ package integration
 
 import (
 	"flag"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -711,12 +710,12 @@ func TestMain(m *testing.M) {
 	flag.Parse() // Parse flags passed to `go test`
 
 	// Build the binary once before running tests.
-	fmt.Println("Building irr binary for integration tests...")
-	if err := buildIrrBinary(); err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: Failed to build irr binary: %v\n", err)
-		os.Exit(1) // Exit if build fails
-	}
-	fmt.Println("Build successful.")
+	// fmt.Println("Building irr binary for integration tests...")
+	// if err := buildIrrBinary(); err != nil {
+	// 	fmt.Fprintf(os.Stderr, "ERROR: Failed to build irr binary: %v\n", err)
+	// 	os.Exit(1) // Exit if build fails
+	// }
+	// fmt.Println("Build successful.")
 
 	// Run the actual tests
 	code := m.Run()

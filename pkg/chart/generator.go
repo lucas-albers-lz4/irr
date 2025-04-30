@@ -788,6 +788,7 @@ func (g *Generator) createOverride(pattern analysis.ImagePattern, imgRef *image.
 
 	// Assuming pattern.Path is string based on later errors, log it directly
 	log.Debug("[DEBUG IRR OVERRIDE CREATE] Creating override for path", "path", pattern.Path, "type", pattern.Type)
+	log.Debug("[DEBUG IRR OVERRIDE CREATE INPUTS]", "targetReg", targetReg, "newPath", newPath, "imgRefTag", imgRef.Tag, "imgRefDigest", imgRef.Digest) // Added input logging
 	switch pattern.Type {
 	case "map": // Assuming "map" is the type string for map structures
 		log.Debug("[DEBUG IRR OVERRIDE CREATE MAP DETECTED] Creating map override for path", "path", pattern.Path)
@@ -880,6 +881,7 @@ func (g *Generator) processImagePattern(pattern analysis.ImagePattern) (*image.R
 	imgRef, err := image.ParseImageReference(pattern.Value)
 	if err == nil {
 		log.Debug("Successfully parsed image reference", "ref", imgRef.String())
+		log.Debug("[DEBUG IRR PARSED REF]", "path", pattern.Path, "ref_original", imgRef.Original, "ref_registry", imgRef.Registry, "ref_repo", imgRef.Repository, "ref_tag", imgRef.Tag, "ref_digest", imgRef.Digest)
 		return imgRef, nil // Success
 	}
 
