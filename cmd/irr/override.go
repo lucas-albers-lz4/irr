@@ -1284,6 +1284,13 @@ func validateChart(cmd *cobra.Command, yamlBytes []byte, config *GeneratorConfig
 			Err:  fmt.Errorf("failed to create temporary file for validation: %w", err),
 		}
 	}
+	// Add explicit nil check, as afero.TempFile might theoretically return (nil, nil)
+	if tempFile == nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitIOError,
+			Err:  errors.New("failed to create temporary file: file handle is nil"),
+		}
+	}
 	defer func() {
 		if err := tempFile.Close(); err != nil {
 			log.Warn("Failed to close temporary file", "error", err)

@@ -2,6 +2,7 @@
 package chart
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 
@@ -77,6 +78,9 @@ func (l *DefaultLoader) Load(chartPath string) (*chart.Chart, error) {
 	log.Debug("Absolute chart path", "path", absPath)
 
 	// Verify the chart path exists using our injectable filesystem
+	if l.fs == nil {
+		return nil, errors.New("internal error: chart loader has a nil filesystem")
+	}
 	_, err = l.fs.Stat(absPath)
 	if err != nil {
 		return nil, fmt.Errorf("chart path stat error %s: %w", absPath, err)
@@ -89,6 +93,21 @@ func (l *DefaultLoader) Load(chartPath string) (*chart.Chart, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to load chart from %s: %w", absPath, err)
 	}
+	// Add checks for nil chart and nil metadata
+	if loadedChart == nil {
+		return nil, fmt.Errorf("helm loader returned nil chart for path %s without error", absPath)
+	}
+	if loadedChart.Metadata == nil {
+		// Log a warning but maybe proceed? Or return error?
+		// Helm charts *should* always have metadata. Let's treat this as an error.
+		chartName := absPath             // Use path as fallback if name isn't available
+		if loadedChart.Metadata != nil { // Re-check might be redundant but safe if logic changes
+			chartName = loadedChart.Name()
+		}
+		return nil, fmt.Errorf("loaded chart %s has nil metadata", chartName)
+		// Alternative: log.Warn("Loaded chart has nil metadata", "path", absPath); // And potentially skip version logging
+	}
+	//nolint:nilaway // Nil check performed above
 	log.Debug("Successfully loaded chart", "name", loadedChart.Name(), "version", loadedChart.Metadata.Version)
 
 	// Ensure chart has values

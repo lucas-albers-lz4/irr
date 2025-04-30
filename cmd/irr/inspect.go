@@ -440,6 +440,25 @@ func setupAnalyzerAndLoadChart(cmd *cobra.Command, flags *InspectFlags) (string,
 			Err:  fmt.Errorf("failed to load chart with values: %w", err),
 		}
 	}
+	// Add nil checks
+	if chartAnalysisContext == nil {
+		return "", nil, errors.New("internal error: LoadChartAndTrackOrigins returned nil context without error")
+	}
+	if chartAnalysisContext.Chart == nil {
+		// Perhaps the path didn't actually contain a chart?
+		// Need to determine the correct chartPath variable here, it might not be set yet.
+		// Using loaderOptions.ChartPath as the input path.
+		return "", nil, fmt.Errorf("failed to load chart details from context for path: %s", loaderOptions.ChartPath)
+	}
+	if chartAnalysisContext.Chart.Metadata == nil {
+		// This indicates a chart was loaded but lacks required metadata
+		// Use Name() if available, else fallback to ChartPath()
+		chartIdentifier := chartAnalysisContext.Chart.ChartPath()
+		if chartAnalysisContext.Chart.Name() != "" {
+			chartIdentifier = chartAnalysisContext.Chart.Name()
+		}
+		return "", nil, fmt.Errorf("loaded chart %s lacks metadata", chartIdentifier)
+	}
 
 	// Create context-aware analyzer
 	contextAnalyzer := helm.NewContextAwareAnalyzer(chartAnalysisContext)
@@ -1482,7 +1501,20 @@ func checkSubchartDiscrepancy(cmd *cobra.Command, chartPath string, analysisResu
 	// Render the templates
 	release, err := installAction.Run(loadedChart, vals)
 	if err != nil {
-		return fmt.Errorf("failed to render chart templates: %w", err)
+		log.Warn("Failed to render chart templates for subchart check, skipping", "chart", loadedChart.Name(), "error", err)
+		return nil // Return nil to indicate non-fatal error for this check
+	}
+
+	// Check if the release object itself is nil (can happen in dry-run)
+	if release == nil {
+		log.Warn("Chart rendering resulted in a nil release object, skipping subchart check", "chart", loadedChart.Name())
+		return nil
+	}
+
+	// Add check for empty manifest before processing
+	if release.Manifest == "" {
+		log.Warn("Rendered release has an empty manifest, skipping subchart discrepancy check", "chart", loadedChart.Name())
+		return nil
 	}
 
 	// Extract images from rendered templates

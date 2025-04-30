@@ -12,6 +12,7 @@ import (
 	"helm.sh/helm/v3/pkg/cli"
 
 	"github.com/lucas-albers-lz4/irr/pkg/exitcodes"
+	"github.com/lucas-albers-lz4/irr/pkg/log"
 )
 
 // ClientInterface defines the interface for interacting with Helm.
@@ -113,7 +114,14 @@ func (c *RealHelmClient) GetReleaseMetadata(_ context.Context, releaseName, name
 		return nil, err
 	}
 
-	return chartObj.Metadata, nil
+	if chartObj == nil {
+		return nil, fmt.Errorf("GetChartFromRelease returned nil chart for release %s in namespace %s", releaseName, namespace)
+	}
+	if chartObj.Metadata == nil {
+		return nil, fmt.Errorf("chart %s from release %s in namespace %s has nil metadata", chartObj.Name(), releaseName, namespace)
+	}
+
+	return chartObj.Metadata, nil //nolint:nilaway // Nil checks performed above
 }
 
 // TemplateChart implements ClientInterface.
@@ -168,7 +176,16 @@ func (c *RealHelmClient) TemplateChart(_ context.Context, chartPath, releaseName
 		}
 	}
 
+	if rel == nil {
+		return "", fmt.Errorf("helm template run resulted in a nil release object for chart %s", chartPath)
+	}
+
 	// Return the templates
+	if rel.Manifest == "" {
+		log.Warn("Templated release has an empty manifest", "chart", chartPath, "release", releaseName)
+		return "", nil
+	}
+
 	return rel.Manifest, nil
 }
 

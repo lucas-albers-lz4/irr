@@ -116,10 +116,15 @@ func GetChartPathFromRelease(releaseName string) (string, error) {
 		return "", fmt.Errorf("failed to get release %s: %w", releaseName, err)
 	}
 
+	// Add nil checks for release, chart, and metadata
+	if rel == nil || rel.Chart == nil || rel.Chart.Metadata == nil {
+		return "", fmt.Errorf("failed to retrieve valid chart metadata from release %s", releaseName)
+	}
+
 	// Extract chart info
 	chartInfo := HelmChartInfo{
-		Name:    rel.Chart.Metadata.Name,
-		Version: rel.Chart.Metadata.Version,
+		Name:    rel.Chart.Metadata.Name,    //nolint:nilaway // Nil check performed above
+		Version: rel.Chart.Metadata.Version, //nolint:nilaway // Nil check performed above
 	}
 
 	log.Info("Found chart for release", "name", chartInfo.Name, "version", chartInfo.Version, "release", releaseName)
