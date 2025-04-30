@@ -1,8 +1,11 @@
-// Package log provides a simple leveled logger.
+// Package log provides a simple leveled logger built on top of the standard library's slog package.
 //
-// Note: This logger writes directly to os.Stderr using fmt.Fprintf.
-// It does not use the standard library's log.SetOutput redirection mechanism.
-// To capture logs in tests, redirect os.Stderr directly.
+// By default, it configures a global logger writing JSON (or text if LOG_FORMAT=text)
+// to os.Stderr. The log level is controlled globally via SetLevel() and can be
+// initialized from environment variables or command-line flags (typically done in main).
+//
+// Use the SetOutput() function to redirect log output, primarily for testing purposes.
+// It replaces the default os.Stderr writer and returns a function to restore it.
 package log
 
 import (
