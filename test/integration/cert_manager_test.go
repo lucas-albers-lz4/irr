@@ -81,30 +81,13 @@ func TestCertManager(t *testing.T) {
 
 	// Run a subtest for each component group
 	for _, group := range componentGroups {
+		// Capture group for use in closure
+		group := group
 		t.Run(group.name, func(t *testing.T) {
-			// Create image paths to test for this component group
-			var imagePaths []string
-			for _, component := range group.components {
-				if component == "controller" {
-					// Special case for controller
-					imagePaths = append(imagePaths, "image")
-				} else {
-					// For other components, use the component.image pattern
-					imagePaths = append(imagePaths, component+".image")
-				}
-			}
-
-			// Prepare the known image paths argument
-			knownImagePathsArg := strings.Join(imagePaths, ",")
-
-			// Set up additional args based on component group
-			additionalArgs := []string{
-				"--known-image-paths", knownImagePathsArg,
-			}
-
-			// Enable debug logging via environment variable
-			// os.Setenv("LOG_LEVEL", "DEBUG") // Ensure debug logs are generated
-			// defer os.Unsetenv("LOG_LEVEL") // Clean up env var
+			// Create a unique output file path for this subtest
+			// Use the group name to ensure uniqueness
+			outputFileName := fmt.Sprintf("generated-overrides-%s.yaml", group.name)
+			overridePath := harness.GetTempFilePath(outputFileName)
 
 			// Construct the command
 			args := []string{
@@ -112,9 +95,8 @@ func TestCertManager(t *testing.T) {
 				"--chart-path", harness.chartPath,
 				"--target-registry", harness.targetReg,
 				"--source-registries", strings.Join(harness.sourceRegs, ","),
-				"--output-file", harness.overridePath,
+				"--output-file", overridePath, // Use the unique path for this subtest
 			}
-			args = append(args, additionalArgs...)
 
 			// Execute the command
 			output, err := harness.ExecuteIRR(nil, args...)
@@ -129,7 +111,7 @@ func TestCertManager(t *testing.T) {
 			}
 
 			// Parse the override file if it exists
-			overrides, err := harness.getOverrides()
+			overrides, err := harness.getOverridesFromPath(overridePath) // Modify helper to take path
 			if err != nil {
 				if group.isCritical {
 					t.Errorf("[%s] Failed to read/parse generated overrides file: %v", group.name, err)

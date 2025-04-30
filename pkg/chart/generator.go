@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -380,55 +381,37 @@ type FailedItem struct {
 	Error string `json:"error"`
 }
 
-// processEligibleImagesLoop iterates through eligible images and generates overrides.
-func (g *Generator) processEligibleImagesLoop(eligibleImages []analysis.ImagePattern, result *override.File) (processingErrors []error, processedCount int) {
-	processedCount = 0 // Explicitly initialize
-	// processingErrors is implicitly initialized to nil
-	var failedItems []FailedItem
+// processEligibleImagesLoop iterates through eligible images, processes them, and collects results.
+func (g *Generator) processEligibleImagesLoop(eligibleImages []analysis.ImagePattern, overrides map[string]interface{}) (processingErrors []error, processedCount int) {
+	// Initialize local slices/maps if needed (overrides is passed in)
+	if overrides == nil {
+		overrides = make(map[string]interface{}) // Should ideally not happen if called from Generate
+		log.Warn("Overrides map was nil in processEligibleImagesLoop, re-initialized")
+	}
+	processingErrors = []error{}
+	processedCount = 0
 
 	for _, pattern := range eligibleImages {
-		success, unsupported, err := g.processImage(pattern, result.Values)
-
+		processed, unsupported, err := g.processImage(pattern, overrides) // PASS local overrides map
 		if err != nil {
-			processingErrors = append(processingErrors, err)
-			path := pattern.Path
-			if strings.HasPrefix(err.Error(), "path '") {
-				endQuoteIdx := strings.Index(err.Error()[6:], "'")
-				if endQuoteIdx > 0 {
-					path = err.Error()[6 : 6+endQuoteIdx]
-				}
+			log.Warn("Error processing image pattern", "path", pattern.Path, "error", err)
+			wrappedErr := fmt.Errorf("path '%s': %w", pattern.Path, err)
+			processingErrors = append(processingErrors, wrappedErr)
+		} else if unsupported != nil {
+			log.Warn("Unsupported structure detected", "path", pattern.Path, "type", unsupported.Type, "value", pattern.Value)
+			// Handle strict mode: add error
+			if g.strict {
+				strictErr := fmt.Errorf("path '%s': %w (type: %s)", pattern.Path, ErrUnsupportedStructure, unsupported.Type)
+				processingErrors = append(processingErrors, strictErr)
 			}
-			failedItems = append(failedItems, FailedItem{Path: path, Error: err.Error()})
-		}
-		if unsupported != nil {
-			result.Unsupported = append(result.Unsupported, *unsupported)
-		}
-		if success {
+		} else if processed {
 			processedCount++
 		}
 	}
-
-	log.Debug("Generator finished processing images", "processed", processedCount, "eligible", len(eligibleImages), "chart", g.chartPath)
-
-	// Log errors if any occurred
-	if len(processingErrors) > 0 {
-		logLevel := log.LevelWarn
-		logMsg := "Image processing completed with errors (non-strict mode)"
-		if g.strict {
-			logLevel = log.LevelError
-			logMsg = "Image processing failed with errors (strict mode)"
-		}
-		if logLevel == log.LevelError {
-			log.Error(logMsg, "count", len(processingErrors), "failedItems", failedItems)
-		} else {
-			log.Warn(logMsg, "count", len(processingErrors), "failedItems", failedItems)
-		}
-	}
-
 	return processingErrors, processedCount
 }
 
-// checkProcessingThreshold checks if the processing threshold was met and handles strict mode errors.
+// checkProcessingThreshold evaluates if the processing met the required threshold.
 func (g *Generator) checkProcessingThreshold(processingErrors []error, processedCount, eligibleCount int, successRate float64, _ *override.File) error {
 	// Return specific error immediately if in strict mode and errors occurred
 	if g.strict && len(processingErrors) > 0 {
@@ -487,80 +470,73 @@ func (g *Generator) applyRulesIfNeeded(loadedChart *chart.Chart, result *overrid
 	return nil
 }
 
-// Generate orchestrates the chart analysis and override generation process (Refactored)
+// Generate orchestrates the chart loading, analysis, and override generation process.
 func (g *Generator) Generate() (*override.File, error) {
-	log.Debug("Generator starting override generation", "chartPath", g.chartPath)
-
-	// Initialize rules registry if needed
-	g.initRulesRegistry() // Ensure registry is ready before loading
-
-	// Initialize result structure
+	// Initialize the result structure
 	result := &override.File{
 		ChartPath:   g.chartPath,
+		ChartName:   filepath.Base(g.chartPath), // Extract chart name from path
 		Values:      make(map[string]interface{}),
-		Unsupported: []override.UnsupportedStructure{},
+		Unsupported: []override.UnsupportedStructure{}, // Initialize slice
 	}
 
-	// 1. Load Chart and Analyze for Images
-	loadedChart, detectedImages, err := g.loadAndAnalyzeChart(result)
+	// 1. Load and Analyze Chart
+	loadedChart, analysisResult, err := g.loadAndAnalyzeChart(result)
 	if err != nil {
-		// Loading or strict-mode unsupported error occurred
-		return nil, err // Return the specific error (LoadingError or UnsupportedStructureError)
+		log.Error("Failed during chart load/analysis phase", "error", err)
+		// Ensure we return nil result on loading/analysis error
+		return nil, err // Correctly return nil for result
 	}
-	// Handle case where analysis failed but wasn't a fatal error
-	// This happens if loadAndAnalyzeChart returns a non-nil loadedChart but nil detectedImages due to analysisErr
-	if loadedChart != nil && detectedImages == nil && loadedChart.Values != nil {
-		// Analysis failed, but loading succeeded. Return partial result.
-		return result, nil
+	// Add checks for nil return values even if error is nil
+	if loadedChart == nil {
+		return nil, errors.New("internal error: loadAndAnalyzeChart returned nil chart without error")
 	}
-	// Handle case where chart had no values or no images detected
-	if detectedImages == nil || len(detectedImages.ImagePatterns) == 0 {
-		log.Debug("No images detected or chart has no values.", "chart", g.chartPath)
-		return result, nil // Return empty/partial result
+	if analysisResult == nil {
+		return nil, errors.New("internal error: loadAndAnalyzeChart returned nil analysis result without error")
 	}
+	result.ChartName = loadedChart.Name()                 // Update chart name from loaded chart metadata
+	result.TotalCount = len(analysisResult.ImagePatterns) // Total detected patterns
+	// Initialize Unsupported slice, it will be populated during image processing if needed
+	result.Unsupported = []override.UnsupportedStructure{}
 
 	// 2. Filter Eligible Images
-	eligibleImages := g.filterEligibleImages(detectedImages.ImagePatterns)
-	log.Debug("Generator filtering results", "total_patterns", len(detectedImages.ImagePatterns), "eligible_count", len(eligibleImages))
-	result.TotalCount = len(eligibleImages)
-
-	// Handle case where no images are eligible after filtering
-	if len(eligibleImages) == 0 {
-		log.Debug("No eligible images found after filtering.", "chart", g.chartPath)
-		return result, nil
-	}
+	eligibleImages := g.filterEligibleImages(analysisResult.ImagePatterns)
+	eligibleCount := len(eligibleImages)
+	log.Info("Finished chart analysis", "total_images", result.TotalCount, "eligible_images", eligibleCount, "unsupported_count", len(result.Unsupported))
 
 	// 3. Process Eligible Images & Collect Errors
-	processingErrors, processedCount := g.processEligibleImagesLoop(eligibleImages, result)
+	processingErrors, processedCount := g.processEligibleImagesLoop(eligibleImages, result.Values)
+	result.ProcessedCount = processedCount // Store processed count
 
 	// 4. Calculate and Store Success Rate
 	var successRate float64
-	if result.TotalCount > 0 {
-		successRate = float64(processedCount*PercentageMultiplier) / float64(result.TotalCount)
+	if eligibleCount > 0 {
+		successRate = (float64(processedCount) / float64(eligibleCount)) * PercentageMultiplier
+	} else {
+		successRate = 100.0 // No eligible images means 100% success
 	}
 	result.SuccessRate = successRate
-	result.ProcessedCount = processedCount
-	log.Debug("Generator success rate check", "rate", fmt.Sprintf("%.2f%%", successRate), "processed", processedCount, "eligible", result.TotalCount, "threshold", g.threshold)
+	log.Info("Image processing complete", "processed", processedCount, "eligible", eligibleCount, "success_rate", fmt.Sprintf("%.2f%%", successRate))
 
-	// 5. Apply Rules (before threshold check)
-	if err := g.applyRulesIfNeeded(loadedChart, result); err != nil {
-		return nil, err // Return error if rule application fails
+	// 5. Check Threshold
+	if thresholdErr := g.checkProcessingThreshold(processingErrors, processedCount, eligibleCount, successRate, result); thresholdErr != nil {
+		log.Error("Processing threshold not met or strict mode failure", "error", thresholdErr)
+		// If thresholdErr is due to strict mode (i.e., processingErrors is not empty and g.strict is true),
+		// or if it's a threshold failure, return nil for the result.
+		// The checkProcessingThreshold function already encapsulates this logic implicitly
+		// by returning an error in these cases.
+		return nil, thresholdErr // Return nil result and the error
 	}
 
-	// 6. Check Threshold & Strict Mode Errors
-	thresholdErr := g.checkProcessingThreshold(processingErrors, processedCount, result.TotalCount, successRate, result)
-	if thresholdErr != nil {
-		// If strict mode caused an error, return nil result and the error
-		var processingErr *ProcessingError
-		if errors.As(thresholdErr, &processingErr) { // Use errors.As for type checking
-			return nil, thresholdErr // Return the original ProcessingError
-		}
-		// Otherwise, return the partial result along with the ThresholdError
-		return result, thresholdErr
+	// 6. Apply Rules if enabled
+	if rulesErr := g.applyRulesIfNeeded(loadedChart, result); rulesErr != nil {
+		log.Error("Error applying chart rules", "error", rulesErr)
+		// Consider if this should be a distinct exit code or wrapped
+		return result, fmt.Errorf("error applying chart rules: %w", rulesErr)
 	}
 
-	log.Debug("Generator returning result", "chart", g.chartPath, "processed", processedCount, "eligible", len(eligibleImages))
-	return result, nil // Success
+	log.Debug("Override generation successful", "chart", result.ChartName)
+	return result, nil
 }
 
 // initRulesRegistry initializes the rules registry if rules are enabled and the registry is not already set.
@@ -828,52 +804,42 @@ func (g *Generator) createOverride(pattern analysis.ImagePattern, imgRef *image.
 	}
 }
 
-// setOverridePath navigates the nested overrides map according to the path specified
-// in the ImagePattern and sets the final overrideValue at that location.
-// It handles the creation of intermediate map structures if they don't exist.
-// Returns an error if a path conflict occurs (e.g., trying to set a map key on a non-map value).
+// setOverridePath sets the generated override value at the correct path within the main override map.
+// It handles nested paths (e.g., "parent.child.image") by creating intermediate maps as needed.
 func (g *Generator) setOverridePath(overrides map[string]interface{}, pattern analysis.ImagePattern, overrideValue interface{}) error {
-	// Split the path string into components
-	pathParts := strings.Split(pattern.Path, ".")                                            // Assume dot notation based on previous usage
-	log.Debug("[DEBUG IRR OVERRIDE SET] Setting override value for path", "path", pathParts) // Log the slice now
+	pathSegments := strings.Split(pattern.Path, ".")
+	currentLevel := overrides
 
-	if len(pathParts) == 0 || (len(pathParts) == 1 && pathParts[0] == "") {
-		log.Error("[DEBUG IRR OVERRIDE SET] Received pattern with empty or invalid path", "originalPath", pattern.Path, "value", pattern.Value)
-		return fmt.Errorf("invalid pattern with empty or invalid path received: %s", pattern.Path)
-	}
-
-	current := overrides
-	for i, key := range pathParts { // Iterate over the []string pathParts
-		if i == len(pathParts)-1 {
-			log.Debug("[DEBUG IRR OVERRIDE SET FINAL] Setting value at final key", "key", key, "value", overrideValue)
-			current[key] = overrideValue // key is now string
-			break
-		}
-
-		var next map[string]interface{}
-		existing, ok := current[key] // key is now string
-		if !ok {
-			log.Debug("[DEBUG IRR OVERRIDE SET CREATE NESTED] Creating nested map for key", "key", key)
-			next = make(map[string]interface{})
-			current[key] = next // key is now string
+	// Traverse the path, creating nested maps if they don't exist
+	for i, segment := range pathSegments {
+		if i == len(pathSegments)-1 {
+			// Last segment: Set the actual override value
+			currentLevel[segment] = overrideValue
+			log.Debug("Set override value", "path", pattern.Path, "segment", segment, "value_type", fmt.Sprintf("%T", overrideValue))
 		} else {
-			next, ok = existing.(map[string]interface{})
-			if !ok {
-				// Use pathParts for Join
-				conflictPath := strings.Join(pathParts[:i+1], ".")
-				log.Error("[DEBUG IRR OVERRIDE SET CONFLICT] Path conflict: Expected map but found different type", "path", conflictPath, "key", key)
-				return fmt.Errorf("path conflict at %s: expected map structure for key '%s'", conflictPath, key)
+			// Intermediate segment: Ensure a map exists and move down
+			if _, ok := currentLevel[segment]; !ok {
+				// Create a new map if the key doesn't exist
+				currentLevel[segment] = make(map[string]interface{})
+				log.Debug("Created intermediate map", "path", pattern.Path, "segment", segment)
 			}
+
+			// Check if the existing value is a map, otherwise, it's an error (path conflict)
+			nextLevel, ok := currentLevel[segment].(map[string]interface{})
+			if !ok {
+				log.Error("Path conflict: intermediate key exists but is not a map", "path", pattern.Path, "segment", segment, "existing_type", fmt.Sprintf("%T", currentLevel[segment]))
+				return fmt.Errorf("failed to set override path '%s': segment '%s' is not a map (existing type: %T)", pattern.Path, segment, currentLevel[segment])
+			}
+			currentLevel = nextLevel
+			log.Debug("Traversed to next level map", "path", pattern.Path, "segment", segment)
 		}
-		current = next
 	}
+
 	return nil
 }
 
-// processImagePattern parses the image reference string from an ImagePattern.
-// It uses the image package's parser and includes heuristics for common issues,
-// such as potentially missing tags, to improve robustness.
-// Returns a parsed image.Reference or an error if parsing fails even with heuristics.
+// processImagePattern attempts to parse an ImagePattern's value into an image.Reference.
+// It handles different pattern types (string, map) and logs warnings for parsing issues.
 func (g *Generator) processImagePattern(pattern analysis.ImagePattern) (*image.Reference, error) {
 	log.Debug("Processing image pattern", "path", pattern.Path, "value", pattern.Value)
 

@@ -41,6 +41,12 @@ func detectBitnamiChart(ch *chart.Chart) Detection {
 	indicators := []string{}
 	metadata := ch.Metadata
 
+	// Add nil check for metadata before using it
+	if metadata == nil {
+		log.Debug("detectBitnamiChart called with nil metadata, returning ConfidenceNone.")
+		return Detection{Provider: ProviderBitnami, Confidence: ConfidenceNone} // Still Bitnami context, but None confidence
+	}
+
 	// Check direct indicators
 
 	// 1. Check home field for bitnami.com
