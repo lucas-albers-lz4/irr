@@ -64,7 +64,6 @@ func (g *Generator) Generate(_ string, values map[string]interface{}) (map[strin
 		ExcludeRegistries: g.ExcludeRegistries,
 		Strict:            g.StrictMode,
 		TemplateMode:      g.TemplateMode,
-		// GlobalRegistry handling might need context here if applicable
 	}
 	detector := image.NewDetector(*detectionContext)
 
@@ -200,9 +199,9 @@ func normalizeKubeStateMetricsOverrides(
 		// Remove the KSM entry from its original detected path, if it exists and differs from the top-level key
 		if len(ksmDetectedPath) > 0 && ksmDetectedPath[0] != KubeStateMetricsKey {
 			log.Debug("Attempting to remove original KSM entry from path", ksmDetectedPath)
-			// We need a way to delete a value at a path. The override package might need a DeleteValueAtPath.
-			// For now, we assume the SetValueAtPath in the main loop might have placed it.
-			// Let's try removing it carefully.
+			// Using local removeValueAtPath helper to remove the original entry.
+			// Ideally, this functionality might belong in the override package,
+			// but it currently lacks a dedicated delete function.
 			removeValueAtPath(overrides, ksmDetectedPath)
 		}
 	}
