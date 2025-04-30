@@ -11,9 +11,11 @@ import (
 
 	// Use constants for file permissions instead of hardcoded values for consistency and maintainability
 	"github.com/lucas-albers-lz4/irr/pkg/fileutil"
+	"github.com/lucas-albers-lz4/irr/pkg/testutil"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 func TestInspectCommand(t *testing.T) {
@@ -110,93 +112,75 @@ func TestInspectParentChart(t *testing.T) {
 	harness := NewTestHarness(t)
 	defer harness.Cleanup()
 
-	// Create a parent chart with a subchart
-	chartDir := filepath.Join(harness.tempDir, "parent-chart")
-	subchartDir := filepath.Join(chartDir, "charts", "child")
+	// Use the existing parent-test chart for better coverage
+	parentTestChartPath := testutil.GetChartPath(t, "parent-test") // Use testutil helper
 
-	// Create parent chart structure
-	require.NoError(t, os.MkdirAll(chartDir, fileutil.ReadWriteExecuteUserReadGroup))
-	parentChartYaml := `apiVersion: v2
-name: parent-chart
-version: 0.1.0
-dependencies:
-- name: child
-  version: 0.1.0
-  repository: ""`
-	require.NoError(t, os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), []byte(parentChartYaml), fileutil.ReadWriteUserPermission))
+	// Ensure the chart path exists before proceeding
+	_, err := os.Stat(parentTestChartPath)
+	require.NoError(t, err, "parent-test chart should exist")
 
-	// Create parents values.yaml with image reference
-	parentValuesYaml := `image:
-  repository: nginx
-  tag: "1.23"`
-	require.NoError(t, os.WriteFile(filepath.Join(chartDir, "values.yaml"), []byte(parentValuesYaml), fileutil.ReadWriteUserPermission))
-
-	// Create subchart structure
-	require.NoError(t, os.MkdirAll(subchartDir, fileutil.ReadWriteExecuteUserReadGroup))
-	childChartYaml := `apiVersion: v2
-name: child
-version: 0.1.0`
-	require.NoError(t, os.WriteFile(filepath.Join(subchartDir, "Chart.yaml"), []byte(childChartYaml), fileutil.ReadWriteUserPermission))
-
-	// Create subchart values file with image reference
-	childValuesYaml := `image:
-  repository: redis
-  tag: "7.0"`
-	require.NoError(t, os.WriteFile(filepath.Join(subchartDir, "values.yaml"), []byte(childValuesYaml), fileutil.ReadWriteUserPermission))
-
-	// Create subchart templates directory and deployment file
-	require.NoError(t, os.MkdirAll(filepath.Join(subchartDir, "templates"), fileutil.ReadWriteExecuteUserReadGroup))
-	childDeploymentYaml := `apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: child
-spec:
-  template:
-    spec:
-      containers:
-      - name: redis
-        image: {{ .Values.image.repository }}:{{ .Values.image.tag }}`
-	require.NoError(t, os.WriteFile(filepath.Join(subchartDir, "templates", "deployment.yaml"), []byte(childDeploymentYaml), fileutil.ReadWriteUserPermission))
-
-	// Create parent templates directory and deployment file
-	require.NoError(t, os.MkdirAll(filepath.Join(chartDir, "templates"), fileutil.ReadWriteExecuteUserReadGroup))
-	parentDeploymentYaml := `apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: parent
-spec:
-  template:
-    spec:
-      containers:
-      - name: nginx
-        image: {{ .Values.image.repository }}:{{ .Values.image.tag }}`
-	require.NoError(t, os.WriteFile(filepath.Join(chartDir, "templates", "deployment.yaml"), []byte(parentDeploymentYaml), fileutil.ReadWriteUserPermission))
-
-	// Set the chart path in the harness
-	harness.chartPath = chartDir
-
-	// Run the inspect command on the parent chart
+	// Run the inspect command on the parent-test chart
+	outputFile := filepath.Join(harness.tempDir, "parent-inspect.yaml")
 	args := []string{
 		"inspect",
-		"--chart-path", chartDir,
+		"--chart-path", parentTestChartPath,
 		"--output-format", "yaml",
+		"--output-file", outputFile, // Output to file for easier parsing
 		"--log-level=error",
 	}
-	output, _ /*stderr*/, err := harness.ExecuteIRRWithStderr(nil, args...)
+	_, _ /*stderr*/, err = harness.ExecuteIRRWithStderr(nil, args...)
 	require.NoError(t, err)
 
-	// Verify the output contains parent chart information (should find the nginx image)
-	assert.Contains(t, output, "parent-chart", "Output should include parent chart name")
-	assert.True(t,
-		strings.Contains(output, "nginx") ||
-			strings.Contains(output, "library/nginx") ||
-			strings.Contains(output, "docker.io/nginx") ||
-			strings.Contains(output, "docker.io/library/nginx"),
-		"Output should include parent chart's nginx image")
+	// Verify the output file exists and parse it
+	require.FileExists(t, outputFile, "Output file should exist")
+	content, err := os.ReadFile(outputFile) // #nosec G304
+	require.NoError(t, err, "Should be able to read output file")
 
-	// Subchart images might not be detected without additional processing
-	// (which is a known limitation mentioned in Phase 9 of TODO.md)
-	// So don't assert on child chart's redis image
+	// Define a struct to unmarshal the relevant parts of the inspect output
+	type ImageAnalysisOutput struct {
+		Images []struct {
+			SourcePath string `yaml:"sourcePath"`
+			Reference  string `yaml:"reference"`
+		} `yaml:"images"`
+	}
+
+	var analysisResult ImageAnalysisOutput
+	err = yaml.Unmarshal(content, &analysisResult)
+	require.NoError(t, err, "Failed to unmarshal inspect output YAML")
+
+	// Verify expected images and their source paths
+	expectedImages := map[string]string{ // reference -> expected sourcePath
+		"library/nginx:1.23":              "image",                                    // From parent values.yaml
+		"parent/custom:latest":            "parentImage",                              // From parent values.yaml
+		"docker.io/library/redis:7.0":     "child.image",                              // From child values.yaml
+		"registry.k8s.io/pause:3.9":       "child.extraImage",                         // From child values.yaml
+		"custom-repo/custom-image:stable": "another-child.image",                      // From another-child values.yaml
+		"prom/prometheus:v2.40.0":         "another-child.monitoring.prometheusImage", // From another-child values.yaml
+	}
+
+	foundImages := make(map[string]string)
+	for _, img := range analysisResult.Images {
+		// Normalize reference (e.g., remove implicit docker.io/library)
+		normalizedRef := img.Reference
+		if strings.HasPrefix(normalizedRef, "docker.io/") {
+			normalizedRef = strings.TrimPrefix(normalizedRef, "docker.io/")
+		}
+		if strings.HasPrefix(normalizedRef, "library/") {
+			normalizedRef = strings.TrimPrefix(normalizedRef, "library/")
+		}
+		foundImages[normalizedRef] = img.SourcePath
+	}
+
+	for ref, expectedPath := range expectedImages {
+		actualPath, ok := foundImages[ref]
+		assert.True(t, ok, "Expected image not found in inspect output: %s", ref)
+		if ok {
+			assert.Equal(t, expectedPath, actualPath, "Incorrect sourcePath for image: %s", ref)
+		}
+	}
+
+	// Optionally, assert the total number of images found if it's reliable
+	// assert.Len(t, analysisResult.Images, len(expectedImages), "Unexpected number of images found")
 }
 
 func TestInspectGenerateConfigSkeleton(t *testing.T) {

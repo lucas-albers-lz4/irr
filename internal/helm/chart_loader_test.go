@@ -87,6 +87,14 @@ func TestDefaultChartLoader_LoadChartAndTrackOrigins(t *testing.T) {
 		assert.True(t, exists, "Should have origin for child.image.repository")
 		if exists {
 			assert.Equal(t, OriginChartDefault, childImageOrigin.Type)
+			assert.Equal(t, "child", childImageOrigin.ChartName, "Subchart value origin should have subchart name")
+		}
+
+		anotherChildImageOrigin, exists := context.Origins["another-child.image.repository"]
+		assert.True(t, exists, "Should have origin for another-child.image.repository")
+		if exists {
+			assert.Equal(t, OriginChartDefault, anotherChildImageOrigin.Type)
+			assert.Equal(t, "another-child", anotherChildImageOrigin.ChartName, "Another subchart value origin should have its subchart name")
 		}
 	})
 
