@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/lucas-albers-lz4/irr/pkg/log"
 	"github.com/pkg/errors"
 	"gopkg.in/yaml.v3"
 	"helm.sh/helm/v3/pkg/chart"
@@ -119,6 +120,9 @@ func (l *DefaultChartLoader) LoadChartAndTrackOrigins(opts *ChartLoaderOptions) 
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to coalesce values")
 	}
+
+	// ### DEBUG: Log the structure of mergedValues ###
+	log.Debug("LOADER_DEBUG: Merged Values Structure", "values", fmt.Sprintf("%#v", mergedValues))
 
 	// Create context
 	return NewChartAnalysisContext(
@@ -243,19 +247,16 @@ func flattenAndTrackValues(valuesMap map[string]interface{}, origins map[string]
 			keyPath = prefix + "." + k
 		}
 
-		// Only update origin if this path hasn't been set by a higher precedence source
-		// (like user values or parent chart defaults). Helm coalescing rules apply.
-		// The current simple implementation overwrites; a more sophisticated one might check.
-		// However, since we call CoalesceValues later, the *final* values map reflects precedence.
-		// Our goal here is to record the *initial* source before CoalesceValues merges.
-		// A potential issue: If CoalesceValues picks a parent value over a subchart default,
-		// our 'origins' map might incorrectly show the subchart origin if tracked last.
-		// TODO: Revisit origin tracking *after* CoalesceValues for ultimate accuracy,
-		// although this might be significantly more complex. For now, track initial sources.
-		origins[keyPath] = origin
+		// Only record the origin if this path hasn't been recorded yet.
+		// This prioritizes the first source encountered (parent defaults over subchart defaults).
+		if _, exists := origins[keyPath]; !exists {
+			origins[keyPath] = origin
+		}
 
 		// Recursively process nested maps
 		if nestedMap, ok := v.(map[string]interface{}); ok {
+			// Pass the original origin down for nested structures within the same file/source.
+			// The existence check above handles precedence between different sources.
 			flattenAndTrackValues(nestedMap, origins, origin, keyPath)
 		}
 		// TODO: Handle lists/arrays if necessary? Helm treats them mostly as atomic values during merge.
@@ -263,6 +264,7 @@ func flattenAndTrackValues(valuesMap map[string]interface{}, origins map[string]
 }
 
 // mergeUserValuesFileWithOrigin merges values from a user-provided file and tracks their origin.
+// It *overwrites* existing origins for the paths defined in the file.
 func mergeUserValuesFileWithOrigin(fileName string, valuesMap map[string]interface{}, origins map[string]ValueOrigin) error {
 	// Read and parse the file
 	// G304: Potential file inclusion vulnerability - fileName needs validation.
@@ -276,18 +278,39 @@ func mergeUserValuesFileWithOrigin(fileName string, valuesMap map[string]interfa
 		return errors.Wrapf(err, "failed to parse values file %s", fileName)
 	}
 
-	// Track origins for these values
+	// Directly track origins for these values, overwriting defaults.
 	origin := ValueOrigin{
 		Type: OriginUserFile,
 		Path: fileName,
 		// ChartName is not applicable for user files
 	}
-	// User files apply at the root level, so no prefix needed for flattenAndTrackValues
-	flattenAndTrackValues(fileValues, origins, origin, "")
+	// Call a helper to flatten and *overwrite* origins for this specific source.
+	// We cannot use the main flattenAndTrackValues as it prevents overwrites.
+	forceFlattenAndTrackOrigins(fileValues, origins, origin, "")
 
 	// Merge with existing values (mutates the 'values' map)
 	chartutil.CoalesceTables(valuesMap, fileValues)
 	return nil
+}
+
+// forceFlattenAndTrackOrigins is similar to flattenAndTrackValues but *always* sets the origin,
+// effectively overwriting any previous origin for the same path. Used for higher-precedence sources.
+func forceFlattenAndTrackOrigins(valuesMap map[string]interface{}, origins map[string]ValueOrigin, origin ValueOrigin, prefix string) {
+	for k, v := range valuesMap {
+		keyPath := k
+		if prefix != "" {
+			keyPath = prefix + "." + k
+		}
+
+		// Always set/overwrite the origin for this path
+		origins[keyPath] = origin
+
+		// Recursively process nested maps
+		if nestedMap, ok := v.(map[string]interface{}); ok {
+			// Pass the same origin down for nested structures within this source.
+			forceFlattenAndTrackOrigins(nestedMap, origins, origin, keyPath)
+		}
+	}
 }
 
 // applySetValueWithOrigin applies a --set value and tracks its origin.

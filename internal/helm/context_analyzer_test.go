@@ -3,6 +3,8 @@ package helm
 import (
 	"testing"
 
+	"github.com/lucas-albers-lz4/irr/pkg/analysis"
+	log "github.com/lucas-albers-lz4/irr/pkg/log"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"helm.sh/helm/v3/pkg/chart"
@@ -10,6 +12,11 @@ import (
 )
 
 func TestContextAwareAnalyzer_AnalyzeContext(t *testing.T) {
+	// Set debug logging for this test
+	originalLevel := log.CurrentLevel()
+	log.SetLevel(log.LevelDebug)
+	defer log.SetLevel(originalLevel) // Reset after test
+
 	// Load the test chart
 	chartPath := "../../test-data/charts/parent-test"
 	chartData, err := loader.Load(chartPath)
@@ -23,27 +30,58 @@ func TestContextAwareAnalyzer_AnalyzeContext(t *testing.T) {
 		analyzer := NewContextAwareAnalyzer(context)
 
 		// Run analysis
-		analysis, err := analyzer.AnalyzeContext()
+		analysisResult, err := analyzer.AnalyzeContext()
 		require.NoError(t, err, "Analysis should succeed")
-		require.NotNil(t, analysis, "Analysis result should not be nil")
+		require.NotNil(t, analysisResult)
 
-		// Verify image patterns were found
-		require.Greater(t, len(analysis.ImagePatterns), 0, "Should find at least one image pattern")
+		// Convert to map for easier checking
+		patternsMap := make(map[string]analysis.ImagePattern)
+		for _, p := range analysisResult.ImagePatterns {
+			patternsMap[p.Path] = p
+			log.Debug("TestCheck", "path", p.Path, "value", p.Value, "type", p.Type)
+		}
 
-		// Check for specific image patterns from parent values
-		foundParentImage := false
-		foundChildImage := false
-		for _, pattern := range analysis.ImagePatterns {
-			if pattern.Path == "parentImage.repository" || pattern.Path == "image.repository" {
-				foundParentImage = true
-			}
-			if pattern.Path == "child.image.repository" || pattern.Path == "child.extraImage.repository" {
-				foundChildImage = true
+		// Check for parent map-based image component: "image.repository"
+		if pattern, ok := patternsMap["image.repository"]; ok {
+			assert.Equal(t, analysis.PatternTypeString, pattern.Type)
+			// Value might be normalized, check for key parts
+			assert.Contains(t, pattern.Value, "parent/app", "Parent repo string value mismatch")
+		} else {
+			assert.Fail(t, "Should find parent image pattern for image.repository")
+		}
+
+		// Check for parent image (now expected as a map pattern due to Helm coalescing)
+		if pattern, ok := patternsMap["parentImage"]; ok {
+			assert.Equal(t, analysis.PatternTypeMap, pattern.Type, "parentImage should be detected as a map pattern")
+			require.NotNil(t, pattern.Structure, "parentImage map pattern should have structure")
+			assert.Equal(t, "docker.io", pattern.Structure["registry"], "parentImage registry mismatch")
+			assert.Equal(t, "parent/app", pattern.Structure["repository"], "parentImage repository mismatch")
+			assert.Equal(t, "v1.0.0", pattern.Structure["tag"], "parentImage tag mismatch")
+		} else {
+			assert.Fail(t, "Should find parent image map pattern for parentImage")
+		}
+
+		// Check for child map-based image component: "child.image.repository"
+		if pattern, ok := patternsMap["child.image.repository"]; ok {
+			assert.Equal(t, analysis.PatternTypeString, pattern.Type)
+			assert.Contains(t, pattern.Value, "nginx", "Child repo string value mismatch") // Check content
+			// TODO: Fix the path logging bug if necessary
+		} else {
+			// If the previous log bug path `child.child.image.repository` exists, flag that
+			if _, bugExists := patternsMap["child.child.image.repository"]; bugExists {
+				assert.Fail(t, "Found child image pattern with INCORRECT path 'child.child.image.repository'")
+			} else {
+				assert.Fail(t, "Should find child image pattern for child.image.repository")
 			}
 		}
 
-		assert.True(t, foundParentImage, "Should find parent image pattern")
-		assert.True(t, foundChildImage, "Should find child image pattern")
+		// Check for child map-based image component: "child.extraImage.repository"
+		if pattern, ok := patternsMap["child.extraImage.repository"]; ok {
+			assert.Equal(t, analysis.PatternTypeString, pattern.Type)
+			assert.Contains(t, pattern.Value, "bitnami/nginx", "Child extra repo string value mismatch")
+		} else {
+			assert.Fail(t, "Should find child image pattern for child.extraImage.repository")
+		}
 	})
 
 	t.Run("analyzes values with user overrides", func(t *testing.T) {

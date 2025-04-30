@@ -54,6 +54,11 @@ func (a *ContextAwareAnalyzer) analyzeValues(values map[string]interface{}, pref
 			currentPath = prefix + "." + k
 		}
 
+		// ### DEBUG: Check type specifically for parentImage ###
+		if k == "parentImage" {
+			log.Debug("ANALYZER_TYPE_CHECK", "key", k, "path", currentPath, "value_type", fmt.Sprintf("%T", v), "value_content", fmt.Sprintf("%#v", v))
+		}
+
 		log.Debug("analyzeValues LOOP", "path", currentPath, "type", fmt.Sprintf("%T", v))
 		if err := a.analyzeSingleValue(k, v, currentPath, chartAnalysis); err != nil {
 			// If analyzing a single value fails, wrap the error with context
@@ -95,12 +100,12 @@ func (a *ContextAwareAnalyzer) analyzeSingleValue(key string, value interface{},
 
 // analyzeMapValue handles analysis of map values for image references.
 func (a *ContextAwareAnalyzer) analyzeMapValue(val map[string]interface{}, currentPath string, chartAnalysis *analysis.ChartAnalysis) error {
-	// Check if the map represents an image definition
+	// Check if the map represents an image definition using the stricter heuristic
 	if a.isImageMap(val) {
 		// Extract and normalize image values
 		registry, repository, tag := a.normalizeImageValues(val)
 
-		// Create an image pattern
+		// Create an image pattern for the map itself
 		imageStructure := map[string]interface{}{
 			"registry":   registry,
 			"repository": repository,
@@ -116,11 +121,13 @@ func (a *ContextAwareAnalyzer) analyzeMapValue(val map[string]interface{}, curre
 		}
 
 		// Add the pattern to the analysis
+		log.Debug("ANALYZER_DEBUG: Adding Map Pattern", "path", pattern.Path, "value", pattern.Value)
 		chartAnalysis.ImagePatterns = append(chartAnalysis.ImagePatterns, pattern)
-		return nil
+		// DO NOT return here. Continue analysis into the map's children.
 	}
 
-	// If not an image map, recurse into the map
+	// Always recurse into the map's children, regardless of whether it was an image map pattern.
+	// This ensures individual string values like 'repository' and 'tag' are analyzed.
 	return a.analyzeValues(val, currentPath, chartAnalysis)
 }
 
@@ -149,6 +156,7 @@ func (a *ContextAwareAnalyzer) analyzeStringValue(key, val, currentPath string, 
 		}
 
 		// Add the pattern to the analysis
+		log.Debug("ANALYZER_DEBUG: Adding String Pattern", "path", pattern.Path, "value", pattern.Value)
 		chartAnalysis.ImagePatterns = append(chartAnalysis.ImagePatterns, pattern)
 	}
 
@@ -169,10 +177,13 @@ func (a *ContextAwareAnalyzer) analyzeArrayValue(val []interface{}, currentPath 
 }
 
 // isImageMap checks if a map likely represents a Helm image definition.
+// A stricter check requiring both repository and tag.
 func (a *ContextAwareAnalyzer) isImageMap(val map[string]interface{}) bool {
 	_, hasRepo := val["repository"]
-	// Basic check: must have a repository key
-	return hasRepo
+	_, hasTag := val["tag"]
+	// Basic check: must have repository and tag keys
+	// Consider adding registry check or ensuring values are strings if needed.
+	return hasRepo && hasTag
 }
 
 // isImageString uses heuristics to check if a string likely represents a container image reference.
@@ -195,29 +206,54 @@ func (a *ContextAwareAnalyzer) normalizeImageValues(val map[string]interface{}) 
 	// Default values
 	registry = DefaultRegistry
 	tag = "latest"
+	var repoStr string // Temporary variable for raw repository string
 
-	// Extract values from the map
-	if reg, ok := val["registry"]; ok && reg != nil {
-		registry = fmt.Sprintf("%v", reg)
+	// Extract raw values from map
+	if r, ok := val["registry"].(string); ok && r != "" {
+		registry = r
+	}
+	if repoVal, ok := val["repository"].(string); ok && repoVal != "" {
+		repoStr = repoVal
+	} else {
+		// If repository key is missing or empty, cannot proceed
+		log.Warn("normalizeImageValues: 'repository' key missing or empty in image map", "map", val)
+		return "", "", ""
+	}
+	if t, ok := val["tag"].(string); ok && t != "" {
+		tag = t
 	}
 
-	if repo, ok := val["repository"]; ok && repo != nil {
-		repository = fmt.Sprintf("%v", repo)
+	// Attempt to parse the raw repository string itself, as it might contain registry/tag info
+	// This handles cases where Helm might have coalesced a full string into the repo field
+	// or if the map only contained { repository: "myreg/myrepo:mytag" }.
+	parsedReg, parsedRepo, parsedTag := a.parseImageString(repoStr)
+
+	if parsedRepo != "" { // Check if parsing the repo string yielded a repository component
+		repository = parsedRepo // Use the parsed repository
+		if parsedReg != "" {
+			// If the repo string contained a registry, it overrides any explicit 'registry' key from the map
+			// (or the default 'docker.io') because it's more specific.
+			registry = parsedReg
+		}
+		if parsedTag != "" && tag == "latest" { // Only use tag from repo string if no explicit tag was in the map
+			tag = parsedTag
+		}
+	} else {
+		// If parsing repoStr failed (e.g., it was just "myrepo"), use repoStr as is.
+		repository = repoStr
+		// Keep registry/tag extracted from map (or defaults).
 	}
 
-	if t, ok := val["tag"]; ok && t != nil {
-		tag = fmt.Sprintf("%v", t)
-	}
-
-	// Normalize docker.io references
+	// Final normalization for registry (e.g., add library/ for docker.io)
 	if registry == DefaultRegistry && !strings.Contains(repository, "/") {
 		repository = "library/" + repository
 	}
 
-	return registry, repository, tag
+	log.Debug("normalizeImageValues result", "registry", registry, "repository", repository, "tag", tag)
+	return // Return potentially updated registry, repository, tag
 }
 
-// parseImageString parses a string image reference into its components.
+// parseImageString attempts to parse a string into image components.
 func (a *ContextAwareAnalyzer) parseImageString(val string) (registry, repository, tag string) {
 	// Default values
 	registry = DefaultRegistry
@@ -264,16 +300,33 @@ func (a *ContextAwareAnalyzer) parseImageString(val string) (registry, repositor
 	return registry, repository, tag
 }
 
-// getSourcePathForValue determines the appropriate source path for a value based on its origin.
+// getSourcePathForValue resolves the effective source path for a value based on origin.
+// For now, it returns the structural path as determined by traversal.
+// TODO: Enhance this to properly use origin information if needed for more complex scenarios (e.g., aliases).
 func (a *ContextAwareAnalyzer) getSourcePathForValue(valuePath string) string {
-	if a.context == nil {
-		return valuePath
-	}
+	// Simply return the structural path derived from map traversal.
+	// The path already includes prefixes like "child." based on the merged value structure.
+	log.Debug("getSourcePathForValue returning structural path", "path", valuePath)
+	return valuePath
 
-	return a.context.GetSourcePathForValue(valuePath)
+	/* // Original complex logic - REMOVED as it caused bugs
+	origin, exists := a.context.Origins[valuePath]
+	if exists {
+		log.Debug("getSourcePathForValue: Found origin", "valuePath", valuePath, "originChart", origin.ChartName, "contextChart", a.context.ChartName)
+		if origin.ChartName != "" && origin.ChartName != a.context.ChartName {
+			// BUGGY: return origin.ChartName + "." + valuePath
+			// Correct logic would need to understand the structure better, maybe remove prefixes?
+			// For now, just return the structurally derived valuePath.
+			return valuePath
+		}
+	} else {
+		log.Debug("getSourcePathForValue: No origin found", "valuePath", valuePath)
+	}
+	return valuePath // Fallback to the structural path
+	*/
 }
 
-// GetContext returns the chart analysis context.
+// GetContext returns the analysis context.
 func (a *ContextAwareAnalyzer) GetContext() *ChartAnalysisContext {
 	return a.context
 }
