@@ -14,12 +14,12 @@ import (
 	"github.com/spf13/afero"
 	"gopkg.in/yaml.v3"
 	"helm.sh/helm/v3/pkg/action"
-	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/chartutil"
 	"helm.sh/helm/v3/pkg/cli/values"
 
 	"github.com/lucas-albers-lz4/irr/internal/helm"
+	"github.com/lucas-albers-lz4/irr/pkg/analysis"
 	"github.com/lucas-albers-lz4/irr/pkg/analyzer"
 	"github.com/lucas-albers-lz4/irr/pkg/exitcodes"
 	"github.com/lucas-albers-lz4/irr/pkg/fileutil"
@@ -67,8 +67,6 @@ type InspectFlags struct {
 	AllNamespaces          bool
 	OverwriteSkeleton      bool
 	NoSubchartCheck        bool
-	// Add filesystem dependency if needed for loading logic outside runInspect
-	// Fs                     afero.Fs
 }
 
 const (
@@ -101,7 +99,8 @@ func newInspectCmd() *cobra.Command {
 		Use:   "inspect [release-name]",
 		Short: "Inspect a Helm chart for image references",
 		Long: `Inspect a Helm chart to find all image references.
-This command analyzes the chart's values.yaml and templates to find image references.`,
+This command analyzes the chart's values.yaml and templates to find image references.
+It properly handles subcharts and dependency values according to Helm's value merging rules.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: runInspect,
 	}
@@ -118,136 +117,18 @@ This command analyzes the chart's values.yaml and templates to find image refere
 	cmd.Flags().BoolP("all-namespaces", "A", false, "Inspect Helm releases across all namespaces (conflicts with --chart-path, --release-name, --namespace)")
 	cmd.Flags().Bool("overwrite-skeleton", false, "Overwrite the skeleton file if it already exists (only applies when using --generate-config-skeleton)")
 	cmd.Flags().Bool("no-subchart-check", false, "Skip checking for subchart image discrepancies")
-	cmd.Flags().StringSlice("values", nil, "Specify values in a YAML file or a URL (can specify multiple)")
+
+	// Add Helm flags
+	cmd.Flags().StringSlice("values", nil, "Values files to process (can be specified multiple times)")
+	cmd.Flags().StringSlice("set", nil, "Set values on the command line (can be specified multiple times)")
+	cmd.Flags().StringSlice("set-string", nil, "Set STRING values on the command line (can be specified multiple times)")
+	cmd.Flags().StringSlice("set-file", nil, "Set values from files (can be specified multiple times)")
 
 	return cmd
 }
 
-// loadHelmChart loads a Helm chart from the given path using the provided filesystem.
-func loadHelmChart(fs afero.Fs, chartPath string) (*chart.Chart, error) {
-	// Check if chart path exists on the given filesystem
-	exists, err := afero.Exists(fs, chartPath)
-	if err != nil {
-		return nil, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitChartLoadFailed,
-			Err:  fmt.Errorf("failed to check chart path %q: %w", chartPath, err),
-		}
-	}
-	if !exists {
-		// Attempt to check if it's a file to mimic original loader error slightly better
-		if _, statErr := fs.Stat(chartPath); statErr != nil { // Doesn't exist or other stat error
-			return nil, &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitChartLoadFailed,
-				Err:  fmt.Errorf("chart path not found or inaccessible: %s", chartPath),
-			}
-		}
-		// If it exists but isn't loadable, loader.Load will handle it below
-	}
-
-	// In test mode, we need to create a simple chart structure in memory
-	// instead of trying to load from the real filesystem
-	if isTestMode {
-		// Create a simple chart for testing
-		log.Debug("Test mode detected, creating mock chart for", chartPath)
-		mockChart := &chart.Chart{
-			Metadata: &chart.Metadata{
-				Name:    filepath.Base(chartPath),
-				Version: "1.0.0",
-			},
-			Values: map[string]interface{}{
-				"image": "nginx:stable",
-			},
-		}
-
-		// If we have a Chart.yaml file in the mock filesystem, try to read it
-		chartYamlPath := filepath.Join(chartPath, "Chart.yaml")
-		if chartYamlExists, checkErr := afero.Exists(fs, chartYamlPath); checkErr == nil && chartYamlExists {
-			chartYamlContent, readErr := afero.ReadFile(fs, chartYamlPath)
-			if readErr == nil {
-				var chartYaml struct {
-					APIVersion string `yaml:"apiVersion"`
-					Name       string `yaml:"name"`
-					Version    string `yaml:"version"`
-				}
-				if yamlErr := yaml.Unmarshal(chartYamlContent, &chartYaml); yamlErr == nil {
-					mockChart.Metadata.Name = chartYaml.Name
-					mockChart.Metadata.Version = chartYaml.Version
-				}
-			}
-		}
-
-		// If we have a values.yaml file in the mock filesystem, try to read it
-		valuesYamlPath := filepath.Join(chartPath, "values.yaml")
-		if valuesYamlExists, checkErr := afero.Exists(fs, valuesYamlPath); checkErr == nil && valuesYamlExists {
-			valuesYamlContent, readErr := afero.ReadFile(fs, valuesYamlPath)
-			if readErr == nil {
-				var valuesYaml map[string]interface{}
-				if yamlErr := yaml.Unmarshal(valuesYamlContent, &valuesYaml); yamlErr == nil {
-					mockChart.Values = valuesYaml
-				}
-			}
-		}
-
-		return mockChart, nil
-	}
-
-	// Use Helm's loader for real filesystem operations (non-test mode)
-	loadedChart, err := loader.Load(chartPath)
-	if err != nil {
-		// Improve error message consistency with the Exists check
-		errMsg := fmt.Sprintf("failed to load chart at %s: %v", chartPath, err)
-		// Check if the error is a "not found" type to return the specific code
-		if strings.Contains(err.Error(), "no such file or directory") || strings.Contains(err.Error(), "not found") {
-			return nil, &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitChartLoadFailed,
-				Err:  errors.New(errMsg), // Use errors.New for non-wrapping error message
-			}
-		}
-		// Otherwise, it's likely a chart format error or other load issue
-		return nil, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitChartLoadFailed, // Or ExitChartProcessingFailed?
-			Err:  errors.New(errMsg),            // Use errors.New for non-wrapping error message
-		}
-	}
-
-	return loadedChart, nil
-}
-
-// analyzeChart analyzes a chart for image patterns
-func analyzeChart(chartData *chart.Chart, config *analyzer.Config) (*ImageAnalysis, error) {
-	// Extract chart info
-	chartInfo := ChartInfo{
-		Name:         chartData.Metadata.Name,
-		Version:      chartData.Metadata.Version,
-		Path:         chartData.ChartPath(),
-		Dependencies: len(chartData.Dependencies()),
-	}
-
-	// Analyze chart values
-	patterns, err := analyzer.AnalyzeHelmValues(chartData.Values, config)
-	if err != nil {
-		return nil, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitChartProcessingFailed,
-			Err:  fmt.Errorf("chart analysis failed: %w", err),
-		}
-	}
-
-	// Process image patterns
-	images, skipped := processImagePatterns(patterns)
-
-	// Create analysis result
-	analysis := &ImageAnalysis{
-		Chart:         chartInfo,
-		Images:        images,
-		ImagePatterns: patterns,
-		Skipped:       skipped,
-	}
-
-	return analysis, nil
-}
-
 // writeOutput writes the analysis to a file or stdout
-func writeOutput(cmd *cobra.Command, analysis *ImageAnalysis, flags *InspectFlags) error {
+func writeOutput(cmd *cobra.Command, analysisResult *ImageAnalysis, flags *InspectFlags) error {
 	// Handle generate-config-skeleton flag
 	if flags.GenerateConfigSkeleton {
 		skeletonFile := flags.OutputFile
@@ -277,7 +158,7 @@ func writeOutput(cmd *cobra.Command, analysis *ImageAnalysis, flags *InspectFlag
 			log.Info("Overwriting existing skeleton file", "path", skeletonFile)
 		}
 
-		if err := createConfigSkeleton(analysis.Images, skeletonFile); err != nil {
+		if err := createConfigSkeleton(analysisResult.Images, skeletonFile); err != nil {
 			// Special handling for file exists error - should not happen now with the checks above
 			var exitErr *exitcodes.ExitCodeError
 			if errors.As(err, &exitErr) && strings.Contains(exitErr.Err.Error(), "already exists") {
@@ -303,7 +184,7 @@ func writeOutput(cmd *cobra.Command, analysis *ImageAnalysis, flags *InspectFlag
 
 	switch strings.ToLower(flags.OutputFormat) {
 	case "json":
-		output, err = json.Marshal(analysis)
+		output, err = json.Marshal(analysisResult)
 		if err != nil {
 			return &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitGeneralRuntimeError,
@@ -312,7 +193,7 @@ func writeOutput(cmd *cobra.Command, analysis *ImageAnalysis, flags *InspectFlag
 		}
 	default:
 		// Default to YAML
-		output, err = yaml.Marshal(analysis)
+		output, err = yaml.Marshal(analysisResult)
 		if err != nil {
 			return &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitGeneralRuntimeError,
@@ -380,7 +261,7 @@ func runInspect(cmd *cobra.Command, args []string) error {
 	}
 
 	// Standalone mode (no release name)
-	chartPath, analysis, err := setupAnalyzerAndLoadChart(cmd, flags) // Pass AppFs here
+	chartPath, analysisResult, err := setupAnalyzerAndLoadChart(cmd, flags) // Pass AppFs here
 	if err != nil {
 		// Log the error details for better debugging
 		log.Debug("Error during setupAnalyzerAndLoadChart", err)
@@ -400,13 +281,13 @@ func runInspect(cmd *cobra.Command, args []string) error {
 	if len(flags.SourceRegistries) > 0 {
 		// Log filtering action
 		log.Info("Filtering results to only include registries", "registries", strings.Join(flags.SourceRegistries, ", "))
-		filterImagesBySourceRegistries(cmd, flags, analysis) // Modifies analysis in place
+		filterImagesBySourceRegistries(cmd, flags, analysisResult) // Modifies analysis in place
 	}
 
 	// Perform subchart check if not explicitly disabled
 	if !flags.NoSubchartCheck && chartPath != "" {
 		// Check for subchart discrepancies
-		if err := checkSubchartDiscrepancy(cmd, chartPath, analysis); err != nil {
+		if err := checkSubchartDiscrepancy(cmd, chartPath, analysisResult); err != nil {
 			// Just log the error, don't fail the command
 			log.Warn("Failed to check for subchart discrepancies: %s", err)
 		}
@@ -419,7 +300,7 @@ func runInspect(cmd *cobra.Command, args []string) error {
 		log.Info("Successfully loaded and analyzed chart", "path", chartPath)
 
 		// Extract unique registries from the potentially filtered analysis.
-		uniqueRegistries := extractUniqueRegistries(analysis.Images)
+		uniqueRegistries := extractUniqueRegistries(analysisResult.Images)
 
 		if len(uniqueRegistries) > 0 {
 			log.Info("Found images from the following registries:")
@@ -447,7 +328,7 @@ func runInspect(cmd *cobra.Command, args []string) error {
 	// --- End Informational Output ---
 
 	// Output the main analysis result (after logging informational messages)
-	if err := writeOutput(cmd, analysis, flags); err != nil {
+	if err := writeOutput(cmd, analysisResult, flags); err != nil {
 		return err // Return error with exit code from writeOutput
 	}
 
@@ -455,17 +336,14 @@ func runInspect(cmd *cobra.Command, args []string) error {
 }
 
 // setupAnalyzerAndLoadChart prepares the analyzer config and loads the chart for standalone mode.
-// It now explicitly uses AppFs for path checking and chart loading.
-func setupAnalyzerAndLoadChart(_ *cobra.Command, flags *InspectFlags) (string, *ImageAnalysis, error) {
-	config := flags.AnalyzerConfig // Already configured in getInspectFlags
+// Uses the context-aware chart loading to properly handle subcharts.
+func setupAnalyzerAndLoadChart(cmd *cobra.Command, flags *InspectFlags) (string, *ImageAnalysis, error) {
 	chartPath := flags.ChartPath
 	var relativePath string // Declare relativePath variable
 
 	// Detect chart path if not provided
 	if chartPath == "" {
 		var detectErr error
-		// Start search from the current directory (".") within the mock filesystem
-		// Use the updated function name and capture all return values
 		chartPath, relativePath, detectErr = detectChartIfNeeded(AppFs, ".") // Assuming start from "."
 		if detectErr != nil {
 			return "", nil, &exitcodes.ExitCodeError{
@@ -473,11 +351,10 @@ func setupAnalyzerAndLoadChart(_ *cobra.Command, flags *InspectFlags) (string, *
 				Err:  fmt.Errorf("failed to find chart: %w", detectErr),
 			}
 		}
-		// Log both detected paths for clarity
 		log.Info("Detected chart path", "absolute", chartPath, "relative", relativePath)
 	} else {
 		// Validate provided chart path using AppFs
-		absChartPath := chartPath // Use the provided path directly for now
+		absChartPath := chartPath
 		exists, err := afero.Exists(AppFs, absChartPath)
 		if err != nil {
 			return "", nil, &exitcodes.ExitCodeError{
@@ -491,32 +368,95 @@ func setupAnalyzerAndLoadChart(_ *cobra.Command, flags *InspectFlags) (string, *
 				Err:  fmt.Errorf("chart path not found or inaccessible: %s", absChartPath),
 			}
 		}
-		chartPath = absChartPath // Use absolute path - Correction: chartPath is assigned, no need for absChartPath re-assignment
+		chartPath = absChartPath
 	}
 
-	// Load the chart using the filesystem-aware function
-	loadedChart, err := loadHelmChart(AppFs, chartPath)
+	// Create value options from flags
+	valueOpts := &values.Options{}
+
+	// Get values files
+	valuesFiles, err := cmd.Flags().GetStringSlice("values")
 	if err != nil {
-		// loadHelmChart should already return an ExitCodeError
-		log.Debug("Failed during loadHelmChart", err)
-		return chartPath, nil, err
+		return "", nil, &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get values files: %w", err),
+		}
+	}
+	valueOpts.ValueFiles = valuesFiles
+
+	// Get set values
+	setValues, err := cmd.Flags().GetStringSlice("set")
+	if err == nil && len(setValues) > 0 {
+		valueOpts.Values = setValues
 	}
 
-	// Analyze the chart
-	// Pass relativePath if analyzeChart needs it, otherwise it remains unused for now
-	// analysis, err := analyzeChart(loadedChart, config, relativePath) // Example if needed
-	analysis, err := analyzeChart(loadedChart, config) // Current signature
+	// Get set-string values
+	setStringValues, err := cmd.Flags().GetStringSlice("set-string")
+	if err == nil && len(setStringValues) > 0 {
+		valueOpts.StringValues = setStringValues
+	}
+
+	// Get set-file values
+	setFileValues, err := cmd.Flags().GetStringSlice("set-file")
+	if err == nil && len(setFileValues) > 0 {
+		valueOpts.FileValues = setFileValues
+	}
+
+	// Create chart loader options
+	loaderOptions := &helm.ChartLoaderOptions{
+		ChartPath:  chartPath,
+		ValuesOpts: *valueOpts,
+	}
+
+	// Create chart loader
+	chartLoader := helm.NewChartLoader()
+
+	// Load chart and track origins - this properly handles subcharts and dependencies
+	chartAnalysisContext, err := chartLoader.LoadChartAndTrackOrigins(loaderOptions)
 	if err != nil {
-		// analyzeChart should already return an ExitCodeError
-		return chartPath, nil, err
+		return "", nil, &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitChartLoadFailed,
+			Err:  fmt.Errorf("failed to load chart with values: %w", err),
+		}
 	}
 
-	return chartPath, analysis, nil
+	// Create context-aware analyzer
+	contextAnalyzer := helm.NewContextAwareAnalyzer(chartAnalysisContext)
+
+	// Run analysis
+	chartAnalysisResult, err := contextAnalyzer.AnalyzeContext()
+	if err != nil {
+		return "", nil, &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitChartProcessingFailed,
+			Err:  fmt.Errorf("chart analysis failed: %w", err),
+		}
+	}
+
+	// Convert analysis.ImagePattern to analyzer.ImagePattern for compatibility
+	analyzerImagePatterns := convertAnalysisPatternsToAnalyzerPatterns(chartAnalysisResult.ImagePatterns)
+
+	// Process image patterns using the converted type
+	images, skipped := processImagePatterns(analyzerImagePatterns)
+
+	// Create image analysis for the CLI output, using the converted patterns
+	analysisResult := &ImageAnalysis{
+		Chart: ChartInfo{
+			Name:         chartAnalysisContext.Chart.Metadata.Name,
+			Version:      chartAnalysisContext.Chart.Metadata.Version,
+			Path:         chartAnalysisContext.Chart.ChartPath(),
+			Dependencies: len(chartAnalysisContext.Chart.Dependencies()),
+		},
+		Images:        images,
+		ImagePatterns: analyzerImagePatterns,
+		Skipped:       skipped,
+	}
+
+	return chartPath, analysisResult, nil
 }
 
 // filterImagesBySourceRegistries modifies the analysis object to only include images
 // from the specified source registries.
-func filterImagesBySourceRegistries(_ *cobra.Command, flags *InspectFlags, analysis *ImageAnalysis) {
+func filterImagesBySourceRegistries(_ *cobra.Command, flags *InspectFlags, analysisResult *ImageAnalysis) {
 	sourceSet := make(map[string]bool)
 	for _, r := range flags.SourceRegistries {
 		normalized := image.NormalizeRegistry(r)
@@ -528,19 +468,19 @@ func filterImagesBySourceRegistries(_ *cobra.Command, flags *InspectFlags, analy
 		return // No valid registries to filter by
 	}
 
-	filteredImages := make([]ImageInfo, 0, len(analysis.Images))
-	for _, img := range analysis.Images {
+	filteredImages := make([]ImageInfo, 0, len(analysisResult.Images))
+	for _, img := range analysisResult.Images {
 		normalizedRegistry := image.NormalizeRegistry(img.Registry)
 		if sourceSet[normalizedRegistry] {
 			filteredImages = append(filteredImages, img)
 		}
 	}
-	analysis.Images = filteredImages
+	analysisResult.Images = filteredImages
 
 	// Also filter imagePatterns (simple approach: remove if no resulting image matches)
 	// A more robust approach might analyze pattern structure itself.
-	filteredPatterns := make([]analyzer.ImagePattern, 0, len(analysis.ImagePatterns))
-	for _, pattern := range analysis.ImagePatterns {
+	filteredPatterns := make([]analyzer.ImagePattern, 0, len(analysisResult.ImagePatterns))
+	for _, pattern := range analysisResult.ImagePatterns {
 		imgRef, err := image.ParseImageReference(pattern.Value) // Assuming pattern.Value holds the image string or similar
 		if err == nil {
 			normalizedRegistry := image.NormalizeRegistry(imgRef.Registry)
@@ -555,7 +495,7 @@ func filterImagesBySourceRegistries(_ *cobra.Command, flags *InspectFlags, analy
 			filteredPatterns = append(filteredPatterns, pattern)
 		}
 	}
-	analysis.ImagePatterns = filteredPatterns
+	analysisResult.ImagePatterns = filteredPatterns
 }
 
 // extractUniqueRegistries extracts a set of unique registry names from image info
@@ -653,7 +593,7 @@ func inspectHelmRelease(cmd *cobra.Command, flags *InspectFlags, releaseName, na
 	images, skipped := processImagePatterns(analysisPatterns)
 
 	// Create analysis result
-	analysis := &ImageAnalysis{
+	analysisResult := &ImageAnalysis{
 		Chart:         chartInfo,
 		Images:        images,
 		ImagePatterns: analysisPatterns, // Patterns found in values
@@ -668,29 +608,33 @@ func inspectHelmRelease(cmd *cobra.Command, flags *InspectFlags, releaseName, na
 		// Create a map for O(1) lookups
 		registryMap := make(map[string]bool)
 		for _, reg := range flags.SourceRegistries {
-			registryMap[reg] = true
+			normalized := image.NormalizeRegistry(reg)
+			registryMap[normalized] = true
 		}
 
 		// Filter images
-		for _, img := range analysis.Images {
+		for _, img := range analysisResult.Images {
 			if registryMap[img.Registry] {
 				filteredImages = append(filteredImages, img)
 			}
 		}
 
 		// Update the analysis with filtered images
-		analysis.Images = filteredImages
+		analysisResult.Images = filteredImages
 		log.Info("Filtered images to", len(flags.SourceRegistries), "registries")
 	}
 
 	// Write output
-	return writeOutput(cmd, analysis, flags)
+	return writeOutput(cmd, analysisResult, flags)
 }
 
 // getInspectFlags retrieves and validates flags for the inspect command
 func getInspectFlags(cmd *cobra.Command, releaseNameProvided bool) (*InspectFlags, error) {
-	// Get chart path
-	chartPath, err := cmd.Flags().GetString("chart-path")
+	flags := &InspectFlags{}
+
+	// Get chart path from --chart-path flag
+	var err error
+	flags.ChartPath, err = cmd.Flags().GetString("chart-path")
 	if err != nil {
 		return nil, &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitInputConfigurationError,
@@ -698,87 +642,8 @@ func getInspectFlags(cmd *cobra.Command, releaseNameProvided bool) (*InspectFlag
 		}
 	}
 
-	// Get release-name flag
-	releaseName, err := cmd.Flags().GetString("release-name")
-	if err != nil {
-		return nil, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get release-name flag: %w", err),
-		}
-	}
-
-	// Get namespace flag
-	namespace, err := cmd.Flags().GetString("namespace")
-	if err != nil {
-		return nil, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get namespace flag: %w", err),
-		}
-	}
-
-	// Get all-namespaces flag
-	allNamespaces, err := cmd.Flags().GetBool("all-namespaces")
-	if err != nil {
-		return nil, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get all-namespaces flag: %w", err),
-		}
-	}
-
-	// If all-namespaces is true, validate that it doesn't conflict with other flags
-	if allNamespaces {
-		if chartPath != "" {
-			return nil, &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitInputConfigurationError,
-				Err:  fmt.Errorf("--all-namespaces cannot be used together with --chart-path"),
-			}
-		}
-
-		if releaseName != "" {
-			return nil, &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitInputConfigurationError,
-				Err:  fmt.Errorf("--all-namespaces cannot be used together with --release-name"),
-			}
-		}
-
-		if namespace != defaultNamespace {
-			return nil, &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitInputConfigurationError,
-				Err:  fmt.Errorf("--all-namespaces cannot be used together with --namespace"),
-			}
-		}
-	}
-
-	// Only require chart-path if we're not using a release name in plugin mode or all-namespaces
-	if chartPath == "" && !releaseNameProvided && !allNamespaces {
-		return nil, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitMissingRequiredFlag,
-			Err:  fmt.Errorf("required flag \"chart-path\" not set"),
-		}
-	}
-
-	// If we have a chart path, validate it
-	if chartPath != "" {
-		// Check if chart exists using the AppFs
-		_, err = AppFs.Stat(chartPath)
-		if err != nil {
-			// Check if the error is specifically a 'not found' error
-			if os.IsNotExist(err) {
-				return nil, &exitcodes.ExitCodeError{
-					Code: exitcodes.ExitChartNotFound,
-					Err:  fmt.Errorf("chart path not found or inaccessible: %s", chartPath),
-				}
-			}
-			// Handle other potential errors from Stat (e.g., permissions)
-			return nil, &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitChartLoadFailed, // Use a more general load fail code
-				Err:  fmt.Errorf("error accessing chart path %s: %w", chartPath, err),
-			}
-		}
-	}
-
-	// Get output file
-	outputFile, err := cmd.Flags().GetString("output-file")
+	// Get output file path from --output-file flag
+	flags.OutputFile, err = cmd.Flags().GetString("output-file")
 	if err != nil {
 		return nil, &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitInputConfigurationError,
@@ -786,8 +651,8 @@ func getInspectFlags(cmd *cobra.Command, releaseNameProvided bool) (*InspectFlag
 		}
 	}
 
-	// Get output format
-	outputFormat, err := cmd.Flags().GetString("output-format")
+	// Get output format from --output-format flag
+	flags.OutputFormat, err = cmd.Flags().GetString("output-format")
 	if err != nil {
 		return nil, &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitInputConfigurationError,
@@ -795,21 +660,16 @@ func getInspectFlags(cmd *cobra.Command, releaseNameProvided bool) (*InspectFlag
 		}
 	}
 
-	// If not set, default to yaml (should already be default, but double-check for empty string)
-	if outputFormat == "" {
-		outputFormat = outputFormatYAML
-	}
-
-	// Validate output format
-	if outputFormat != outputFormatYAML && outputFormat != outputFormatJSON {
+	// Validate output format is supported
+	if flags.OutputFormat != outputFormatYAML && flags.OutputFormat != outputFormatJSON {
 		return nil, &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("invalid output format '%s': must be '%s' or '%s'", outputFormat, outputFormatYAML, outputFormatJSON),
+			Err:  fmt.Errorf("unsupported output format %q; supported formats: %s, %s", flags.OutputFormat, outputFormatYAML, outputFormatJSON),
 		}
 	}
 
 	// Get generate-config-skeleton flag
-	generateConfigSkeleton, err := cmd.Flags().GetBool("generate-config-skeleton")
+	flags.GenerateConfigSkeleton, err = cmd.Flags().GetBool("generate-config-skeleton")
 	if err != nil {
 		return nil, &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitInputConfigurationError,
@@ -818,7 +678,7 @@ func getInspectFlags(cmd *cobra.Command, releaseNameProvided bool) (*InspectFlag
 	}
 
 	// Get overwrite-skeleton flag
-	overwriteSkeleton, err := cmd.Flags().GetBool("overwrite-skeleton")
+	flags.OverwriteSkeleton, err = cmd.Flags().GetBool("overwrite-skeleton")
 	if err != nil {
 		return nil, &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitInputConfigurationError,
@@ -827,7 +687,7 @@ func getInspectFlags(cmd *cobra.Command, releaseNameProvided bool) (*InspectFlag
 	}
 
 	// Get no-subchart-check flag
-	noSubchartCheck, err := cmd.Flags().GetBool("no-subchart-check")
+	flags.NoSubchartCheck, err = cmd.Flags().GetBool("no-subchart-check")
 	if err != nil {
 		return nil, &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitInputConfigurationError,
@@ -835,24 +695,113 @@ func getInspectFlags(cmd *cobra.Command, releaseNameProvided bool) (*InspectFlag
 		}
 	}
 
-	// Validate overwrite-skeleton is only used with generate-config-skeleton
-	if overwriteSkeleton && !generateConfigSkeleton {
+	// Get all-namespaces flag
+	flags.AllNamespaces, err = cmd.Flags().GetBool("all-namespaces")
+	if err != nil {
 		return nil, &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("--overwrite-skeleton requires --generate-config-skeleton"),
+			Err:  fmt.Errorf("failed to get all-namespaces flag: %w", err),
 		}
 	}
 
-	// Get analysis patterns
-	includePatterns, excludePatterns, err := getAnalysisPatterns(cmd)
-	if err != nil {
-		return nil, err
+	// Validate conflicts with all-namespaces
+	if flags.AllNamespaces {
+		if flags.ChartPath != "" {
+			return nil, &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitInputConfigurationError,
+				Err:  errors.New("--all-namespaces cannot be used with --chart-path"),
+			}
+		}
+		// If release name was provided, flag conflict
+		if releaseNameProvided {
+			return nil, &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitInputConfigurationError,
+				Err:  errors.New("--all-namespaces cannot be used with a release name"),
+			}
+		}
+		// Check if --namespace was explicitly set (if it's not default)
+		namespace, nsErr := cmd.Flags().GetString("namespace")
+		if nsErr == nil && namespace != defaultNamespace && namespace != "" {
+			return nil, &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitInputConfigurationError,
+				Err:  errors.New("--all-namespaces cannot be used with --namespace"),
+			}
+		}
 	}
 
-	// Create analyzer config
-	analyzerConfig := &analyzer.Config{}
-	analyzerConfig.IncludePatterns = includePatterns
-	analyzerConfig.ExcludePatterns = excludePatterns
+	// Validate output file path now to avoid later issues
+	if flags.OutputFile != "" {
+		// Check if directory exists
+		outDir := filepath.Dir(flags.OutputFile)
+		if stat, err := os.Stat(outDir); err != nil || !stat.IsDir() {
+			return nil, &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitIOError,
+				Err:  fmt.Errorf("output directory %q does not exist or is not a directory", outDir),
+			}
+		}
+
+		// Check if output file is writable (or can be created)
+		// Case 1: File exists - check if we can write to it
+		if stat, err := os.Stat(flags.OutputFile); err == nil {
+			if flags.GenerateConfigSkeleton && !flags.OverwriteSkeleton {
+				return nil, &exitcodes.ExitCodeError{
+					Code: exitcodes.ExitIOError,
+					Err:  fmt.Errorf("skeleton file %q already exists; use --overwrite-skeleton to overwrite", flags.OutputFile),
+				}
+			}
+			// Check if it's a regular file
+			if !stat.Mode().IsRegular() {
+				return nil, &exitcodes.ExitCodeError{
+					Code: exitcodes.ExitIOError,
+					Err:  fmt.Errorf("output path %q exists but is not a regular file", flags.OutputFile),
+				}
+			}
+			// Check write permission (attempt to open for writing)
+			f, err := os.OpenFile(flags.OutputFile, os.O_WRONLY, 0)
+			if err != nil {
+				return nil, &exitcodes.ExitCodeError{
+					Code: exitcodes.ExitIOError,
+					Err:  fmt.Errorf("cannot write to output file %q: %w", flags.OutputFile, err),
+				}
+			}
+			if err := f.Close(); err != nil {
+				log.Warn("Error closing file after permission check", "error", err)
+			}
+		}
+		// Case 2: File doesn't exist - check if we can create it
+		// Attempt to create and then remove the file
+		f, err := os.OpenFile(flags.OutputFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, fileutil.ReadWriteUserReadOthers)
+		if err != nil {
+			return nil, &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitIOError,
+				Err:  fmt.Errorf("cannot create output file %q: %w", flags.OutputFile, err),
+			}
+		}
+		if err := f.Close(); err != nil {
+			log.Warn("Error closing temporary file", "error", err)
+		}
+		// Only remove the file if it didn't exist before
+		if _, err := os.Stat(flags.OutputFile); err == nil {
+			if err := os.Remove(flags.OutputFile); err != nil {
+				log.Warn("Failed to remove temporary file", "path", flags.OutputFile, "error", err)
+			}
+		}
+	}
+
+	// Get the analyzer config with include/exclude patterns
+	includePatterns, excludePatterns, err := getAnalysisPatterns(cmd)
+	if err != nil {
+		return nil, &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get analysis patterns: %w", err),
+		}
+	}
+
+	config := &analyzer.Config{
+		IncludePatterns: includePatterns,
+		ExcludePatterns: excludePatterns,
+	}
+	flags.AnalyzerConfig = config
 
 	// Get source registries
 	sourceRegistries, err := cmd.Flags().GetStringSlice("source-registries")
@@ -862,18 +811,10 @@ func getInspectFlags(cmd *cobra.Command, releaseNameProvided bool) (*InspectFlag
 			Err:  fmt.Errorf("failed to get source-registries flag: %w", err),
 		}
 	}
+	flags.SourceRegistries = sourceRegistries
 
-	return &InspectFlags{
-		ChartPath:              chartPath,
-		OutputFile:             outputFile,
-		OutputFormat:           outputFormat,
-		GenerateConfigSkeleton: generateConfigSkeleton,
-		AnalyzerConfig:         analyzerConfig,
-		SourceRegistries:       sourceRegistries,
-		AllNamespaces:          allNamespaces,
-		OverwriteSkeleton:      overwriteSkeleton,
-		NoSubchartCheck:        noSubchartCheck,
-	}, nil
+	// Return the extracted flags
+	return flags, nil
 }
 
 // getAnalysisPatterns retrieves include/exclude patterns from flags
@@ -899,57 +840,76 @@ func getAnalysisPatterns(cmd *cobra.Command) (includePatterns, excludePatterns [
 	return includePatterns, excludePatterns, nil
 }
 
-// processImagePatterns converts analysis patterns into ImageInfo and skipped list
+// processImagePatterns converts analyzer.ImagePattern structs into ImageInfo structs,
+// attempting to parse image references and logging skipped patterns.
 func processImagePatterns(patterns []analyzer.ImagePattern) (images []ImageInfo, skipped []string) {
-	// Extract images from patterns
+	images = make([]ImageInfo, 0, len(patterns))
+	skipped = make([]string, 0)
+
 	for _, pattern := range patterns {
-		// Skip non-string patterns for direct image extraction
-		if pattern.Type != "string" {
-			// For map-based patterns, construct the image reference
-			if pattern.Structure != nil {
-				var imageRef string
-				if pattern.Structure.Registry != "" {
-					imageRef += pattern.Structure.Registry + "/"
-				}
-				imageRef += pattern.Structure.Repository
-				if pattern.Structure.Tag != "" {
-					imageRef += ":" + pattern.Structure.Tag
-				}
+		// Handle Map-based patterns
+		if pattern.Type == "map" && pattern.Structure != nil {
+			// Attempt to reconstruct the full image string from the structured map
+			reg := image.DefaultRegistry // Use imported constant
+			repo := pattern.Structure.Repository
+			tag := "latest" // Default tag
 
-				// Parse the constructed image reference
-				imgRef, err := image.ParseImageReference(imageRef)
-				if err != nil {
-					skipped = append(skipped, fmt.Sprintf("%s (%s): %v", pattern.Path, imageRef, err))
-					continue
-				}
-
-				// Convert to our ImageInfo type
-				images = append(images, ImageInfo{
-					Registry:   imgRef.Registry,
-					Repository: imgRef.Repository,
-					Tag:        imgRef.Tag,
-					Digest:     imgRef.Digest,
-					Source:     pattern.Path,
-				})
+			if pattern.Structure.Registry != "" {
+				reg = pattern.Structure.Registry
 			}
-			continue
+			if pattern.Structure.Tag != "" {
+				tag = pattern.Structure.Tag
+			}
+
+			if repo == "" {
+				skipped = append(skipped, fmt.Sprintf("%s (map type): missing repository field", pattern.Path))
+				continue
+			}
+
+			// Normalize registry (e.g., add library/ for docker.io)
+			if reg == image.DefaultRegistry && !strings.Contains(repo, "/") {
+				repo = "library/" + repo
+			}
+
+			imageRefStr := fmt.Sprintf("%s/%s:%s", reg, repo, tag)
+
+			// Parse the reconstructed image reference
+			imgRef, err := image.ParseImageReference(imageRefStr)
+			if err != nil {
+				skipped = append(skipped, fmt.Sprintf("%s (map type: %s): %v", pattern.Path, imageRefStr, err))
+				continue
+			}
+
+			images = append(images, ImageInfo{
+				Registry:   imgRef.Registry,
+				Repository: imgRef.Repository,
+				Tag:        imgRef.Tag,
+				Digest:     imgRef.Digest,
+				Source:     pattern.Path, // Path is already string
+			})
+			continue // Move to the next pattern
 		}
 
-		// For string patterns, parse directly
-		imgRef, err := image.ParseImageReference(pattern.Value)
-		if err != nil {
-			skipped = append(skipped, fmt.Sprintf("%s (%s): %v", pattern.Path, pattern.Value, err))
-			continue
+		// Handle String-based patterns
+		if pattern.Type == "string" {
+			imgRef, err := image.ParseImageReference(pattern.Value)
+			if err != nil {
+				skipped = append(skipped, fmt.Sprintf("%s (string type: %s): %v", pattern.Path, pattern.Value, err))
+				continue
+			}
+
+			images = append(images, ImageInfo{
+				Registry:   imgRef.Registry,
+				Repository: imgRef.Repository,
+				Tag:        imgRef.Tag,
+				Digest:     imgRef.Digest,
+				Source:     pattern.Path, // Path is already string
+			})
+			continue // Move to the next pattern
 		}
 
-		// Convert to our ImageInfo type
-		images = append(images, ImageInfo{
-			Registry:   imgRef.Registry,
-			Repository: imgRef.Repository,
-			Tag:        imgRef.Tag,
-			Digest:     imgRef.Digest,
-			Source:     pattern.Path,
-		})
+		// Skip other pattern types
+		skipped = append(skipped, fmt.Sprintf("%s (type %s): skipping direct processing", pattern.Path, pattern.Type))
 	}
 
 	return images, skipped
@@ -1217,7 +1177,7 @@ func analyzeRelease(release *helm.ReleaseElement, helmAdapter *helm.Adapter, fla
 	originalImages, skipped := processImagePatterns(analysisPatterns)
 
 	// Create analysis result structure
-	analysis := ImageAnalysis{
+	analysisResult := ImageAnalysis{
 		Chart:         chartInfo,
 		Images:        originalImages, // Start with original images
 		ImagePatterns: analysisPatterns,
@@ -1248,14 +1208,14 @@ func analyzeRelease(release *helm.ReleaseElement, helmAdapter *helm.Adapter, fla
 		}
 
 		// Update the analysis.Images field ONLY for the output result
-		analysis.Images = filteredImagesForOutput
+		analysisResult.Images = filteredImagesForOutput
 	}
 
 	// Return the potentially filtered analysis result AND the original unfiltered images
 	return &ReleaseAnalysisResult{
 		ReleaseName: release.Name,
 		Namespace:   release.Namespace,
-		Analysis:    analysis,
+		Analysis:    analysisResult,
 	}, unfilteredImagesForSkeleton, nil // Return unfiltered images here
 }
 
@@ -1459,7 +1419,7 @@ func inspectAllNamespaces(cmd *cobra.Command, flags *InspectFlags) error {
 // checkSubchartDiscrepancy checks for discrepancies between the analyzer's image count
 // and the images found in rendered chart templates (specifically from Deployments and StatefulSets).
 // It returns an error only for fatal issues like chart loading errors, not for discrepancies.
-func checkSubchartDiscrepancy(cmd *cobra.Command, chartPath string, analysis *ImageAnalysis) error {
+func checkSubchartDiscrepancy(cmd *cobra.Command, chartPath string, analysisResult *ImageAnalysis) error {
 	log.Debug("Checking for subchart image discrepancies")
 
 	// Get values files from command line
@@ -1539,7 +1499,7 @@ func checkSubchartDiscrepancy(cmd *cobra.Command, chartPath string, analysis *Im
 	}
 
 	// Compare image counts
-	analyzerImageCount := len(analysis.Images)
+	analyzerImageCount := len(analysisResult.Images)
 	templateImageCount := len(templateImages)
 
 	// Circuit breaker check - using constant instead of magic number
@@ -1610,4 +1570,34 @@ func extractImagesFromContainers(podSpec map[string]interface{}, containerType s
 		// Add image to the set
 		images[imageValue] = struct{}{}
 	}
+}
+
+// convertAnalysisPatternsToAnalyzerPatterns converts the analysis package patterns
+// to the analyzer package patterns for compatibility with existing functions.
+func convertAnalysisPatternsToAnalyzerPatterns(analysisPatterns []analysis.ImagePattern) []analyzer.ImagePattern {
+	analyzerPatterns := make([]analyzer.ImagePattern, 0, len(analysisPatterns))
+	for _, ap := range analysisPatterns {
+		var azStruct *analyzer.ImageStructure
+		if ap.Type == analysis.PatternTypeMap && ap.Structure != nil {
+			azStruct = &analyzer.ImageStructure{}
+			if reg, ok := ap.Structure["registry"].(string); ok {
+				azStruct.Registry = reg
+			}
+			if repo, ok := ap.Structure["repository"].(string); ok {
+				azStruct.Repository = repo
+			}
+			if tag, ok := ap.Structure["tag"].(string); ok {
+				azStruct.Tag = tag
+			}
+		}
+
+		analyzerPatterns = append(analyzerPatterns, analyzer.ImagePattern{
+			Path:      ap.Path,
+			Type:      string(ap.Type),
+			Value:     ap.Value,
+			Structure: azStruct,
+			Count:     ap.Count,
+		})
+	}
+	return analyzerPatterns
 }
