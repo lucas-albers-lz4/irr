@@ -242,7 +242,7 @@ The project includes both unit tests and integration tests. Here's how to run th
 make test
 ```
 
-For detailed testing instructions, test architecture, and test coverage information, see [TESTING.md](TESTING.md).
+For detailed testing instructions, test architecture, and test coverage information, see [TESTING.md](docs/TESTING.md).
 
 # Testing a Single Helm Chart
 
