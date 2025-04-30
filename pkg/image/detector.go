@@ -545,9 +545,7 @@ func (d *Detector) createImageReference(repoStr, regStr, tagStr, digestStr strin
 
 	// Determine which registry to apply using a switch statement instead of if-else chain
 	hasRegistryPrefix := false
-	//nolint:nilaway // strings.SplitN always returns non-nil slice
 	if regStr == "" && len(strings.SplitN(repoStr, "/", MaxComponents)) > 1 {
-		//nolint:nilaway // strings.SplitN always returns non-nil slice
 		firstPart := strings.SplitN(repoStr, "/", MaxComponents)[0]
 		hasRegistryPrefix = strings.ContainsAny(firstPart, ".:") || firstPart == "localhost"
 	}
@@ -563,7 +561,6 @@ func (d *Detector) createImageReference(repoStr, regStr, tagStr, digestStr strin
 	case hasRegistryPrefix:
 		// Case 2: No explicit registry, but repoStr contains registry prefix
 		// Don't add anything to builder here, as registry is part of repoStr
-		//nolint:nilaway // strings.SplitN always returns non-nil slice
 		firstPart := strings.SplitN(repoStr, "/", MaxComponents)[0]
 		registryApplied = firstPart + " (in repoStr)"
 		log.Debug("Detected potential registry prefix ('", firstPart, "') in repoStr ('", repoStr, "'). Skipping global registry.")
@@ -637,15 +634,11 @@ func (d *Detector) tryExtractImageFromMap(m map[string]interface{}, path []strin
 	// Handle registry prefix that might be part of the repo string
 	if result.Repository != "" {
 		// Check if repo string might have registry prefix (contains '/')
-		//nolint:nilaway // strings.SplitN always returns non-nil slice
 		if repoParts := strings.SplitN(result.Repository, "/", MaxComponents); len(repoParts) > 1 {
 			// The first part looks like a registry hostname if it contains dots or ':'
 			// e.g., "docker.io/nginx" or "localhost:5000/myapp"
-			//nolint:nilaway // index checked by len(repoParts) > 1
 			if strings.Contains(repoParts[0], ".") || strings.Contains(repoParts[0], ":") {
-				//nolint:nilaway // index checked by len(repoParts) > 1
 				result.Registry = repoParts[0]
-				//nolint:nilaway // index checked by len(repoParts) > 1
 				result.Repository = repoParts[1]
 			}
 		}

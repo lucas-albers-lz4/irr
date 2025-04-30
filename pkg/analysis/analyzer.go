@@ -585,14 +585,14 @@ func (a *Analyzer) ParseImageString(val string) (registry, repository, tag strin
 	registry = DefaultRegistry
 	tag = DefaultTag
 
-	parts := strings.Split(val, "/") //nolint:nilaway // strings.Split always returns non-nil slice
-	if len(parts) == 0 {             // Should not happen with strings.Split, but defensive check
+	parts := strings.Split(val, "/")
+	if len(parts) == 0 {
 		return "", "", DefaultTag
 	}
 
 	lastPart := parts[len(parts)-1]
-	repoParts := strings.Split(lastPart, ":") //nolint:nilaway // strings.Split always returns non-nil slice
-	if len(repoParts) == 0 {                  // Should not happen, defensive check
+	repoParts := strings.Split(lastPart, ":")
+	if len(repoParts) == 0 { // Should not happen, defensive check
 		repository = lastPart // Treat as repository only if split fails unexpectedly
 	} else {
 		repository = repoParts[0]
@@ -609,10 +609,10 @@ func (a *Analyzer) ParseImageString(val string) (registry, repository, tag strin
 			// Join the middle parts back for the repository name
 			// Ensure repoParts[0] is included correctly
 			if len(repoParts) > 0 {
-				repository = strings.Join(parts[1:len(parts)-1], "/") + "/" + repoParts[0] //nolint:nilaway // length checks above ensure safety
+				repository = strings.Join(parts[1:len(parts)-1], "/") + "/" + repoParts[0]
 			} else {
 				// Handle edge case like "registry/namespace/:tag" ? This seems invalid, but be safe.
-				repository = strings.Join(parts[1:len(parts)-1], "/") //nolint:nilaway // length checks above ensure safety
+				repository = strings.Join(parts[1:len(parts)-1], "/")
 			}
 		}
 		// If len(parts) == 2 (i.e., <= maxSplitTwo), repository is already set correctly from repoParts[0] above
@@ -672,5 +672,5 @@ func ensureString(v interface{}) (string, bool) {
 func splitRepoPath(repo string) []string {
 	// Splitting a non-empty string will always yield at least one element.
 	// Splitting an empty string yields a slice with one empty string.
-	return strings.SplitN(repo, "/", maxSplitTwo) //nolint:nilaway // strings.SplitN always returns non-nil slice
+	return strings.SplitN(repo, "/", maxSplitTwo)
 }

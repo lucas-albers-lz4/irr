@@ -121,7 +121,7 @@ func (c *RealHelmClient) GetReleaseMetadata(_ context.Context, releaseName, name
 		return nil, fmt.Errorf("chart %s from release %s in namespace %s has nil metadata", chartObj.Name(), releaseName, namespace)
 	}
 
-	return chartObj.Metadata, nil //nolint:nilaway // Nil checks performed above
+	return chartObj.Metadata, nil
 }
 
 // TemplateChart implements ClientInterface.

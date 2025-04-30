@@ -111,6 +111,9 @@ linters:
       allow-unused: false
       require-explanation: true
       require-specific: true
+      # Allow nolint directives for linters known to be run separately.
+      allow-unknown:
+        - nilaway
     mnd:
       # Comma-separated list of checks to enable
       # Recommended: argument, assign, case, condition, return, operation
@@ -148,7 +151,9 @@ linters:
     funlen:
       lines: 200
       statements: 65
-
+    allow-unused: true
+    allow-unknown:
+      - nilaway
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0

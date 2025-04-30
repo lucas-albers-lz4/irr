@@ -600,13 +600,10 @@ func (h *TestHarness) buildEnv(envOverrides map[string]string) []string {
 	baseEnv := os.Environ()
 	envMap := make(map[string]string)
 	for _, envVar := range baseEnv {
-		//nolint:nilaway // strings.SplitN always returns non-nil slice
 		parts := strings.SplitN(envVar, "=", envSplitCount)
 		if len(parts) == envSplitCount {
-			//nolint:nilaway // length checked above
 			envMap[parts[0]] = parts[1]
 		} else {
-			//nolint:nilaway // length checked above (parts[0] exists)
 			envMap[parts[0]] = "" // Handle variables without values
 		}
 	}

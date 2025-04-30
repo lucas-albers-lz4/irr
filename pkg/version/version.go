@@ -25,7 +25,6 @@ var execCommand = exec.Command
 func parseHelmVersionString(versionStr string) string {
 	parsed := strings.TrimSpace(versionStr)
 	parsed = strings.TrimPrefix(parsed, "v")
-	//nolint:nilaway // strings.Split always returns non-nil slice
 	parsed = strings.Split(parsed, "+")[0]
 	return parsed
 }
@@ -60,9 +59,7 @@ func CheckHelmVersion() error {
 // isVersionGreaterOrEqual compares two semantic versions
 func isVersionGreaterOrEqual(v1, v2 string) bool {
 	// Split versions into components
-	//nolint:nilaway // strings.Split always returns non-nil slice
 	v1Parts := strings.Split(v1, ".")
-	//nolint:nilaway // strings.Split always returns non-nil slice
 	v2Parts := strings.Split(v2, ".")
 
 	// Compare each component

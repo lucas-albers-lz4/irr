@@ -188,7 +188,7 @@ func TestMockHelmClient_TemplateChart_Error(t *testing.T) {
 		"error-namespace",
 		map[string]interface{}{"key": "val"}, // Values don't matter for error path
 		"1.20.0",                             // KubeVersion doesn't matter for error path
-	) //nolint:nilaway // This test specifically checks the error path, result is expected to be empty/nil.
+	)
 
 	// Verify result
 	require.Error(t, err, "Expected an error from TemplateChart")

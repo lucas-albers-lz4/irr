@@ -221,19 +221,15 @@ func validateMappingValue(source, target, path string) error {
 	}
 
 	// Validate port number if present
-	//nolint:nilaway // strings.Split always returns non-nil slice
 	hostParts := strings.Split(target, "/") // Use plural name
 	if len(hostParts) == 0 {                // Defensive check, should not happen
 		return fmt.Errorf("internal error: splitting target registry resulted in empty slice for target %s", target)
 	}
-	//nolint:nilaway // length checked above
 	hostPart := hostParts[0] // Safe access to index 0
 
 	if strings.Contains(hostPart, ":") {
-		//nolint:nilaway // strings.Split always returns non-nil slice
 		hostAndPort := strings.Split(hostPart, ":")
 		if len(hostAndPort) > 1 { // Check if port part exists
-			//nolint:nilaway // length checked above
 			portStr := hostAndPort[1] // Safe access to index 1
 			port, err := strconv.Atoi(portStr)
 			if err != nil || port < 1 || port > 65535 {

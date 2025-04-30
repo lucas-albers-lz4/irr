@@ -123,8 +123,8 @@ func GetChartPathFromRelease(releaseName string) (string, error) {
 
 	// Extract chart info
 	chartInfo := HelmChartInfo{
-		Name:    rel.Chart.Metadata.Name,    //nolint:nilaway // Nil check performed above
-		Version: rel.Chart.Metadata.Version, //nolint:nilaway // Nil check performed above
+		Name:    rel.Chart.Metadata.Name,
+		Version: rel.Chart.Metadata.Version,
 	}
 
 	log.Info("Found chart for release", "name", chartInfo.Name, "version", chartInfo.Version, "release", releaseName)
