@@ -105,7 +105,6 @@ func (l *DefaultLoader) Load(chartPath string) (*chart.Chart, error) {
 			chartName = loadedChart.Name()
 		}
 		return nil, fmt.Errorf("loaded chart %s has nil metadata", chartName)
-		// Alternative: log.Warn("Loaded chart has nil metadata", "path", absPath); // And potentially skip version logging
 	}
 	//nolint:nilaway // Nil check performed above
 	log.Debug("Successfully loaded chart", "name", loadedChart.Name(), "version", loadedChart.Metadata.Version)

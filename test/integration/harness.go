@@ -516,7 +516,7 @@ func (h *TestHarness) getOverrides() (overrides map[string]interface{}, err erro
 
 // getOverridesFromPath reads the override file at the specified path and returns its content as a map.
 func (h *TestHarness) getOverridesFromPath(filePath string) (map[string]interface{}, error) {
-	content, err := os.ReadFile(filePath)
+	content, err := os.ReadFile(filePath) //nolint:gosec // filePath is controlled by the test harness, not external input.
 	if err != nil {
 		return nil, fmt.Errorf("failed to read overrides file %s: %w", filePath, err)
 	}

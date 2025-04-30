@@ -393,18 +393,19 @@ func (g *Generator) processEligibleImagesLoop(eligibleImages []analysis.ImagePat
 
 	for _, pattern := range eligibleImages {
 		processed, unsupported, err := g.processImage(pattern, overrides) // PASS local overrides map
-		if err != nil {
+		switch {
+		case err != nil:
 			log.Warn("Error processing image pattern", "path", pattern.Path, "error", err)
 			wrappedErr := fmt.Errorf("path '%s': %w", pattern.Path, err)
 			processingErrors = append(processingErrors, wrappedErr)
-		} else if unsupported != nil {
+		case unsupported != nil:
 			log.Warn("Unsupported structure detected", "path", pattern.Path, "type", unsupported.Type, "value", pattern.Value)
 			// Handle strict mode: add error
 			if g.strict {
 				strictErr := fmt.Errorf("path '%s': %w (type: %s)", pattern.Path, ErrUnsupportedStructure, unsupported.Type)
 				processingErrors = append(processingErrors, strictErr)
 			}
-		} else if processed {
+		case processed:
 			processedCount++
 		}
 	}

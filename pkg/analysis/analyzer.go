@@ -32,8 +32,6 @@ const (
 	// --- Parsing Helpers ---
 	// maxSplitTwo is used when splitting strings into at most two parts
 	maxSplitTwo = 2
-	// minimumSplitParts defines the minimum number of parts expected when checking if a string looks like repo/name:tag
-	minimumSplitParts = 2
 	// tagSplitParts defines the number of parts expected when splitting by the first colon for tag detection.
 	tagSplitParts = 2
 )
@@ -606,7 +604,7 @@ func (a *Analyzer) ParseImageString(val string) (registry, repository, tag strin
 	if len(parts) > 1 {
 		// Has a registry part
 		registry = parts[0]
-		if len(parts) > 2 {
+		if len(parts) > maxSplitTwo {
 			// Handle cases like registry/namespace/repo...[:tag]
 			// Join the middle parts back for the repository name
 			// Ensure repoParts[0] is included correctly
@@ -617,11 +615,7 @@ func (a *Analyzer) ParseImageString(val string) (registry, repository, tag strin
 				repository = strings.Join(parts[1:len(parts)-1], "/") //nolint:nilaway // length checks above ensure safety
 			}
 		}
-		// If len(parts) == 2, repository is already set correctly from repoParts[0] above
-	} else {
-		// No registry part (len(parts) == 1)
-		// repository and tag are already set from repoParts above
-		// registry remains DefaultRegistry
+		// If len(parts) == 2 (i.e., <= maxSplitTwo), repository is already set correctly from repoParts[0] above
 	}
 
 	// Final check for empty repository which might occur with inputs like "/" or ":"
