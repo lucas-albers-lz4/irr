@@ -1,3 +1,4 @@
+// Package helm provides internal utilities for interacting with Helm.
 package helm
 
 import (

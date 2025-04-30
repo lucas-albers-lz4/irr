@@ -1,3 +1,4 @@
+// Package helm provides internal utilities for interacting with Helm.
 package helm
 
 import (
@@ -6,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/lucas-albers-lz4/irr/pkg/log"
 	"github.com/pkg/errors"
 	"gopkg.in/yaml.v3"
 	"helm.sh/helm/v3/pkg/chart"
@@ -120,9 +120,6 @@ func (l *DefaultChartLoader) LoadChartAndTrackOrigins(opts *ChartLoaderOptions) 
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to coalesce values")
 	}
-
-	// ### DEBUG: Log the structure of mergedValues ###
-	log.Debug("LOADER_DEBUG: Merged Values Structure", "values", fmt.Sprintf("%#v", mergedValues))
 
 	// Create context
 	return NewChartAnalysisContext(

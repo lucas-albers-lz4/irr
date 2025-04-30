@@ -1,3 +1,4 @@
+// Package helm provides internal utilities for interacting with Helm.
 package helm
 
 // ValueOrigin represents the source of a Helm value.

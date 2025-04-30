@@ -1,3 +1,4 @@
+// Package main implements the irr CLI commands.
 package main
 
 import (

@@ -1,8 +1,8 @@
+// Package helm provides internal utilities for interacting with Helm.
 package helm
 
 import (
 	"fmt"
-	"reflect"
 	"strings"
 
 	"github.com/lucas-albers-lz4/irr/pkg/analysis"
@@ -47,18 +47,10 @@ func (a *ContextAwareAnalyzer) AnalyzeContext() (*analysis.ChartAnalysis, error)
 
 // analyzeValues recursively analyzes a values map to identify container image references.
 func (a *ContextAwareAnalyzer) analyzeValues(values map[string]interface{}, prefix string, chartAnalysis *analysis.ChartAnalysis) error {
-	log.Debug("analyzeValues ENTER", "prefix", prefix, "keys", reflect.ValueOf(values).MapKeys())
-	defer log.Debug("analyzeValues EXIT", "prefix", prefix)
-
 	for k, v := range values {
 		currentPath := k
 		if prefix != "" {
 			currentPath = prefix + "." + k
-		}
-
-		// ### DEBUG: Check type specifically for parentImage ###
-		if k == "parentImage" {
-			log.Debug("ANALYZER_TYPE_CHECK", "key", k, "path", currentPath, "value_type", fmt.Sprintf("%T", v), "value_content", fmt.Sprintf("%#v", v))
 		}
 
 		log.Debug("analyzeValues LOOP", "path", currentPath, "type", fmt.Sprintf("%T", v))
@@ -123,7 +115,6 @@ func (a *ContextAwareAnalyzer) analyzeMapValue(val map[string]interface{}, curre
 		}
 
 		// Add the pattern to the analysis
-		log.Debug("ANALYZER_DEBUG: Adding Map Pattern", "path", pattern.Path, "value", pattern.Value)
 		chartAnalysis.ImagePatterns = append(chartAnalysis.ImagePatterns, pattern)
 		// DO NOT return here. Continue analysis into the map's children.
 	}
@@ -158,7 +149,6 @@ func (a *ContextAwareAnalyzer) analyzeStringValue(key, val, currentPath string, 
 		}
 
 		// Add the pattern to the analysis
-		log.Debug("ANALYZER_DEBUG: Adding String Pattern", "path", pattern.Path, "value", pattern.Value)
 		chartAnalysis.ImagePatterns = append(chartAnalysis.ImagePatterns, pattern)
 	}
 
