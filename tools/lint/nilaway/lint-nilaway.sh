@@ -1,4 +1,6 @@
 #!/bin/bash
 go install go.uber.org/nilaway/cmd/nilaway@latest
+#this audit takes about 8 minutes and uses a lot of mem so we don't run it nearly as frequently
+# ~/go/bin/nilaway  -experimental-anonymous-function  -experimental-struct-init ./...
 echo linting for nil errors : https://github.com/uber-go/nilaway/?tab=readme-ov-file
 ~/go/bin/nilaway -json -pretty-print=false -include-pkgs="github.com/lalbers/irr" ./...
