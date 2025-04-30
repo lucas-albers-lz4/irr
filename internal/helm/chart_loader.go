@@ -146,7 +146,7 @@ func processValuesOptions(valuesOpts *values.Options) (map[string]interface{}, e
 
 		// Read and parse the file
 		// G304: Potential file inclusion vulnerability - filePath needs validation.
-		bytes, err := os.ReadFile(filePath) // NOTE: Needs validation to prevent reading arbitrary files.
+		bytes, err := os.ReadFile(filePath) //nolint:gosec // NOTE: Needs validation to prevent reading arbitrary files.
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed to read values file %s", filePath)
 		}
@@ -265,7 +265,7 @@ func flattenAndTrackValues(valuesMap map[string]interface{}, origins map[string]
 func mergeUserValuesFileWithOrigin(fileName string, valuesMap map[string]interface{}, origins map[string]ValueOrigin) error {
 	// Read and parse the file
 	// G304: Potential file inclusion vulnerability - fileName needs validation.
-	bytes, err := os.ReadFile(fileName) // NOTE: Needs validation to prevent reading arbitrary files.
+	bytes, err := os.ReadFile(fileName) //nolint:gosec // NOTE: Needs validation to prevent reading arbitrary files.
 	if err != nil {
 		return errors.Wrapf(err, "failed to read values file %s", fileName)
 	}

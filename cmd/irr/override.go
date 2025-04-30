@@ -38,10 +38,6 @@ const (
 	chartSourceTypeChart    = "chart"
 	chartSourceTypeRelease  = "release"
 	autoDetectedChartSource = "auto-detected"
-	// defaultKubeVersion represents the default Kubernetes version used for template validation.
-	defaultKubeVersion = "1.27.0"
-	// defaultOutputFileFormat defines the default naming pattern for override files in plugin mode.
-	defaultOutputFileFormat = "%s-overrides.yaml"
 	// trueString represents the string literal "true", commonly used for boolean env vars.
 	trueString = "true"
 	// unknownSourceDescription is used when the chart source cannot be determined.
