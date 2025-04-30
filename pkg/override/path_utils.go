@@ -3,15 +3,11 @@ package override
 
 import (
 	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
 
 	log "github.com/lucas-albers-lz4/irr/pkg/log"
 )
-
-//nolint:unused // Kept for potential future uses
-var arrayIndexPattern = regexp.MustCompile(`^(.*)\[(\d+)\]$`)
 
 // DeepCopy creates a deep copy of a map[string]interface{} structure.
 // It handles nested maps, slices, and primitive values.

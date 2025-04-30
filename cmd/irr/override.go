@@ -5,8 +5,6 @@
 // To resolve the missing go.sum entries, run:
 //
 //	go get helm.sh/helm/v3@v3.14.2
-//
-//nolint:unused // These functions are used by tests but flagged as unused by the linter
 package main
 
 import (

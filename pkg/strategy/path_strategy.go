@@ -23,12 +23,6 @@ type PathStrategy interface {
 	GeneratePath(originalRef *image.Reference, targetRegistry string) (string, error)
 }
 
-//nolint:unused // Kept for potential future uses
-var strategyRegistry = map[string]PathStrategy{
-	"prefix-source-registry": NewPrefixSourceRegistryStrategy(),
-	"flat":                   NewFlatStrategy(),
-}
-
 // GetStrategy returns a path strategy based on the name
 func GetStrategy(name string, _ *registry.Mappings) (PathStrategy, error) {
 	log.Debug("GetStrategy: Getting strategy for name", "name", name)
