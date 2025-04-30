@@ -246,17 +246,38 @@ func runInspect(cmd *cobra.Command, args []string) error {
 		return inspectAllNamespaces(cmd, flags)
 	}
 
-	// Existing code for single release/chart flow
 	// Decide execution path based on args/plugin mode
 	if releaseNameProvided {
-		// Assume plugin mode if release name is given (validated inside inspectHelmRelease)
+		// Assume plugin mode if release name is given
 		releaseName = args[0] // Assign releaseName here
-		namespace, nsErr := cmd.Flags().GetString("namespace")
-		if nsErr != nil {
-			return &exitcodes.ExitCodeError{Code: exitcodes.ExitInputConfigurationError, Err: fmt.Errorf("failed to get namespace flag: %w", nsErr)}
-		} else if namespace == "" {
-			namespace = defaultNamespace // Use constant
+
+		// --- Namespace Handling for Plugin Mode ---
+		// Get namespace primarily from Helm's environment/settings when running as a plugin.
+		// Fall back to the flag if not found or not in plugin mode (though this path assumes plugin mode).
+		var namespace string
+		var nsErr error
+
+		// Check HELM_NAMESPACE env var first (common for plugins)
+		helmNamespaceEnv := os.Getenv("HELM_NAMESPACE")
+		if helmNamespaceEnv != "" {
+			namespace = helmNamespaceEnv
+			log.Debug("Using namespace from HELM_NAMESPACE env var", "namespace", namespace)
+		} else {
+			// Fallback to the flag defined by irr (might be set if not using helm irr ...)
+			namespace, nsErr = cmd.Flags().GetString("namespace")
+			if nsErr != nil {
+				return &exitcodes.ExitCodeError{Code: exitcodes.ExitInputConfigurationError, Err: fmt.Errorf("failed to get namespace flag: %w", nsErr)}
+			}
+			log.Debug("Using namespace from --namespace flag", "namespace", namespace)
 		}
+
+		// Default if still empty
+		if namespace == "" {
+			namespace = defaultNamespace // Use constant
+			log.Debug("Namespace defaulted", "namespace", namespace)
+		}
+		// --- End Namespace Handling ---
+
 		return inspectHelmRelease(cmd, flags, releaseName, namespace)
 	}
 
