@@ -111,12 +111,12 @@ func TestContextAwareAnalyzer_AnalyzeContext(t *testing.T) {
 		analyzer := NewContextAwareAnalyzer(context)
 
 		// Run analysis
-		analysis, err := analyzer.AnalyzeContext()
+		analysisResult, err := analyzer.AnalyzeContext()
 		require.NoError(t, err, "Analysis should succeed")
 
 		// Verify we find the overridden image
 		var foundOverriddenImage bool
-		for _, pattern := range analysis.ImagePatterns {
+		for _, pattern := range analysisResult.ImagePatterns {
 			if pattern.Path == "image.repository" {
 				if pattern.Value == "user/overridden-app" || pattern.Value == DefaultRegistry+"/user/overridden-app:v2.0" {
 					foundOverriddenImage = true

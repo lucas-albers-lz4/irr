@@ -12,6 +12,8 @@ import (
 const (
 	// DefaultRegistry is the standard Docker Hub registry
 	DefaultRegistry = "docker.io"
+	// defaultImageTag is the default tag used when none is specified.
+	defaultImageTag = "latest"
 )
 
 // ContextAwareAnalyzer is an analyzer that uses the ChartAnalysisContext to analyze charts
@@ -205,8 +207,8 @@ func (a *ContextAwareAnalyzer) isImageString(key, val string) bool {
 func (a *ContextAwareAnalyzer) normalizeImageValues(val map[string]interface{}) (registry, repository, tag string) {
 	// Default values
 	registry = DefaultRegistry
-	tag = "latest"
-	var repoStr string // Temporary variable for raw repository string
+	tag = defaultImageTag // Use constant
+	var repoStr string    // Temporary variable for raw repository string
 
 	// Extract raw values from map
 	if r, ok := val["registry"].(string); ok && r != "" {
@@ -235,7 +237,7 @@ func (a *ContextAwareAnalyzer) normalizeImageValues(val map[string]interface{}) 
 			// (or the default 'docker.io') because it's more specific.
 			registry = parsedReg
 		}
-		if parsedTag != "" && tag == "latest" { // Only use tag from repo string if no explicit tag was in the map
+		if parsedTag != "" && tag == defaultImageTag { // Use constant comparison
 			tag = parsedTag
 		}
 	} else {
@@ -257,7 +259,7 @@ func (a *ContextAwareAnalyzer) normalizeImageValues(val map[string]interface{}) 
 func (a *ContextAwareAnalyzer) parseImageString(val string) (registry, repository, tag string) {
 	// Default values
 	registry = DefaultRegistry
-	tag = "latest"
+	tag = defaultImageTag // Use constant
 
 	// Basic parsing for format "registry/repository:tag"
 	parts := strings.Split(val, "/")
@@ -308,22 +310,6 @@ func (a *ContextAwareAnalyzer) getSourcePathForValue(valuePath string) string {
 	// The path already includes prefixes like "child." based on the merged value structure.
 	log.Debug("getSourcePathForValue returning structural path", "path", valuePath)
 	return valuePath
-
-	/* // Original complex logic - REMOVED as it caused bugs
-	origin, exists := a.context.Origins[valuePath]
-	if exists {
-		log.Debug("getSourcePathForValue: Found origin", "valuePath", valuePath, "originChart", origin.ChartName, "contextChart", a.context.ChartName)
-		if origin.ChartName != "" && origin.ChartName != a.context.ChartName {
-			// BUGGY: return origin.ChartName + "." + valuePath
-			// Correct logic would need to understand the structure better, maybe remove prefixes?
-			// For now, just return the structurally derived valuePath.
-			return valuePath
-		}
-	} else {
-		log.Debug("getSourcePathForValue: No origin found", "valuePath", valuePath)
-	}
-	return valuePath // Fallback to the structural path
-	*/
 }
 
 // GetContext returns the analysis context.
