@@ -227,9 +227,9 @@ The tool detects the following image reference patterns in Helm chart values:
 
 ## Limitations
 
-- Images defined outside `values.yaml` (e.g., hardcoded in templates) are not detected
-- Complex templated image references may not be detected
-- Currently only processes `.tgz` files and directories, not Helm OCI artifacts
+- **Hardcoded Images:** Images defined outside `values.yaml` or other standard Helm value sources (e.g., hardcoded directly within template files like `deployment.yaml`) are not detected or processed by `irr`. Overrides must be applied manually for these cases.
+- **Complex Templating:** Image references constructed through complex Go templating logic within Helm templates might not always be identified correctly by the static analysis performed by `irr`.
+- **Helm OCI Artifacts:** Currently, `irr` processes local chart directories and `.tgz` archives, but does not directly support Helm charts stored as OCI artifacts in registries.
 
 ## Development
 
