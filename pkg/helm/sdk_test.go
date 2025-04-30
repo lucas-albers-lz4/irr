@@ -30,7 +30,7 @@ type mockTimeProvider struct {
 }
 
 func (m *mockTimeProvider) Now() time.Time {
-	args := m.Called()
+	args := m.Called() //nolint:nilaway // Mock setup
 	ret, ok := args.Get(0).(time.Time)
 	if !ok {
 		panic("failed to cast to time.Time")
@@ -43,27 +43,27 @@ type mockRepositoryManager struct {
 }
 
 func (m *mockRepositoryManager) GetRepositories() (*repo.File, error) {
-	args := m.Called()
-	if args.Get(0) == nil {
-		return nil, fmt.Errorf("mock error: %w", args.Error(1))
+	args := m.Called()      //nolint:nilaway // Mock setup
+	if args.Get(0) == nil { //nolint:nilaway // Mock assertion
+		return nil, fmt.Errorf("mock error: %w", args.Error(1)) //nolint:nilaway // Mock assertion
 	}
-	ret, ok := args.Get(0).(*repo.File)
+	ret, ok := args.Get(0).(*repo.File) //nolint:nilaway // Mock assertion
 	if !ok {
 		return nil, fmt.Errorf("failed to cast to *repo.File")
 	}
-	return ret, fmt.Errorf("mock error: %w", args.Error(1))
+	return ret, fmt.Errorf("mock error: %w", args.Error(1)) //nolint:nilaway // Mock assertion
 }
 
 func (m *mockRepositoryManager) GetRepositoryIndex(entry *repo.Entry) (*repo.IndexFile, error) {
-	args := m.Called(entry)
-	if args.Get(0) == nil {
-		return nil, fmt.Errorf("mock error: %w", args.Error(1))
+	args := m.Called(entry) //nolint:nilaway // Mock setup
+	if args.Get(0) == nil { //nolint:nilaway // Mock assertion
+		return nil, fmt.Errorf("mock error: %w", args.Error(1)) //nolint:nilaway // Mock assertion
 	}
-	ret, ok := args.Get(0).(*repo.IndexFile)
+	ret, ok := args.Get(0).(*repo.IndexFile) //nolint:nilaway // Mock assertion
 	if !ok {
 		return nil, fmt.Errorf("failed to cast to *repo.IndexFile")
 	}
-	return ret, fmt.Errorf("mock error: %w", args.Error(1))
+	return ret, fmt.Errorf("mock error: %w", args.Error(1)) //nolint:nilaway // Mock assertion
 }
 
 // TestChartPathResolution tests chart path resolution using mocked filesystem
@@ -409,23 +409,23 @@ func TestRepositoryOperations(t *testing.T) {
 		{
 			name: "successful repository operations",
 			setupMock: func() {
-				mockRepoManager.On("GetRepositories").Return(testRepoFile, nil)
-				mockRepoManager.On("GetRepositoryIndex", testRepoFile.Repositories[0]).Return(testIndex, nil)
+				mockRepoManager.On("GetRepositories").Return(testRepoFile, nil)                               //nolint:nilaway // Mock setup
+				mockRepoManager.On("GetRepositoryIndex", testRepoFile.Repositories[0]).Return(testIndex, nil) //nolint:nilaway // Mock setup, index check needed
 			},
 			wantErr: false,
 		},
 		{
 			name: "repository not found",
 			setupMock: func() {
-				mockRepoManager.On("GetRepositories").Return(nil, assert.AnError)
+				mockRepoManager.On("GetRepositories").Return(nil, assert.AnError) //nolint:nilaway // Mock setup
 			},
 			wantErr: true,
 		},
 		{
 			name: "index not found",
 			setupMock: func() {
-				mockRepoManager.On("GetRepositories").Return(testRepoFile, nil)
-				mockRepoManager.On("GetRepositoryIndex", testRepoFile.Repositories[0]).Return(nil, assert.AnError)
+				mockRepoManager.On("GetRepositories").Return(testRepoFile, nil)                                    //nolint:nilaway // Mock setup
+				mockRepoManager.On("GetRepositoryIndex", testRepoFile.Repositories[0]).Return(nil, assert.AnError) //nolint:nilaway // Mock setup, index check needed
 			},
 			wantErr: true,
 		},
@@ -443,6 +443,7 @@ func TestRepositoryOperations(t *testing.T) {
 			assert.Equal(t, testRepoFile, repos)
 
 			if !tt.wantErr {
+				//nolint:nilaway // Index check needed; repos can be nil if GetRepositories fails, handled by wantErr
 				index, err := mockRepoManager.GetRepositoryIndex(repos.Repositories[0])
 				assert.NoError(t, err)
 				assert.Equal(t, testIndex, index)

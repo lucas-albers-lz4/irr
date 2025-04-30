@@ -147,6 +147,11 @@ func (h *TestHarness) Cleanup() {
 	h.cleanupFuncs = nil // Clear cleanup functions
 }
 
+// GetTempFilePath returns the full path to a file within the harness's temp directory.
+func (h *TestHarness) GetTempFilePath(filename string) string {
+	return filepath.Join(h.tempDir, filename)
+}
+
 // createDefaultRegistryMappingFile creates a default mapping file in the harness temp dir.
 func (h *TestHarness) createDefaultRegistryMappingFile() (mappingsPath string, err error) {
 	// Create a structured Config object instead of a map[string]string
@@ -503,24 +508,26 @@ func (h *TestHarness) fallbackCheck(mappings *registry.Mappings, output string) 
 	return nil
 }
 
-// getOverrides reads and unmarshals the generated overrides file.
+// getOverrides reads the default generated override file and returns its content as a map.
+// Deprecated: Use getOverridesFromPath for clarity when multiple override files might exist.
 func (h *TestHarness) getOverrides() (overrides map[string]interface{}, err error) {
-	// #nosec G304 -- Reading a test-generated file from the test's temp directory is safe.
-	overridesBytes, err := os.ReadFile(h.overridePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read overrides file %s: %w", h.overridePath, err)
-	}
-
-	h.t.Logf("Raw content of overrides file %s:\n%s", h.overridePath, string(overridesBytes))
-
-	overrides = make(map[string]interface{})
-	if err := yaml.Unmarshal(overridesBytes, &overrides); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal overrides YAML from %s: %w", h.overridePath, err)
-	}
-	return overrides, nil
+	return h.getOverridesFromPath(h.overridePath)
 }
 
-// GetValueFromOverrides retrieves a value from the overrides map using a path.
+// getOverridesFromPath reads the override file at the specified path and returns its content as a map.
+func (h *TestHarness) getOverridesFromPath(filePath string) (map[string]interface{}, error) {
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read overrides file %s: %w", filePath, err)
+	}
+	var data map[string]interface{}
+	if err := yaml.Unmarshal(content, &data); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal overrides YAML from %s: %w", filePath, err)
+	}
+	return data, nil
+}
+
+// GetValueFromOverrides retrieves a potentially nested value from the override map using a path.
 func (h *TestHarness) GetValueFromOverrides(overrides map[string]interface{}, path ...string) (interface{}, bool) {
 	var current interface{} = overrides
 	for _, key := range path {
@@ -593,10 +600,13 @@ func (h *TestHarness) buildEnv(envOverrides map[string]string) []string {
 	baseEnv := os.Environ()
 	envMap := make(map[string]string)
 	for _, envVar := range baseEnv {
+		//nolint:nilaway // strings.SplitN always returns non-nil slice
 		parts := strings.SplitN(envVar, "=", envSplitCount)
 		if len(parts) == envSplitCount {
+			//nolint:nilaway // length checked above
 			envMap[parts[0]] = parts[1]
 		} else {
+			//nolint:nilaway // length checked above (parts[0] exists)
 			envMap[parts[0]] = "" // Handle variables without values
 		}
 	}

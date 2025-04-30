@@ -99,9 +99,19 @@ func assertDetectedImages(t *testing.T, expected, actual []DetectedImage, checkO
 	assert.Equal(t, len(expected), len(actual), "Detected image count mismatch")
 	if len(expected) == len(actual) {
 		for i := range actual {
+			// Add nil checks for Reference field using require for early failure
+			require.NotNil(t, actual[i].Reference, fmt.Sprintf("actual[%d].Reference should not be nil", i))
+			// Check expected as well, though less likely to be the source of panic if test is written correctly
+			require.NotNil(t, expected[i].Reference, fmt.Sprintf("expected[%d].Reference should not be nil (check test definition)", i))
+
+			// Proceed with assertions only if References are not nil (require already checked)
+			//nolint:nilaway // require.NotNil check above prevents panic
 			assert.Equal(t, expected[i].Reference.Registry, actual[i].Reference.Registry, fmt.Sprintf("detected[%d] Registry mismatch", i))
+			//nolint:nilaway // require.NotNil check above prevents panic
 			assert.Equal(t, expected[i].Reference.Repository, actual[i].Reference.Repository, fmt.Sprintf("detected[%d] Repository mismatch", i))
+			//nolint:nilaway // require.NotNil check above prevents panic
 			assert.Equal(t, expected[i].Reference.Tag, actual[i].Reference.Tag, fmt.Sprintf("detected[%d] Tag mismatch", i))
+			//nolint:nilaway // require.NotNil check above prevents panic
 			assert.Equal(t, expected[i].Reference.Digest, actual[i].Reference.Digest, fmt.Sprintf("detected[%d] Digest mismatch", i))
 			assert.Equal(t, expected[i].Path, actual[i].Path, fmt.Sprintf("detected[%d] path mismatch", i))
 			assert.Equal(t, expected[i].Pattern, actual[i].Pattern, fmt.Sprintf("detected[%d] pattern mismatch", i))

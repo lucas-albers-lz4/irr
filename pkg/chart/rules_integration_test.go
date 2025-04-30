@@ -22,9 +22,9 @@ type mockChartLoader struct {
 }
 
 func (m *mockChartLoader) Load(chartPath string) (*chart.Chart, error) {
-	args := m.Called(chartPath)
-	chartObj, ok := args.Get(0).(*chart.Chart)
-	err := args.Error(1)
+	args := m.Called(chartPath)                //nolint:nilaway // Mock setup
+	chartObj, ok := args.Get(0).(*chart.Chart) //nolint:nilaway // Mock assertion
+	err := args.Error(1)                       //nolint:nilaway // Mock assertion
 	if err != nil {
 		return nil, fmt.Errorf("mock loader error: %w", err)
 	}
@@ -40,19 +40,19 @@ type mockRulesRegistry struct {
 }
 
 func (m *mockRulesRegistry) Get(name string) (rules.Rule, bool) {
-	args := m.Called(name)
-	rule, ok := args.Get(0).(rules.Rule)
-	if !ok && args.Get(0) != nil {
+	args := m.Called(name)               //nolint:nilaway // Mock setup
+	rule, ok := args.Get(0).(rules.Rule) //nolint:nilaway // Mock assertion
+	if !ok && args.Get(0) != nil {       //nolint:nilaway // Mock assertion
 		// Only log an error if the value wasn't nil to begin with
 		log.Error("Type assertion failed for rules.Rule in Get")
 	}
-	return rule, args.Bool(1)
+	return rule, args.Bool(1) //nolint:nilaway // Mock assertion
 }
 
 func (m *mockRulesRegistry) GetRuleByName(name string) rules.Rule {
-	args := m.Called(name)
-	rule, ok := args.Get(0).(rules.Rule)
-	if !ok && args.Get(0) != nil {
+	args := m.Called(name)               //nolint:nilaway // Mock setup
+	rule, ok := args.Get(0).(rules.Rule) //nolint:nilaway // Mock assertion
+	if !ok && args.Get(0) != nil {       //nolint:nilaway // Mock assertion
 		// Only log an error if the value wasn't nil to begin with
 		log.Error("Type assertion failed for rules.Rule in GetRuleByName")
 	}
@@ -60,8 +60,9 @@ func (m *mockRulesRegistry) GetRuleByName(name string) rules.Rule {
 }
 
 func (m *mockRulesRegistry) ApplyRules(chrt *chart.Chart, overrides map[string]interface{}) (bool, error) {
-	args := m.Called(chrt, overrides)
-	return args.Bool(0), args.Error(1)
+	args := m.Called(chrt, overrides) //nolint:nilaway // Mock setup
+	//nolint:nilaway // Mock setup, nil panic unlikely
+	return args.Bool(0), args.Error(1) //nolint:nilaway // Mock assertion
 }
 
 // mockPathStrategy implements strategy.PathStrategy for testing
@@ -70,8 +71,8 @@ type mockPathStrategy struct {
 }
 
 func (m *mockPathStrategy) GeneratePath(ref *image.Reference, targetRegistry string) (string, error) {
-	args := m.Called(ref, targetRegistry)
-	return args.String(0), args.Error(1)
+	args := m.Called(ref, targetRegistry) //nolint:nilaway // Mock setup
+	return args.String(0), args.Error(1)  //nolint:nilaway // Mock assertion
 }
 
 // TestSetRulesEnabled tests the SetRulesEnabled method

@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 
+	"errors"
+
 	log "github.com/lucas-albers-lz4/irr/pkg/log"
 	helmchart "helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
@@ -100,6 +102,10 @@ func NewAnalyzer(chartPath string, chartLoader ChartLoader) *Analyzer {
 //   - ChartAnalysis containing all detected patterns
 //   - Error if chart loading or analysis fails
 func (a *Analyzer) Analyze() (*ChartAnalysis, error) {
+	// Add nil check for the loader interface itself
+	if a.loader == nil {
+		return nil, errors.New("internal error: Analyzer has a nil chart loader")
+	}
 	analysis := NewChartAnalysis()
 
 	// Load the chart using the loader interface
@@ -573,38 +579,59 @@ func (a *Analyzer) isImageString(val string) bool {
 // It also handles the docker.io/library/ prefix for official images.
 // Note: This does not handle digests (@sha256:...). Use a more comprehensive parser if digests are needed.
 func (a *Analyzer) ParseImageString(val string) (registry, repository, tag string) {
-	// Default values
-	// registry = DefaultRegistry // Removed ineffectual assignment
-	// tag = DefaultTag // Removed ineffectual assignment
+	// Handle empty input string gracefully
+	if val == "" {
+		return "", "", DefaultTag // Or return "", "", "" depending on desired behavior for empty input
+	}
 
-	// Simple implementation for string format "registry/repository:tag"
-	parts := strings.Split(val, "/")
-	if len(parts) == 1 {
-		// Just repository[:tag]
-		repoParts := strings.Split(parts[0], ":")
+	registry = DefaultRegistry
+	tag = DefaultTag
+
+	parts := strings.Split(val, "/") //nolint:nilaway // strings.Split always returns non-nil slice
+	if len(parts) == 0 {             // Should not happen with strings.Split, but defensive check
+		return "", "", DefaultTag
+	}
+
+	lastPart := parts[len(parts)-1]
+	repoParts := strings.Split(lastPart, ":") //nolint:nilaway // strings.Split always returns non-nil slice
+	if len(repoParts) == 0 {                  // Should not happen, defensive check
+		repository = lastPart // Treat as repository only if split fails unexpectedly
+	} else {
 		repository = repoParts[0]
 		if len(repoParts) > 1 {
 			tag = repoParts[1]
-		} else {
-			tag = DefaultTag // Explicitly set default if no tag
 		}
-		registry = DefaultRegistry // Default registry
-	} else {
-		// registry/repository[:tag]
+	}
+
+	if len(parts) > 1 {
+		// Has a registry part
 		registry = parts[0]
-		repoParts := strings.Split(parts[len(parts)-1], ":")
-
-		if len(parts) > minimumSplitParts {
-			// Handle registry/namespace/repository
-			repository = strings.Join(parts[1:len(parts)-1], "/") + "/" + repoParts[0]
-		} else {
-			repository = repoParts[0]
+		if len(parts) > 2 {
+			// Handle cases like registry/namespace/repo...[:tag]
+			// Join the middle parts back for the repository name
+			// Ensure repoParts[0] is included correctly
+			if len(repoParts) > 0 {
+				repository = strings.Join(parts[1:len(parts)-1], "/") + "/" + repoParts[0] //nolint:nilaway // length checks above ensure safety
+			} else {
+				// Handle edge case like "registry/namespace/:tag" ? This seems invalid, but be safe.
+				repository = strings.Join(parts[1:len(parts)-1], "/") //nolint:nilaway // length checks above ensure safety
+			}
 		}
+		// If len(parts) == 2, repository is already set correctly from repoParts[0] above
+	} else {
+		// No registry part (len(parts) == 1)
+		// repository and tag are already set from repoParts above
+		// registry remains DefaultRegistry
+	}
 
-		if len(repoParts) > 1 {
-			tag = repoParts[1]
+	// Final check for empty repository which might occur with inputs like "/" or ":"
+	if repository == "" && len(parts) == 1 && len(repoParts) == 1 {
+		// If original val was only "/" or ":", parts[0]/repoParts[0] might be empty
+		// Re-assign original val if it wasn't just separators
+		if val != "/" && val != ":" {
+			repository = val
 		} else {
-			tag = DefaultTag // Explicitly set default if no tag
+			repository = "" // Ensure truly empty repository if input was just separators
 		}
 	}
 
@@ -649,5 +676,7 @@ func ensureString(v interface{}) (string, bool) {
 // Example: "docker.io/nginx" -> ["docker.io", "nginx"]
 // Example: "nginx" -> ["nginx"]
 func splitRepoPath(repo string) []string {
-	return strings.SplitN(repo, "/", maxSplitTwo)
+	// Splitting a non-empty string will always yield at least one element.
+	// Splitting an empty string yields a slice with one empty string.
+	return strings.SplitN(repo, "/", maxSplitTwo) //nolint:nilaway // strings.SplitN always returns non-nil slice
 }
