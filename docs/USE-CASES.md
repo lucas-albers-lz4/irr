@@ -85,18 +85,25 @@ helm irr inspect --chart-path ./my-chart --generate-config-skeleton my-chart-con
 
 Example configuration file structure:
 ```yaml
-# ~/.irr.yaml or specified with --config
-registry_mappings:
-  docker.io: "registry.local/docker"  # Needs to be filled in by user
-  quay.io: "registry.local/quay"      # Needs to be filled in by user
-  # Add mappings for other detected source registries...
+# registry-mappings.yaml or specified with --registry-file
+version: "1.0" # Optional but recommended
+registries:
+  mappings:
+    - source: "quay.io"
+      target: "my-registry.example.com/quay-mirror"
+      # enabled: true (optional, defaults to true)
+      # description: "Optional description"
+    - source: "docker.io"
+      target: "my-registry.example.com/docker-mirror"
+    - source: "gcr.io"
+      target: "my-registry.example.com/gcr-mirror"
 
-exclude_registries:
-  - "internal-registry.company.com"
-  - "custom-registry.org"
-
-path_strategy: "prefix-source-registry"  # default
+  # Optional fields for more control:
+  # defaultTarget: "your-fallback-registry.com/generic-prefix"
+  # strictMode: false # Set to true to fail if a source registry isn't explicitly mapped
 ```
+
+*Note:* While you can manually edit this file, the recommended way to manage mappings is using the `helm irr config` command (see [Recommended Workflow](#recommended-workflow) in the main README).
 
 ### 3. Generating Overrides
 
