@@ -503,7 +503,7 @@ func setupGeneratorConfig(cmd *cobra.Command, _ string) (config GeneratorConfig,
 	return config, nil
 }
 
-func setupPathStrategy(cmd *cobra.Command, config *GeneratorConfig) error {
+func setupPathStrategy(_ *cobra.Command, config *GeneratorConfig) error {
 	// Add nil check for safety, although runOverride should prevent this call with nil config
 	if config == nil {
 		return errors.New("internal error: setupPathStrategy called with nil config")
