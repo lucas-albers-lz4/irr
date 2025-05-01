@@ -18,11 +18,12 @@ const (
 	ExitSuccess = 0
 
 	// Input/Configuration Errors (1-9)
-	ExitMissingRequiredFlag     = 1 // Required command flag not provided
-	ExitInputConfigurationError = 2 // General configuration error
-	ExitCodeInvalidStrategy     = 3 // Invalid path strategy specified
-	ExitChartNotFound           = 4 // Chart or values file not found
-	ExitRegistryDetectionError  = 5 // No registries found or couldn't map registries
+	ExitMissingRequiredFlag     = 1                          // Required command flag not provided
+	ExitInputConfigurationError = 2                          // General configuration error
+	ExitCodeInvalidStrategy     = 3                          // Invalid path strategy specified
+	ExitChartNotFound           = 4                          // Chart or values file not found
+	ExitRegistryDetectionError  = 5                          // No registries found or couldn't map registries
+	StrictModeFailure           = ExitRegistryDetectionError // Alias for strict mode failure on missing registry mapping
 
 	// Chart Processing Errors (10-19)
 	ExitChartParsingError     = 10 // Failed to parse or load chart
@@ -76,7 +77,7 @@ var CodeDescriptions = map[int]string{
 	ExitInputConfigurationError: "General configuration error",
 	ExitCodeInvalidStrategy:     "Invalid path strategy specified",
 	ExitChartNotFound:           "Chart or values file not found",
-	ExitRegistryDetectionError:  "No registries found or couldn't map registries",
+	StrictModeFailure:           "Strict mode: No mapping for source registry",
 	ExitChartParsingError:       "Failed to parse or load chart",
 	ExitImageProcessingError:    "Failed to process image references",
 	ExitUnsupportedStructure:    "Unsupported structure found (e.g., templates in strict mode)",
