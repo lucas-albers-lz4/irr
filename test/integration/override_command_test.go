@@ -5,7 +5,6 @@ package integration
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/lucas-albers-lz4/irr/pkg/testutil"
@@ -38,9 +37,12 @@ func TestOverrideFallbackTriggeredAndSucceeds(t *testing.T) {
 	t.Logf("Stderr output: %s", stderr)
 
 	// Verify the content contains expected overrides
-	assert.Contains(t, stdout, "registry: my-target-registry.com", "Output should include the target registry")
-	assert.Contains(t, stdout, "repository: docker.io/library/nginx", "Output should include the image repository")
+	// Check the actual output structure produced by the generator for map overrides
+	// The generator now creates separate registry/repository keys for map overrides.
+	assert.Contains(t, stdout, "registry: my-target-registry.com", "Output should include the target registry key")
+	assert.Contains(t, stdout, "repository: docker.io/library/nginx", "Output should include the relocated repository path key")
 	assert.Contains(t, stdout, "tag: latest", "Output should include the image tag")
+	// assert.NotContains(t, stdout, "registry:", "Output should NOT contain a separate 'registry:' key for this structure") // This assertion is no longer valid
 }
 
 // TestOverrideParentChart verifies override generation for a chart with subcharts.
@@ -80,66 +82,195 @@ func TestOverrideParentChart(t *testing.T) {
 
 	// --- Verification --- (Updated to match actual YAML output 2024-07-16)
 
-	// Helper function to get nested value (remains the same)
-	getNestedValue := func(data map[string]interface{}, path string) (interface{}, bool) {
-		parts := strings.Split(path, ".")
-		current := interface{}(data)
-		for _, part := range parts {
-			m, ok := current.(map[string]interface{})
-			if !ok {
-				return nil, false // Not a map, cannot traverse further
-			}
-			value, exists := m[part]
-			if !exists {
-				return nil, false // Key not found
-			}
-			current = value
-		}
-		return current, true
-	}
-
 	// Verify top-level 'image' override structure (Parent Chart Image)
-	// NOTE: Path strategy generates incorrect path prefix currently due to normalization
-	// Asserting the actual incorrect path for now to validate generator structure.
-	// Will fail until path strategy is fixed (Step 7).
+	parentImageRegistry, ok := getNestedValue(overrideData, "image.registry")
+	assert.True(t, ok, "Should have override for image.registry")
+	assert.Equal(t, "test-registry.io/my-project", parentImageRegistry.(string), "Parent image registry override incorrect")
+
 	parentImageRepo, ok := getNestedValue(overrideData, "image.repository")
 	assert.True(t, ok, "Should have override for image.repository")
-	// assert.Contains(t, parentImageRepo.(string), "test-registry.io/my-project/parent/nginx", "Parent image repo override incorrect") // Expected correct path
-	assert.Contains(t, parentImageRepo.(string), "test-registry.io/my-project/docker.io/library/nginx", "Parent image repo override has incorrect prefix (known issue)") // Assert actual path
+	assert.Equal(t, "docker.io/parent/app", parentImageRepo.(string), "Parent image repo override incorrect") // Original source repo (parent/app)
 
 	parentImageTag, ok := getNestedValue(overrideData, "image.tag")
 	assert.True(t, ok, "Should have override for image.tag")
 	assert.Equal(t, "latest", parentImageTag, "Parent image tag should match analyzer output") // Actual tag
 
-	// Verify 'child.extraImage' override structure (Originally expected child.image)
+	// Verify 'child.extraImage' override structure
+	childExtraImageRegistry, ok := getNestedValue(overrideData, "child.extraImage.registry")
+	assert.True(t, ok, "Should have override for child.extraImage.registry")
+	assert.Equal(t, "test-registry.io/my-project", childExtraImageRegistry.(string), "Child extraImage registry override incorrect")
+
 	childExtraImageRepo, ok := getNestedValue(overrideData, "child.extraImage.repository")
 	assert.True(t, ok, "Should have override for child.extraImage.repository")
-	assert.Contains(t, childExtraImageRepo.(string), "test-registry.io/my-project/docker.io/bitnami/nginx", "Child extraImage repo override incorrect") // Actual repo path
+	assert.Equal(t, "docker.io/bitnami/nginx", childExtraImageRepo.(string), "Child extraImage repo override incorrect") // Original source repo
 
 	childExtraImageTag, ok := getNestedValue(overrideData, "child.extraImage.tag")
 	assert.True(t, ok, "Should have override for child.extraImage.tag")
-	assert.Equal(t, "latest", childExtraImageTag, "Child extraImage tag should match analyzer output") // Actual tag
+	assert.Equal(t, "1.2", childExtraImageTag, "Child extraImage tag should match analyzer output") // Actual tag from subchart
 
 	// Verify 'another-child.monitoring.image' override structure (Using hyphenated key)
+	anotherChildMonImageRegistry, ok := getNestedValue(overrideData, "another-child.monitoring.image.registry")
+	assert.True(t, ok, "Should have override for another-child.monitoring.image.registry")
+	assert.Equal(t, "test-registry.io/my-project", anotherChildMonImageRegistry.(string), "Another-child monitoring image registry override incorrect")
+
 	anotherChildMonImageRepo, ok := getNestedValue(overrideData, "another-child.monitoring.image.repository")
 	assert.True(t, ok, "Should have override for another-child.monitoring.image.repository")
-	assert.Contains(t, anotherChildMonImageRepo.(string), "test-registry.io/my-project/quayio/prometheus/node-exporter", "Another-child monitoring image repo override incorrect") // Actual repo path
+	assert.Equal(t, "quay.io/prometheus/node-exporter", anotherChildMonImageRepo.(string), "Another-child monitoring image repo override incorrect") // Original source repo
 
 	anotherChildMonImageTag, ok := getNestedValue(overrideData, "another-child.monitoring.image.tag")
 	assert.True(t, ok, "Should have override for another-child.monitoring.image.tag")
-	assert.Equal(t, "latest", anotherChildMonImageTag, "Another-child monitoring image tag should match analyzer output") // Actual tag
+	assert.Equal(t, "v1.0", anotherChildMonImageTag, "Another-child monitoring image tag should match analyzer output") // Actual tag from subchart
 
-	// Verify other found top-level keys
+	// Verify other found top-level keys (These might be from different value files/overrides within the test chart)
+	// These might have been simple strings originally, so check both map and string possibilities
+	// Assuming they were maps based on previous test structure
+
+	extraImageRegistry, ok := getNestedValue(overrideData, "extraImage.registry")
+	assert.True(t, ok, "Should have override for top-level extraImage.registry")
+	assert.Equal(t, "test-registry.io/my-project", extraImageRegistry.(string), "Top-level extraImage registry override incorrect")
 	extraImageRepo, ok := getNestedValue(overrideData, "extraImage.repository")
 	assert.True(t, ok, "Should have override for top-level extraImage.repository")
-	assert.Contains(t, extraImageRepo.(string), "test-registry.io/my-project/docker.io/bitnami/nginx", "Top-level extraImage repo override incorrect")
+	assert.Equal(t, "docker.io/bitnami/nginx", extraImageRepo.(string), "Top-level extraImage repo override incorrect")
 
+	monImageRegistry, ok := getNestedValue(overrideData, "monitoring.image.registry")
+	assert.True(t, ok, "Should have override for top-level monitoring.image.registry")
+	assert.Equal(t, "test-registry.io/my-project", monImageRegistry.(string), "Top-level monitoring image registry override incorrect")
 	monImageRepo, ok := getNestedValue(overrideData, "monitoring.image.repository")
 	assert.True(t, ok, "Should have override for top-level monitoring.image.repository")
-	assert.Contains(t, monImageRepo.(string), "test-registry.io/my-project/quayio/prometheus/node-exporter", "Top-level monitoring image repo override incorrect")
+	assert.Equal(t, "quay.io/prometheus/node-exporter", monImageRepo.(string), "Top-level monitoring image repo override incorrect")
 
+	parentImgRegistry, ok := getNestedValue(overrideData, "parentImage.registry")
+	assert.True(t, ok, "Should have override for top-level parentImage.registry")
+	assert.Equal(t, "test-registry.io/my-project", parentImgRegistry.(string), "Top-level parentImage registry override incorrect")
 	parentImgImageRepo, ok := getNestedValue(overrideData, "parentImage.repository")
 	assert.True(t, ok, "Should have override for top-level parentImage.repository")
-	assert.Contains(t, parentImgImageRepo.(string), "test-registry.io/my-project/docker.io/parent/app", "Top-level parentImage repo override incorrect")
+	assert.Equal(t, "docker.io/parent/app", parentImgImageRepo.(string), "Top-level parentImage repo override incorrect") // Original source repo (parent/app)
 
+}
+
+// TestOverrideSubchartAlias verifies override generation uses the alias name.
+func TestOverrideSubchartAlias(t *testing.T) {
+	harness := NewTestHarness(t)
+	defer harness.Cleanup()
+
+	// Use the new alias-test chart
+	aliasTestChartPath := testutil.GetChartPath("alias-test")
+	_, err := os.Stat(aliasTestChartPath)
+	require.NoError(t, err, "alias-test chart should exist at %s", aliasTestChartPath)
+
+	// Run the override command
+	outputFile := filepath.Join(harness.tempDir, "alias-override.yaml")
+	args := []string{
+		"override",
+		"--chart-path", aliasTestChartPath,
+		"--output-file", outputFile,
+		"--target-registry", "test-alias.io", // Example target
+		"--source-registries", "docker.io", // Source for busybox
+	}
+	stdout, stderr, err := harness.ExecuteIRRWithStderr(nil, args...)
+	require.NoError(t, err, "Command failed. Stderr: %s\nStdout: %s", stderr, stdout)
+
+	// Verify the output file exists and parse it
+	require.FileExists(t, outputFile, "Output file should exist")
+	content, err := os.ReadFile(outputFile)
+	require.NoError(t, err, "Should be able to read output file")
+
+	var overrideData map[string]interface{}
+	err = yaml.Unmarshal(content, &overrideData)
+	require.NoError(t, err, "Failed to unmarshal override output YAML")
+
+	t.Logf("Generated Alias Override File Content:\n---\n%s\n---", string(content))
+
+	// --- Verification ---
+
+	// Verify top-level 'image' override structure (Parent Chart Image)
+	parentImageRegistry, ok := getNestedValue(overrideData, "image.registry")
+	assert.True(t, ok, "Should have override for image.registry")
+	assert.Equal(t, "test-alias.io", parentImageRegistry.(string), "Parent image registry override incorrect")
+
+	parentImageRepo, ok := getNestedValue(overrideData, "image.repository")
+	assert.True(t, ok, "Should have override for image.repository")
+	assert.Equal(t, "docker.io/library/busybox", parentImageRepo.(string), "Parent image repo override incorrect") // Original source repo
+
+	parentImageTag, ok := getNestedValue(overrideData, "image.tag")
+	assert.True(t, ok, "Should have override for image.tag")
+	assert.Equal(t, "1.36", parentImageTag, "Parent image tag should match analyzer output") // Actual tag
+
+	// Verify 'child.extraImage' override structure
+	childExtraImageRegistry, ok := getNestedValue(overrideData, "child.extraImage.registry")
+	assert.True(t, ok, "Should have override for child.extraImage.registry")
+	assert.Equal(t, "test-alias.io", childExtraImageRegistry.(string), "Child extraImage registry override incorrect")
+
+	childExtraImageRepo, ok := getNestedValue(overrideData, "child.extraImage.repository")
+	assert.True(t, ok, "Should have override for child.extraImage.repository")
+	assert.Equal(t, "docker.io/bitnami/nginx", childExtraImageRepo.(string), "Child extraImage repo override incorrect") // Original source repo
+
+	childExtraImageTag, ok := getNestedValue(overrideData, "child.extraImage.tag")
+	assert.True(t, ok, "Should have override for child.extraImage.tag")
+	assert.Equal(t, "1.2", childExtraImageTag, "Child extraImage tag should match analyzer output") // Actual tag from subchart
+
+	// Verify 'another-child.monitoring.image' override structure (Using hyphenated key)
+	anotherChildMonImageRegistry, ok := getNestedValue(overrideData, "another-child.monitoring.image.registry")
+	assert.True(t, ok, "Should have override for another-child.monitoring.image.registry")
+	assert.Equal(t, "test-alias.io", anotherChildMonImageRegistry.(string), "Another-child monitoring image registry override incorrect")
+
+	anotherChildMonImageRepo, ok := getNestedValue(overrideData, "another-child.monitoring.image.repository")
+	assert.True(t, ok, "Should have override for another-child.monitoring.image.repository")
+	assert.Equal(t, "quay.io/prometheus/node-exporter", anotherChildMonImageRepo.(string), "Another-child monitoring image repo override incorrect") // Original source repo
+
+	anotherChildMonImageTag, ok := getNestedValue(overrideData, "another-child.monitoring.image.tag")
+	assert.True(t, ok, "Should have override for another-child.monitoring.image.tag")
+	assert.Equal(t, "v1.0", anotherChildMonImageTag, "Another-child monitoring image tag should match analyzer output") // Actual tag from subchart
+
+	// Verify other found top-level keys (These might be from different value files/overrides within the test chart)
+	// These might have been simple strings originally, so check both map and string possibilities
+	// Assuming they were maps based on previous test structure
+
+	extraImageRegistry, ok := getNestedValue(overrideData, "extraImage.registry")
+	assert.True(t, ok, "Should have override for top-level extraImage.registry")
+	assert.Equal(t, "test-alias.io", extraImageRegistry.(string), "Top-level extraImage registry override incorrect")
+	extraImageRepo, ok := getNestedValue(overrideData, "extraImage.repository")
+	assert.True(t, ok, "Should have override for top-level extraImage.repository")
+	assert.Equal(t, "docker.io/bitnami/nginx", extraImageRepo.(string), "Top-level extraImage repo override incorrect")
+
+	monImageRegistry, ok := getNestedValue(overrideData, "monitoring.image.registry")
+	assert.True(t, ok, "Should have override for top-level monitoring.image.registry")
+	assert.Equal(t, "test-alias.io", monImageRegistry.(string), "Top-level monitoring image registry override incorrect")
+	monImageRepo, ok := getNestedValue(overrideData, "monitoring.image.repository")
+	assert.True(t, ok, "Should have override for top-level monitoring.image.repository")
+	assert.Equal(t, "quay.io/prometheus/node-exporter", monImageRepo.(string), "Top-level monitoring image repo override incorrect")
+
+	parentImgRegistry, ok := getNestedValue(overrideData, "parentImage.registry")
+	assert.True(t, ok, "Should have override for top-level parentImage.registry")
+	assert.Equal(t, "test-alias.io", parentImgRegistry.(string), "Top-level parentImage registry override incorrect")
+	parentImgImageRepo, ok := getNestedValue(overrideData, "parentImage.repository")
+	assert.True(t, ok, "Should have override for top-level parentImage.repository")
+	assert.Equal(t, "docker.io/parent/app", parentImgImageRepo.(string), "Top-level parentImage repo override incorrect") // Original source repo (parent/app)
+
+	// Assert that the override path uses the alias "myChildAlias"
+	_, aliasExists := getNestedValue(overrideData, "myChildAlias.image.repository")
+	assert.True(t, aliasExists, "Override path should use the alias 'myChildAlias' for the subchart image")
+
+	// Assert that the override path does NOT use the original chart name "child-chart"
+	_, wrongPathExists := getNestedValue(overrideData, "child-chart.image.repository")
+	assert.False(t, wrongPathExists, "Override path should NOT use the original chart name 'child-chart'")
+
+	// Assert the actual override values for the aliased subchart image
+	actualAliasRepo, _ := getNestedValue(overrideData, "myChildAlias.image.repository")
+	// Note: The subchart image is 'child-nginx', not busybox. Let's assume path strategy adds prefix.
+	assert.Contains(t, actualAliasRepo.(string), "test-alias.io/docker.io/library/child-nginx", "Aliased repository override value is incorrect")
+
+	actualAliasTag, _ := getNestedValue(overrideData, "myChildAlias.image.tag")
+	assert.Equal(t, "1.0", actualAliasTag, "Aliased tag override value is incorrect (should be from subchart)")
+
+	// Assert that the override for the PARENT chart image also exists
+	_, parentImageExists := getNestedValue(overrideData, "image.repository")
+	assert.True(t, parentImageExists, "Override for the parent chart image should also exist")
+
+	// Assert the actual override values for the parent chart image
+	actualParentRepo, _ := getNestedValue(overrideData, "image.repository")
+	assert.Contains(t, actualParentRepo.(string), "test-alias.io/docker.io/library/busybox", "Parent repository override value is incorrect")
+
+	actualParentTag, _ := getNestedValue(overrideData, "image.tag")
+	assert.Equal(t, "1.36", actualParentTag, "Parent tag override value is incorrect")
 }

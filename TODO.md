@@ -155,39 +155,64 @@ _Objective: Ensure the override generator and inspect command correctly process 
         - [x] Aligned `TestOverrideParentChart` assertions with correct generator output.
     - [x] **Outcome:** `TestOverrideParentChart` now passes. Override generator handles parent/subchart structures correctly based on analyzer output.
 
-- [ ] **Phase 9.4.2: [P1] Debug & Fix Inspect Command (`cmd/irr/inspect.go`)** [IN PROGRESS - BLOCKED on Analyzer]
-    - [ ] **Goal:** Resolve regression in `TestInspectParentChart`.
-    - [ ] **Tasks:**
-        - [x] Ran `TestInspectParentChart` - Fails due to incorrect image list in inspect output.
-        - [x] Added diagnostic logging; confirmed output YAML (`images:` list) contains duplicate/incorrect entries.
-        - [x] Attempted fixes in `cmd/irr/inspect.go` (`processImagePatterns`) based on heuristics and trusting `pattern.Value`. These were insufficient.
-        - [x] **Diagnosis:** Root cause likely in `pkg/analyzer/analyzer.go`. It appears to be generating `ImagePattern` entries for sub-fields (e.g., `image.repository`) and/or incorrectly constructing the `Value` field for map-type patterns, leading `inspect` to produce bad output.
-        - [ ] **Next Step (Resume Point): Fix Analyzer Logic (`pkg/analyzer/analyzer.go`)**
-            - [ ] Re-examine `analyzeMapValue`:
-                - Ensure it correctly reconstructs the full image string from `Structure`.
-                - Parse the reconstructed string via `image.ParseImageReference`.
-                - Use the **parsed, canonical reference string** as the `Value` for the `map` type `ImagePattern`.
-                - Ensure function **returns immediately** after adding the pattern for an image map to prevent recursion into sub-fields like `.repository`.
-            - [ ] Re-examine `analyzeStringValue`:
-                - Apply heuristics based on path **before** attempting to parse, to filter out likely sub-fields (e.g., `.tag`, `.repository`).
-                - If parsing succeeds for a likely standalone string image, use the **parsed, canonical reference string** as the `Value`.
-        - [ ] **Next Step: Verify `TestInspectParentChart`** - Run test after fixing the analyzer. The existing `processImagePatterns` logic (last attempted version) in `inspect.go` should now work correctly with the cleaned-up patterns.
-        - [ ] **Next Step: Cleanup** - Remove diagnostic `t.Logf` calls from `TestInspectParentChart` in `inspect_command_test.go` once it passes.
+- [x] **Phase 9.4.2: [P1] Debug & Fix Inspect Command (`cmd/irr/inspect.go`) & Analyzer (`pkg/analyzer/analyzer.go`)** [COMPLETED - Mostly]
+    - [x] **Goal:** Resolve regression in `TestInspectParentChart`.
+    - [x] **Tasks:**
+        - [x] Identified analyzer (`pkg/analyzer/analyzer.go`) as the root cause for `TestInspectParentChart` failures.
+        - [x] Fixed `analyzeMapValue` to use `image.ParseImageReference` for canonical values and return early.
+        - [x] Fixed `analyzeStringValue` to use `image.ParseImageReference` for canonical values and add heuristics to skip likely sub-fields.
+        - [x] Fixed `analyzeInterfaceValue` panic by adding kind check before `IsNil`.
+        - [x] Updated unit tests (`analyzer_test.go`) for canonical values and path expectations.
+        - [x] Added include/exclude logic to `analyzeValuesRecursive`.
+        - [x] Verified `TestInspectParentChart` passes after analyzer fixes. Removed diagnostic logging.
+        - [x] Resolved build errors related to `encoding/yaml` and `exitcodes.StrictModeFailure`.
+    - [x] **Outcome:** Analyzer correctly generates canonical image patterns. `TestInspectParentChart` passes. Build blockers resolved.
+    - [ ] **Known Issue:** Unit test `TestConfigWithIncludeExcludePatterns` still fails due to `filepath.Match` not handling dot-notation paths correctly. Needs investigation/fix later.
 
-- [ ] **Phase 9.4.3: [P1] Verify with Integration Tests & Add Coverage**
+- [ ] **Phase 9.4.3: [P1] Verify with Integration Tests & Add Coverage** [IN PROGRESS]
     - [ ] **Goal:** Confirm fixes work end-to-end and add tests for uncovered subchart scenarios.
-    - [ ] **Tasks:**
-        - [ ] Run `make build && go test -tags integration ./...` frequently after generator/inspector fixes.
-        - [ ] Ensure existing failing tests (`TestOverrideParentChart`, `TestCertManager`, `TestInspectParentChart`) pass.
-        - [ ] **Add New Test Case (Subchart Aliases):** Create/find a test chart with subchart dependencies defined using `alias`. Add an integration test that runs `irr override` on this chart and verifies the generated YAML uses the alias (e.g., `childAlias.image.repository`) not the original chart name in the override path.
+    - [x] **Tasks Completed:**
+        - [x] Added new chart (`test-data/charts/alias-test`) and integration test (`TestOverrideSubchartAlias`) for subchart alias handling.
+        - [x] Fixed build blockers (`encoding/yaml`, `exitcodes.StrictModeFailure`).
+    - [ ] **Next Steps:**
+        - [ ] **Run Full Integration Test Suite:** Execute `make build && go test -tags integration ./...` to identify all currently failing tests.
+        - [ ] **Address Failing Integration Tests:** Debug and fix failures. Known potential failures include:
+            - `TestClickhouseOperator`/`TestRulesSystemIntegration` (previously failed with Exit 16)
+            - `TestOverrideSubchartAlias` (newly added)
+            - Potentially others revealed by the full run.
+        - [ ] **Fix `TestConfigWithIncludeExcludePatterns`:** Investigate and fix the path matching issue in the analyzer unit test.
         - [ ] **(Optional) Add New Test Case (Deep Nesting):** If a suitable chart exists (e.g., parent -> child -> grandchild), add a test case verifying override generation for images defined at deeper levels.
         - [ ] **(Optional) Add New Test Case (Globals Interaction):** Add a test case that verifies how global values (e.g., `global.imageRegistry`) interact with image overrides defined in subcharts.
+
 - [ ] **Phase 9.4.4: [P2] Update Documentation (if necessary)**
     - [ ] **Goal:** Ensure docs accurately reflect subchart handling in both inspect and override.
-    - [ ] **Tasks:** Review relevant documentation sections.
+    - [ ] **Tasks:** Review relevant documentation sections after integration tests pass.
+
+- [ ] **Phase 9.5: Refactor Chart Loading for Accurate Value Origins** [IN PROGRESS]
+    - [ ] **Goal:** Modify `internal/helm/chart_loader.go` (and related context/analyzer logic) to accurately replicate Helm's value merging process and track the precise origin (file, subchart default, parent override, alias, set flag) of each value *after* merging. This is the prerequisite to fix `TestOverrideParentChart` and `TestOverrideSubchartAlias`.
+    - [ ] **Tasks:**
+        - [x] **9.5.1: Define Value Origin Tracking Structure**
+        - [x] **9.5.2: Confirm Helm Value Precedence**
+        - [x] **9.5.3: Implement `mergeAndTrackValues` Function**
+        - [x] **9.5.4: Refactor `LoadChartAndTrackOrigins`**
+        - [x] **9.5.5: Update `ChartAnalysisContext` Usage**
+        - [x] **9.5.6: Test and Verify (Unit tests for basic cases)**
+        - [ ] **9.5.7: Debug and fix edge cases in `mergeAndTrack`:**
+          - [ ] Type conflicts (map vs. scalar, array replacement)
+          - [ ] Nil/empty values
+          - [ ] Deeply nested/aliased subcharts
+          - [ ] Overwriting maps with scalars (clean up obsolete origins)
+        - [ ] **9.5.8: Add/expand unit tests for above edge cases.**
+        - [ ] **9.5.9: Re-run integration tests (`TestOverrideParentChart`, `TestOverrideSubchartAlias`) and debug any remaining failures.**
+        - [ ] **9.5.10: Final code cleanup and documentation.**
+
+    - [ ] **Status & Next Steps:**
+        - **Progress:** Initial merge logic and origin tracking implemented and basic unit tests passing.
+        - **Blockers:** Remaining integration test failures (`TestOverrideParentChart`) point to edge case handling issues in the merge/origin logic.
+        - **Next Immediate Action:** Focus on debugging and hardening `mergeAndTrack` (Task 9.5.7) and adding corresponding unit tests (Task 9.5.8) before re-running integration tests (Task 9.5.9).
 
 ### Acceptance Criteria (Phase 9 - Revised)
-- Analyzer unit tests (`internal/helm`) pass. [COMPLETED]
+- Analyzer unit tests (`internal/helm`) pass (Except `TestConfigWithIncludeExcludePatterns`).
 - Integration tests (`TestOverrideParentChart`, `TestCertManager`, `TestInspectParentChart`) pass, demonstrating correct override generation and inspection for charts with subcharts.
 - New integration tests covering subchart aliases (and optionally deep nesting/globals) pass.
 - Documentation accurately reflects subchart handling capabilities.

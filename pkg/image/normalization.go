@@ -79,7 +79,7 @@ func SanitizeRegistryForPath(registry string) string {
 		}
 	}
 
-	// Remove dots
+	// Remove dots to make it path-safe
 	sanitized := strings.ReplaceAll(registry, ".", "")
 
 	// DO NOT replace slashes
