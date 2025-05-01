@@ -130,7 +130,7 @@ test-pkg-strategy: build
 
 test-integration: build
 	@echo "Running integration tests..."
-	@IRR_TESTING=true go test -v ./test/integration/... || true
+	@go test -tags integration ./test/integration/... || true
 	@echo "Integration tests completed."
 
 test-cert-manager: build
