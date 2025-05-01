@@ -50,7 +50,9 @@ func AnalyzeHelmValues(values map[string]interface{}, config *Config) ([]ImagePa
 	// Post-process to aggregate counts for duplicate patterns
 	aggregatedPatterns := aggregatePatterns(patterns)
 
-	log.Info("Helm values analysis complete. Found %d unique image patterns.", len(aggregatedPatterns))
+	// Log the completion and the number of unique patterns found
+	log.Info(fmt.Sprintf("Helm values analysis complete. Found %d unique image patterns.", len(aggregatedPatterns)))
+
 	return aggregatedPatterns, nil
 }
 

@@ -1179,7 +1179,14 @@ func getAllReleases() ([]*helm.ReleaseElement, *helm.Adapter, error) {
 		}
 	}
 
-	log.Info("Found", len(releases), "releases across all namespaces")
+	log.Debug("Processing release", "name", releases[0].Name, "namespace", releases[0].Namespace)
+
+	if len(releases) == 0 {
+		log.Warn("No Helm releases found across all namespaces.")
+	} else {
+		log.Info(fmt.Sprintf("Found %d releases across all namespaces", len(releases)))
+	}
+
 	return releases, helmAdapter, nil
 }
 
@@ -1383,7 +1390,7 @@ func outputMultiReleaseAnalysis(cmd *cobra.Command, results []*ReleaseAnalysisRe
 		}
 	}
 
-	log.Info("Successfully analyzed", len(results), "releases")
+	log.Info(fmt.Sprintf("Successfully analyzed %d releases", len(results)))
 	return nil
 }
 
