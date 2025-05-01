@@ -123,6 +123,7 @@ irr inspect -A [--output-format FORMAT]
 | `--known-image-paths`        | Specific dot-notation paths known to contain images             |                          | `--known-image-paths "containers[].image"` |
 | `-r`, `--source-registries`  | Source registries to filter results (optional)                  |                          | `--source-registries docker.io,quay.io`     |
 | `--no-subchart-check`        | Skip checking for subchart image discrepancies                  | false                    | `--no-subchart-check`                       |
+| `--context-aware`            | Use context-aware analyzer (handles subcharts, **EXPERIMENTAL**) | false                    | `--context-aware`                           |
 | `-h`, `--help`               | Show help for inspect                                           |                          | `--help`                                    |
 
 ### Basic Inspection
@@ -238,6 +239,7 @@ irr override --chart-path CHART_PATH [flags]
 | `--strict`               | Fail on any parsing error                                | false                    | `--strict`                                       |
 | `--threshold`            | Success percentage required                              | 0                        | `--threshold 90`                                 |
 | `--validate`             | Run helm template to validate                            | false                    | `--validate`                                     |
+| `--context-aware`        | Use context-aware analyzer (handles subcharts, **EXPERIMENTAL**) | false                    | `--context-aware`                                |
 | `-h`, `--help`           | Show help for override                                   |                          | `--help`                                         |
 
 ### Basic Override Generation
