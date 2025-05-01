@@ -118,11 +118,31 @@ func (a *Analyzer) Analyze() (*ChartAnalysis, error) {
 	}
 
 	// Analyze dependencies
+	log.Debug("Starting analysis of dependency values")
 	for _, dep := range chart.Dependencies() {
+		depName := dep.Name() // Get the chart name of the dependency
+		log.Debug("Analyzing dependency", "dependency_name", depName)
+		// Create a temporary analysis object for the dependency
 		depAnalysis := NewChartAnalysis()
-		if err := a.analyzeValues(dep.Values, "", depAnalysis); err != nil {
-			return nil, fmt.Errorf("failed to analyze dependency %s: %w", dep.Name(), err)
+
+		// <<< Attempt to use dependency name as prefix >>>
+		// This is a simplification; Helm's actual merge logic might use aliases
+		// or place the values under a different key based on the parent's values.yaml.
+		prefix := depName
+		if prefix != "" {
+			prefix += "." // Add dot separator if prefix is not empty
 		}
+		log.Debug("Using prefix for dependency analysis", "dependency_name", depName, "prefix", prefix)
+
+		// Analyze the dependency values, passing the CORRECT prefix
+		// The analyzeValues function itself will handle adding the '.' separator internally
+		if err := a.analyzeValues(dep.Values, depName, depAnalysis); err != nil {
+			log.Warn("Error analyzing dependency values, skipping", "dependency", depName, "error", err)
+			continue // Skip this dependency on error
+		}
+
+		// Merge the dependency analysis results into the main analysis object
+		// mergeAnalysis just appends lists, paths already have prefix now.
 		analysis.mergeAnalysis(depAnalysis)
 	}
 
@@ -283,47 +303,42 @@ func (a *Analyzer) analyzeSingleValue(key string, value interface{}, currentPath
 	}
 }
 
-// analyzeMapValue handles analysis when the value is a map.
-// It checks if the map represents an image definition or needs recursive analysis.
-//
-// Parameters:
-//   - val: Map to analyze
-//   - currentPath: Current path for context
-//   - analysis: ChartAnalysis object to store detected patterns
-//
-// Returns:
-//   - Error if analysis fails
+// analyzeMapValue recursively analyzes map values.
 func (a *Analyzer) analyzeMapValue(val map[string]interface{}, currentPath string, analysis *ChartAnalysis) error {
 	log.Debug("analyzeMapValue ENTER", "path", currentPath, "value", fmt.Sprintf("%#v", val))
-	defer func() {
-		log.Debug("analyzeMapValue EXIT", "path", currentPath, "imagePatternsCount", len(analysis.ImagePatterns))
-	}()
 
-	// Check if this is an image map pattern
-	isMap := a.isImageMap(val)
-	log.Debug("analyzeMapValue: isImageMap check", "path", currentPath, "isImageMap", isMap)
-	if isMap {
+	// Check if the current map ITSELF represents an image structure.
+	if a.isImageMap(val) {
 		registry, repository, tag := a.normalizeImageValues(val)
-		if repository != "" {
-			pattern := ImagePattern{
-				Path: currentPath,
-				Type: PatternTypeMap,
-				Structure: map[string]interface{}{
-					"registry":   registry,
-					"repository": repository,
-					"tag":        tag,
-				},
-				Value: fmt.Sprintf("%s/%s:%s", registry, repository, tag),
-				Count: 1,
-			}
-			analysis.ImagePatterns = append(analysis.ImagePatterns, pattern)
-			log.Debug("analyzeMapValue: IMAGE APPEND", "path", pattern.Path, "value", pattern.Value, "structure", fmt.Sprintf("%#v", pattern.Structure))
-		}
-		return nil
+		imageValue := fmt.Sprintf("%s/%s:%s", registry, repository, tag)
+
+		// Log structure details before appending
+		log.Debug("analyzeMapValue: IS image map", "path", currentPath, "value", imageValue, "structure", fmt.Sprintf("%#v", val))
+
+		analysis.ImagePatterns = append(analysis.ImagePatterns, ImagePattern{
+			Path:      currentPath,
+			Type:      PatternTypeMap,
+			Value:     imageValue, // Use normalized value string here
+			Structure: val,        // Store original map structure
+			Count:     1,
+		})
+		// **DO NOT RETURN EARLY HERE** - continue analyzing children
+	} else {
+		log.Debug("analyzeMapValue: is NOT image map", "path", currentPath)
 	}
 
-	// If it's not an image map itself, recurse into its keys/values.
-	return a.analyzeValues(val, currentPath, analysis)
+	// **ALWAYS iterate through map children**
+	log.Debug("analyzeMapValue: Iterating/recursing into map children", "path", currentPath)
+	for k, v := range val {
+		itemPath := currentPath + "." + k
+		log.Debug("analyzeMapValue: Processing child item", "parentPath", currentPath, "childKey", k, "childPath", itemPath)
+		if err := a.analyzeSingleValue(k, v, itemPath, analysis); err != nil {
+			return err // Propagate errors
+		}
+	}
+	log.Debug("analyzeMapValue EXIT", "path", currentPath, "imagePatternsCount", len(analysis.ImagePatterns))
+
+	return nil
 }
 
 // analyzeStringValue handles string values that might be image references.
