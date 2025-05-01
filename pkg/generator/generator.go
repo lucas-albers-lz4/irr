@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/lucas-albers-lz4/irr/pkg/analysis"
 	"github.com/lucas-albers-lz4/irr/pkg/image"
 	"github.com/lucas-albers-lz4/irr/pkg/log"
 	"github.com/lucas-albers-lz4/irr/pkg/override"
@@ -93,7 +94,8 @@ func (g *Generator) Generate(_ string, values map[string]interface{}) (map[strin
 		}
 
 		// Generate the new repository path
-		newRepoPath, pathErr := g.PathStrategy.GeneratePath(ref, mappedRegistry)
+		dummyPattern := analysis.ImagePattern{Path: strings.Join(detected.Path, "."), Value: ref.Original} // Create a basic pattern
+		newRepoPath, pathErr := g.PathStrategy.GeneratePath(ref, dummyPattern, mappedRegistry)
 		if pathErr != nil {
 			// Handle error: log, skip, or return error depending on policy
 			// Use key-value pairs for logging
@@ -157,7 +159,8 @@ func normalizeKubeStateMetricsOverrides(
 			if m != nil {
 				mappedRegistry = m.GetTargetRegistry(ref.Registry)
 			}
-			newRepoPath, pathErr := p.GeneratePath(ref, mappedRegistry)
+			dummyPattern := analysis.ImagePattern{Path: strings.Join(detected.Path, "."), Value: ref.Original} // Create a basic pattern
+			newRepoPath, pathErr := p.GeneratePath(ref, dummyPattern, mappedRegistry)
 			if pathErr != nil {
 				log.Debug("Error generating path for KSM image", ref.String(), "error", pathErr)
 				continue // Skip if path generation fails

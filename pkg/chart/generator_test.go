@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	helmchart "helm.sh/helm/v3/pkg/chart"
 
+	"github.com/lucas-albers-lz4/irr/pkg/analysis"
 	"github.com/lucas-albers-lz4/irr/pkg/image"
 	"github.com/lucas-albers-lz4/irr/pkg/log"
 	"github.com/lucas-albers-lz4/irr/pkg/override"
@@ -20,7 +21,7 @@ import (
 // MockPathStrategy implements the strategy.PathStrategy interface for testing
 type MockPathStrategy struct{}
 
-func (m *MockPathStrategy) GeneratePath(ref *image.Reference, _ string) (string, error) {
+func (m *MockPathStrategy) GeneratePath(ref *image.Reference, pattern analysis.ImagePattern, targetRegistry string) (string, error) {
 	if ref == nil {
 		return "", errors.New("mock strategy received nil reference")
 	}
@@ -238,7 +239,7 @@ type MockPathStrategyWithError struct {
 	ErrorImageRepo string // If ref.Repository matches this, return error
 }
 
-func (m *MockPathStrategyWithError) GeneratePath(ref *image.Reference, _ string) (string, error) {
+func (m *MockPathStrategyWithError) GeneratePath(ref *image.Reference, pattern analysis.ImagePattern, targetRegistry string) (string, error) {
 	if ref.Repository == m.ErrorImageRepo {
 		return "", assert.AnError // Return a generic error
 	}

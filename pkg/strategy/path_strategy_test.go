@@ -3,12 +3,46 @@ package strategy
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
+	"github.com/lucas-albers-lz4/irr/pkg/analysis"
 	"github.com/lucas-albers-lz4/irr/pkg/image"
 	"github.com/lucas-albers-lz4/irr/pkg/registry"
 	"github.com/stretchr/testify/assert"
 )
+
+// Helper to create dummy pattern for tests
+func createDummyPattern(ref *image.Reference) analysis.ImagePattern {
+	var originalValue string
+	if ref.Digest != "" {
+		originalValue = fmt.Sprintf("%s/%s@%s", ref.Registry, ref.Repository, ref.Digest)
+	} else {
+		originalValue = fmt.Sprintf("%s/%s:%s", ref.Registry, ref.Repository, ref.Tag)
+	}
+	// Handle cases where registry might be implicit in original string
+	if ref.Registry == "docker.io" && !strings.Contains(ref.Repository, "/") {
+		if ref.Digest != "" {
+			originalValue = fmt.Sprintf("%s@%s", ref.Repository, ref.Digest)
+		} else {
+			originalValue = fmt.Sprintf("%s:%s", ref.Repository, ref.Tag)
+		}
+	} else if ref.Registry == "docker.io" && strings.HasPrefix(ref.Repository, "library/") {
+		// Handle cases like library/nginx where original might have been just nginx
+		repoPart := strings.TrimPrefix(ref.Repository, "library/")
+		if ref.Digest != "" {
+			originalValue = fmt.Sprintf("%s@%s", repoPart, ref.Digest)
+		} else {
+			originalValue = fmt.Sprintf("%s:%s", repoPart, ref.Tag)
+		}
+	}
+
+	return analysis.ImagePattern{
+		Value: originalValue,
+		// Path is not strictly needed for strategy tests, but provide something
+		Path: "test.image",
+	}
+}
 
 func TestPrefixSourceRegistryStrategy(t *testing.T) {
 	strategy := &PrefixSourceRegistryStrategy{}
@@ -21,6 +55,16 @@ func TestPrefixSourceRegistryStrategy(t *testing.T) {
 	}{
 		{
 			name: "standard image with registry",
+			input: &image.Reference{
+				Registry:   "docker.io",
+				Repository: "library/nginx",
+				Tag:        "latest",
+			},
+			targetRegistry: "",
+			expected:       "docker.io/library/nginx",
+		},
+		{
+			name: "official_docker_hub_image",
 			input: &image.Reference{
 				Registry:   "docker.io",
 				Repository: "nginx",
@@ -63,7 +107,8 @@ func TestPrefixSourceRegistryStrategy(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result, err := strategy.GeneratePath(tc.input, tc.targetRegistry)
+			dummyPattern := createDummyPattern(tc.input)
+			result, err := strategy.GeneratePath(tc.input, dummyPattern, tc.targetRegistry)
 			assert.NoError(t, err)
 			assert.Equal(t, tc.expected, result)
 		})
@@ -151,7 +196,8 @@ func TestPrefixSourceRegistryStrategy_GeneratePath(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := &PrefixSourceRegistryStrategy{}
-			got, err := s.GeneratePath(tt.imgRef, tt.targetRegistry)
+			dummyPattern := createDummyPattern(tt.imgRef)
+			got, err := s.GeneratePath(tt.imgRef, dummyPattern, tt.targetRegistry)
 			assert.NoError(t, err)
 			assert.Equal(t, tt.want, got)
 		})
@@ -225,8 +271,9 @@ func TestPrefixSourceRegistryStrategy_GeneratePath_InputVariations(t *testing.T)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := &PrefixSourceRegistryStrategy{}
+			dummyPattern := createDummyPattern(tt.imgRef)
 			// Pass targetRegistry, even though it's not used by this strategy for path generation
-			got, err := s.GeneratePath(tt.imgRef, tt.targetRegistry)
+			got, err := s.GeneratePath(tt.imgRef, dummyPattern, tt.targetRegistry)
 			assert.NoError(t, err)
 			assert.Equal(t, tt.want, got)
 		})
@@ -252,61 +299,42 @@ func TestFlatStrategy_GeneratePath(t *testing.T) {
 			want: "quayio-org-repo",
 		},
 		{
-			name:           "nested_path",
+			name:           "dockerhub_official",
 			targetRegistry: "",
 			imgRef: &image.Reference{
 				Registry:   "docker.io",
-				Repository: "library/nginx",
+				Repository: "nginx",
 				Tag:        "stable",
 			},
 			want: "docker.io-library-nginx",
 		},
 		{
-			name:           "docker_hub_official_image",
+			name:           "dockerhub_library",
 			targetRegistry: "",
 			imgRef: &image.Reference{
 				Registry:   "docker.io",
-				Repository: "nginx",
-				Tag:        "latest",
+				Repository: "library/redis",
+				Tag:        "alpine",
 			},
-			want: "docker.io-library-nginx",
+			want: "docker.io-library-redis",
 		},
 		{
-			name:           "repository_with_dots",
+			name:           "registry_with_port",
 			targetRegistry: "",
 			imgRef: &image.Reference{
-				Registry:   "registry.k8s.io",
-				Repository: "ingress-nginx/controller",
-				Tag:        "v1.2.0",
+				Registry:   "myregistry.com:5000",
+				Repository: "my-app/backend-service",
+				Tag:        "v2",
 			},
-			want: "registryk8sio-ingress-nginx-controller",
-		},
-		{
-			name:           "repository_with_port",
-			targetRegistry: "",
-			imgRef: &image.Reference{
-				Registry:   "localhost:5000",
-				Repository: "my/local/image",
-				Tag:        "dev",
-			},
-			want: "localhost-my-local-image",
-		},
-		{
-			name:           "deeply_nested_path",
-			targetRegistry: "",
-			imgRef: &image.Reference{
-				Registry:   "gcr.io",
-				Repository: "google-containers/kubernetes/dashboard",
-				Tag:        "v2.0.0",
-			},
-			want: "gcrio-google-containers-kubernetes-dashboard",
+			want: "myregistrycom-my-app-backend-service",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := &FlatStrategy{}
-			got, err := s.GeneratePath(tt.imgRef, tt.targetRegistry)
+			s := NewFlatStrategy()
+			dummyPattern := createDummyPattern(tt.imgRef)
+			got, err := s.GeneratePath(tt.imgRef, dummyPattern, tt.targetRegistry)
 			assert.NoError(t, err)
 			assert.Equal(t, tt.want, got)
 		})

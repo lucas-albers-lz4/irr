@@ -6,6 +6,7 @@ import (
 	"path"
 	"strings"
 
+	"github.com/lucas-albers-lz4/irr/pkg/analysis"
 	"github.com/lucas-albers-lz4/irr/pkg/image"
 	log "github.com/lucas-albers-lz4/irr/pkg/log"
 	"github.com/lucas-albers-lz4/irr/pkg/registry"
@@ -18,9 +19,9 @@ const (
 
 // PathStrategy defines the interface for generating new image paths.
 type PathStrategy interface {
-	// GeneratePath takes an original image reference and the target registry (if any),
-	// and returns the new repository path (e.g., "new-registry/my-app").
-	GeneratePath(originalRef *image.Reference, targetRegistry string) (string, error)
+	// GeneratePath takes an original image reference, the analysis pattern containing original value info,
+	// and the target registry (if any), and returns the new repository path (e.g., "new-registry/my-app").
+	GeneratePath(originalRef *image.Reference, pattern analysis.ImagePattern, targetRegistry string) (string, error)
 }
 
 // GetStrategy returns a path strategy based on the name
@@ -50,42 +51,58 @@ func NewPrefixSourceRegistryStrategy() *PrefixSourceRegistryStrategy {
 }
 
 // GeneratePath implements the PathStrategy interface.
-func (s *PrefixSourceRegistryStrategy) GeneratePath(originalRef *image.Reference, targetRegistry string) (string, error) {
+func (s *PrefixSourceRegistryStrategy) GeneratePath(originalRef *image.Reference, pattern analysis.ImagePattern, targetRegistry string) (string, error) {
 	if originalRef == nil {
 		return "", fmt.Errorf("cannot generate path for nil reference")
 	}
 
-	log.Debug("PrefixSourceRegistryStrategy: Generating path for original reference", "originalRef", originalRef)
-	log.Debug("PrefixSourceRegistryStrategy: Target registry", "targetRegistry", targetRegistry)
+	log.Debug("PrefixSourceRegistryStrategy: Generating path",
+		"originalRef", originalRef.Original,
+		"patternPath", pattern.Path,
+		"patternValue", pattern.Value,
+		"targetRegistry", targetRegistry,
+	)
 
-	// Split repository into org/name parts
+	// --- START: Determine Original Source Registry for Prefix ---
+	// Attempt to parse the original value from the pattern to get the source registry.
+	// This avoids using the potentially normalized registry from originalRef.
+	originalSourceRegistry := originalRef.Registry // Fallback to normalized registry
+	parsedFromPattern, err := image.ParseImageReference(pattern.Value)
+	if err == nil && parsedFromPattern.Registry != "" {
+		originalSourceRegistry = parsedFromPattern.Registry
+		log.Debug("PrefixSourceRegistryStrategy: Using original registry from pattern value", "originalSourceRegistry", originalSourceRegistry)
+	} else {
+		// If parsing pattern.Value failed or registry was empty (e.g., "nginx:latest"),
+		// use the registry detected by the main parser (originalRef.Registry),
+		// which might be the normalized default (e.g., "docker.io").
+		log.Debug("PrefixSourceRegistryStrategy: Falling back to registry from parsed reference", "originalSourceRegistry", originalSourceRegistry, "parseError", err)
+	}
+	pathPrefix := image.SanitizeRegistryForPath(originalSourceRegistry)
+	log.Debug("PrefixSourceRegistryStrategy: Using sanitized original source registry prefix", "pathPrefix", pathPrefix)
+	// --- END: Determine Original Source Registry for Prefix ---
+
+	// Split repository into org/name parts (use normalized repository from originalRef)
 	repoPathParts := strings.SplitN(originalRef.Repository, "/", maxSplitTwo)
 
-	// Always use the sanitized source registry name as the prefix
-	pathPrefix := image.SanitizeRegistryForPath(originalRef.Registry)
-	log.Debug("PrefixSourceRegistryStrategy: Using sanitized source registry prefix", "pathPrefix", pathPrefix)
-
-	// --- Base Repository Path Calculation (Keep existing logic) ---
+	// --- Base Repository Path Calculation (Keep existing logic using originalRef.Repository) ---
 	// Ensure we only use the repository path part, excluding any original registry prefix
-	baseRepoPath := originalRef.Repository
+	baseRepoPath := originalRef.Repository // Use normalized repo path
 	if len(repoPathParts) > 1 {
 		if len(repoPathParts) > 1 && (strings.Contains(repoPathParts[0], ".") || strings.Contains(repoPathParts[0], ":") || repoPathParts[0] == "localhost") {
-			// Heuristic: First part looks like a registry (contains '.' or ':'), so strip it.
-			// This handles cases like "quay.io/prometheus/node-exporter"
-			log.Debug("PrefixSourceRegistryStrategy: Stripping potential registry prefix", "repoPathParts", repoPathParts[0], "originalRef.Repository", originalRef.Repository)
+			log.Debug("PrefixSourceRegistryStrategy: Stripping potential registry prefix from repo", "repoPathParts", repoPathParts[0], "originalRef.Repository", originalRef.Repository)
 			baseRepoPath = strings.Join(repoPathParts[1:], "/")
 		}
 	}
 	log.Debug("PrefixSourceRegistryStrategy: Using base repository path", "baseRepoPath", baseRepoPath)
 
 	// Handle Docker Hub official images (add library/ prefix if needed)
-	if (image.NormalizeRegistry(originalRef.Registry) == "docker.io") && !strings.Contains(baseRepoPath, "/") {
+	if (image.NormalizeRegistry(originalSourceRegistry) == "docker.io") && !strings.Contains(baseRepoPath, "/") {
 		log.Debug("PrefixSourceRegistryStrategy: Prepending 'library/' to Docker Hub image path", "baseRepoPath", baseRepoPath)
 		baseRepoPath = path.Join("library", baseRepoPath)
 	}
 	// --- End Base Repository Path Calculation ---
 
-	// Construct the final repository path part by joining the prefix and base path
+	// Construct the final repository path part by joining the prefix (from original source) and base path (from normalized repo)
 	finalRepoPathPart := path.Join(pathPrefix, baseRepoPath)
 
 	log.Debug("PrefixSourceRegistryStrategy: Generated final repo path part", "finalRepoPathPart", finalRepoPathPart)
@@ -102,20 +119,29 @@ func NewFlatStrategy() *FlatStrategy {
 }
 
 // GeneratePath implements the PathStrategy interface.
-func (s *FlatStrategy) GeneratePath(originalRef *image.Reference, targetRegistry string) (string, error) {
+func (s *FlatStrategy) GeneratePath(originalRef *image.Reference, pattern analysis.ImagePattern, targetRegistry string) (string, error) {
+	// TODO: Update FlatStrategy logic if needed based on new signature/pattern info
 	if originalRef == nil {
 		return "", fmt.Errorf("original image reference is nil")
 	}
 
 	log.Debug("FlatStrategy: Generating path for original reference", "originalRef", originalRef)
 	log.Debug("FlatStrategy: Target registry", "targetRegistry", targetRegistry)
+	log.Debug("FlatStrategy: Pattern info", "patternPath", pattern.Path, "patternValue", pattern.Value)
 
-	// Use the original repository path
+	// Determine original source registry (similar to Prefix strategy)
+	originalSourceRegistry := originalRef.Registry // Fallback
+	parsedFromPattern, err := image.ParseImageReference(pattern.Value)
+	if err == nil && parsedFromPattern.Registry != "" {
+		originalSourceRegistry = parsedFromPattern.Registry
+	}
+
+	// Use the original repository path from the reference
 	baseRepoPath := originalRef.Repository
 	log.Debug("FlatStrategy: Using base repository path", "baseRepoPath", baseRepoPath)
 
 	// Handle Docker Hub official images (add library prefix if needed)
-	if (image.NormalizeRegistry(originalRef.Registry) == "docker.io") && !strings.Contains(baseRepoPath, "/") {
+	if (image.NormalizeRegistry(originalSourceRegistry) == "docker.io") && !strings.Contains(baseRepoPath, "/") {
 		log.Debug("FlatStrategy: Prepending 'library-' to Docker Hub image path", "baseRepoPath", baseRepoPath)
 		baseRepoPath = "library-" + baseRepoPath
 	} else {
@@ -125,7 +151,7 @@ func (s *FlatStrategy) GeneratePath(originalRef *image.Reference, targetRegistry
 	}
 
 	// Add registry prefix for better organization (optional but recommended)
-	registryPrefix := image.SanitizeRegistryForPath(originalRef.Registry)
+	registryPrefix := image.SanitizeRegistryForPath(originalSourceRegistry)
 	finalRepoPathPart := registryPrefix + "-" + baseRepoPath
 
 	log.Debug("FlatStrategy: Final flattened path", "finalRepoPathPart", finalRepoPathPart)

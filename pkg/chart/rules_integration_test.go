@@ -70,8 +70,8 @@ type mockPathStrategy struct {
 	mock.Mock
 }
 
-func (m *mockPathStrategy) GeneratePath(ref *image.Reference, targetRegistry string) (string, error) {
-	args := m.Called(ref, targetRegistry)
+func (m *mockPathStrategy) GeneratePath(ref *image.Reference, pattern analysis.ImagePattern, targetRegistry string) (string, error) {
+	args := m.Called(ref, pattern, targetRegistry)
 	return args.String(0), args.Error(1)
 }
 
@@ -272,7 +272,7 @@ func TestGenerateWithRulesTypeAssertion(t *testing.T) {
 			ref.Registry == expectedRef.Registry &&
 			ref.Repository == expectedRef.Repository &&
 			ref.Tag == expectedRef.Tag
-	}), "example.com").Return("example.com/library/nginx", nil)
+	}), mock.Anything, "example.com").Return("example.com/library/nginx", nil)
 
 	mockRegistry := new(mockRulesRegistry)
 	// Set the core expectation: ApplyRules should be called
