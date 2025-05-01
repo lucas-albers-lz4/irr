@@ -464,11 +464,15 @@ func (a *Analyzer) analyzeMapItemInArray(v map[string]interface{}, itemPath stri
 		registry, repository, tag := a.normalizeImageValues(v)
 		if repository != "" { // Check if it's a valid image map structure
 			pattern := ImagePattern{
-				Path:      itemPath, // Path is the array index
-				Type:      PatternTypeMap,
-				Structure: map[string]interface{}{"registry": registry, "repository": repository, "tag": tag},
-				Value:     fmt.Sprintf("%s/%s:%s", registry, repository, tag),
-				Count:     1,
+				Path: itemPath, // Path is the array index
+				Type: PatternTypeMap,
+				Structure: map[string]interface{}{
+					"registry":   registry,
+					"repository": repository,
+					"tag":        tag,
+				},
+				Value: fmt.Sprintf("%s/%s:%s", registry, repository, tag),
+				Count: 1,
 			}
 			analysis.ImagePatterns = append(analysis.ImagePatterns, pattern)
 			log.Debug("analyzeMapItemInArray: IMAGE APPEND (map)", "path", pattern.Path, "value", pattern.Value, "structure", fmt.Sprintf("%#v", pattern.Structure))
