@@ -880,79 +880,153 @@ func getAnalysisPatterns(cmd *cobra.Command) (includePatterns, excludePatterns [
 	return includePatterns, excludePatterns, nil
 }
 
-// processImagePatterns converts analyzer.ImagePattern structs into ImageInfo structs,
-// attempting to parse image references and logging skipped patterns.
+// processImagePatterns converts analyzer patterns to ImageInfo structs.
+// It prioritizes map-type patterns and filters string-type patterns
+// to avoid processing sub-fields.
 func processImagePatterns(patterns []analyzer.ImagePattern) (images []ImageInfo, skipped []string) {
-	images = make([]ImageInfo, 0, len(patterns))
-	skipped = make([]string, 0)
-
-	for _, pattern := range patterns {
-		// Handle Map-based patterns
-		if pattern.Type == "map" && pattern.Structure != nil {
-			// Attempt to reconstruct the full image string from the structured map
-			reg := image.DefaultRegistry // Use imported constant
-			repo := pattern.Structure.Repository
-			tag := "latest" // Default tag
-
-			if pattern.Structure.Registry != "" {
-				reg = pattern.Structure.Registry
-			}
-			if pattern.Structure.Tag != "" {
-				tag = pattern.Structure.Tag
-			}
-
-			if repo == "" {
-				skipped = append(skipped, fmt.Sprintf("%s (map type): missing repository field", pattern.Path))
-				continue
-			}
-
-			// Normalize registry (e.g., add library/ for docker.io)
-			if reg == image.DefaultRegistry && !strings.Contains(repo, "/") {
-				repo = "library/" + repo
-			}
-
-			imageRefStr := fmt.Sprintf("%s/%s:%s", reg, repo, tag)
-
-			// Parse the reconstructed image reference
-			imgRef, err := image.ParseImageReference(imageRefStr)
-			if err != nil {
-				skipped = append(skipped, fmt.Sprintf("%s (map type: %s): %v", pattern.Path, imageRefStr, err))
-				continue
-			}
-
-			images = append(images, ImageInfo{
-				Registry:   imgRef.Registry,
-				Repository: imgRef.Repository,
-				Tag:        imgRef.Tag,
-				Digest:     imgRef.Digest,
-				Source:     pattern.Path, // Path is already string
-			})
-			continue // Move to the next pattern
-		}
-
-		// Handle String-based patterns
-		if pattern.Type == "string" {
-			imgRef, err := image.ParseImageReference(pattern.Value)
-			if err != nil {
-				skipped = append(skipped, fmt.Sprintf("%s (string type: %s): %v", pattern.Path, pattern.Value, err))
-				continue
-			}
-
-			images = append(images, ImageInfo{
-				Registry:   imgRef.Registry,
-				Repository: imgRef.Repository,
-				Tag:        imgRef.Tag,
-				Digest:     imgRef.Digest,
-				Source:     pattern.Path, // Path is already string
-			})
-			continue // Move to the next pattern
-		}
-
-		// Skip other pattern types
-		skipped = append(skipped, fmt.Sprintf("%s (type %s): skipping direct processing", pattern.Path, pattern.Type))
+	if len(patterns) == 0 {
+		return []ImageInfo{}, []string{}
 	}
 
-	return images, skipped
+	imageSet := make(map[string]ImageInfo) // Use map to store unique images based on full reference string
+	skippedPaths := []string{}             // Store paths of skipped items
+
+	for _, p := range patterns {
+		var imageValueToParse string
+		var isLikelyCompleteImage bool
+
+		switch p.Type {
+		case "map":
+			if p.Structure == nil {
+				log.Debug("Skipping map pattern with nil structure", "path", p.Path)
+				skippedPaths = append(skippedPaths, fmt.Sprintf("%s: (map pattern with nil structure)", p.Path))
+				continue
+			}
+			// Reconstruct from structure
+			reg := p.Structure.Registry
+			repo := p.Structure.Repository
+			tag := p.Structure.Tag
+			if repo == "" {
+				log.Debug("Skipping map pattern with empty repository", "path", p.Path)
+				skippedPaths = append(skippedPaths, fmt.Sprintf("%s: (map pattern with empty repository)", p.Path))
+				continue
+			}
+			imageValueToParse = repo
+			if reg != "" {
+				imageValueToParse = fmt.Sprintf("%s/%s", reg, repo)
+			}
+			if tag != "" {
+				imageValueToParse = fmt.Sprintf("%s:%s", imageValueToParse, tag)
+			} // Digest not available in analyzer.Structure
+			isLikelyCompleteImage = true
+			log.Debug("Processing map pattern", "path", p.Path, "reconstructedValue", imageValueToParse)
+
+		case "string":
+			// --- START Filtering Logic for Strings (Phase 9.4.2 v4) ---
+			// Only process string types if the path doesn't strongly suggest it's a sub-field.
+			if strings.HasSuffix(p.Path, ".repository") ||
+				strings.HasSuffix(p.Path, ".tag") ||
+				strings.HasSuffix(p.Path, ".registry") ||
+				strings.HasSuffix(p.Path, ".digest") ||
+				strings.HasSuffix(p.Path, ".repo") { // Add .repo common variation
+				log.Debug("Skipping string pattern likely representing an image sub-field based on path suffix", "path", p.Path, "value", p.Value)
+				skippedPaths = append(skippedPaths, fmt.Sprintf("%s: %s (skipped as sub-field)", p.Path, p.Value))
+				continue
+			}
+			// Also skip if value is empty
+			if p.Value == "" {
+				log.Debug("Skipping string pattern with empty value", "path", p.Path)
+				skippedPaths = append(skippedPaths, fmt.Sprintf("%s: (string pattern with empty value)", p.Path))
+				continue
+			}
+			// --- END Filtering Logic for Strings ---
+
+			// Assume remaining string types are complete image references
+			imageValueToParse = p.Value
+			isLikelyCompleteImage = true
+			log.Debug("Processing string pattern", "path", p.Path, "value", imageValueToParse)
+
+		default:
+			log.Debug("Skipping pattern with unknown type", "path", p.Path, "type", p.Type)
+			skippedPaths = append(skippedPaths, fmt.Sprintf("%s: (type: %s)", p.Path, p.Type))
+			continue
+		}
+
+		if !isLikelyCompleteImage {
+			continue
+		}
+
+		// Try to parse the determined image value
+		imgRef, err := image.ParseImageReference(imageValueToParse)
+		if err != nil {
+			// Attempt fallback parsing if initial fails (e.g., missing tag)
+			if errors.Is(err, image.ErrInvalidImageRefFormat) && !strings.Contains(imageValueToParse, ":") && !strings.Contains(imageValueToParse, "@") {
+				imgRefLatest := imageValueToParse + ":latest"
+				imgRefRetry, errRetry := image.ParseImageReference(imgRefLatest)
+				if errRetry == nil {
+					log.Debug("Successfully parsed image reference by adding ':latest'", "path", p.Path, "originalValue", imageValueToParse, "parsedRef", imgRefRetry.String())
+					imgRef = imgRefRetry
+					err = nil
+				} else {
+					log.Warn("Skipping unparsable image value (even with :latest retry)", "path", p.Path, "value", imageValueToParse, "error", err, "retryError", errRetry)
+					skippedPaths = append(skippedPaths, fmt.Sprintf("%s: %s (parse error: %v)", p.Path, imageValueToParse, err))
+					continue
+				}
+			} else {
+				log.Warn("Skipping unparsable image value", "path", p.Path, "value", imageValueToParse, "error", err)
+				skippedPaths = append(skippedPaths, fmt.Sprintf("%s: %s (parse error: %v)", p.Path, imageValueToParse, err))
+				continue
+			}
+		}
+
+		// Create ImageInfo from the parsed reference.
+		info := ImageInfo{
+			Registry:   imgRef.Registry,
+			Repository: imgRef.Repository,
+			Tag:        imgRef.Tag,
+			Digest:     imgRef.Digest,
+			Source:     p.Path,
+		}
+
+		fullRef := imgRef.String()
+
+		if _, exists := imageSet[fullRef]; !exists {
+			imageSet[fullRef] = info
+		} else {
+			log.Debug("Duplicate image reference found at different pattern path", "image", fullRef, "firstPath", imageSet[fullRef].Source, "newPath", p.Path)
+			existingInfo := imageSet[fullRef]
+			if !strings.Contains(existingInfo.Source, p.Path) { // Avoid adding the same path multiple times
+				existingInfo.Source += "; " + p.Path // Append new source path
+				imageSet[fullRef] = existingInfo
+			}
+		}
+	}
+
+	// Convert map values to slice
+	imageList := make([]ImageInfo, 0, len(imageSet))
+	for _, info := range imageSet {
+		imageList = append(imageList, info)
+	}
+
+	// Sort images for consistent output
+	sort.Slice(imageList, func(i, j int) bool {
+		if imageList[i].Source != imageList[j].Source {
+			return imageList[i].Source < imageList[j].Source
+		}
+		if imageList[i].Registry != imageList[j].Registry {
+			return imageList[i].Registry < imageList[j].Registry
+		}
+		if imageList[i].Repository != imageList[j].Repository {
+			return imageList[i].Repository < imageList[j].Repository
+		}
+		if imageList[i].Tag != "" || imageList[j].Tag != "" {
+			return imageList[i].Tag < imageList[j].Tag
+		}
+		return imageList[i].Digest < imageList[j].Digest
+	})
+
+	log.Debug("Processed image patterns", "unique_images", len(imageList), "skipped_patterns", len(skippedPaths))
+	return imageList, skippedPaths
 }
 
 // detectChartInCurrentDirectory first checks the given start directory ("."), then searches upwards within the provided filesystem for a Chart.yaml file.
