@@ -129,7 +129,7 @@ test-pkg-strategy: build
 	@echo "Strategy package tests completed."
 
 test-integration: build
-	@echo "Running integration tests..."
+	@echo "Running integration tests : go test -tags integration ./test/integration/..."
 	@go test -tags integration ./test/integration/... || true
 	@echo "Integration tests completed."
 
