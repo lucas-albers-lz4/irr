@@ -145,24 +145,33 @@ _Objective: Ensure the analyzer can fully replicate Helm's value merging, includ
 #### Phase 9.4: Align Generator and Inspector with Context-Aware Analysis [IN PROGRESS]
 _Objective: Ensure the override generator and inspect command correctly process the paths and structures identified by the context-aware analyzer, especially for subchart values, resolving current integration test failures._
 
+**Current Status (Integration Test Failures):**
+- **Parent Chart Tests (`TestOverrideParentChart`, `TestInspectParentChart`):**
+    - `override` generates incorrect repository path prefix for subchart image `another-child.monitoring.prometheusImage` (uses `docker.io/` instead of expected `quayio/`).
+    - `inspect` output format seems incorrect (missing `chart:`, `imagePatterns:`) and identifies the wrong source registry for the same subchart image.
+- **Kube Prometheus Stack Tests (`TestKubePrometheusStack*`):**
+    - Fail validation (`exit 16`) due to `semverCompare` error in `prometheus-node-exporter` subchart template. Suggests incorrect tag override (e.g., missing, empty, or non-semver like `latest`).
+- **Bitnami Chart Tests (`TestComplexChartFeatures/ingress-nginx...`, `TestClickhouseOperator`, `TestRulesSystemIntegration/Bitnami_ValidationSucceeds`):**
+    - Fail validation (`exit 16`) due to Bitnami's internal container validation logic triggered by rewritten image paths. Requires chart-specific flags (e.g., `global.security.allowInsecureImages=true`) during validation, which is outside the scope of Phase 9 and relates to **Phase 10**.
+
 - [ ] **Phase 9.4.1: [P1] Debug & Fix Override Generator (`pkg/chart/generator.go`)** [IN PROGRESS]
-    - [x] **Goal:** Resolve failures in `TestOverrideParentChart` and `TestCertManager`.
+    - [x] **Goal:** Resolve failures in `TestOverrideParentChart` and `TestCertManager`. (CertManager passes, ParentChart fails).
     - [ ] **Tasks:**
-        - [ ] Analyze the `panic` and incorrect values in `TestOverrideParentChart` failures. -> **Still failing: tag mismatch (`latest` vs `1.23`) and missing `child.image.repository`.**
-        - [ ] Debug the `createOverride` and `setOverridePath` functions in `pkg/chart/generator.go` to correctly handle nested paths derived from subchart analysis (e.g., `child.image`, `aliasedChild.monitoring.image`). -> **Ongoing debugging needed.**
-            - **Next Step:** Add detailed logging within `createOverride` to trace how `imgRef` (especially `imgRef.Tag`) is determined and used for the parent image (`library/nginx`) when processing `TestOverrideParentChart`. Verify the `pattern.Structure` map is correctly accessed if needed.
-            - **Next Step:** Add detailed logging within `setOverridePath` to trace how the `child.image.repository` path is processed. Verify intermediate maps are created correctly and the final value is set as expected.
-        - [x] Ensure generated override YAML has the correct nested structure reflecting subchart aliases/names. -> **`TestCertManager` passes, indicating basic structure is okay, but parent/child values are wrong.**
-- [ ] **Phase 9.4.2: [P1] Debug & Fix Inspect Command (`cmd/irr/inspect.go`)**
+        - [-] Analyze the `panic` and incorrect values in `TestOverrideParentChart` failures. -> **Panic resolved by fixing strategy initialization.** **Still failing: Prometheus image repo prefix incorrect (`docker.io/` vs `quayio/`).**
+        - [ ] Debug the context-aware analyzer (`internal/helm/context_analyzer.go`) and generator (`pkg/chart/generator.go`) interaction:
+            - **Next Step (Parent Chart):** Verify how the analyzer determines and passes the *source registry* for `another-child.monitoring.prometheusImage` to the generator. Ensure the generator uses this source info correctly when determining the target path prefix.
+            - **Next Step (Kube Prometheus Stack):** Verify how the analyzer identifies the *tag* for subchart images like `prometheus-node-exporter.image`. Debug the generator's logic (`createOverride`?) for handling tags provided by the context-aware analyzer. Ensure it doesn't default incorrectly (e.g., to `latest` when a specific tag is available).
+- [ ] **Phase 9.4.2: [P1] Debug & Fix Inspect Command (`cmd/irr/inspect.go`)** [IN PROGRESS]
     - [ ] **Goal:** Resolve regression in `TestInspectParentChart`.
     - [ ] **Tasks:**
-        - [ ] Determine why `inspect` fails with parent charts after recent analyzer changes.
+        - [ ] **Next Step:** Align `inspect` output format with context-aware analysis results (check `cmd/irr/inspect.go` formatting logic).
+        - [ ] **Next Step:** Ensure `inspect` correctly reports the source registry identified by the context-aware analyzer for subchart images (like `another-child.monitoring.prometheusImage`).
 - [ ] **Phase 9.4.3: [P1] Verify with Integration Tests & Add Coverage**
     - [ ] **Goal:** Confirm fixes work end-to-end and add tests for uncovered subchart scenarios.
     - [ ] **Tasks:**
         - [ ] Run `make build && go test -tags integration ./...` frequently after generator/inspector fixes.
-        - [ ] Ensure existing failing tests (`TestOverrideParentChart`, `TestCertManager`, `TestInspectParentChart`) pass.
-        - [ ] **Add New Test Case (Subchart Aliases):** Create/find a test chart with subchart dependencies defined using `alias`. Add an integration test that runs `irr override` on this chart and verifies the generated YAML uses the alias (e.g., `childAlias.image.repository`) not the original chart name in the override path.
+        - [ ] Ensure existing failing tests (`TestOverrideParentChart`, `TestInspectParentChart`, `TestKubePrometheusStack*`) pass. (**Note:** Bitnami chart test failures are expected until Phase 10).
+        - [ ] **Add New Test Case (Subchart Aliases):** Create/find a test chart with subchart dependencies defined using `alias`. Add an integration test that runs `irr override --context-aware` on this chart and verifies the generated YAML uses the alias (e.g., `childAlias.image.repository`) not the original chart name in the override path.
         - [ ] **(Optional) Add New Test Case (Deep Nesting):** If a suitable chart exists (e.g., parent -> child -> grandchild), add a test case verifying override generation for images defined at deeper levels.
         - [ ] **(Optional) Add New Test Case (Globals Interaction):** Add a test case that verifies how global values (e.g., `global.imageRegistry`) interact with image overrides defined in subcharts.
 - [ ] **Phase 9.4.4: [P2] Update Documentation (if necessary)**
@@ -171,18 +180,18 @@ _Objective: Ensure the override generator and inspect command correctly process 
 
 ### Acceptance Criteria (Phase 9 - Revised)
 - Analyzer unit tests (`internal/helm`) pass. [COMPLETED]
-- Integration tests (`TestOverrideParentChart`, `TestCertManager`, `TestInspectParentChart`) pass, demonstrating correct override generation and inspection for charts with subcharts.
+- Integration tests (`TestOverrideParentChart`, `TestInspectParentChart`, `TestKubePrometheusStack*`) pass, demonstrating correct override generation and inspection for charts with subcharts. (**Note:** Bitnami chart failures are expected until Phase 10 is addressed).
 - New integration tests covering subchart aliases (and optionally deep nesting/globals) pass.
 - Documentation accurately reflects subchart handling capabilities.
 
 IMPORTANT NOTES:
-        - [ ] **Run Full Integration Test Suite:** Execute `make build && make test-quiet && go test -tags integration ./...` to identify all currently failing tests.
+        - [x] **Run Full Integration Test Suite:** Execute `make build && make test-integration` to identify all currently failing tests. (Completed, failures documented above).
         Rememer you need to build between code changes to see the change!
 
 ## Phase 10: Investigate and Address Helm Template Failures During Validation
 
 ### Overview
-Address the ~4.4% chart failure rate (`ERROR_TEMPLATE_EXEC`, `ERROR_TEMPLATE_PARSE`) observed during large-scale testing (Phase 9.2). The goal is to understand why `helm template` fails for these charts when run with minimal configuration and identify the necessary (likely Type 2 - Test/Validation-Only) parameters required to allow successful templating for testing/validation purposes. This phase focuses on understanding and potentially improving the validation process, *not* on adding validation-specific parameters to the final `override.yaml`.
+Address the ~4.4% chart failure rate (`ERROR_TEMPLATE_EXEC`, `ERROR_TEMPLATE_PARSE`) observed during large-scale testing (Phase 9.2), **and specifically the Bitnami chart validation failures currently seen in integration tests (`TestComplexChartFeatures/ingress-nginx...`, `TestClickhouseOperator`, `TestRulesSystemIntegration/Bitnami_ValidationSucceeds`)**. The goal is to understand why `helm template` fails for these charts when run with minimal configuration and identify the necessary (likely Type 2 - Test/Validation-Only) parameters required to allow successful templating for testing/validation purposes, particularly for the internal validation run by `irr override`. This phase focuses on understanding and potentially improving the validation process, *not* on adding validation-specific parameters to the final `override.yaml`.
 
 ### Motivation
 - Increase the number of charts whose analysis *accuracy* can be verified by IRR's test suite.
