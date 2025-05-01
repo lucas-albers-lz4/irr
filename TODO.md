@@ -175,6 +175,10 @@ _Objective: Ensure the override generator and inspect command correctly process 
 - New integration tests covering subchart aliases (and optionally deep nesting/globals) pass.
 - Documentation accurately reflects subchart handling capabilities.
 
+IMPORTANT NOTES:
+        - [ ] **Run Full Integration Test Suite:** Execute `make build && make test-quiet && go test -tags integration ./...` to identify all currently failing tests.
+        Rememer you need to build between code changes to see the change!
+
 ## Phase 10: Investigate and Address Helm Template Failures During Validation
 
 ### Overview
