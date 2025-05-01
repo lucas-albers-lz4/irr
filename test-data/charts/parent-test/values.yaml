@@ -2,44 +2,45 @@
 parentImage:
   registry: docker.io
   repository: parent/app
-  tag: v1.0.0
+  tag: v1.0.0 # Used for parentImage override tests
 
-# Values for first child chart instance
+# Renamed from 'image' to avoid path collision
+parentAppImage:
+  repository: docker.io/parent/app
+  tag: latest # Used for top-level image override tests
+  pullPolicy: IfNotPresent
+
+# Values passed to the 'child' dependency
 child:
+  # These values override the child chart's defaults (e.g., child/values.yaml)
   image:
-    repository: docker.io/nginx
-    tag: latest
-  
-  explicitRegistry:
+    # repository: docker.io/nginx # This would be the default from child/values.yaml if not overridden here
+    tag: "1.23" # Override default tag ('latest') from child/values.yaml
+  extraImage:
+    repository: docker.io/bitnami/nginx # Override extraImage defined in child/values.yaml
+    tag: stable # Override default tag ('latest') for extraImage
+  explicitRegistry: # Test overriding a map that already has registry
     image:
-      registry: docker.io
-      repository: docker.io/bitnami/nginx
-      tag: latest
+      registry: docker.io # Original registry
+      repository: bitnami/explicit-child # Different repo name for clarity
+      tag: "1.0"
 
-# Values for second child chart instance
+# Values passed to the 'another-child' dependency
 another-child:
+  # These values override the another-child chart's defaults
   image:
-    repository: docker.io/redis
-    tag: latest
-  
-  quayImage:
+    repository: custom-repo/custom-image # Override repo from another-child/values.yaml
+    tag: stable # Override tag ('latest') from another-child/values.yaml
+  monitoring:
+    # Override the nested image in another-child's monitoring section
+    # Key path: another-child.monitoring.prometheusImage
+    prometheusImage:
+      repository: prom/prometheus # Override repo
+      tag: v2.40.0 # Override tag
+  quayImage: # Test image originally from quay.io
     image:
       registry: quay.io
       repository: prometheus/node-exporter
-      tag: latest
-
-image:
-  repository: docker.io/parent/app
-  tag: latest
-  pullPolicy: IfNotPresent
-
-child:
-  extraImage:
-    repository: docker.io/bitnami/nginx
-    tag: latest
-
-another-child:
-  monitoring:
-    image:
-      repository: quay.io/prometheus/node-exporter
-      tag: latest 
+      tag: v1.5.0 # Specific tag
+  # global: # Example of parent passing globals - not used in this test focuses
+  #   someGlobal: parent_global_value 
