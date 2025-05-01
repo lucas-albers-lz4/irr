@@ -1,0 +1,4 @@
+apiVersion: v2
+name: child-chart
+description: A simple child chart for alias testing.
+version: 0.1.0 

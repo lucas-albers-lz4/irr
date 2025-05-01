@@ -1,0 +1,7 @@
+# Default values for child-chart
+
+someValue: default
+
+image:
+  repository: busybox # Defaults to docker.io/library/busybox
+  tag: "1.36" 

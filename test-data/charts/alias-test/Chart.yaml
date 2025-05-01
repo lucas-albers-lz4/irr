@@ -1,0 +1,11 @@
+apiVersion: v2
+name: alias-test
+description: A Helm chart demonstrating subchart aliases for IRR testing.
+version: 0.1.0
+appVersion: "1.0"
+
+dependencies:
+  - name: child-chart # The actual chart name in the charts/ directory
+    version: "0.1.0"
+    repository: "file://./charts/child-chart" # Local dependency
+    alias: myChildAlias # The alias to use in values 

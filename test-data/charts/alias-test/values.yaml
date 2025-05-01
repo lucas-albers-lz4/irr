@@ -1,0 +1,7 @@
+# Parent values - can be empty or contain top-level values
+
+# Values for the aliased subchart MUST use the alias
+myChildAlias:
+  # These values override the defaults in charts/child-chart/values.yaml
+  someValue: overridden
+  # We don't define the image here, relying on the child's default 
