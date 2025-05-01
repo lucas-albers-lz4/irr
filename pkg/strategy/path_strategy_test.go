@@ -12,6 +12,8 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+const dockerHubRegistry = "docker.io"
+
 // Helper to create dummy pattern for tests
 func createDummyPattern(ref *image.Reference) analysis.ImagePattern {
 	var originalValue string
@@ -21,13 +23,13 @@ func createDummyPattern(ref *image.Reference) analysis.ImagePattern {
 		originalValue = fmt.Sprintf("%s/%s:%s", ref.Registry, ref.Repository, ref.Tag)
 	}
 	// Handle cases where registry might be implicit in original string
-	if ref.Registry == "docker.io" && !strings.Contains(ref.Repository, "/") {
+	if ref.Registry == dockerHubRegistry && !strings.Contains(ref.Repository, "/") {
 		if ref.Digest != "" {
 			originalValue = fmt.Sprintf("%s@%s", ref.Repository, ref.Digest)
 		} else {
 			originalValue = fmt.Sprintf("%s:%s", ref.Repository, ref.Tag)
 		}
-	} else if ref.Registry == "docker.io" && strings.HasPrefix(ref.Repository, "library/") {
+	} else if ref.Registry == dockerHubRegistry && strings.HasPrefix(ref.Repository, "library/") {
 		// Handle cases like library/nginx where original might have been just nginx
 		repoPart := strings.TrimPrefix(ref.Repository, "library/")
 		if ref.Digest != "" {

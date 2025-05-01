@@ -966,7 +966,6 @@ func processImagePatterns(patterns []analyzer.ImagePattern) (images []ImageInfo,
 				if errRetry == nil {
 					log.Debug("Successfully parsed image reference by adding ':latest'", "path", p.Path, "originalValue", imageValueToParse, "parsedRef", imgRefRetry.String())
 					imgRef = imgRefRetry
-					err = nil
 				} else {
 					log.Warn("Skipping unparsable image value (even with :latest retry)", "path", p.Path, "value", imageValueToParse, "error", err, "retryError", errRetry)
 					skippedPaths = append(skippedPaths, fmt.Sprintf("%s: %s (parse error: %v)", p.Path, imageValueToParse, err))
