@@ -1,9 +1,10 @@
 package chart
 
 import (
-	"errors"
+	"errors" // Re-import standard errors for errors.New
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -14,13 +15,21 @@ import (
 	"helm.sh/helm/v3/pkg/chartutil"
 	"helm.sh/helm/v3/pkg/cli"
 
+	// Use github.com/pkg/errors for wrapping capabilities
+	pkgerrors "github.com/pkg/errors" // Alias to avoid collision
+
 	"github.com/lucas-albers-lz4/irr/pkg/analysis"
 	image "github.com/lucas-albers-lz4/irr/pkg/image"
 	log "github.com/lucas-albers-lz4/irr/pkg/log"
+
+	// Removed: "github.com/lucas-albers-lz4/irr/pkg/maputil"
+
+	helmtypes "github.com/lucas-albers-lz4/irr/pkg/helmtypes"
 	"github.com/lucas-albers-lz4/irr/pkg/override"
 	"github.com/lucas-albers-lz4/irr/pkg/registry"
 	"github.com/lucas-albers-lz4/irr/pkg/rules"
 	"github.com/lucas-albers-lz4/irr/pkg/strategy"
+	"helm.sh/helm/v3/pkg/cli/values"
 )
 
 // Constants
@@ -43,6 +52,7 @@ const (
 )
 
 // --- Local Error Definitions ---
+// Use standard errors.New for simple error types
 var (
 	ErrUnsupportedStructure = errors.New("unsupported structure found")
 )
@@ -81,6 +91,52 @@ func (e *ThresholdError) Error() string {
 	return errMsg
 }
 func (e *ThresholdError) Unwrap() error { return e.Err }
+
+// --- analysis.ChartLoader Implementation ---
+
+// analysisLoaderWrapper adapts helmtypes.ChartLoader to analysis.ChartLoader interface.
+// This is necessary because the analysis package defines its own simpler ChartLoader interface.
+type analysisLoaderWrapper struct {
+	originalLoader helmtypes.ChartLoader // The underlying loader (e.g., internal/helm.DefaultChartLoader)
+}
+
+// NewAnalysisLoaderWrapper creates a new wrapper.
+func NewAnalysisLoaderWrapper(helmLoader helmtypes.ChartLoader) analysis.ChartLoader {
+	if helmLoader == nil {
+		// Handle nil case? Maybe return an error or a default internal loader?
+		log.Error("NewAnalysisLoaderWrapper received nil helmtypes.ChartLoader")
+		// Returning nil might cause panic later. Need a robust strategy.
+		// For now, let it proceed, but this highlights a potential issue.
+		return nil
+	}
+	return &analysisLoaderWrapper{originalLoader: helmLoader}
+}
+
+// Load implements the analysis.ChartLoader interface.
+func (w *analysisLoaderWrapper) Load(chartPath string) (*chart.Chart, error) {
+	if w.originalLoader == nil {
+		return nil, errors.New("internal error: analysisLoaderWrapper has a nil loader")
+	}
+	// The analysis.ChartLoader interface doesn't provide value options.
+	// We must call the underlying loader with default/empty options.
+	// This might not be sufficient if the analysis truly depends on computed values.
+	opts := &helmtypes.ChartLoaderOptions{
+		ChartPath:  chartPath,
+		ValuesOpts: values.Options{}, // Use default/empty values options
+	}
+
+	// We only need the chart struct, not the merged values here.
+	// LoadChartWithValues is simpler, but LoadChartAndTrackOrigins might be needed
+	// if the analyzer internally relies on the context it provides.
+	// Let's try LoadChartWithValues first.
+	loadedChart, _, err := w.originalLoader.LoadChartWithValues(opts)
+	if err != nil {
+		return nil, pkgerrors.Wrapf(err, "analysisLoaderWrapper failed to load chart '%s' via helmtypes.ChartLoader", chartPath)
+	}
+	return loadedChart, nil
+}
+
+// --- End analysis.ChartLoader Implementation ---
 
 // --- Generator Implementation ---
 
@@ -141,7 +197,7 @@ type Generator struct {
 	excludePatterns   []string // Passed to detector context
 	knownPaths        []string // Passed to detector context
 	threshold         int
-	loader            Loader                  // Use Loader from this package
+	loader            helmtypes.ChartLoader
 	rulesEnabled      bool                    // Whether to apply rules
 	rulesRegistry     rules.RegistryInterface // Use the interface type here
 }
@@ -154,14 +210,16 @@ func NewGenerator(
 	mappings *registry.Mappings,
 	strict bool,
 	threshold int,
-	chartLoader Loader, // Use Loader from this package
+	chartLoader helmtypes.ChartLoader,
 	includePatterns, excludePatterns, knownPaths []string,
 	rulesEnabled bool,
 ) *Generator {
 	// Set up a default chart loader if none was provided
 	if chartLoader == nil {
-		// Use the constructor from api.go which uses DefaultLoader
-		chartLoader = NewLoader()
+		// Caller is responsible for providing a loader. Error or use a default?
+		// For now, let's assume the caller handles this. If nil is passed, it will panic later.
+		// A better approach might be to return an error or have a default internal one.
+		log.Warn("NewGenerator received nil chartLoader. Ensure a loader is provided.")
 	}
 
 	return &Generator{
@@ -250,10 +308,10 @@ func (g *Generator) filterEligibleImages(detectedImages []analysis.ImagePattern)
 
 // determineTargetPathAndRegistry calculates the target registry and the new repository path
 // for a given image reference based on the configured registry mappings and path strategy.
-// It applies mappings first, then uses the path strategy to construct the final path.
-// It now accepts the analysis.ImagePattern to provide original value context to the strategy.
-func (g *Generator) determineTargetPathAndRegistry(imgRef *image.Reference, pattern analysis.ImagePattern) (targetReg, newPath string, err error) {
-	targetReg = g.targetRegistry
+// It applies mappings first to determine the effective target registry prefix,
+// then uses the path strategy to construct the repository path part.
+func (g *Generator) determineTargetPathAndRegistry(imgRef *image.Reference, pattern analysis.ImagePattern) (finalRegistryPrefix, finalRepoPathPart string, err error) {
+	log.Debug("determineTargetPathAndRegistry: start", "patternValue", pattern.Value, "imgRefRegistry", imgRef.Registry)
 
 	// Determine original source registry from pattern or fallback to imgRef
 	originalSourceRegistry := imgRef.Registry // Fallback
@@ -262,126 +320,102 @@ func (g *Generator) determineTargetPathAndRegistry(imgRef *image.Reference, patt
 		originalSourceRegistry = parsedFromPattern.Registry
 	}
 
-	// Check for registry mappings using the original source registry
+	// Determine the final registry prefix: Use mapping target if available, else use default targetRegistry
+	finalRegistryPrefix = g.targetRegistry // Default
 	if g.mappings != nil {
-		if mappedTarget := g.mappings.GetTargetRegistry(originalSourceRegistry); mappedTarget != "" {
-			targetReg = mappedTarget // Use mapped target if found
-			log.Debug("determineTargetPathAndRegistry: Using mapped target registry", "originalRegistry", originalSourceRegistry, "mappedTarget", targetReg)
+		if mappedTargetPrefix := g.mappings.GetTargetRegistry(originalSourceRegistry); mappedTargetPrefix != "" {
+			finalRegistryPrefix = mappedTargetPrefix // Override with mapping target
+			log.Debug("determineTargetPathAndRegistry: Using mapping target prefix", "originalRegistry", originalSourceRegistry, "mappedTargetPrefix", mappedTargetPrefix)
 		} else {
-			log.Debug("determineTargetPathAndRegistry: No mapping found, using default target registry", "originalRegistry", originalSourceRegistry, "defaultTarget", targetReg)
+			log.Debug("determineTargetPathAndRegistry: No mapping found, using default target registry", "originalRegistry", originalSourceRegistry, "defaultTargetRegistry", g.targetRegistry)
 		}
 	} else {
-		log.Debug("determineTargetPathAndRegistry: No mappings configured, using default target registry", "defaultTarget", targetReg)
+		log.Debug("determineTargetPathAndRegistry: No mappings configured, using default target registry", "defaultTargetRegistry", g.targetRegistry)
 	}
 
-	// Generate the new repository path using the strategy, passing the pattern
-	newPath, err = g.pathStrategy.GeneratePath(imgRef, pattern, targetReg)
+	// Generate the repository path PART using the strategy.
+	// The strategy should ideally return the path *relative* to the registry (e.g., "library/nginx" or "docker.io/library/nginx")
+	// The PrefixSourceRegistryStrategy currently returns the source-prefixed path (e.g., "docker.io/library/nginx").
+	// We will use this path directly for now, assuming the combination works.
+	// The `finalRegistryPrefix` already incorporates the mapping target path.
+	var strategyGeneratedPath string
+	strategyGeneratedPath, err = g.pathStrategy.GeneratePath(imgRef, pattern, g.targetRegistry) // Pass original target for context, though prefix strategy ignores it
 	if err != nil {
-		// Use original pattern value in error for better context
-		return "", "", fmt.Errorf("path generation failed for pattern '%s' (value: '%s'): %w", pattern.Path, pattern.Value, err)
+		return "", "", pkgerrors.Wrapf(err, "path generation failed for pattern '%s' (value: '%s'): %v", pattern.Path, pattern.Value, err)
 	}
 
-	log.Debug("Generated new path", "new_path", newPath, "original_pattern_value", pattern.Value)
-	return targetReg, newPath, nil
+	// For now, we assume the strategy output (`strategyGeneratedPath`) is the correct final path part
+	// relative to the `finalRegistryPrefix`.
+	// Example with mapping: finalRegistryPrefix="registry.example.com/dockerio", strategyGeneratedPath="docker.io/library/nginx"
+	//   -> Resulting full path = registry.example.com/dockerio/library/nginx (Incorrect if mapping target includes source prefix)
+	// Example without mapping: finalRegistryPrefix="test.registry.io", strategyGeneratedPath="docker.io/library/nginx"
+	//   -> Resulting full path = test.registry.io/docker.io/library/nginx (Correct for Prefix strategy)
+	// Let's adjust: If a mapping was used, assume the mapping *replaces* the default target AND the strategy's prefix.
+	// This is a heuristic.
+
+	finalRepoPathPart = strategyGeneratedPath // Start with strategy output
+	if g.mappings != nil && g.mappings.GetTargetRegistry(originalSourceRegistry) != "" {
+		// Mapping exists. PrefixSourceRegistryStrategy returns sourcePrefix/repoPath.
+		// Mapped target is finalRegistryPrefix.
+		// We want finalRegistryPrefix/repoPath.
+		// Need to strip the sourcePrefix from strategyGeneratedPath.
+		sourcePrefix := image.SanitizeRegistryForPath(originalSourceRegistry)
+		if strings.HasPrefix(strategyGeneratedPath, sourcePrefix+"/") {
+			finalRepoPathPart = strings.TrimPrefix(strategyGeneratedPath, sourcePrefix+"/")
+			log.Debug("determineTargetPathAndRegistry: Stripped source prefix due to mapping", "originalStrategyPath", strategyGeneratedPath, "finalRepoPathPart", finalRepoPathPart)
+		} else {
+			log.Warn("determineTargetPathAndRegistry: Mapping exists, but strategy path didn't have expected source prefix", "strategyPath", strategyGeneratedPath, "sourcePrefix", sourcePrefix)
+		}
+	}
+
+	log.Debug("determineTargetPathAndRegistry: computed", "finalRegistryPrefix", finalRegistryPrefix, "finalRepoPathPart", finalRepoPathPart)
+
+	// Return the final registry prefix and the repository path part.
+	return finalRegistryPrefix, finalRepoPathPart, nil
 }
 
-// processImage attempts to generate and apply an override for a single image pattern.
-// Steps involved:
-// 1. Parse the image pattern (string or map) into an image.Reference.
-// 2. Determine the target registry and repository path using mappings and strategy.
-// 3. Create the override structure (map or string).
-// 4. Set the override value at the correct path in the main overrides map.
-// Returns: success bool, unsupported *override.UnsupportedStructure, err error
-func (g *Generator) processImage(pattern analysis.ImagePattern, overrides map[string]interface{}) (bool, *override.UnsupportedStructure, error) {
-	log.Debug("Processing image pattern", "path", pattern.Path, "value", pattern.Value)
+// processImage processes a single eligible image pattern and adds its override to the map.
+func (g *Generator) processImage(pattern analysis.ImagePattern, overrides map[string]interface{}, aliasMap map[string]string) (processed bool, unsupported *override.UnsupportedStructure, err error) {
+	log.Debug("Processing image pattern", "path", pattern.Path, "value", pattern.Value, "type", pattern.Type)
 
-	// 1. Process the image pattern string
+	// Check if this path already exists in the overrides (prevent lower precedence overwrites)
+	pathExists := pathExistsInMap(overrides, pattern.Path)
+	if pathExists {
+		log.Warn("Override path already exists, skipping potential overwrite", "path", pattern.Path)
+		return false, nil, nil // Consider this 'processed' in the sense that we don't want to touch it
+	}
+
 	imgRef, err := g.processImagePattern(pattern)
 	if err != nil {
-		log.Warn("Failed to process image pattern", "path", pattern.Path, "value", pattern.Value, "error", err)
-		unsupported := &override.UnsupportedStructure{
-			Path: strings.Split(pattern.Path, "."),
-			Type: "InvalidImageFormat", // Or a more specific type if available from err
-		}
-		// Return the raw error for aggregation
-		return false, unsupported, fmt.Errorf("path '%s': failed to process image: %w", pattern.Path, err)
+		// Error already logged in helper
+		return false, nil, pkgerrors.Wrapf(err, "failed to process image pattern at path %s: %v", pattern.Path, err)
 	}
 
-	// 2. Determine Target Path and Registry - PASS THE PATTERN
-	targetReg, newPath, err := g.determineTargetPathAndRegistry(imgRef, pattern)
+	// --- 2. Determine Target Registry and Repository Path ---
+	finalRegistryPrefix, finalRepoPathPart, err := g.determineTargetPathAndRegistry(imgRef, pattern)
 	if err != nil {
-		log.Warn("Failed to determine target path/registry", "path", pattern.Path, "image", imgRef.Original, "error", err)
-		return false, nil, fmt.Errorf("path '%s': failed to determine target path: %w", pattern.Path, err)
+		log.Error("Failed to determine target path/registry", "path", pattern.Path, "error", err)
+		// Use errors.Wrapf from github.com/pkg/errors
+		return false, nil, fmt.Errorf("failed to determine target path and registry for %s", pattern.Value)
 	}
 
-	// 3. Create the Override Value
-	overrideValue := g.createOverride(pattern, imgRef, targetReg, newPath)
+	// --- 3. Create the override value (string or map) ---
+	// Correct argument order: pattern, imgRef
+	overrideValue := g.createOverride(pattern, imgRef, finalRegistryPrefix, finalRepoPathPart)
 
-	// 4. Set the Override Path
-	if err := g.setOverridePath(overrides, pattern, overrideValue); err != nil {
-		log.Warn("Failed to set override", "path", pattern.Path, "error", err)
-		unsupported := &override.UnsupportedStructure{
-			Path: strings.Split(pattern.Path, "."),
-			Type: "OverrideSetError",
-		}
-		return false, unsupported, fmt.Errorf("path '%s': failed to set override: %w", pattern.Path, err)
+	// --- 4. Set the override value at the correct path ---
+	// Correct function call: setOverridePath without receiver
+	if err := setOverridePath(pattern, overrides, overrideValue, aliasMap); err != nil {
+		log.Error("Failed to set override path in map", "path", pattern.Path, "error", err)
+		return false, nil, err // Return the path setting error
 	}
 
-	log.Debug("Successfully processed and generated override", "path", pattern.Path)
-	return true, nil, nil // Success, no unsupported structure, no error
+	// Successfully processed and set the override
+	log.Debug("Successfully processed image and set override", "path", pattern.Path)
+	return true, nil, nil
 }
 
 // --- Refactored Generate Logic --- (Helper methods added below)
-
-// loadAndAnalyzeChart loads the chart and performs initial analysis.
-func (g *Generator) loadAndAnalyzeChart(result *override.File) (*chart.Chart, *analysis.ChartAnalysis, error) {
-	// Use the configured loader via the Loader interface
-	log.Debug("Generator using loader", "loader_type", fmt.Sprintf("%T", g.loader))
-	loadedChart, err := g.loader.Load(g.chartPath) // Use interface method
-	if err != nil {
-		log.Debug("Generator error loading chart", "chartPath", g.chartPath, "error", err)
-		// Wrap error for consistent exit code mapping
-		// Consider if LoadingError is still the right type or if loader returns wrapped errors
-		return nil, nil, &LoadingError{ChartPath: g.chartPath, Err: err} // Pass err directly
-	}
-	log.Debug("Generator chart loaded", "name", loadedChart.Name(), "values_type", fmt.Sprintf("%T", loadedChart.Values))
-
-	if loadedChart.Values == nil {
-		log.Debug("Generator chart has nil values, skipping analysis", "chart", loadedChart.Name())
-		// No need to create analysis if no values
-		return loadedChart, nil, nil
-	}
-
-	// Use the same loader instance for the analyzer
-	analyzer := analysis.NewAnalyzer(g.chartPath, g.loader) // Pass the loader instance
-	detectedImages, analysisErr := analyzer.Analyze()
-	if analysisErr != nil {
-		log.Warn("Analysis of chart failed", "chartPath", g.chartPath, "error", analysisErr)
-		result.Unsupported = append(result.Unsupported, override.UnsupportedStructure{
-			Path: []string{"analysis"},
-			Type: "AnalysisError",
-		})
-		// Return partial success (loaded chart) but indicate analysis issue
-		return loadedChart, nil, nil
-	}
-
-	// Check for unsupported patterns found *during* analysis
-	if detectedImages != nil {
-		result.Unsupported = append(result.Unsupported, g.findUnsupportedPatterns(detectedImages.ImagePatterns)...)
-		if g.strict && len(result.Unsupported) > 0 {
-			log.Debug("Generator found unsupported patterns in strict mode", "count", len(result.Unsupported))
-			firstUnsupported := result.Unsupported[0]
-			// Return specific error for unsupported structure in strict mode
-			// Use the existing UnsupportedStructureError type (ensure it's defined/imported)
-			return nil, nil, &UnsupportedStructureError{
-				Path: firstUnsupported.Path,
-				Type: firstUnsupported.Type,
-			}
-		}
-	}
-
-	return loadedChart, detectedImages, nil
-}
 
 // FailedItem struct definition remains the same
 type FailedItem struct {
@@ -390,7 +424,8 @@ type FailedItem struct {
 }
 
 // processEligibleImagesLoop iterates through eligible images, processes them, and collects results.
-func (g *Generator) processEligibleImagesLoop(eligibleImages []analysis.ImagePattern, overrides map[string]interface{}) (processingErrors []error, processedCount int) {
+// It now accepts the aliasMap to pass down to processImage.
+func (g *Generator) processEligibleImagesLoop(eligibleImages []analysis.ImagePattern, overrides map[string]interface{}, aliasMap map[string]string) (processingErrors []error, processedCount int) {
 	// Initialize local slices/maps if needed (overrides is passed in)
 	if overrides == nil {
 		overrides = make(map[string]interface{}) // Should ideally not happen if called from Generate
@@ -400,7 +435,8 @@ func (g *Generator) processEligibleImagesLoop(eligibleImages []analysis.ImagePat
 	processedCount = 0
 
 	for _, pattern := range eligibleImages {
-		processed, unsupported, err := g.processImage(pattern, overrides) // PASS local overrides map
+		// Pass aliasMap to processImage
+		processed, unsupported, err := g.processImage(pattern, overrides, aliasMap) // Pass aliasMap
 		switch {
 		case err != nil:
 			log.Warn("Error processing image pattern", "path", pattern.Path, "error", err)
@@ -410,8 +446,10 @@ func (g *Generator) processEligibleImagesLoop(eligibleImages []analysis.ImagePat
 			log.Warn("Unsupported structure detected", "path", pattern.Path, "type", unsupported.Type, "value", pattern.Value)
 			// Handle strict mode: add error
 			if g.strict {
+				log.Error("Unsupported structure detected in strict mode", "path", pattern.Path, "type", unsupported.Type)
 				strictErr := fmt.Errorf("path '%s': %w (type: %s)", pattern.Path, ErrUnsupportedStructure, unsupported.Type)
 				processingErrors = append(processingErrors, strictErr)
+				continue // Skip further processing for this pattern
 			}
 		case processed:
 			processedCount++
@@ -439,7 +477,7 @@ func (g *Generator) checkProcessingThreshold(processingErrors []error, processed
 			for _, e := range processingErrors {
 				errStrings = append(errStrings, e.Error())
 			}
-			combinedErr = fmt.Errorf("processing errors: %s", strings.Join(errStrings, "; "))
+			combinedErr = fmt.Errorf("processing errors: %v", strings.Join(errStrings, "; "))
 		}
 		// Return threshold error (non-fatal, allows returning partial result)
 		return &ThresholdError{
@@ -469,7 +507,7 @@ func (g *Generator) applyRulesIfNeeded(loadedChart *chart.Chart, result *overrid
 	modified, err := g.rulesRegistry.ApplyRules(loadedChart, result.Values)
 	if err != nil {
 		log.Error("Error applying rules", "chart_path", g.chartPath, "error", err)
-		return fmt.Errorf("failed to apply rules to chart %s: %w", g.chartPath, err)
+		return pkgerrors.Wrapf(err, "failed to apply rules to chart %v", g.chartPath)
 	}
 	if modified {
 		log.Debug("Rules modified overrides", "chart_path", g.chartPath)
@@ -489,35 +527,95 @@ func (g *Generator) Generate() (*override.File, error) {
 		Unsupported: []override.UnsupportedStructure{}, // Initialize slice
 	}
 
-	// 1. Load and Analyze Chart
-	loadedChart, analysisResult, err := g.loadAndAnalyzeChart(result)
+	// --- 1. Load Chart with Merged Values & Origins ---
+	// Assuming values opts are handled by the calling command (irr override)
+	// Generator focuses on the core logic using the loaded context.
+	loadOpts := &helmtypes.ChartLoaderOptions{
+		ChartPath:  g.chartPath,
+		ValuesOpts: values.Options{}, // Pass empty opts, expecting caller to provide merged context if needed?
+		// TODO: Revisit how ValuesOpts should be populated here or if generator needs merged values passed in.
+		// For now, proceed assuming LoadChartAndTrackOrigins gives us what we need from the chart structure itself.
+	}
+	analysisContext, err := g.loader.LoadChartAndTrackOrigins(loadOpts)
 	if err != nil {
-		log.Error("Failed during chart load/analysis phase", "error", err)
-		// Ensure we return nil result on loading/analysis error
-		return nil, err // Correctly return nil for result
+		log.Error("Failed to load chart and track origins", "path", g.chartPath, "error", err)
+		// Map helm loader errors to appropriate exit codes/errors if possible
+		// Return specific LoadingError type
+		return nil, &LoadingError{ChartPath: g.chartPath, Err: err}
 	}
-	// Add checks for nil return values even if error is nil
-	if loadedChart == nil {
-		return nil, errors.New("internal error: loadAndAnalyzeChart returned nil chart without error")
+	if analysisContext == nil || analysisContext.LoadedChart == nil {
+		// Should not happen if LoadChartAndTrackOrigins returns nil error
+		return nil, pkgerrors.New("internal error: nil analysis context after successful load")
 	}
+
+	aliasMap := make(map[string]string) // Define aliasMap outside the if block
+
+	// Populate alias map from loaded chart dependencies
+	if analysisContext.LoadedChart.Metadata != nil && analysisContext.LoadedChart.Metadata.Dependencies != nil {
+		for _, dep := range analysisContext.LoadedChart.Metadata.Dependencies {
+			if dep.Alias != "" {
+				aliasMap[dep.Name] = dep.Alias
+			}
+		}
+	}
+
+	// --- 2. Analyze Merged Values ---
+	// Create the wrapper for the loader
+	analysisLoader := NewAnalysisLoaderWrapper(g.loader)
+	analyzer := analysis.NewAnalyzer(g.chartPath, analysisLoader)
+
+	// Analyze the MERGED values directly. Assume Analyze takes values and returns patterns.
+	// This deviates from the signature found (Analyze()), but aligns with how Generate uses it.
+	// We need to reconcile the Analyzer interface/implementation with its usage here.
+	// Let's TRY calling it with the merged values and assume it returns []ImagePattern
+	analysisResult, analysisErr := analyzer.Analyze() // Returns *analysis.ChartAnalysis
+
+	if analysisErr != nil {
+		// Log error but potentially continue if some patterns were found?
+		log.Error("Error during analysis of merged values", "error", analysisErr)
+		// Decide on error handling - return error or proceed with potentially incomplete patterns?
+		// Let's return error for now to be safe.
+		return nil, pkgerrors.Wrap(analysisErr, "analysis of merged values failed")
+	}
+
+	var detectedPatternsList []analysis.ImagePattern // Declare the slice
+	// Extract the image patterns from the analysis result
 	if analysisResult == nil {
-		return nil, errors.New("internal error: loadAndAnalyzeChart returned nil analysis result without error")
+		// Handle nil analysis result case
+		log.Warn("Analyzer returned nil result, assuming no patterns found.")
+		detectedPatternsList = []analysis.ImagePattern{}
+	} else {
+		// Assuming ImagePatterns is the field name in ChartAnalysis
+		detectedPatternsList = analysisResult.ImagePatterns
 	}
-	result.ChartName = loadedChart.Name()                 // Update chart name from loaded chart metadata
-	result.TotalCount = len(analysisResult.ImagePatterns) // Total detected patterns
-	// Initialize Unsupported slice, it will be populated during image processing if needed
-	result.Unsupported = []override.UnsupportedStructure{}
 
-	// 2. Filter Eligible Images
-	eligibleImages := g.filterEligibleImages(analysisResult.ImagePatterns)
+	// Assuming detectedPatternsList is now correctly []analysis.ImagePattern
+	result.Unsupported = append(result.Unsupported, g.findUnsupportedPatterns(detectedPatternsList)...)
+	if g.strict && len(result.Unsupported) > 0 {
+		log.Debug("Generator found unsupported patterns in strict mode", "count", len(result.Unsupported))
+		firstUnsupported := result.Unsupported[0]
+		return nil, &UnsupportedStructureError{
+			Path: firstUnsupported.Path,
+			Type: firstUnsupported.Type,
+		}
+	}
+	log.Info("Finished chart analysis of merged values", "total_patterns", len(detectedPatternsList), "unsupported_count", len(result.Unsupported))
+
+	// --- 3. Filter Eligible Images ---
+	eligibleImages := g.filterEligibleImages(detectedPatternsList) // Use patterns from merged analysis
 	eligibleCount := len(eligibleImages)
-	log.Info("Finished chart analysis", "total_images", result.TotalCount, "eligible_images", eligibleCount, "unsupported_count", len(result.Unsupported))
+	log.Debug("Finished filtering images", "eligible_count", eligibleCount)
+	if eligibleCount == 0 {
+		log.Info("No eligible images found for processing", "chart", filepath.Base(g.chartPath))
+		return result, nil
+	}
 
-	// 3. Process Eligible Images & Collect Errors
-	processingErrors, processedCount := g.processEligibleImagesLoop(eligibleImages, result.Values)
-	result.ProcessedCount = processedCount // Store processed count
+	// 4. Process Eligible Images & Collect Errors
+	// Pass the aliasMap to the processing loop helper
+	processingErrors, processedCount := g.processEligibleImagesLoop(eligibleImages, result.Values, aliasMap) // Pass aliasMap
+	result.ProcessedCount = processedCount                                                                   // Store processed count
 
-	// 4. Calculate and Store Success Rate
+	// 5. Calculate and Store Success Rate
 	var successRate float64
 	if eligibleCount > 0 {
 		successRate = (float64(processedCount) / float64(eligibleCount)) * PercentageMultiplier
@@ -527,7 +625,7 @@ func (g *Generator) Generate() (*override.File, error) {
 	result.SuccessRate = successRate
 	log.Info("Image processing complete", "processed", processedCount, "eligible", eligibleCount, "success_rate", fmt.Sprintf("%.2f%%", successRate))
 
-	// 5. Check Threshold
+	// 6. Check Threshold
 	if thresholdErr := g.checkProcessingThreshold(processingErrors, processedCount, eligibleCount, successRate, result); thresholdErr != nil {
 		log.Error("Processing threshold not met or strict mode failure", "error", thresholdErr)
 		// If thresholdErr is due to strict mode (i.e., processingErrors is not empty and g.strict is true),
@@ -537,11 +635,11 @@ func (g *Generator) Generate() (*override.File, error) {
 		return nil, thresholdErr // Return nil result and the error
 	}
 
-	// 6. Apply Rules if enabled
-	if rulesErr := g.applyRulesIfNeeded(loadedChart, result); rulesErr != nil {
+	// 7. Apply Rules if enabled
+	if rulesErr := g.applyRulesIfNeeded(analysisContext.LoadedChart, result); rulesErr != nil {
 		log.Error("Error applying chart rules", "error", rulesErr)
 		// Consider if this should be a distinct exit code or wrapped
-		return result, fmt.Errorf("error applying chart rules: %w", rulesErr)
+		return result, pkgerrors.Wrapf(rulesErr, "error applying chart rules: %v", rulesErr)
 	}
 
 	log.Debug("Override generation successful", "chart", result.ChartName)
@@ -577,7 +675,8 @@ func ValidateHelmTemplate(chartPath string, overrides []byte) error {
 			err = validateHelmTemplateInternalFunc(chartPath, nil)
 			if err != nil {
 				log.Error("Helm template validation failed even after retry without overrides", "error", err)
-				return fmt.Errorf("helm template validation failed on retry: %w", err)
+				// Don't use %v for the error, just wrap it directly
+				return pkgerrors.Wrap(err, "helm template validation failed on retry")
 			} // If retry succeeds, log info and return nil
 			log.Info("Helm validation succeeded on retry without overrides (Bitnami common issue)")
 			return nil
@@ -585,7 +684,8 @@ func ValidateHelmTemplate(chartPath string, overrides []byte) error {
 
 		// If it's not the Bitnami error, log and return the original error
 		log.Error("Helm template validation failed", "error", err)
-		return fmt.Errorf("helm template validation failed: %w", err)
+		// Don't use %v for the error, just wrap it directly
+		return pkgerrors.Wrap(err, "helm template validation failed")
 	}
 	log.Info("Helm template validation successful")
 	return nil
@@ -600,6 +700,7 @@ var validateHelmTemplateInternalFunc = validateHelmTemplateInternal
 // It creates a temporary file for the overrides and runs Helm.
 // This function is wrapped by ValidateHelmTemplate for potential mocking.
 func validateHelmTemplateInternal(chartPath string, overrides []byte) error {
+	log.Debug("Running internal helm template validation", "chartPath", chartPath)
 	// Setup Helm environment settings
 	settings := cli.New() // Use default settings
 
@@ -613,13 +714,13 @@ func validateHelmTemplateInternal(chartPath string, overrides []byte) error {
 		log.Debug(fmt.Sprintf("[Helm] %s", fmt.Sprintf(format, v...)))
 	})
 	if err != nil {
-		return fmt.Errorf("failed to initialize Helm action config: %w", err)
+		return pkgerrors.Wrapf(err, "failed to initialize Helm action config: %v", err)
 	}
 
 	// Create a temporary file for the overrides
 	tmpFile, err := os.CreateTemp("", "irr-overrides-*.yaml")
 	if err != nil {
-		return fmt.Errorf("failed to create temporary override file: %w", err)
+		return pkgerrors.Wrapf(err, "failed to create temporary override file: %v", err)
 	}
 	defer func() {
 		// Close the file handle before removing
@@ -635,11 +736,11 @@ func validateHelmTemplateInternal(chartPath string, overrides []byte) error {
 	}()
 
 	if _, err = tmpFile.Write(overrides); err != nil {
-		return fmt.Errorf("failed to write overrides to temporary file: %w", err)
+		return pkgerrors.Wrapf(err, "failed to write overrides to temporary file: %v", err)
 	}
 	// Close might not be strictly necessary here if we just wrote, but good practice
 	// if err = tmpFile.Close(); err != nil {
-	// 	return fmt.Errorf("failed to close temporary override file after writing: %w", err)
+	// 	return pkgerrors.Wrapf(err, "failed to close temporary override file after writing: %v", err)
 	// }
 	log.Debug("Overrides written to temporary file", "path", tmpFile.Name()) // Refactored
 
@@ -648,7 +749,7 @@ func validateHelmTemplateInternal(chartPath string, overrides []byte) error {
 	// Here we use Helm's standard loader for simplicity in validation context.
 	chartReq, err := loader.Load(chartPath)
 	if err != nil {
-		return fmt.Errorf("failed to load chart for validation %s: %w", chartPath, err)
+		return pkgerrors.Wrapf(err, "failed to load chart for validation %v: %v", chartPath, err)
 	}
 	log.Debug("Chart loaded for validation", "name", chartReq.Name()) // Refactored
 
@@ -657,19 +758,19 @@ func validateHelmTemplateInternal(chartPath string, overrides []byte) error {
 	// Start with chart's default values
 	baseValues, err := chartutil.CoalesceValues(chartReq, chartReq.Values)
 	if err != nil {
-		return fmt.Errorf("failed to coalesce base chart values: %w", err)
+		return pkgerrors.Wrapf(err, "failed to coalesce base chart values: %v", err)
 	}
 	log.Debug("Coalesced base chart values") // Refactored (no args needed)
 
 	// Load override values from the temp file
 	overrideValues, err := chartutil.ReadValuesFile(tmpFile.Name())
 	if err != nil {
-		return fmt.Errorf("failed to read override values from temp file %s: %w", tmpFile.Name(), err)
+		return pkgerrors.Wrapf(err, "failed to read override values from temp file %v: %v", tmpFile.Name(), err)
 	}
 	log.Debug("Loaded override values from temporary file", "path", tmpFile.Name()) // Refactored
 
 	// Merge override values onto base values
-	finalValues := chartutil.CoalesceTables(overrideValues, baseValues)
+	finalValues := chartutil.CoalesceTables(baseValues, overrideValues)
 	log.Debug("Merged override values with base values") // Refactored (no args needed)
 
 	// --- Configure Template Action ---
@@ -695,10 +796,10 @@ func validateHelmTemplateInternal(chartPath string, overrides []byte) error {
 		// Check if the error is related to specific template failures
 		if strings.Contains(err.Error(), "template:") || strings.Contains(err.Error(), "parse error") {
 			// Provide a more specific error message for template issues
-			return fmt.Errorf("chart template rendering error: %w", err)
+			return pkgerrors.Wrapf(err, "chart template rendering error: %v", err)
 		}
 		// Return a general error for other issues
-		return fmt.Errorf("helm template command execution failed: %w", err)
+		return pkgerrors.Wrapf(err, "helm template command execution failed: %v", err)
 	}
 
 	// Optional: Check if the release or rendered manifest is empty (might indicate issues)
@@ -717,9 +818,9 @@ func validateHelmTemplateInternal(chartPath string, overrides []byte) error {
 // findValueByPath traverses a nested map using a slice of path segments
 // and returns the value found at that path.
 // It returns the value and a boolean indicating if the path was found.
-func findValueByPath(data map[string]interface{}, path []string) (interface{}, bool) {
+func findValueByPath(data map[string]interface{}, pathSegments []string) (interface{}, bool) {
 	current := interface{}(data)
-	for i, part := range path { // Keep index i for potential error messages
+	for i, part := range pathSegments { // Keep index i for potential error messages
 		mapData, ok := current.(map[string]interface{})
 		if !ok {
 			log.Debug("findValueByPath: Cannot traverse non-map value", "path_segment_index", i, "path_part", part, "current_type", fmt.Sprintf("%T", current))
@@ -740,7 +841,7 @@ func OverridesToYAML(overrides map[string]interface{}) ([]byte, error) {
 	log.Debug("Marshaling overrides to YAML")
 	yamlBytes, err := yaml.Marshal(overrides)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal overrides to YAML: %w", err)
+		return nil, pkgerrors.Wrapf(err, "failed to marshal overrides to YAML: %v", err)
 	}
 	return yamlBytes, nil
 }
@@ -757,165 +858,131 @@ func (e *ProcessingError) Error() string {
 		errStrings = append(errStrings, err.Error()) // Use the full error message which includes path
 	}
 	// Provide a more informative summary message
-	return fmt.Sprintf("strict mode: %d processing errors occurred for paths: %s", e.Count, strings.Join(errStrings, "; "))
+	return fmt.Sprintf("strict mode: %d processing errors occurred for paths: %v", e.Count, strings.Join(errStrings, "; "))
 }
 
 // --- Override Generation Logic ---
 
-// createOverride generates the appropriate override structure (string or map) based on the original pattern and the new image details.
-// It takes the analysis pattern, the parsed image reference, the target registry, and the new path strategy-generated path.
-// It returns the value (string or map[string]interface{}) to be set in the override file.
-func (g *Generator) createOverride(pattern analysis.ImagePattern, imgRef *image.Reference, targetReg, newPath string) interface{} {
-	// --- START Logging Added for Debugging (Phase 9.4.1) ---
-	log.Debug("Entering createOverride",
-		"patternPath", pattern.Path,
-		"patternValue", pattern.Value,
-		"patternStructureKeys", getMapKeys(pattern.Structure), // Log original keys for context
-		"imgRefRepository", imgRef.Repository,
-		"imgRefTag", imgRef.Tag,
-		"imgRefDigest", imgRef.Digest,
-		"targetRegistry", targetReg,
-		"newPath", newPath,
-	)
-	// --- END Logging Added ---
+// createOverride generates the override value (string or map) for a given pattern.
+func (g *Generator) createOverride(pattern analysis.ImagePattern, imgRef *image.Reference, finalRegistryPrefix, finalRepoPathPart string) interface{} {
+	log.Debug("Creating override", "patternPath", pattern.Path, "finalRegistryPrefix", finalRegistryPrefix, "finalRepoPathPart", finalRepoPathPart)
+	// Log input reference details
+	if imgRef != nil {
+		log.Debug("[DEBUG GENERATOR] createOverride input imgRef", "path", pattern.Path, "ref_registry", imgRef.Registry, "ref_repo", imgRef.Repository, "ref_tag", imgRef.Tag, "ref_digest", imgRef.Digest)
+	} else {
+		log.Warn("[DEBUG GENERATOR] createOverride received nil imgRef", "path", pattern.Path)
+	}
 
-	// Decide whether to create a string override or a map override
-	// Check if the original pattern was a simple string or had structure
-	if len(pattern.Structure) == 0 {
-		// Original was likely a simple string "repo:tag" or "repo@digest"
-		fullImagePath := newPath // Start with the path generated by the strategy
-		if targetReg != "" {
-			switch {
-			case strings.HasSuffix(targetReg, "/") && strings.HasPrefix(newPath, "/"):
-				fullImagePath = targetReg + newPath[1:]
-			case !strings.HasSuffix(targetReg, "/") && !strings.HasPrefix(newPath, "/"):
-				fullImagePath = targetReg + "/" + newPath
-			default:
-				// One has a slash, one doesn't, simple concatenation is fine
-				fullImagePath = targetReg + newPath
+	// --- FIX: Construct the full target image path here ---
+	// The path strategy now returns the repository path part relative to the target registry.
+	// Join the target registry prefix with the relative path part.
+	// Use path.Join for cross-platform compatibility, although image paths typically use '/'.
+	// Consider explicitly using strings.Join with '/' if path.Join causes issues on Windows.
+	fullTargetPath := path.Join(finalRegistryPrefix, finalRepoPathPart)
+	// Replace backslashes potentially introduced by path.Join on Windows
+	fullTargetPath = strings.ReplaceAll(fullTargetPath, "\\", "/")
+	log.Debug("Constructed full target path", "fullTargetPath", fullTargetPath)
+
+	// Determine the new tag. Use the original tag from the reference.
+	newTag := imgRef.Tag
+
+	// FIX: Fallback logic for tags, especially for map types
+	if newTag == "" || newTag == image.DefaultTag {
+		if pattern.Type == analysis.PatternTypeMap && pattern.Structure != nil {
+			tagVal, ok := pattern.Structure["tag"]
+			if ok {
+				if tagStr, ok := tagVal.(string); ok && tagStr != "" {
+					log.Debug("Using tag from pattern structure as fallback (map type)", "path", pattern.Path, "structure_tag", tagStr)
+					newTag = tagStr
+				}
 			}
 		}
-
-		// Append tag or digest
-		if imgRef.Digest != "" {
-			fullImagePath += "@" + imgRef.Digest
-		} else if imgRef.Tag != "" { // Prefer digest if available
-			fullImagePath += ":" + imgRef.Tag
-		}
-		// --- START Logging Added for Debugging (Phase 9.4.1) ---
-		log.Debug("createOverride: Generated simple string override", "value", fullImagePath)
-		// --- END Logging Added ---
-		return fullImagePath // Return the fully qualified image string
-	}
-
-	// Original had structure, create a map override using STANDARD keys
-	overrideMap := make(map[string]interface{})
-
-	// --- START Corrected Map Generation Logic (Phase 9.4.1) ---
-	// Calculate the full repository path including the target registry
-	fullRepoPath := newPath // Start with the path generated by the strategy
-	if targetReg != "" {
-		switch {
-		case strings.HasSuffix(targetReg, "/") && strings.HasPrefix(newPath, "/"):
-			fullRepoPath = targetReg + newPath[1:]
-		case !strings.HasSuffix(targetReg, "/") && !strings.HasPrefix(newPath, "/"):
-			fullRepoPath = targetReg + "/" + newPath
-		default:
-			fullRepoPath = targetReg + newPath
+		if newTag == "" {
+			newTag = image.DefaultTag
 		}
 	}
 
-	// Set the standard "repository" key
-	overrideMap["repository"] = fullRepoPath
+	// Check pattern type to determine override structure
+	switch pattern.Type {
+	case analysis.PatternTypeString:
+		// Override with a simple string: "registry/repo/path:tag"
+		fullImageString := fmt.Sprintf("%s:%s", fullTargetPath, newTag)
+		log.Debug("Generated override string", "value", fullImageString)
+		return fullImageString
 
-	// Set the standard "tag" or "digest" key
-	if imgRef.Digest != "" {
-		overrideMap["digest"] = imgRef.Digest
-	} else if imgRef.Tag != "" { // Prefer digest if available, else use tag
-		overrideMap["tag"] = imgRef.Tag
-	}
-	// We no longer use pattern.Structure keys to build the map, ensuring standard output.
-	// --- END Corrected Map Generation Logic ---
-
-	// --- START Logging Added for Debugging (Phase 9.4.1) ---
-	log.Debug("createOverride: Generated standard map override", "value", overrideMap)
-	// --- END Logging Added ---
-	return overrideMap
-}
-
-// setOverridePath navigates the overrides map according to the pattern's path and sets the final value.
-// It handles creating intermediate maps if they don't exist.
-// It returns an error if path traversal or setting fails.
-func (g *Generator) setOverridePath(overrides map[string]interface{}, pattern analysis.ImagePattern, overrideValue interface{}) error {
-	pathParts := strings.Split(pattern.Path, ".")
-	current := overrides
-
-	// --- START Logging Added for Debugging (Phase 9.4.1) ---
-	log.Debug("Entering setOverridePath",
-		"fullPath", pattern.Path,
-		"pathParts", pathParts,
-		"overrideValue", overrideValue,
-	)
-	// --- END Logging Added ---
-
-	// Traverse the path, creating intermediate maps as needed
-	for i, part := range pathParts {
-		// --- START Logging Added for Debugging (Phase 9.4.1) ---
-		log.Debug("setOverridePath: Processing path part", "index", i, "part", part, "currentMapKeys", getMapKeys(current))
-		// --- END Logging Added ---
-
-		if i == len(pathParts)-1 {
-			// Last part: set the final value
-			// --- START Logging Added for Debugging (Phase 9.4.1) ---
-			log.Debug("setOverridePath: Setting final value", "key", part, "value", overrideValue)
-			// --- END Logging Added ---
-			current[part] = overrideValue
-			return nil
+	case analysis.PatternTypeMap:
+		// Override with a map structure: {repository: "repo/path", tag: "tag", registry: "registry"}
+		// The 'repository' key in the override map should contain the path *without* the target registry.
+		// The 'registry' key should contain the target registry.
+		overrideMap := map[string]interface{}{
+			"registry":   finalRegistryPrefix, // Target registry
+			"repository": finalRepoPathPart,   // Path part returned by strategy
+			"tag":        newTag,
 		}
+		log.Debug("Generated override map", "value", overrideMap)
+		return overrideMap
 
-		// Intermediate part: ensure a map exists
-		next, ok := current[part]
-		if !ok {
-			// --- START Logging Added for Debugging (Phase 9.4.1) ---
-			log.Debug("setOverridePath: Intermediate key not found, creating new map", "key", part)
-			// --- END Logging Added ---
-			// Key doesn't exist, create a new map
-			newMap := make(map[string]interface{})
-			current[part] = newMap
-			current = newMap
-		} else {
-			// Key exists, check if it's a map
-			nextMap, ok := next.(map[string]interface{})
-			if !ok {
-				// Existing value is not a map, cannot traverse further
-				// --- START Logging Added for Debugging (Phase 9.4.1) ---
-				log.Error("setOverridePath: Conflict - existing value is not a map, cannot set nested path",
-					"path", pattern.Path,
-					"conflictingKey", part,
-					"existingValueType", fmt.Sprintf("%T", next),
-				)
-				// --- END Logging Added ---
-				return fmt.Errorf("failed to set override path '%s': key '%s' exists but is not a map (type: %T)", pattern.Path, part, next)
-			}
-			// It's a map, continue traversal
-			current = nextMap
-		}
-	}
-
-	// Should not be reached if pathParts is not empty
-	return fmt.Errorf("internal error: failed to set path '%s', loop completed unexpectedly", pattern.Path)
-}
-
-// Helper function to get keys of a map for logging (avoids nil panics)
-func getMapKeys(m map[string]interface{}) []string {
-	if m == nil {
+	default:
+		// Should not happen if analysis is correct
+		log.Warn("Cannot create override for unsupported pattern type", "patternPath", pattern.Path, "patternType", pattern.Type)
+		// Return the original value string as a fallback?
+		// Returning nil might be safer to avoid incorrect overrides.
 		return nil
 	}
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
+}
+
+// setOverridePath sets the override value at the correct path within the nested override map.
+// It handles dot-notation paths including subchart aliases.
+func setOverridePath(pattern analysis.ImagePattern, overrides map[string]interface{}, overrideValue interface{}, _ map[string]string) error {
+	// Use the full path from the pattern, which includes aliases/subchart names.
+	// Example: "myChildAlias.image.repository" or "parentImage.tag"
+	pathStr := pattern.Path
+	log.Debug("Setting override path", "path", pathStr, "valueType", fmt.Sprintf("%T", overrideValue))
+
+	// Split the path into parts
+	parts := strings.Split(pathStr, ".")
+	if len(parts) == 0 {
+		return fmt.Errorf("invalid empty path provided for override: %s", pathStr)
 	}
-	return keys
+
+	currentMap := overrides
+	// Iterate through the path parts, creating nested maps as needed
+	// Stop one level before the final key
+	for i := 0; i < len(parts)-1; i++ {
+		part := parts[i]
+		log.Debug("Navigating override path part", "part", part)
+
+		nextVal, exists := currentMap[part]
+		if !exists {
+			// If the key doesn't exist, create a new map
+			log.Debug("Creating intermediate map", "key", part)
+			newMap := make(map[string]interface{})
+			currentMap[part] = newMap
+			currentMap = newMap
+		} else {
+			// If the key exists, ensure it's a map
+			var ok bool
+			currentMap, ok = nextVal.(map[string]interface{})
+			if !ok {
+				// Path conflict: trying to set a key inside something that isn't a map
+				// This could happen if, e.g., `image` was previously set as a string
+				// and now we try to set `image.repository`.
+				// Overwrite with a map? Or error? Helm typically overwrites.
+				log.Warn("Path conflict during override generation. Overwriting non-map with map.", "path", strings.Join(parts[:i+1], "."))
+				newMap := make(map[string]interface{})
+				currentMap[part] = newMap // Re-assign to fix the reference
+				currentMap = newMap
+			}
+		}
+	}
+
+	// Set the final key in the deepest map
+	lastKey := parts[len(parts)-1]
+	log.Debug("Setting final override value", "key", lastKey)
+	currentMap[lastKey] = overrideValue
+
+	log.Debug("Override path set successfully", "fullPath", pathStr)
+	return nil
 }
 
 // processImagePattern attempts to parse an image string from the pattern's value.
@@ -968,5 +1035,34 @@ func (g *Generator) processImagePattern(pattern analysis.ImagePattern) (*image.R
 	}
 
 	// If retries/heuristics didn't work, return the original parsing error wrapped.
-	return nil, fmt.Errorf("failed to parse image reference at path '%s' for value '%s': %w", pattern.Path, pattern.Value, err)
+	return nil, pkgerrors.Wrapf(err, "failed to parse image reference at path '%v' for value '%v'", pattern.Path, pattern.Value)
+}
+
+// pathExistsInMap checks if a dot-notation path exists in a nested map[string]interface{}.
+// Example: pathExistsInMap(m, "a.b.c") returns true if m["a"]["b"]["c"] exists.
+func pathExistsInMap(data map[string]interface{}, pathStr string) bool {
+	if data == nil || pathStr == "" {
+		return false
+	}
+	parts := strings.Split(pathStr, ".")
+	current := interface{}(data)
+	for i, part := range parts {
+		mapData, exists := current.(map[string]interface{})
+		if !exists {
+			return false
+		}
+		if i == len(parts)-1 {
+			// Found the final part, it exists
+			return true
+		}
+		// Need to go deeper
+		next, ok := mapData[part]
+		if !ok {
+			// Path exists up to this point, but the next part isn't a map
+			return false
+		}
+		current = next
+	}
+	// Should not be reached if path has parts, but handles edge cases like empty path
+	return false
 }

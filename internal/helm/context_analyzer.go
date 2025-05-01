@@ -3,330 +3,343 @@ package helm
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
-	"github.com/lucas-albers-lz4/irr/pkg/analysis"
+	analyzer "github.com/lucas-albers-lz4/irr/pkg/analyzer"
+	helmtypes "github.com/lucas-albers-lz4/irr/pkg/helmtypes"
+	"github.com/lucas-albers-lz4/irr/pkg/image"
 	"github.com/lucas-albers-lz4/irr/pkg/log"
 )
 
 const (
 	// DefaultRegistry is the standard Docker Hub registry
 	DefaultRegistry = "docker.io"
-	// defaultImageTag is the default tag used when none is specified.
-	defaultImageTag = "latest"
 )
 
-// ContextAwareAnalyzer is an analyzer that uses the ChartAnalysisContext to analyze charts
-// with full awareness of subchart values and their origins.
-type ContextAwareAnalyzer struct {
-	context *ChartAnalysisContext
+// ContextAnalyzer uses the ChartAnalysisContext (with pre-computed merged values and origins)
+// to find image patterns.
+// It replaces the older Analyzer that relied on loading the chart itself and re-computing values.
+type ContextAnalyzer struct {
+	Context *helmtypes.ChartAnalysisContext // Use the shared type
+	Config  *analyzer.Config                // Include/exclude patterns, etc.
 }
 
-// NewContextAwareAnalyzer creates a new ContextAwareAnalyzer.
-func NewContextAwareAnalyzer(context *ChartAnalysisContext) *ContextAwareAnalyzer {
-	return &ContextAwareAnalyzer{
-		context: context,
+// NewContextAnalyzer creates a new analyzer based on a ChartAnalysisContext.
+func NewContextAnalyzer(ctx *helmtypes.ChartAnalysisContext, cfg *analyzer.Config) *ContextAnalyzer {
+	return &ContextAnalyzer{
+		Context: ctx,
+		Config:  cfg,
 	}
 }
 
-// AnalyzeContext analyzes a chart with its merged values, considering value origins.
-func (a *ContextAwareAnalyzer) AnalyzeContext() (*analysis.ChartAnalysis, error) {
-	if a.context == nil {
-		return nil, fmt.Errorf("analysis context is nil")
-	}
-
-	chartAnalysis := analysis.NewChartAnalysis()
-
-	// Analyze the merged values from the context
-	if err := a.analyzeValues(a.context.Values, "", chartAnalysis); err != nil {
-		return nil, fmt.Errorf("failed to analyze values: %w", err)
-	}
-
-	return chartAnalysis, nil
+// NewContextAwareAnalyzer is an exported alias for NewContextAnalyzer for external use.
+func NewContextAwareAnalyzer(ctx *helmtypes.ChartAnalysisContext) *ContextAnalyzer {
+	return NewContextAnalyzer(ctx, nil)
 }
 
-// analyzeValues recursively analyzes a values map to identify container image references.
-func (a *ContextAwareAnalyzer) analyzeValues(values map[string]interface{}, prefix string, chartAnalysis *analysis.ChartAnalysis) error {
-	for k, v := range values {
-		currentPath := k
-		if prefix != "" {
-			currentPath = prefix + "." + k
-		}
-
-		log.Debug("analyzeValues LOOP", "path", currentPath, "type", fmt.Sprintf("%T", v))
-		if err := a.analyzeSingleValue(k, v, currentPath, chartAnalysis); err != nil {
-			// If analyzing a single value fails, wrap the error with context
-			return fmt.Errorf("error analyzing path '%s': %w", currentPath, err)
-		}
-
-		// Check for global patterns (registry configurations)
-		if k == "global" || strings.HasPrefix(k, "global.") {
-			pattern := analysis.GlobalPattern{
-				Type: analysis.PatternTypeGlobal,
-				Path: a.getSourcePathForValue(currentPath),
-			}
-			chartAnalysis.GlobalPatterns = append(chartAnalysis.GlobalPatterns, pattern)
-		}
+// Analyze traverses the context's MergedValues and uses the Origins map
+// to identify image patterns with their correct source paths.
+func (a *ContextAnalyzer) Analyze() ([]analyzer.ImagePattern, error) {
+	patterns := []analyzer.ImagePattern{}
+	if a.Context == nil || a.Context.MergedValues == nil {
+		log.Warn("ContextAnalyzer: Context or MergedValues is nil. Returning empty patterns.")
+		return patterns, nil
 	}
 
-	return nil
+	err := a.analyzeRecursive(a.Context.MergedValues, "", &patterns)
+	if err != nil {
+		return nil, fmt.Errorf("error during context analysis: %w", err)
+	}
+	return patterns, nil
 }
 
-// analyzeSingleValue analyzes a single key-value pair based on the value type.
-func (a *ContextAwareAnalyzer) analyzeSingleValue(key string, value interface{}, currentPath string, chartAnalysis *analysis.ChartAnalysis) error {
-	log.Debug("analyzeSingleValue ENTER", "path", currentPath, "type", fmt.Sprintf("%T", value))
-	defer func() {
-		log.Debug("analyzeSingleValue EXIT", "path", currentPath, "imagePatternsCount", len(chartAnalysis.ImagePatterns))
-	}()
-
-	switch val := value.(type) {
+// analyzeRecursive performs the traversal of the merged values map.
+func (a *ContextAnalyzer) analyzeRecursive(currentVal interface{}, pathSoFar string, patterns *[]analyzer.ImagePattern) error {
+	switch v := currentVal.(type) {
 	case map[string]interface{}:
-		return a.analyzeMapValue(val, currentPath, chartAnalysis)
-	case string:
-		return a.analyzeStringValue(key, val, currentPath, chartAnalysis)
-	case []interface{}:
-		return a.analyzeArrayValue(val, currentPath, chartAnalysis)
-	default:
-		// Ignore other types (bool, int, float, nil, etc.)
-		return nil
-	}
-}
+		// Check if this map represents a structured image
+		if IsImageMap(v) {
+			log.Debug("Found potential image map", "path", pathSoFar)
+			registry, repository, tag := NormalizeImageMapValues(v)
+			constructedRefStr := ConstructImageString(registry, repository, tag)
 
-// analyzeMapValue handles analysis of map values for image references.
-func (a *ContextAwareAnalyzer) analyzeMapValue(val map[string]interface{}, currentPath string, chartAnalysis *analysis.ChartAnalysis) error {
-	// Use the refined check to see if this map *directly* defines an image
-	if a.isDirectImageMapDefinition(val) {
-		// Extract and normalize image values
-		registry, repository, tag := a.normalizeImageValues(val)
+			// Attempt to parse for validation, but use constructed string for pattern
+			_, err := image.ParseImageReference(constructedRefStr)
+			if err != nil {
+				log.Warn("Failed to parse constructed image string from map, but proceeding", "path", pathSoFar, "value", constructedRefStr, "error", err)
+				// Decide whether to add pattern anyway or skip? Let's add it for now.
+			}
 
-		// Create an image pattern for the map itself
-		imageStructure := map[string]interface{}{
-			"registry":   registry,
-			"repository": repository,
-			"tag":        tag,
+			// Get the origin source path using the context
+			sourcePath := a.getSourcePath(pathSoFar)
+			if sourcePath == "" {
+				log.Warn("Could not find origin for merged map path. Skipping image pattern.", "path", pathSoFar)
+				return nil // Skip this pattern
+			}
+
+			pattern := analyzer.ImagePattern{
+				Path:  sourcePath, // Use the source path from origin
+				Value: constructedRefStr,
+				Type:  "map",
+				Structure: &analyzer.ImageStructure{
+					Registry:   registry,
+					Repository: repository,
+					Tag:        tag,
+				},
+			}
+			if a.shouldIncludePattern(pattern) {
+				*patterns = append(*patterns, pattern)
+				log.Debug("Added image map pattern", "path", pattern.Path, "value", pattern.Value)
+			}
+			// Important: Do *not* recurse further into a detected image map
+			return nil
 		}
 
-		pattern := analysis.ImagePattern{
-			Type:      analysis.PatternTypeMap,
-			Path:      a.getSourcePathForValue(currentPath),
-			Value:     fmt.Sprintf("%s/%s:%s", registry, repository, tag),
-			Structure: imageStructure,
-			Count:     1,
-		}
-
-		// Add the pattern to the analysis
-		chartAnalysis.ImagePatterns = append(chartAnalysis.ImagePatterns, pattern)
-
-		// If it IS an image map definition, we *might* still need to recurse
-		// if other keys exist alongside repository/tag/registry.
-		// Let's recurse anyway for now, analyzeValues handles individual fields.
-		// The isDirectImageMapDefinition check prevents infinite loops for simple image maps.
-		log.Debug("analyzeMapValue: identified as direct image map, but recursing anyway", "path", currentPath)
-	}
-
-	// Always recurse into child map values, analyzeValues handles skipping non-map/string/array leaves.
-	// The isDirectImageMapDefinition check above is primarily to *detect* the pattern,
-	// not necessarily to stop all recursion for that map.
-	return a.analyzeValues(val, currentPath, chartAnalysis)
-}
-
-// analyzeStringValue handles analysis of string values for image references.
-func (a *ContextAwareAnalyzer) analyzeStringValue(key, val, currentPath string, chartAnalysis *analysis.ChartAnalysis) error {
-	// Check if the string looks like an image reference
-	if a.isImageString(key, val) {
-		// Try to parse the image string
-		registry, repository, tag := a.parseImageString(val)
-
-		// Create an image pattern
-		pattern := analysis.ImagePattern{
-			Type:  analysis.PatternTypeString,
-			Path:  a.getSourcePathForValue(currentPath),
-			Value: val,
-			Count: 1,
-		}
-
-		// If we successfully parsed the image components, add the structure
-		if repository != "" {
-			pattern.Structure = map[string]interface{}{
-				"registry":   registry,
-				"repository": repository,
-				"tag":        tag,
+		// If not an image map, recurse into its key-value pairs
+		for key, val := range v {
+			currentMergedPath := key
+			if pathSoFar != "" {
+				currentMergedPath = pathSoFar + "." + key
+			}
+			if err := a.analyzeRecursive(val, currentMergedPath, patterns); err != nil {
+				return err
 			}
 		}
 
-		// Add the pattern to the analysis
-		chartAnalysis.ImagePatterns = append(chartAnalysis.ImagePatterns, pattern)
-	}
+	case []interface{}:
+		// Arrays are tricky for path generation, Helm uses indices like `key[0]`
+		// For simplicity in origin lookup, we might skip array analysis or need a more robust path mapping.
+		// Let's skip analyzing inside arrays for now, as image refs are less common here.
+		// _ = i // Avoid unused variable error
+		// _ = item
+		// currentMergedPath := fmt.Sprintf("%s[%d]", pathSoFar, i)
+		// if err := a.analyzeRecursive(item, currentMergedPath, patterns); err != nil {
+		// 	return err
+		// }
 
+	case string:
+		// Check if the string looks like an image reference
+		imgRef, err := image.ParseImageReference(v)
+		if err == nil && imgRef != nil && imgRef.Repository != "" {
+			// It parses! Get the origin source path.
+			sourcePath := a.getSourcePath(pathSoFar)
+			if sourcePath == "" {
+				log.Warn("Could not find origin for merged string path. Skipping image pattern.", "path", pathSoFar)
+				return nil // Skip this pattern
+			}
+
+			pattern := analyzer.ImagePattern{
+				Path:  sourcePath,      // Use the source path from origin
+				Value: imgRef.String(), // Use canonical value
+				Type:  "string",
+			}
+			if a.shouldIncludePattern(pattern) {
+				*patterns = append(*patterns, pattern)
+				log.Debug("Added image string pattern", "path", pattern.Path, "value", pattern.Value)
+			}
+		}
+	}
 	return nil
 }
 
-// analyzeArrayValue handles analysis of array values.
-func (a *ContextAwareAnalyzer) analyzeArrayValue(val []interface{}, currentPath string, chartAnalysis *analysis.ChartAnalysis) error {
-	for i, item := range val {
-		itemPath := fmt.Sprintf("%s[%d]", currentPath, i)
+// getSourcePath looks up the origin for a merged path and returns the relevant source path.
+func (a *ContextAnalyzer) getSourcePath(mergedPath string) string {
+	if a.Context == nil || a.Context.Origins == nil {
+		return "" // Cannot determine path without context/origins
+	}
 
-		if err := a.analyzeSingleValue("", item, itemPath, chartAnalysis); err != nil {
-			return fmt.Errorf("error analyzing array item at path '%s': %w", itemPath, err)
+	origin, found := a.Context.Origins[mergedPath]
+	if !found {
+		// Attempt lookup in parent path if leaf not found directly
+		parts := strings.Split(mergedPath, ".")
+		if len(parts) > 1 {
+			parentPath := strings.Join(parts[:len(parts)-1], ".")
+			parentOrigin, parentFound := a.Context.Origins[parentPath]
+			if parentFound {
+				origin = parentOrigin
+				found = true
+				log.Debug("Using parent origin for path", "mergedPath", mergedPath, "parentPath", parentPath)
+			}
+		}
+		// If still not found, return empty
+		if !found {
+			log.Warn("Origin not found for merged path or its parent", "mergedPath", mergedPath)
+			return ""
 		}
 	}
 
-	return nil
+	// Construct the source path based on origin type
+	switch origin.Type {
+	case helmtypes.OriginChartDefault:
+		aliasOrName := origin.Alias
+		switch {
+		case aliasOrName == "":
+			// No alias: Find prefix by chart name
+			log.Debug("ChartDefault Origin: No alias, finding prefix for chart", "chartName", origin.ChartName)
+			prefix := a.findPrefixForChart(origin.ChartName) // Need helper
+			if prefix != "" && strings.HasPrefix(mergedPath, prefix+".") {
+				log.Debug("ChartDefault Origin: Found prefix, trimming path", "prefix", prefix, "mergedPath", mergedPath)
+				return strings.TrimPrefix(mergedPath, prefix+".")
+			}
+			log.Warn("Could not determine chart prefix for default origin, using merged path as fallback", "chartName", origin.ChartName, "mergedPath", mergedPath)
+			return mergedPath // Fallback
+		case strings.HasPrefix(mergedPath, aliasOrName+"."):
+			// Alias exists and path starts with it: Trim prefix
+			log.Debug("ChartDefault Origin: Alias matches path prefix, trimming path", "alias", aliasOrName, "mergedPath", mergedPath)
+			return strings.TrimPrefix(mergedPath, aliasOrName+".")
+		default:
+			// Path doesn't match alias: Fallback to merged path.
+			log.Warn("Merged path does not start with expected alias for default origin", "alias", aliasOrName, "mergedPath", mergedPath)
+			return mergedPath
+		}
+
+	case helmtypes.OriginParentOverride:
+		// Path is relative to the subchart being overridden.
+		// Example: mergedPath = "subchart.image.tag", origin.Alias = "subchart"
+		//          We want "image.tag"
+		aliasOrName := origin.Alias // Parent override uses alias/name key
+		if aliasOrName != "" && strings.HasPrefix(mergedPath, aliasOrName+".") {
+			return strings.TrimPrefix(mergedPath, aliasOrName+".")
+		}
+		log.Warn("Merged path does not start with expected alias for parent override origin, using fallback", "alias", aliasOrName, "mergedPath", mergedPath)
+		return mergedPath // Fallback
+
+	case helmtypes.OriginUserFile:
+		// Path is exactly as it appears in the user file and merged values.
+		return mergedPath
+
+	case helmtypes.OriginUserSet:
+		// Path is the key used in the --set flag.
+		// Need to parse the key from origin.Key (which stores "key=value")
+		if parts := strings.SplitN(origin.Key, "=", expectedSplitParts); len(parts) > 0 {
+			// TODO: Handle complex strvals paths like key[0].name more robustly.
+			// For now, use the key part directly. It should match mergedPath.
+			if parts[0] == mergedPath {
+				return parts[0]
+			}
+			log.Warn("Mismatch between --set key and merged path, using fallback", "setKey", parts[0], "mergedPath", mergedPath)
+			return mergedPath // Fallback
+		}
+		log.Warn("Could not parse key from --set origin key", "originKey", origin.Key)
+		return mergedPath // Fallback
+
+	default: // helmtypes.OriginUnknown
+		log.Warn("Unknown origin type for path", "mergedPath", mergedPath, "originType", origin.Type)
+		return mergedPath // Fallback
+	}
 }
 
-// isDirectImageMapDefinition provides a stricter check to identify maps that
-// directly define an image using standard keys.
-func (a *ContextAwareAnalyzer) isDirectImageMapDefinition(val map[string]interface{}) bool {
-	repoVal, hasRepo := val["repository"]
-	tagVal, hasTag := val["tag"]
+// findPrefixForChart is a placeholder helper to find the alias/name prefix for a given chart name.
+// This needs access to the chart's dependency metadata.
+func (a *ContextAnalyzer) findPrefixForChart(chartName string) string {
+	if a.Context == nil || a.Context.LoadedChart == nil {
+		return "" // Cannot determine without chart context
+	}
+	// Check top-level chart name
+	if a.Context.LoadedChart.Name() == chartName {
+		return "" // Top-level chart has no prefix
+	}
+	// Search dependencies
+	for _, dep := range a.Context.LoadedChart.Metadata.Dependencies {
+		if dep.Name == chartName {
+			if dep.Alias != "" {
+				return dep.Alias
+			}
+			return dep.Name // Use name if no alias
+		}
+	}
+	log.Warn("Could not find dependency matching chart name to determine prefix", "chartName", chartName)
+	return "" // Not found
+}
 
-	// Must have repository key
-	if !hasRepo {
-		return false
-	}
-	// Repository value must be a non-empty string
-	repoStr, repoIsString := repoVal.(string)
-	if !repoIsString || repoStr == "" {
-		return false
+// shouldIncludePattern checks if a pattern should be included based on config.
+func (a *ContextAnalyzer) shouldIncludePattern(pattern analyzer.ImagePattern) bool {
+	if a.Config == nil {
+		return true // No config, include everything
 	}
 
-	// Must have tag key (for now, ignoring digest)
-	if !hasTag {
-		return false
-	}
-	// Tag value must be a non-empty string
-	tagStr, tagIsString := tagVal.(string)
-	if !tagIsString || tagStr == "" {
-		return false
-	}
+	path := pattern.Path
 
-	// Optional: Check registry if present
-	if regVal, hasReg := val["registry"]; hasReg {
-		regStr, regIsString := regVal.(string)
-		if !regIsString || regStr == "" {
-			return false // Registry present but empty or wrong type
+	// Check exclude patterns first
+	for _, exclude := range a.Config.ExcludePatterns {
+		matched, err := filepath.Match(exclude, path)
+		if err != nil {
+			log.Warn("Invalid exclude pattern", "pattern", exclude, "error", err)
+			continue // Skip invalid patterns
+		}
+		if matched {
+			log.Debug("Excluding pattern due to exclude rule", "path", path, "rule", exclude)
+			return false
 		}
 	}
 
-	// Passed all checks
+	// If include patterns exist, path MUST match one
+	if len(a.Config.IncludePatterns) > 0 {
+		foundMatch := false
+		for _, include := range a.Config.IncludePatterns {
+			matched, err := filepath.Match(include, path)
+			if err != nil {
+				log.Warn("Invalid include pattern", "pattern", include, "error", err)
+				continue // Skip invalid patterns
+			}
+			if matched {
+				log.Debug("Including pattern due to include rule", "path", path, "rule", include)
+				foundMatch = true
+				break
+			}
+		}
+		if !foundMatch {
+			log.Debug("Excluding pattern because it didn't match any include rules", "path", path)
+			return false // Didn't match any include patterns
+		}
+	}
+
+	// If we reach here, it wasn't excluded and met include criteria (if any)
 	return true
 }
 
-// isImageString uses heuristics to check if a string likely represents a container image reference.
-func (a *ContextAwareAnalyzer) isImageString(key, val string) bool {
-	// Basic check: at least one slash (/) and optionally a colon (:)
-	if strings.Contains(val, "/") && !strings.Contains(val, "{{") {
-		return true
+// IsImageMap checks if the provided map looks like a Helm image map structure.
+// It requires at least a non-empty "repository" key.
+func IsImageMap(val map[string]interface{}) bool {
+	repo, ok := val["repository"].(string)
+	if !ok || repo == "" {
+		return false
 	}
-
-	// Keys with 'image' in their name might indicate an image string
-	if strings.Contains(strings.ToLower(key), "image") && !strings.Contains(val, "{{") {
-		return true
-	}
-
-	return false
+	// Optionally check for tag/registry, but not required
+	return true
 }
 
-// normalizeImageValues extracts and normalizes image components from a map.
-func (a *ContextAwareAnalyzer) normalizeImageValues(val map[string]interface{}) (registry, repository, tag string) {
-	// Defaults
-	registry = DefaultRegistry
-	repository = ""
-	tag = defaultImageTag
-
-	// Prioritize values directly from the map
-	if r, ok := val["registry"].(string); ok && r != "" {
-		registry = r
-	}
-	if repoVal, ok := val["repository"].(string); ok && repoVal != "" {
-		repository = repoVal // Use repository directly from map
-	}
-	if tagVal, ok := val["tag"].(string); ok && tagVal != "" {
-		tag = tagVal // Use tag directly from map
-	}
-
-	// Basic check: If repository is missing, it's not a valid image map for our purposes
-	if repository == "" {
-		log.Warn("normalizeImageValues: 'repository' key missing or empty", "map", val)
-		return "", "", "" // Cannot proceed without repository
-	}
-
-	// REFINED TAG LOGIC:
-	// If tag wasn't explicitly in map, AND repo string looks like it might contain a tag
-	if tag == defaultImageTag && strings.Contains(repository, ":") {
-		_, parsedRepo, parsedTag := a.parseImageString(repository)
-		if parsedRepo != "" && parsedTag != "" {
-			log.Debug("normalizeImageValues: Using tag parsed from repository string", "parsedTag", parsedTag)
-			repository = parsedRepo // Update repo if tag was embedded
-			tag = parsedTag         // Use tag found in repo string
+// NormalizeImageMapValues extracts registry, repository, and tag from a Helm image map
+func NormalizeImageMapValues(val map[string]interface{}) (registry, repository, tag string) {
+	repositoryVal, ok := val["repository"]
+	if ok {
+		repository, ok = repositoryVal.(string)
+		if !ok {
+			repository = ""
 		}
 	}
-
-	// Final normalization (e.g., docker.io/library/) - Apply AFTER deciding repo/tag
-	if registry == DefaultRegistry && !strings.Contains(repository, "/") {
-		repository = "library/" + repository
-	}
-
-	return registry, repository, tag
-}
-
-// parseImageString attempts to parse a string into image components.
-func (a *ContextAwareAnalyzer) parseImageString(val string) (registry, repository, tag string) {
-	// Default values
-	registry = DefaultRegistry
-	tag = defaultImageTag // Use constant
-
-	// Basic parsing for format "registry/repository:tag"
-	parts := strings.Split(val, "/")
-	if len(parts) == 1 {
-		// Just repository[:tag]
-		repoParts := strings.Split(parts[0], ":")
-		repository = repoParts[0]
-		if len(repoParts) > 1 {
-			tag = repoParts[1]
-		}
-	} else {
-		// registry/repository[:tag] or repository/subpath[:tag]
-		registry = parts[0]
-
-		// Check if this is docker.io/library/... or another registry
-		if strings.Contains(registry, ".") || registry == "localhost" {
-			// Likely a registry
-			repository = strings.Join(parts[1:], "/")
-		} else {
-			// Likely just a repository path, default to docker.io
-			registry = DefaultRegistry
-			repository = val // Use the full original value as repo path if first part is not a registry
-		}
-
-		// Handle tag (extract from the repository part if present)
-		if strings.Contains(repository, ":") {
-			repoParts := strings.Split(repository, ":")
-			repository = repoParts[0]
-			if len(repoParts) > 1 {
-				tag = repoParts[1]
-			}
+	registryVal, ok := val["registry"]
+	if ok {
+		registry, ok = registryVal.(string)
+		if !ok {
+			registry = ""
 		}
 	}
-
-	// Normalize docker.io references
-	if registry == DefaultRegistry && !strings.Contains(repository, "/") {
-		repository = "library/" + repository
+	tagVal, ok := val["tag"]
+	if ok {
+		tag, ok = tagVal.(string)
+		if !ok {
+			tag = ""
+		}
 	}
 	return registry, repository, tag
 }
 
-// getSourcePathForValue resolves the effective source path for a value based on origin.
-// For now, it returns the structural path as determined by traversal.
-// TODO: Enhance this to properly use origin information if needed for more complex scenarios (e.g., aliases).
-func (a *ContextAwareAnalyzer) getSourcePathForValue(valuePath string) string {
-	// Simply return the structural path derived from map traversal.
-	// The path already includes prefixes like "child." based on the merged value structure.
-	log.Debug("getSourcePathForValue returning structural path", "path", valuePath)
-	return valuePath
-}
-
-// GetContext returns the analysis context.
-func (a *ContextAwareAnalyzer) GetContext() *ChartAnalysisContext {
-	return a.context
+// ConstructImageString builds a canonical image string from registry, repository, and tag
+func ConstructImageString(registry, repository, tag string) string {
+	if registry != "" {
+		return registry + "/" + repository + ":" + tag
+	}
+	return repository + ":" + tag
 }

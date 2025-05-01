@@ -1,14 +1,18 @@
 package helm
 
 import (
+	"strings"
 	"testing"
 
-	"github.com/lucas-albers-lz4/irr/pkg/analysis"
+	analyzer "github.com/lucas-albers-lz4/irr/pkg/analyzer"
 	log "github.com/lucas-albers-lz4/irr/pkg/log"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
+	"helm.sh/helm/v3/pkg/chartutil"
+
+	helmtypes "github.com/lucas-albers-lz4/irr/pkg/helmtypes"
 )
 
 func TestContextAwareAnalyzer_AnalyzeContext(t *testing.T) {
@@ -27,23 +31,23 @@ func TestContextAwareAnalyzer_AnalyzeContext(t *testing.T) {
 		context := createTestContext(chartData)
 
 		// Create analyzer
-		analyzer := NewContextAwareAnalyzer(context)
+		ctxAnalyzer := NewContextAwareAnalyzer(context)
 
 		// Run analysis
-		analysisResult, err := analyzer.AnalyzeContext()
+		analysisResult, err := ctxAnalyzer.Analyze()
 		require.NoError(t, err, "Analysis should succeed")
 		require.NotNil(t, analysisResult)
 
 		// Convert to map for easier checking
-		patternsMap := make(map[string]analysis.ImagePattern)
-		for _, p := range analysisResult.ImagePatterns {
+		patternsMap := make(map[string]analyzer.ImagePattern)
+		for _, p := range analysisResult {
 			patternsMap[p.Path] = p
 			log.Debug("TestCheck", "path", p.Path, "value", p.Value, "type", p.Type)
 		}
 
 		// Check for parent map-based image component: "image.repository"
 		if pattern, ok := patternsMap["image.repository"]; ok {
-			assert.Equal(t, analysis.PatternTypeString, pattern.Type)
+			assert.Equal(t, "string", pattern.Type)
 			// Value might be normalized, check for key parts
 			assert.Contains(t, pattern.Value, "parent/app", "Parent repo string value mismatch")
 		} else {
@@ -52,18 +56,18 @@ func TestContextAwareAnalyzer_AnalyzeContext(t *testing.T) {
 
 		// Check for parent image (now expected as a map pattern due to Helm coalescing)
 		if pattern, ok := patternsMap["parentImage"]; ok {
-			assert.Equal(t, analysis.PatternTypeMap, pattern.Type, "parentImage should be detected as a map pattern")
+			assert.Equal(t, "map", pattern.Type, "parentImage should be detected as a map pattern")
 			require.NotNil(t, pattern.Structure, "parentImage map pattern should have structure")
-			assert.Equal(t, "docker.io", pattern.Structure["registry"], "parentImage registry mismatch")
-			assert.Equal(t, "parent/app", pattern.Structure["repository"], "parentImage repository mismatch")
-			assert.Equal(t, "v1.0.0", pattern.Structure["tag"], "parentImage tag mismatch")
+			assert.Equal(t, "docker.io", pattern.Structure.Registry, "parentImage registry mismatch")
+			assert.Equal(t, "parent/app", pattern.Structure.Repository, "parentImage repository mismatch")
+			assert.Equal(t, "v1.0.0", pattern.Structure.Tag, "parentImage tag mismatch")
 		} else {
 			assert.Fail(t, "Should find parent image map pattern for parentImage")
 		}
 
 		// Check for child map-based image component: "child.image.repository"
 		if pattern, ok := patternsMap["child.image.repository"]; ok {
-			assert.Equal(t, analysis.PatternTypeString, pattern.Type)
+			assert.Equal(t, "string", pattern.Type)
 			assert.Contains(t, pattern.Value, "nginx", "Child repo string value mismatch") // Check content
 			// TODO: Fix the path logging bug if necessary
 		} else {
@@ -77,7 +81,7 @@ func TestContextAwareAnalyzer_AnalyzeContext(t *testing.T) {
 
 		// Check for child map-based image component: "child.extraImage.repository"
 		if pattern, ok := patternsMap["child.extraImage.repository"]; ok {
-			assert.Equal(t, analysis.PatternTypeString, pattern.Type)
+			assert.Equal(t, "string", pattern.Type)
 			assert.Contains(t, pattern.Value, "bitnami/nginx", "Child extra repo string value mismatch")
 		} else {
 			assert.Fail(t, "Should find child image pattern for child.extraImage.repository")
@@ -85,97 +89,119 @@ func TestContextAwareAnalyzer_AnalyzeContext(t *testing.T) {
 	})
 
 	t.Run("analyzes values with user overrides", func(t *testing.T) {
-		// Create analysis context with user overrides
-		userValues := map[string]interface{}{
+		// --- FIX: Create context ONLY with user overrides for this test ---
+		// This simulates the highest precedence of user values.
+		mergedValues := map[string]interface{}{
 			"image": map[string]interface{}{
 				"repository": "user/overridden-app",
 				"tag":        "v2.0",
 			},
+			// Include other base values ONLY if strictly necessary for analyzer logic
+			// For this test, we only care about verifying the override is found.
 		}
 
-		// Set origin for user value
-		origins := make(map[string]ValueOrigin)
-		origins["image.repository"] = ValueOrigin{
-			Type: OriginUserSet,
-			Path: "--set image.repository=user/overridden-app",
+		// Create origins map ONLY with the user override origin
+		origins := make(map[string]helmtypes.ValueOrigin)
+		userOrigin := helmtypes.ValueOrigin{
+			Type: helmtypes.OriginUserSet,
+			Key:  "--set image...", // Simplified key for test
 		}
+		origins["image"] = userOrigin            // Origin for the map
+		origins["image.repository"] = userOrigin // Origin for the leaf
+		origins["image.tag"] = userOrigin        // Origin for the leaf
 
-		context := &ChartAnalysisContext{
-			Chart:     chartData,
-			Values:    userValues,
-			Origins:   origins,
-			ChartName: chartData.Name(),
+		context := &helmtypes.ChartAnalysisContext{
+			LoadedChart:  chartData, // Keep chart data for context
+			MergedValues: mergedValues,
+			Origins:      origins,
 		}
 
 		// Create analyzer
-		analyzer := NewContextAwareAnalyzer(context)
+		ctxAnalyzer := NewContextAwareAnalyzer(context)
 
 		// Run analysis
-		analysisResult, err := analyzer.AnalyzeContext()
+		analysisResult, err := ctxAnalyzer.Analyze()
 		require.NoError(t, err, "Analysis should succeed")
 
 		// Verify we find the overridden image
-		var foundOverriddenImage bool
-		for _, pattern := range analysisResult.ImagePatterns {
-			if pattern.Path == "image.repository" {
-				if pattern.Value == "user/overridden-app" || pattern.Value == DefaultRegistry+"/user/overridden-app:v2.0" {
-					foundOverriddenImage = true
-					break
+		log.Debug("Checking for overridden image", "patternCount", len(analysisResult))
+		for _, pattern := range analysisResult {
+			log.Debug("Checking pattern", "path", pattern.Path, "type", pattern.Type, "value", pattern.Value)
+			// Check the map pattern or the string pattern based on analyzer logic
+			if pattern.Path == "image" && pattern.Type == "map" {
+				log.Debug("Checking map pattern structure", "structure", pattern.Structure)
+				if pattern.Structure != nil && pattern.Structure.Repository == "user/overridden-app" {
+					log.Debug("Map pattern matched!")
+					assert.True(t, true) // Assert immediately on match
+					return               // Exit test successfully
+				}
+			} else if pattern.Path == "image.repository" && pattern.Type == "string" {
+				log.Debug("Checking string pattern", "value", pattern.Value, "structure", pattern.Structure)
+				// Check contains, as value might be normalized
+				if strings.Contains(pattern.Value, "user/overridden-app") {
+					log.Debug("String pattern matched via Contains!")
+					assert.True(t, true) // Assert immediately on match
+					return               // Exit test successfully
+				}
+				// Also check the structure if it was parsed
+				if pattern.Structure != nil && pattern.Structure.Repository == "user/overridden-app" {
+					log.Debug("String pattern matched via Structure!")
+					assert.True(t, true) // Assert immediately on match
+					return               // Exit test successfully
 				}
 			}
 		}
-
-		assert.True(t, foundOverriddenImage, "Should find overridden image pattern")
+		// If loop completes without finding the pattern
+		assert.Fail(t, "Should find overridden image pattern")
 	})
 }
 
 // Helper function to create a test context
-func createTestContext(chartData *chart.Chart) *ChartAnalysisContext {
+func createTestContext(chartData *chart.Chart) *helmtypes.ChartAnalysisContext {
 	// Create a simple context with chart default values
-	mergedValues := map[string]interface{}{
-		"image": map[string]interface{}{
-			"repository": DefaultRegistry + "/parent/app",
-			"tag":        "latest",
-		},
-		"parentImage": map[string]interface{}{
-			"registry":   DefaultRegistry,
-			"repository": "parent/app",
-			"tag":        "v1.0.0",
-		},
+	// Simulate a slightly more realistic merge (though not perfect)
+	mergedValues := make(map[string]interface{})
+	if chartData.Values != nil {
+		mergedValues = chartutil.CoalesceTables(mergedValues, chartData.Values)
+	}
+	// Simulate subchart merge (using parent-test structure)
+	childValues := map[string]interface{}{
 		"child": map[string]interface{}{
 			"image": map[string]interface{}{
-				"repository": DefaultRegistry + "/nginx",
+				"repository": "nginx", // Base default from child chart
 				"tag":        "latest",
 			},
 			"extraImage": map[string]interface{}{
-				"repository": DefaultRegistry + "/bitnami/nginx",
+				"repository": "bitnami/nginx",
 				"tag":        "latest",
 			},
 		},
 	}
+	mergedValues = chartutil.CoalesceTables(mergedValues, childValues)
 
-	// Create some basic origin tracking
-	origins := make(map[string]ValueOrigin)
-	origins["image.repository"] = ValueOrigin{
-		Type:      OriginChartDefault,
-		ChartName: chartData.Name(),
-		Path:      "values.yaml",
-	}
-	origins["parentImage.repository"] = ValueOrigin{
-		Type:      OriginChartDefault,
-		ChartName: chartData.Name(),
-		Path:      "values.yaml",
-	}
-	origins["child.image.repository"] = ValueOrigin{
-		Type:      OriginChartDefault,
-		ChartName: "child",
-		Path:      "values.yaml",
-	}
+	// Create a more complete origin map for the test case
+	origins := make(map[string]helmtypes.ValueOrigin)
+	parentOrigin := helmtypes.ValueOrigin{Type: helmtypes.OriginChartDefault, ChartName: chartData.Name(), Path: "values.yaml"}
+	childOrigin := helmtypes.ValueOrigin{Type: helmtypes.OriginChartDefault, ChartName: "child", Path: "values.yaml"}
+	// Assume merged values reflect parent chart's final state after merging child defaults and parent overrides
+	origins["image"] = parentOrigin                // Origin for parent map key
+	origins["image.repository"] = parentOrigin     // Origin for parent leaf key
+	origins["image.tag"] = parentOrigin            // Origin for parent leaf key
+	origins["parentImage"] = parentOrigin          // Origin for parent map key
+	origins["parentImage.registry"] = parentOrigin // etc.
+	origins["parentImage.repository"] = parentOrigin
+	origins["parentImage.tag"] = parentOrigin
+	origins["child"] = parentOrigin                 // Origin for the key 'child' itself comes from parent values
+	origins["child.image"] = childOrigin            // Origin for the map key 'child.image'
+	origins["child.image.repository"] = childOrigin // Origin for the leaf key 'child.image.repository'
+	origins["child.image.tag"] = childOrigin
+	origins["child.extraImage"] = childOrigin
+	origins["child.extraImage.repository"] = childOrigin
+	origins["child.extraImage.tag"] = childOrigin
 
-	return &ChartAnalysisContext{
-		Chart:     chartData,
-		Values:    mergedValues,
-		Origins:   origins,
-		ChartName: chartData.Name(),
+	return &helmtypes.ChartAnalysisContext{
+		LoadedChart:  chartData,
+		MergedValues: mergedValues,
+		Origins:      origins,
 	}
 }

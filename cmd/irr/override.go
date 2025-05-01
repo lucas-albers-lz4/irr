@@ -20,6 +20,7 @@ import (
 	"github.com/lucas-albers-lz4/irr/pkg/chart"
 	"github.com/lucas-albers-lz4/irr/pkg/exitcodes"
 	"github.com/lucas-albers-lz4/irr/pkg/fileutil"
+	helmtypes "github.com/lucas-albers-lz4/irr/pkg/helmtypes"
 	log "github.com/lucas-albers-lz4/irr/pkg/log"
 	"github.com/lucas-albers-lz4/irr/pkg/registry"
 	"github.com/lucas-albers-lz4/irr/pkg/strategy"
@@ -694,10 +695,19 @@ func createAndExecuteGenerator(chartSource *ChartSource, config *GeneratorConfig
 		return nil, handleGenerateError(err)
 	}
 
-	// Serialize the overrides to YAML
-	yamlBytes, err := yaml.Marshal(overrideFile.Values)
+	// --- Log Final Map Before Marshaling ---
+	finalMapLogBytes, logErr := yaml.Marshal(overrideFile.Values)
+	if logErr != nil {
+		log.Warn("createAndExecuteGenerator: Failed to marshal final map for logging", "error", logErr)
+	}
+	log.Debug("createAndExecuteGenerator: Final map BEFORE marshaling", "mapYaml", string(finalMapLogBytes))
+	// --- End Log ---
+
+	// Convert the final override values map to YAML
+	yamlBytes, err := chart.OverridesToYAML(overrideFile.Values)
 	if err != nil {
-		return nil, fmt.Errorf("failed to serialize overrides to YAML: %w", err)
+		log.Error("Failed to marshal overrides to YAML", "error", err)
+		return nil, fmt.Errorf("failed to marshal overrides to YAML: %w", err)
 	}
 
 	return yamlBytes, nil
@@ -738,7 +748,7 @@ func createGenerator(_ *ChartSource, config *GeneratorConfig) (GeneratorInterfac
 	}
 
 	// Create chart loader options for context-aware analysis
-	loaderOptions := &internalhelm.ChartLoaderOptions{
+	loaderOptions := &helmtypes.ChartLoaderOptions{
 		ChartPath:  config.ChartPath,
 		ValuesOpts: *valueOpts,
 	}
@@ -755,18 +765,18 @@ func createGenerator(_ *ChartSource, config *GeneratorConfig) (GeneratorInterfac
 
 	// Create context-aware analyzer and perform analysis
 	contextAnalyzer := internalhelm.NewContextAwareAnalyzer(chartAnalysisContext)
-	chartAnalysis, err := contextAnalyzer.AnalyzeContext()
+	_, err = contextAnalyzer.Analyze()
 	if err != nil {
 		return nil, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitChartProcessingFailed, // Use existing exit code
-			Err:  fmt.Errorf("context-aware analysis failed: %w", err),
+			Code: exitcodes.ExitChartProcessingFailed,
+			Err:  fmt.Errorf("analysis failed: %w", err),
 		}
 	}
 
 	// Create a custom loader that returns the pre-loaded chart
 	preloadedLoader := &PreloadedChartLoader{
-		chart:    chartAnalysisContext.Chart,
-		analysis: chartAnalysis,
+		Chart:   chartAnalysisContext.LoadedChart,
+		Context: chartAnalysisContext,
 	}
 
 	// --- Create Override Generator ---
@@ -795,20 +805,32 @@ func createGenerator(_ *ChartSource, config *GeneratorConfig) (GeneratorInterfac
 }
 
 // PreloadedChartLoader is a custom loader that returns a pre-loaded chart and analysis.
-// It implements the chart.Loader interface.
 type PreloadedChartLoader struct {
-	chart    *helmchart.Chart
-	analysis *analysis.ChartAnalysis
+	Chart   *helmchart.Chart
+	Context *helmtypes.ChartAnalysisContext
 }
 
-// Load implements the chart.Loader interface.
+// errAnalyzeNotApplicable indicates that the Analyze method is not applicable for PreloadedChartLoader.
+var errAnalyzeNotApplicable = errors.New("Analyze method is not applicable for PreloadedChartLoader")
+
+// Load returns the pre-loaded chart.
 func (l *PreloadedChartLoader) Load(_ string) (*helmchart.Chart, error) {
-	return l.chart, nil
+	return l.Chart, nil
 }
 
-// Analyze implements the analysis.ChartLoader interface.
+// Analyze is not applicable for PreloadedChartLoader and returns an error.
 func (l *PreloadedChartLoader) Analyze(_ string) (*analysis.ChartAnalysis, error) {
-	return l.analysis, nil
+	return nil, errAnalyzeNotApplicable // Not used in this context, return sentinel error
+}
+
+// LoadChartAndTrackOrigins returns the pre-loaded analysis context.
+func (l *PreloadedChartLoader) LoadChartAndTrackOrigins(_ *helmtypes.ChartLoaderOptions) (*helmtypes.ChartAnalysisContext, error) {
+	return l.Context, nil
+}
+
+// LoadChartWithValues returns the pre-loaded chart and nil values (as merged values aren't available).
+func (l *PreloadedChartLoader) LoadChartWithValues(_ *helmtypes.ChartLoaderOptions) (*helmchart.Chart, map[string]interface{}, error) {
+	return l.Chart, nil, nil // Merged values not available in this context
 }
 
 // runOverridePluginMode handles the logic when override is run in plugin mode.

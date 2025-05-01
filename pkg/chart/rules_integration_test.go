@@ -8,30 +8,57 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	"helm.sh/helm/v3/pkg/chart"
+	helmchart "helm.sh/helm/v3/pkg/chart"
 
 	"github.com/lucas-albers-lz4/irr/pkg/analysis"
+	helmtypes "github.com/lucas-albers-lz4/irr/pkg/helmtypes"
 	"github.com/lucas-albers-lz4/irr/pkg/image"
 	"github.com/lucas-albers-lz4/irr/pkg/log"
 	"github.com/lucas-albers-lz4/irr/pkg/rules"
 )
 
-// mockChartLoader implements analysis.ChartLoader for testing
+// mockChartLoader implements helmtypes.ChartLoader for testing using testify/mock
 type mockChartLoader struct {
 	mock.Mock
 }
 
-func (m *mockChartLoader) Load(chartPath string) (*chart.Chart, error) {
-	args := m.Called(chartPath)
-	chartObj, ok := args.Get(0).(*chart.Chart)
-	err := args.Error(1)
-	if err != nil {
-		return nil, fmt.Errorf("mock loader error: %w", err)
+// Remove the old Load method
+// func (m *mockChartLoader) Load(chartPath string) (*chart.Chart, error) { ... }
+
+// Implement LoadChartAndTrackOrigins using testify/mock
+func (m *mockChartLoader) LoadChartAndTrackOrigins(opts *helmtypes.ChartLoaderOptions) (*helmtypes.ChartAnalysisContext, error) {
+	args := m.Called(opts)
+	// Return nil context on error
+	if err := args.Error(1); err != nil {
+		return nil, fmt.Errorf("mock LoadChartAndTrackOrigins error: %w", err)
 	}
-	if !ok || chartObj == nil {
-		return nil, fmt.Errorf("type assertion failed: expected *chart.Chart")
+	// Get the context from the mock setup
+	context, ok := args.Get(0).(*helmtypes.ChartAnalysisContext)
+	if !ok {
+		// Return error if type assertion fails, indicating bad mock setup
+		return nil, fmt.Errorf("mock LoadChartAndTrackOrigins: type assertion failed for *helmtypes.ChartAnalysisContext")
 	}
-	return chartObj, nil
+	return context, nil
+}
+
+// Implement LoadChartWithValues using testify/mock
+func (m *mockChartLoader) LoadChartWithValues(opts *helmtypes.ChartLoaderOptions) (*helmchart.Chart, map[string]interface{}, error) {
+	args := m.Called(opts)
+	// Return nil chart/values on error
+	if err := args.Error(2); err != nil {
+		return nil, nil, fmt.Errorf("mock LoadChartWithValues error: %w", err)
+	}
+	// Get the chart from the mock setup
+	chrt, okChart := args.Get(0).(*helmchart.Chart)
+	if !okChart {
+		return nil, nil, fmt.Errorf("mock LoadChartWithValues: type assertion failed for *helmchart.Chart")
+	}
+	// Get the values from the mock setup
+	vals, okVals := args.Get(1).(map[string]interface{})
+	if !okVals {
+		return nil, nil, fmt.Errorf("mock LoadChartWithValues: type assertion failed for map[string]interface{}")
+	}
+	return chrt, vals, nil
 }
 
 // mockRulesRegistry implements a mock rules registry for testing
@@ -59,7 +86,7 @@ func (m *mockRulesRegistry) GetRuleByName(name string) rules.Rule {
 	return rule
 }
 
-func (m *mockRulesRegistry) ApplyRules(chrt *chart.Chart, overrides map[string]interface{}) (bool, error) {
+func (m *mockRulesRegistry) ApplyRules(chrt *helmchart.Chart, overrides map[string]interface{}) (bool, error) {
 	args := m.Called(chrt, overrides)
 
 	return args.Bool(0), args.Error(1)
@@ -160,26 +187,29 @@ func TestGenerateWithRulesEnabled(t *testing.T) {
 
 // TestGenerateWithRulesDisabled tests the Generate method with rules disabled
 func TestGenerateWithRulesDisabled(t *testing.T) {
-	// Create a mock chart loader
+	// Create a mock chart loader using testify/mock
 	mockLoader := new(mockChartLoader)
 
 	// Create a mock chart
-	mockChart := &chart.Chart{
-		Metadata: &chart.Metadata{
+	mockChart := &helmchart.Chart{
+		Metadata: &helmchart.Metadata{
 			Name:    "test-chart",
 			Version: "1.0.0",
 		},
 		Values: map[string]interface{}{},
 	}
+	// Create a mock context
+	mockContext := helmtypes.NewChartAnalysisContext(mockChart, make(map[string]interface{}), make(map[string]helmtypes.ValueOrigin), "")
 
-	// Configure the mock loader to return our mock chart
-	mockLoader.On("Load", "test-chart").Return(mockChart, nil)
+	// Configure the mock loader for LoadChartAndTrackOrigins
+	mockLoader.On("LoadChartAndTrackOrigins", mock.AnythingOfType("*helmtypes.ChartLoaderOptions")).Return(mockContext, nil)
+	// Add expectation for LoadChartWithValues (called by analysisLoaderWrapper)
+	mockLoader.On("LoadChartWithValues", mock.AnythingOfType("*helmtypes.ChartLoaderOptions")).Return(mockChart, make(map[string]interface{}), nil)
 
 	// Create a mock rules registry
 	mockRegistry := new(mockRulesRegistry)
 
 	// The mock should NOT be called since rules are disabled
-	// We're not setting an expectation, so if it's called, the test will fail
 
 	// Create a mock path strategy
 	mockStrategy := new(mockPathStrategy)
@@ -188,13 +218,13 @@ func TestGenerateWithRulesDisabled(t *testing.T) {
 	generator := NewGenerator(
 		"test-chart",
 		"example.com",
-		[]string{},
+		[]string{}, // No source registries needed as analysis is mocked/skipped implicitly
 		[]string{},
 		mockStrategy,
 		nil, // nil mappings is valid
 		false,
 		0,
-		mockLoader,
+		mockLoader, // Use the testify/mock loader
 		nil,
 		nil,
 		nil,
@@ -211,8 +241,10 @@ func TestGenerateWithRulesDisabled(t *testing.T) {
 	require.NoError(t, err, "Generate should not return an error")
 	require.NotNil(t, result, "Generate should return a result")
 
-	// Verify the mock was called
-	mockLoader.AssertCalled(t, "Load", "test-chart")
+	// Verify the loader mocks were called
+	mockLoader.AssertCalled(t, "LoadChartAndTrackOrigins", mock.AnythingOfType("*helmtypes.ChartLoaderOptions"))
+	// Assert LoadChartWithValues was called (or not, depending on internal logic)
+	// mockLoader.AssertCalled(t, "LoadChartWithValues", mock.AnythingOfType("*helmtypes.ChartLoaderOptions"))
 
 	// Verify the rules registry was NOT called
 	mockRegistry.AssertNotCalled(t, "ApplyRules", mock.Anything, mock.Anything)
@@ -252,8 +284,8 @@ func TestInitRulesRegistry(t *testing.T) {
 func TestGenerateWithRulesTypeAssertion(t *testing.T) {
 	// --- Mocks & Setup ---
 	mockLoader := new(mockChartLoader)
-	mockChart := &chart.Chart{
-		Metadata: &chart.Metadata{Name: "test-chart", Version: "1.0.0"},
+	mockChart := &helmchart.Chart{
+		Metadata: &helmchart.Metadata{Name: "test-chart", Version: "1.0.0"},
 		// Values aren't directly used by the generator if analysis result is predefined
 		Values: map[string]interface{}{},
 	}

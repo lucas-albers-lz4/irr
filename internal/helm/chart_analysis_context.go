@@ -2,115 +2,112 @@
 package helm
 
 import (
+	"fmt"
 	"strings"
 
+	// Ensure correct import if needed elsewhere, or remove if unused
+	// Assuming chart package is needed
+
+	"github.com/lucas-albers-lz4/irr/pkg/analysis" // Corrected import path assuming it exists
+	helmtypes "github.com/lucas-albers-lz4/irr/pkg/helmtypes"
+	"github.com/lucas-albers-lz4/irr/pkg/image" // Correct import for ParseImageReference
 	"github.com/lucas-albers-lz4/irr/pkg/log"
-	"helm.sh/helm/v3/pkg/chart"
+	// Corrected import path assuming it exists
 )
 
-// ChartAnalysisContext encapsulates all information needed to analyze a chart's images.
-type ChartAnalysisContext struct {
-	// The Helm chart being analyzed
-	Chart *chart.Chart
-
-	// The final merged values that would be used for rendering
-	Values map[string]interface{}
-
-	// Origin tracking for values
-	Origins map[string]ValueOrigin
-
-	// Metadata about this analysis
-	ChartName    string
-	ChartVersion string
-	ValuesFiles  []string
-	SetValues    []string
-}
-
-// GetSourcePathForValue determines the source path for a given value based on its origin.
-// This is crucial for generating correct source paths for images found in subchart values.
-func (ctx *ChartAnalysisContext) GetSourcePathForValue(valuePath string) string {
-	// Default to the base path if no origin info available
-	if ctx.Origins == nil {
-		return valuePath
+// GetSourcePathForValue attempts to find the original source path for a given path in the merged values.
+// It uses the pre-computed Origins map.
+func GetSourcePathForValue(c *helmtypes.ChartAnalysisContext, mergedPath string) (string, bool) {
+	origin, found := c.Origins[mergedPath]
+	if !found {
+		log.Debug("Origin not found for merged path", "path", mergedPath)
+		parts := strings.Split(mergedPath, ".")
+		if len(parts) > 1 {
+			parentPath := strings.Join(parts[:len(parts)-1], ".")
+			log.Debug("Retrying origin lookup for parent path", "path", parentPath)
+		}
+		return "", false
 	}
 
-	origin, exists := ctx.Origins[valuePath]
-	if !exists {
-		// If exact path not found, try checking parent paths for aliasing/global overrides
-		// This is a simplified check; more robust logic might be needed.
-		parts := strings.Split(valuePath, ".")
-		for i := len(parts) - 1; i > 0; i-- {
-			parentPath := strings.Join(parts[:i], ".")
-			if parentOrigin, parentExists := ctx.Origins[parentPath]; parentExists {
-				// TODO: Add more sophisticated logic here if needed, e.g., alias handling
-				// For now, use the origin of the nearest parent found.
-				origin = parentOrigin
-				exists = true
-				break
+	log.Debug("Origin found for merged path", "path", mergedPath, "type", origin.Type, "originPath", origin.Path)
+	return origin.Path, true
+}
+
+// FindImagePatterns traverses the MergedValues using the Origins map to report correct source paths.
+func FindImagePatterns(c *helmtypes.ChartAnalysisContext, includePatterns, excludePatterns []string) ([]analysis.ImagePattern, error) {
+	patterns := []analysis.ImagePattern{}
+	log.Debug("Starting image pattern search", "mergedValueCount", len(c.MergedValues), "originCount", len(c.Origins))
+
+	if c.MergedValues == nil {
+		log.Warn("MergedValues map is nil, cannot find image patterns.")
+		return patterns, nil
+	}
+
+	err := findPatternsRecursive(c, c.MergedValues, "", &patterns, includePatterns, excludePatterns)
+	if err != nil {
+		log.Error("Error during recursive pattern search", "error", err)
+		return nil, err
+	}
+	log.Debug("Finished image pattern search", "patternsFound", len(patterns))
+	return patterns, nil
+}
+
+// findPatternsRecursive is a helper to traverse the merged values map.
+func findPatternsRecursive(
+	c *helmtypes.ChartAnalysisContext,
+	currentVal interface{},
+	pathSoFar string,
+	patterns *[]analysis.ImagePattern,
+	includePatterns, excludePatterns []string,
+) error {
+	switch v := currentVal.(type) {
+	case map[string]interface{}:
+		log.Debug("Traversing map", "path", pathSoFar)
+		for key, val := range v {
+			currentMergedPath := key
+			if pathSoFar != "" {
+				currentMergedPath = pathSoFar + "." + key
+			}
+
+			if err := findPatternsRecursive(c, val, currentMergedPath, patterns, includePatterns, excludePatterns); err != nil {
+				return err
 			}
 		}
-		// If still no origin found after checking parents, return the original path
-		if !exists {
-			return valuePath
+	case []interface{}:
+		log.Debug("Traversing slice", "path", pathSoFar)
+		for i, item := range v {
+			currentMergedPath := fmt.Sprintf("%s[%d]", pathSoFar, i)
+			if err := findPatternsRecursive(c, item, currentMergedPath, patterns, includePatterns, excludePatterns); err != nil {
+				return err
+			}
 		}
-	}
+	case string:
+		log.Debug("Checking string", "path", pathSoFar)
+		imgRef, err := image.ParseImageReference(v)
+		if err == nil && imgRef != nil && imgRef.Repository != "" {
+			log.Debug("Found potential image ref", "value", v, "path", pathSoFar)
+			sourcePath, found := GetSourcePathForValue(c, pathSoFar)
+			if !found {
+				log.Warn("Could not find origin for merged path. Skipping image pattern.", "path", pathSoFar)
+				return nil
+			}
 
-	// Handle different origin types
-	switch origin.Type {
-	case OriginChartDefault, OriginParentValues:
-		// If the value originates from a different chart (subchart), prepend its name.
-		if origin.ChartName != "" && origin.ChartName != ctx.ChartName {
-			return origin.ChartName + "." + valuePath
+			pattern := analysis.ImagePattern{
+				Path:  sourcePath,
+				Value: v,
+				Type:  analysis.PatternTypeString,
+			}
+			log.Debug("Adding ImagePattern", "path", pattern.Path, "value", pattern.Value)
+			*patterns = append(*patterns, pattern)
+		} else {
+			log.Debug("String is not a valid image reference", "value", v, "path", pathSoFar)
 		}
-		// Otherwise, it's from the top-level chart, return the path as is.
-		return valuePath
-
-	case OriginUserFile, OriginUserSet:
-		// User-provided values apply to the top-level context, don't change the path structure relative to that.
-		return valuePath
-
-	case OriginAlias:
-		// TODO: Implement proper alias handling.
-		// For now, return the path as is, assuming it might be correct or needs manual adjustment.
-		// A more complete solution would involve tracing the alias back to the original chart
-		// and prepending the alias name.
-		log.Warn("Alias origin type detected, but full alias handling not yet implemented.", "path", valuePath, "originChart", origin.ChartName)
-		return valuePath // Placeholder
-
-	case OriginGlobal:
-		// Globals are typically accessed directly, e.g., .Values.global.someValue
-		// The tracked path should already include 'global.' prefix from the merging logic.
-		// No modification needed here as the path should be correct as tracked.
-		return valuePath
-
 	default:
-		log.Warn("Unknown value origin type encountered", "type", origin.Type, "path", valuePath)
-		return valuePath
+		log.Debug("Skipping non-string/non-map/non-slice value", "path", pathSoFar, "type", fmt.Sprintf("%T", v))
 	}
+	return nil
 }
 
-// NewChartAnalysisContext creates a new context for chart analysis.
-func NewChartAnalysisContext(chartData *chart.Chart, values map[string]interface{}, origins map[string]ValueOrigin, valuesFiles, setValues []string) *ChartAnalysisContext {
-	return &ChartAnalysisContext{
-		Chart:        chartData,
-		Values:       values,
-		Origins:      origins,
-		ChartName:    chartData.Name(),
-		ChartVersion: chartData.Metadata.Version,
-		ValuesFiles:  valuesFiles,
-		SetValues:    setValues,
-	}
-}
-
-// NewChartAnalysisContextFromCoalesced creates a context from a chart and coalesced values.
-func NewChartAnalysisContextFromCoalesced(chartData *chart.Chart, coalesced *CoalescedValues, valuesFiles, setValues []string) *ChartAnalysisContext {
-	return &ChartAnalysisContext{
-		Chart:        chartData,
-		Values:       coalesced.Values,
-		Origins:      coalesced.Origins,
-		ChartName:    chartData.Name(),
-		ChartVersion: chartData.Metadata.Version,
-		ValuesFiles:  valuesFiles,
-		SetValues:    setValues,
-	}
-}
+// --- Helper functions or other methods for ChartAnalysisContext can go here ---
+// Example:
+// func matchesPathPattern(path string, patterns []string) bool { ... }

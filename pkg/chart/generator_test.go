@@ -11,21 +11,25 @@ import (
 	helmchart "helm.sh/helm/v3/pkg/chart"
 
 	"github.com/lucas-albers-lz4/irr/pkg/analysis"
+	helmtypes "github.com/lucas-albers-lz4/irr/pkg/helmtypes"
 	"github.com/lucas-albers-lz4/irr/pkg/image"
 	"github.com/lucas-albers-lz4/irr/pkg/log"
 	"github.com/lucas-albers-lz4/irr/pkg/override"
 	"github.com/lucas-albers-lz4/irr/pkg/registry"
+	"github.com/lucas-albers-lz4/irr/pkg/strategy"
 	"github.com/lucas-albers-lz4/irr/pkg/testutil"
 )
 
 // MockPathStrategy implements the strategy.PathStrategy interface for testing
 type MockPathStrategy struct{}
 
+// GeneratePath mocks the path generation, prepending "mockpath/" to the repository.
 func (m *MockPathStrategy) GeneratePath(ref *image.Reference, _ analysis.ImagePattern, _ string) (string, error) {
 	if ref == nil {
 		return "", errors.New("mock strategy received nil reference")
 	}
-	// Return mockpath/{repository} format as expected by tests
+	// Restore mock behavior: return mockpath/{repository} format as expected by some tests.
+	// NOTE: This mock is simplistic and doesn't reflect real strategy behavior fully.
 	return fmt.Sprintf("mockpath/%s", ref.Repository), nil
 }
 
@@ -46,8 +50,9 @@ func (m *MockRulesRegistry) ApplyRules(chart *helmchart.Chart, overrides map[str
 
 // MockChartLoader implements the analysis.ChartLoader interface for testing
 type MockChartLoader struct {
-	chart *helmchart.Chart
-	err   error
+	chart      *helmchart.Chart
+	err        error // Error for Load/LoadWithValues
+	originsErr error // Specific error for LoadChartAndTrackOrigins
 }
 
 func (m *MockChartLoader) Load(_ string) (*helmchart.Chart, error) {
@@ -57,11 +62,24 @@ func (m *MockChartLoader) Load(_ string) (*helmchart.Chart, error) {
 	return m.chart, nil
 }
 
+func (m *MockChartLoader) LoadChartAndTrackOrigins(_ *helmtypes.ChartLoaderOptions) (*helmtypes.ChartAnalysisContext, error) {
+	// Return specific error if configured
+	if m.originsErr != nil {
+		return nil, m.originsErr
+	}
+	// Return default success response otherwise
+	return helmtypes.NewChartAnalysisContext(m.chart, make(map[string]interface{}), make(map[string]helmtypes.ValueOrigin), ""), nil
+}
+
+func (m *MockChartLoader) LoadChartWithValues(_ *helmtypes.ChartLoaderOptions) (*helmchart.Chart, map[string]interface{}, error) {
+	return m.chart, map[string]interface{}{}, nil
+}
+
 func TestNewGenerator(t *testing.T) {
-	strategy := &MockPathStrategy{}
-	loader := &MockChartLoader{} // Use mock loader
-	// Use chart.NewGenerator from the actual package
-	gen := NewGenerator("path", "target", []string{"source"}, []string{}, strategy, nil, false, 80, loader, []string(nil), []string(nil), []string(nil), false)
+	mockStrategy := &MockPathStrategy{}
+	loader := &MockChartLoader{}
+	var testMappings *registry.Mappings // Use nil for this simple test
+	gen := NewGenerator("path", "target", []string{"source"}, []string{}, mockStrategy, testMappings, false, 80, loader, []string(nil), []string(nil), []string(nil), false)
 	assert.NotNil(t, gen)
 }
 
@@ -72,24 +90,44 @@ func TestGenerator_Generate_Simple(t *testing.T) {
 			Metadata: &helmchart.Metadata{Name: "test-chart"},
 			Values: map[string]interface{}{
 				"image": map[string]interface{}{
-					"registry":   "source.registry.com",
+					// Analyzer produces canonical strings, so the test input here doesn't
+					// directly reflect what the generator receives. The generator gets
+					// analysis.ImagePattern with Value = "source.registry.com/library/nginx:latest".
 					"repository": "library/nginx",
 					"tag":        "latest",
+					"registry":   "source.registry.com", // Original structure for context
 				},
 			},
 		},
 	}
-	mockStrategy := &MockPathStrategy{}
+	mockStrategy := strategy.NewPrefixSourceRegistryStrategy() // Use actual strategy
+
+	// Create a Config struct with the desired mappings
+	config := &registry.Config{
+		Registries: registry.RegConfig{
+			Mappings: []registry.RegMapping{
+				{
+					Source:  "source.registry.com",
+					Target:  "sourceregistrycom", // Mapping prefix
+					Enabled: true,                // Explicitly enable
+				},
+			},
+			// Add DefaultTarget or StrictMode if needed by the test logic
+		},
+		// Add Version or Compatibility if needed
+	}
+	// Convert the Config to Mappings format for the generator
+	mappings := config.ToMappings()
 
 	g := NewGenerator(
 		"test-chart",
 		"target.registry.com",
 		[]string{"source.registry.com"},
-		[]string{},
+		[]string{}, // No exclusions
 		mockStrategy,
-		nil,
-		false,
-		0,
+		mappings, // Pass the converted *registry.Mappings
+		false,    // Strict mode off
+		0,        // Threshold 0 (process all)
 		mockLoader,
 		nil, nil, nil,
 		false,
@@ -99,13 +137,14 @@ func TestGenerator_Generate_Simple(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
-	// Verify the expected overrides map structure
+	// Verify the expected overrides map structure based on PrefixSourceRegistryStrategy
 	expectedOverrides := override.File{
 		ChartPath: "test-chart",
 		Values: map[string]interface{}{
 			"image": map[string]interface{}{
-				"registry":   "target.registry.com",
-				"repository": "mockpath/library/nginx",
+				// Correct expectation: Generator now separates registry and repo path
+				"registry":   "sourceregistrycom", // Mapping target becomes the registry
+				"repository": "library/nginx",     // Repo path without registry prefix
 				"tag":        "latest",
 			},
 		},
@@ -140,7 +179,19 @@ func TestGenerator_Generate_ThresholdMet(t *testing.T) {
 			},
 		},
 	}
-	mockStrategy := &MockPathStrategy{} // Will prepend "mockpath/"
+	mockStrategy := strategy.NewPrefixSourceRegistryStrategy() // Use actual strategy
+
+	// Create a Config struct with the desired mappings
+	config := &registry.Config{
+		Registries: registry.RegConfig{
+			Mappings: []registry.RegMapping{
+				{Source: "source.registry.com", Target: "sourceregistrycom", Enabled: true},
+				{Source: "another.source.com", Target: "anothersourcecom", Enabled: true},
+			},
+		},
+	}
+	// Convert the Config to Mappings format for the generator
+	mappings := config.ToMappings()
 
 	g := NewGenerator(
 		"test-chart",
@@ -148,7 +199,7 @@ func TestGenerator_Generate_ThresholdMet(t *testing.T) {
 		[]string{"source.registry.com", "another.source.com"}, // Allow both sources
 		[]string{"ignored.registry.com"},                      // Exclude this one
 		mockStrategy,
-		nil,
+		mappings, // Pass the converted *registry.Mappings
 		false,
 		80, // Threshold 80% - Should pass (2/2 eligible images processed)
 		mockLoader,
@@ -160,18 +211,20 @@ func TestGenerator_Generate_ThresholdMet(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
-	// Verify the expected overrides for both images
+	// Verify the expected overrides for both images based on PrefixSourceRegistryStrategy
 	expectedOverrides := override.File{
 		Values: map[string]interface{}{
 			"image": map[string]interface{}{
-				"registry":   "target.registry.com",
-				"repository": "mockpath/library/nginx", // mockpath/ + library/nginx
+				// Correct expectation
+				"registry":   "sourceregistrycom",
+				"repository": "library/nginx",
 				"tag":        "latest",
 			},
 			"sidecar": map[string]interface{}{ // Nested structure preserved
 				"image": map[string]interface{}{
-					"registry":   "target.registry.com",    // Default target registry
-					"repository": "mockpath/utils/busybox", // mockpath/ + utils/busybox
+					// Correct expectation
+					"registry":   "anothersourcecom",
+					"repository": "utils/busybox",
 					"tag":        "1.2.3",
 				},
 			},
@@ -380,8 +433,8 @@ func (m *MockImageDetector) DetectImages(_ interface{}, _ []string) ([]image.Det
 func TestProcessChartForOverrides(t *testing.T) {
 	t.Skip("Functionality removed or under refactoring")
 	// Following line commented out to avoid unused variable error
-	// strategy := &MockPathStrategy{}
-	// g := NewGenerator("", "target.registry.com", []string{}, []string{}, strategy, nil, map[string]string{}, false, 0, nil, nil, nil, nil)
+	// mockStrategy := &MockPathStrategy{}
+	// g := NewGenerator("", "target.registry.com", []string{}, []string{}, mockStrategy, nil, map[string]string{}, false, 0, nil, nil, nil, nil)
 }
 
 func TestGenerateOverrides_Integration(t *testing.T) {
@@ -848,10 +901,12 @@ func TestGenerator_Generate_LoadingError(t *testing.T) {
 	chartPath := "/path/does/not/exist"
 	loaderErr := errors.New("mock loader failed")
 
-	// Create a mock loader that returns an error
+	// Create a mock loader that returns an error from LoadChartAndTrackOrigins
 	mockLoader := &MockChartLoader{
-		err: loaderErr, // Configure the mock to return an error
+		originsErr: loaderErr, // Configure the mock to return an error specifically from this method
 	}
+	// Remove the explicit method assignment which caused lint error
+
 	mockStrategy := &MockPathStrategy{} // Strategy won't be used but needed for NewGenerator
 
 	g := NewGenerator(

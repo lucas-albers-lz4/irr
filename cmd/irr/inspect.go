@@ -18,16 +18,15 @@ import (
 	"helm.sh/helm/v3/pkg/chartutil"
 	"helm.sh/helm/v3/pkg/cli/values"
 
-	"github.com/lucas-albers-lz4/irr/internal/helm"
-	"github.com/lucas-albers-lz4/irr/pkg/analysis"
+	internalhelm "github.com/lucas-albers-lz4/irr/internal/helm"
 	"github.com/lucas-albers-lz4/irr/pkg/analyzer"
 	"github.com/lucas-albers-lz4/irr/pkg/exitcodes"
 	"github.com/lucas-albers-lz4/irr/pkg/fileutil"
+	helmtypes "github.com/lucas-albers-lz4/irr/pkg/helmtypes"
 	"github.com/lucas-albers-lz4/irr/pkg/image"
 	log "github.com/lucas-albers-lz4/irr/pkg/log"
 	"github.com/lucas-albers-lz4/irr/pkg/registry"
 	"github.com/spf13/cobra"
-	// Added Helm imports
 )
 
 // ChartInfo represents basic chart information
@@ -85,8 +84,8 @@ type ReleaseAnalysisResult struct {
 }
 
 // createHelmClient creates a new instance of the Helm client
-func createHelmClient() (helm.ClientInterface, error) {
-	client, err := helm.NewHelmClient()
+func createHelmClient() (internalhelm.ClientInterface, error) {
+	client, err := internalhelm.NewHelmClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Helm client: %w", err)
 	}
@@ -424,13 +423,13 @@ func setupAnalyzerAndLoadChart(cmd *cobra.Command, flags *InspectFlags) (string,
 	}
 
 	// Create chart loader options
-	loaderOptions := &helm.ChartLoaderOptions{
+	loaderOptions := &helmtypes.ChartLoaderOptions{
 		ChartPath:  chartPath,
 		ValuesOpts: *valueOpts,
 	}
 
 	// Create chart loader
-	chartLoader := helm.NewChartLoader()
+	chartLoader := internalhelm.NewChartLoader()
 
 	// Load chart and track origins - this properly handles subcharts and dependencies
 	chartAnalysisContext, err := chartLoader.LoadChartAndTrackOrigins(loaderOptions)
@@ -444,27 +443,27 @@ func setupAnalyzerAndLoadChart(cmd *cobra.Command, flags *InspectFlags) (string,
 	if chartAnalysisContext == nil {
 		return "", nil, errors.New("internal error: LoadChartAndTrackOrigins returned nil context without error")
 	}
-	if chartAnalysisContext.Chart == nil {
+	if chartAnalysisContext.LoadedChart == nil {
 		// Perhaps the path didn't actually contain a chart?
 		// Need to determine the correct chartPath variable here, it might not be set yet.
 		// Using loaderOptions.ChartPath as the input path.
 		return "", nil, fmt.Errorf("failed to load chart details from context for path: %s", loaderOptions.ChartPath)
 	}
-	if chartAnalysisContext.Chart.Metadata == nil {
+	if chartAnalysisContext.LoadedChart.Metadata == nil {
 		// This indicates a chart was loaded but lacks required metadata
 		// Use Name() if available, else fallback to ChartPath()
-		chartIdentifier := chartAnalysisContext.Chart.ChartPath()
-		if chartAnalysisContext.Chart.Name() != "" {
-			chartIdentifier = chartAnalysisContext.Chart.Name()
+		chartIdentifier := chartAnalysisContext.LoadedChart.ChartPath()
+		if chartAnalysisContext.LoadedChart.Name() != "" {
+			chartIdentifier = chartAnalysisContext.LoadedChart.Name()
 		}
 		return "", nil, fmt.Errorf("loaded chart %s lacks metadata", chartIdentifier)
 	}
 
 	// Create context-aware analyzer
-	contextAnalyzer := helm.NewContextAwareAnalyzer(chartAnalysisContext)
+	contextAnalyzer := internalhelm.NewContextAwareAnalyzer(chartAnalysisContext)
 
 	// Run analysis
-	chartAnalysisResult, err := contextAnalyzer.AnalyzeContext()
+	patterns, err := contextAnalyzer.Analyze()
 	if err != nil {
 		return "", nil, &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitChartProcessingFailed,
@@ -472,22 +471,19 @@ func setupAnalyzerAndLoadChart(cmd *cobra.Command, flags *InspectFlags) (string,
 		}
 	}
 
-	// Convert analysis.ImagePattern to analyzer.ImagePattern for compatibility
-	analyzerImagePatterns := convertAnalysisPatternsToAnalyzerPatterns(chartAnalysisResult.ImagePatterns)
+	// Process image patterns using the correct type
+	images, skipped := processImagePatterns(patterns)
 
-	// Process image patterns using the converted type
-	images, skipped := processImagePatterns(analyzerImagePatterns)
-
-	// Create image analysis for the CLI output, using the converted patterns
+	// Create image analysis for the CLI output, using the correct patterns
 	analysisResult := &ImageAnalysis{
 		Chart: ChartInfo{
-			Name:         chartAnalysisContext.Chart.Metadata.Name,
-			Version:      chartAnalysisContext.Chart.Metadata.Version,
-			Path:         chartAnalysisContext.Chart.ChartPath(),
-			Dependencies: len(chartAnalysisContext.Chart.Dependencies()),
+			Name:         chartAnalysisContext.LoadedChart.Metadata.Name,
+			Version:      chartAnalysisContext.LoadedChart.Metadata.Version,
+			Path:         chartAnalysisContext.LoadedChart.ChartPath(),
+			Dependencies: len(chartAnalysisContext.LoadedChart.Dependencies()),
 		},
 		Images:        images,
-		ImagePatterns: analyzerImagePatterns,
+		ImagePatterns: patterns,
 		Skipped:       skipped,
 	}
 
@@ -1220,7 +1216,7 @@ func createConfigSkeleton(images []ImageInfo, outputFile string) error {
 }
 
 // getAllReleases returns all Helm releases across all namespaces
-func getAllReleases() ([]*helm.ReleaseElement, *helm.Adapter, error) {
+func getAllReleases() ([]*internalhelm.ReleaseElement, *internalhelm.Adapter, error) {
 	// Create a Helm adapter for interacting with the cluster
 	helmAdapter, err := helmAdapterFactory()
 	if err != nil {
@@ -1257,7 +1253,7 @@ func getAllReleases() ([]*helm.ReleaseElement, *helm.Adapter, error) {
 }
 
 // analyzeRelease analyzes a single Helm release and returns the analysis result and the original unfiltered images
-func analyzeRelease(release *helm.ReleaseElement, helmAdapter *helm.Adapter, flags *InspectFlags) (*ReleaseAnalysisResult, []ImageInfo, error) {
+func analyzeRelease(release *internalhelm.ReleaseElement, helmAdapter *internalhelm.Adapter, flags *InspectFlags) (*ReleaseAnalysisResult, []ImageInfo, error) {
 	log.Info("Analyzing release", "name", release.Name, "namespace", release.Namespace)
 
 	// Get release values
@@ -1333,7 +1329,7 @@ func analyzeRelease(release *helm.ReleaseElement, helmAdapter *helm.Adapter, fla
 }
 
 // processAllReleases processes all releases and returns the aggregated results
-func processAllReleases(releases []*helm.ReleaseElement, helmAdapter *helm.Adapter, flags *InspectFlags) ([]*ReleaseAnalysisResult, []string, []ImageInfo, error) {
+func processAllReleases(releases []*internalhelm.ReleaseElement, helmAdapter *internalhelm.Adapter, flags *InspectFlags) ([]*ReleaseAnalysisResult, []string, []ImageInfo, error) {
 	var allResults []*ReleaseAnalysisResult
 	var skippedReleases []string
 	uniqueRegistries := make(map[string]bool)
@@ -1696,34 +1692,4 @@ func extractImagesFromContainers(podSpec map[string]interface{}, containerType s
 		// Add image to the set
 		images[imageValue] = struct{}{}
 	}
-}
-
-// convertAnalysisPatternsToAnalyzerPatterns converts the analysis package patterns
-// to the analyzer package patterns for compatibility with existing functions.
-func convertAnalysisPatternsToAnalyzerPatterns(analysisPatterns []analysis.ImagePattern) []analyzer.ImagePattern {
-	analyzerPatterns := make([]analyzer.ImagePattern, 0, len(analysisPatterns))
-	for _, ap := range analysisPatterns {
-		var azStruct *analyzer.ImageStructure
-		if ap.Type == analysis.PatternTypeMap && ap.Structure != nil {
-			azStruct = &analyzer.ImageStructure{}
-			if reg, ok := ap.Structure["registry"].(string); ok {
-				azStruct.Registry = reg
-			}
-			if repo, ok := ap.Structure["repository"].(string); ok {
-				azStruct.Repository = repo
-			}
-			if tag, ok := ap.Structure["tag"].(string); ok {
-				azStruct.Tag = tag
-			}
-		}
-
-		analyzerPatterns = append(analyzerPatterns, analyzer.ImagePattern{
-			Path:      ap.Path,
-			Type:      string(ap.Type),
-			Value:     ap.Value,
-			Structure: azStruct,
-			Count:     ap.Count,
-		})
-	}
-	return analyzerPatterns
 }
