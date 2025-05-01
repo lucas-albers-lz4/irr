@@ -658,42 +658,44 @@ func (h *TestHarness) ExecuteIRR(env map[string]string, args ...string) (string,
 	return output, nil
 }
 
-// ExecuteIRRWithStderr executes the IRR command with the given arguments,
-// capturing both stdout and stderr separately.
-// It also accepts an optional map of environment variables to set for the command execution.
-func (h *TestHarness) ExecuteIRRWithStderr(env map[string]string, args ...string) (stdout, stderr string, err error) {
-	cmdPath := h.getIrrBinaryPath()
-	cmdArgs := append([]string{}, args...) // Create a mutable copy
-
-	log.Info("Executing command (capturing stderr)", "command", cmdPath, "args", cmdArgs)
-
-	cmd := exec.Command(cmdPath, cmdArgs...) // #nosec G204 Need to run the built binary
-
-	// Set environment variables if provided
-	cmd.Env = os.Environ() // Initialize with current environment
-	if env != nil {
-		cmd.Env = append(cmd.Env, h.getEnvSlice(env)...) // Append ONLY custom vars
-		log.Debug("Setting custom environment variables", "env", env)
+// ExecuteIRRWithStderr executes the irr command with given arguments, captures stdout/stderr,
+// and optionally adds the --context-aware flag.
+func (h *TestHarness) ExecuteIRRWithStderr(env map[string]string, useContextAware bool, args ...string) (stdoutStr, stderrStr string, err error) {
+	fullArgs := args
+	if useContextAware {
+		fullArgs = append(fullArgs, "--context-aware")
 	}
 
-	var stdoutBuf, stderrBuf bytes.Buffer
-	cmd.Stdout = &stdoutBuf
-	cmd.Stderr = &stderrBuf
+	// Log the command being executed, including the context-aware flag if used
+	cmdString := fmt.Sprintf("%s %s", h.getIrrBinaryPath(), strings.Join(fullArgs, " "))
+	h.t.Logf("Executing IRR command: %s", cmdString)
+
+	// #nosec G204 - Subprocess launched with variable
+	cmd := exec.Command(h.getIrrBinaryPath(), fullArgs...)
+	cmd.Dir = h.rootDir // Ensure command runs from the project root
+
+	// Set environment variables
+	cmd.Env = os.Environ() // Inherit current environment
+	for k, v := range env {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
+	}
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 
 	err = cmd.Run()
 
-	stdout = stdoutBuf.String()
-	stderr = stderrBuf.String()
+	stdoutStr = stdout.String()
+	stderrStr = stderr.String()
 
+	// Only wrap the error if it's not nil
 	if err != nil {
-		// Log the error along with stdout/stderr for context
-		log.Info("Command failed", "error", err, "stderr", stderr)
-		// Return a combined error message including stderr content
-		return stdout, stderr, fmt.Errorf("%w\\nStderr:\\n%s", err, stderr)
+		return stdoutStr, stderrStr, fmt.Errorf("failed to run irr command: %w", err)
 	}
 
-	log.Debug("Command succeeded", "stdout_len", len(stdout), "stderr_len", len(stderr))
-	return stdout, stderr, nil
+	// Return nil error if cmd.Run() succeeded
+	return stdoutStr, stderrStr, nil
 }
 
 // getIrrBinaryPath returns the path to the built IRR binary.
@@ -1146,7 +1148,7 @@ func (h *TestHarness) RunIrrCommandWithOutput(cmdArgs []string) (string, error) 
 // RunIrrCommand executes the IRR command with the given arguments and returns stdout, stderr, and exit code
 func (h *TestHarness) RunIrrCommand(args ...string) (stdout, stderr string, exitCode int) {
 	// This is a simplified implementation that just uses ExecuteIRRWithStderr and captures exit code
-	output, errOut, err := h.ExecuteIRRWithStderr(nil, args...)
+	output, errOut, err := h.ExecuteIRRWithStderr(nil, false, args...)
 
 	// If err is an ExitCodeError, extract the exit code
 	var exitErr *exec.ExitError

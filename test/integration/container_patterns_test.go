@@ -287,7 +287,7 @@ func setupAndRunOverride(t *testing.T, values, outputFileName string) (map[strin
 	h.SetupChart(chartDir)
 	h.SetRegistries("test.registry.io", []string{"docker.io", "quay.io"})
 	outputFile := filepath.Join(h.tempDir, outputFileName)
-	output, stderr, err := h.ExecuteIRRWithStderr(nil,
+	output, stderr, err := h.ExecuteIRRWithStderr(nil, false,
 		"override",
 		"--chart-path", chartDir,
 		"--target-registry", h.targetReg,

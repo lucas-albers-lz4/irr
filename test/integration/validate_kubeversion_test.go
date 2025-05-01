@@ -23,8 +23,7 @@ func TestValidateWithExplicitKubeVersion(t *testing.T) {
 
 	// Generate overrides
 	overridesFile := filepath.Join(harness.tempDir, "overrides.yaml")
-	_, _, err := harness.ExecuteIRRWithStderr(nil,
-		"override",
+	_, _, err := harness.ExecuteIRRWithStderr(nil, false, "override",
 		"--chart-path", chartPath,
 		"--target-registry", "test-registry.local",
 		"--source-registries", "docker.io",
@@ -34,8 +33,7 @@ func TestValidateWithExplicitKubeVersion(t *testing.T) {
 
 	// Run the validate command with explicit Kubernetes version
 	outputFile := filepath.Join(harness.tempDir, "output-explicit-version.yaml")
-	_, stderr, err := harness.ExecuteIRRWithStderr(nil,
-		"validate",
+	_, stderr, err := harness.ExecuteIRRWithStderr(nil, false, "validate",
 		"--chart-path", chartPath,
 		"--values", overridesFile,
 		"--kube-version", "1.25.0",
@@ -67,8 +65,7 @@ func TestKubeVersionDefaultBehavior(t *testing.T) {
 
 	// Generate overrides
 	overridesFile := filepath.Join(harness.tempDir, "overrides.yaml")
-	_, _, err := harness.ExecuteIRRWithStderr(nil,
-		"override",
+	_, _, err := harness.ExecuteIRRWithStderr(nil, false, "override",
 		"--chart-path", chartPath,
 		"--target-registry", "test-registry.local",
 		"--source-registries", "docker.io",
@@ -78,8 +75,7 @@ func TestKubeVersionDefaultBehavior(t *testing.T) {
 
 	// Run the validate command without specifying a Kubernetes version (should use default)
 	outputFile := filepath.Join(harness.tempDir, "output-default-version.yaml")
-	_, stderr, err := harness.ExecuteIRRWithStderr(nil,
-		"validate",
+	_, stderr, err := harness.ExecuteIRRWithStderr(nil, false, "validate",
 		"--chart-path", chartPath,
 		"--values", overridesFile,
 		"--output-file", outputFile,
@@ -103,8 +99,7 @@ func TestVersionCompatibilityEdgeCases(t *testing.T) {
 
 	// Generate overrides
 	overridesFile := filepath.Join(harness.tempDir, "overrides.yaml")
-	_, _, err := harness.ExecuteIRRWithStderr(nil,
-		"override",
+	_, _, err := harness.ExecuteIRRWithStderr(nil, false, "override",
 		"--chart-path", chartPath,
 		"--target-registry", "test-registry.local",
 		"--source-registries", "docker.io",
@@ -113,8 +108,7 @@ func TestVersionCompatibilityEdgeCases(t *testing.T) {
 	require.NoError(t, err, "override command should succeed")
 
 	// Test with a very old Kubernetes version
-	_, stderr, err := harness.ExecuteIRRWithStderr(nil,
-		"validate",
+	_, stderr, err := harness.ExecuteIRRWithStderr(nil, false, "validate",
 		"--chart-path", chartPath,
 		"--values", overridesFile,
 		"--kube-version", "1.11.0", // Very old version
@@ -130,8 +124,7 @@ func TestVersionCompatibilityEdgeCases(t *testing.T) {
 	}
 
 	// Test with a very new/future Kubernetes version
-	_, stderr, err = harness.ExecuteIRRWithStderr(nil,
-		"validate",
+	_, stderr, err = harness.ExecuteIRRWithStderr(nil, false, "validate",
 		"--chart-path", chartPath,
 		"--values", overridesFile,
 		"--kube-version", "1.99.0", // Future version
@@ -151,8 +144,7 @@ func TestInvalidKubernetesVersionFormat(t *testing.T) {
 
 	// Generate overrides
 	overridesFile := filepath.Join(harness.tempDir, "overrides.yaml")
-	_, _, err := harness.ExecuteIRRWithStderr(nil,
-		"override",
+	_, _, err := harness.ExecuteIRRWithStderr(nil, false, "override",
 		"--chart-path", chartPath,
 		"--target-registry", "test-registry.local",
 		"--source-registries", "docker.io",
@@ -161,8 +153,7 @@ func TestInvalidKubernetesVersionFormat(t *testing.T) {
 	require.NoError(t, err, "override command should succeed")
 
 	// Test with invalid version format
-	_, stderr, err := harness.ExecuteIRRWithStderr(nil,
-		"validate",
+	_, stderr, err := harness.ExecuteIRRWithStderr(nil, false, "validate",
 		"--chart-path", chartPath,
 		"--values", overridesFile,
 		"--kube-version", "invalid-version",
@@ -178,8 +169,7 @@ func TestInvalidKubernetesVersionFormat(t *testing.T) {
 	}
 
 	// Test with malformed but recognizable version
-	_, stderr, err = harness.ExecuteIRRWithStderr(nil,
-		"validate",
+	_, stderr, err = harness.ExecuteIRRWithStderr(nil, false, "validate",
 		"--chart-path", chartPath,
 		"--values", overridesFile,
 		"--kube-version", "v1.31", // v-prefix and missing patch version
@@ -235,8 +225,7 @@ data:
 
 	// Test with two different Kubernetes versions
 	outputOldVersion := filepath.Join(harness.tempDir, "output-old-version.yaml")
-	_, _, err := harness.ExecuteIRRWithStderr(nil,
-		"validate",
+	_, _, err := harness.ExecuteIRRWithStderr(nil, false, "validate",
 		"--chart-path", chartDir,
 		"--values", valuesFile, // Use the chart's own values.yaml file
 		"--kube-version", "1.19.0", // Older version
@@ -245,8 +234,7 @@ data:
 	require.NoError(t, err, "validate command should succeed with older Kubernetes version")
 
 	outputNewVersion := filepath.Join(harness.tempDir, "output-new-version.yaml")
-	_, _, err = harness.ExecuteIRRWithStderr(nil,
-		"validate",
+	_, _, err = harness.ExecuteIRRWithStderr(nil, false, "validate",
 		"--chart-path", chartDir,
 		"--values", valuesFile, // Use the chart's own values.yaml file
 		"--kube-version", "1.25.0", // Newer version
@@ -278,8 +266,7 @@ func TestKubeVersionPropagation(t *testing.T) {
 
 	// Generate overrides
 	overridesFile := filepath.Join(harness.tempDir, "overrides.yaml")
-	_, _, err := harness.ExecuteIRRWithStderr(nil,
-		"override",
+	_, _, err := harness.ExecuteIRRWithStderr(nil, false, "override",
 		"--chart-path", chartPath,
 		"--target-registry", "test-registry.local",
 		"--source-registries", "docker.io",
@@ -289,8 +276,7 @@ func TestKubeVersionPropagation(t *testing.T) {
 
 	// Run validate with debug enabled to see the Kubernetes version in logs
 	specificVersion := "1.28.0"
-	_, stderr, err := harness.ExecuteIRRWithStderr(nil,
-		"validate",
+	_, stderr, err := harness.ExecuteIRRWithStderr(nil, false, "validate",
 		"--chart-path", chartPath,
 		"--values", overridesFile,
 		"--kube-version", specificVersion,

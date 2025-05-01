@@ -37,7 +37,7 @@ func TestKubePrometheusStack_Alertmanager(t *testing.T) {
 		"--output-file", outputFile,
 	}
 
-	_, stderr, err := h.ExecuteIRRWithStderr(nil, args...)
+	_, stderr, err := h.ExecuteIRRWithStderr(nil, true, args...)
 	require.NoError(t, err, "irr override failed for Alertmanager: %s", stderr)
 
 	overrides, err := h.getOverridesFromFile(outputFile)
@@ -73,7 +73,7 @@ func TestKubePrometheusStack_Prometheus(t *testing.T) {
 		"--output-file", outputFile,
 	}
 
-	_, stderr, err := h.ExecuteIRRWithStderr(nil, args...)
+	_, stderr, err := h.ExecuteIRRWithStderr(nil, true, args...)
 	require.NoError(t, err, "irr override failed for Prometheus: %s", stderr)
 
 	overrides, err := h.getOverridesFromFile(outputFile)
@@ -111,7 +111,7 @@ func TestKubePrometheusStack_FullChart_WithSubcharts_TODO(t *testing.T) {
 		"--output-file", outputFile,
 	}
 
-	_, stderr, err := h.ExecuteIRRWithStderr(nil, args...)
+	_, stderr, err := h.ExecuteIRRWithStderr(nil, true, args...)
 	// NOTE: We expect this to potentially fail or produce incomplete results currently,
 	// but the require.NoError check should pass once Phase 10 is implemented.
 	require.NoError(t, err, "irr override failed for full kube-prometheus-stack: %s", stderr)
@@ -154,7 +154,7 @@ func TestKubePrometheusStack_Operator(t *testing.T) {
 		"--output-file", outputFile,
 	}
 
-	_, stderr, err := h.ExecuteIRRWithStderr(nil, args...)
+	_, stderr, err := h.ExecuteIRRWithStderr(nil, true, args...)
 	require.NoError(t, err, "irr override failed for Operator: %s", stderr)
 
 	overrides, err := h.getOverridesFromFile(outputFile)
@@ -188,7 +188,7 @@ func TestKubePrometheusStack_ThanosRuler(t *testing.T) {
 		"--output-file", outputFile,
 	}
 
-	_, stderr, err := h.ExecuteIRRWithStderr(nil, args...)
+	_, stderr, err := h.ExecuteIRRWithStderr(nil, true, args...)
 	require.NoError(t, err, "irr override failed for Thanos Ruler: %s", stderr)
 
 	overrides, err := h.getOverridesFromFile(outputFile)

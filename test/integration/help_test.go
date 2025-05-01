@@ -20,8 +20,8 @@ func assertHelpDefault(t *testing.T, subcommand, flagName, expectedDefault strin
 	h := NewTestHarness(t) // Create a harness for execution context
 	// No need to defer cleanup for help commands, they don't create files.
 
-	output, stderr, err := h.ExecuteIRRWithStderr(nil, subcommand, "--help")
-	require.NoError(t, err, "Executing --help for %s should succeed. Stderr: %s", subcommand, stderr)
+	output, stderr, err := h.ExecuteIRRWithStderr(nil, false, subcommand, "--help")
+	require.NoError(t, err, "Executing 'irr %s --help' failed. Stderr: %s", subcommand, stderr)
 
 	// Construct the expected default value string
 	expectedDefaultText := fmt.Sprintf(`(default %q)`, expectedDefault)

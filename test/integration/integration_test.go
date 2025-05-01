@@ -34,12 +34,13 @@ func TestMinimalChart(t *testing.T) {
 	outputFile := filepath.Join(h.tempDir, "minimal-chart-overrides.yaml")
 
 	// Execute the override command
-	output, stderr, err := h.ExecuteIRRWithStderr(nil,
+	output, stderr, err := h.ExecuteIRRWithStderr(nil, false,
 		"override",
 		"--chart-path", h.chartPath,
 		"--target-registry", h.targetReg,
 		"--source-registries", strings.Join(h.sourceRegs, ","),
 		"--output-file", outputFile,
+		"--debug",
 	)
 	require.NoError(t, err, "override command should succeed")
 	t.Logf("Override output: %s", output)
@@ -81,7 +82,7 @@ func TestParentChart(t *testing.T) {
 	outputFile := filepath.Join(h.tempDir, "parent-chart-overrides.yaml")
 
 	// Execute the override command
-	output, stderr, err := h.ExecuteIRRWithStderr(nil,
+	output, stderr, err := h.ExecuteIRRWithStderr(nil, true,
 		"override",
 		"--chart-path", h.chartPath,
 		"--target-registry", h.targetReg,
@@ -134,7 +135,7 @@ func TestKubePrometheusStack(t *testing.T) {
 	outputFile := filepath.Join(h.tempDir, "kube-prometheus-stack-overrides.yaml")
 
 	// Execute the override command
-	output, stderr, err := h.ExecuteIRRWithStderr(nil,
+	output, stderr, err := h.ExecuteIRRWithStderr(nil, true,
 		"override",
 		"--chart-path", h.chartPath,
 		"--target-registry", h.targetReg,
@@ -463,7 +464,7 @@ func TestRegistryMappingFile(t *testing.T) {
 	sourceRegs := []string{"docker.io"}
 
 	// Run the override command with the mappings file
-	output, stderr, err := h.ExecuteIRRWithStderr(nil,
+	output, stderr, err := h.ExecuteIRRWithStderr(nil, false,
 		"override",
 		"--chart-path", h.chartPath,
 		"--target-registry", targetReg,
@@ -555,7 +556,7 @@ func TestClickhouseOperator(t *testing.T) {
 	outputFile := filepath.Join(h.tempDir, "clickhouse-operator-overrides.yaml")
 
 	// Execute the override command
-	output, stderr, err := h.ExecuteIRRWithStderr(nil,
+	output, stderr, err := h.ExecuteIRRWithStderr(nil, false,
 		"override",
 		"--chart-path", h.chartPath,
 		"--target-registry", h.targetReg,
@@ -671,7 +672,7 @@ func TestReadOverridesFromStdout(t *testing.T) {
 	tempOutputFile := filepath.Join(h.tempDir, "stdout-test-override.yaml")
 
 	// Execute the override command with output file
-	output, stderr, err := h.ExecuteIRRWithStderr(nil,
+	output, stderr, err := h.ExecuteIRRWithStderr(nil, false,
 		"override",
 		"--chart-path", h.chartPath,
 		"--target-registry", h.targetReg,

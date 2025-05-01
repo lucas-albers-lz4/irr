@@ -119,7 +119,7 @@ registries:
 				"--output-file", outputFile,
 			}
 
-			output, stderr, err := h.ExecuteIRRWithStderr(nil, args...)
+			output, stderr, err := h.ExecuteIRRWithStderr(nil, false, args...)
 
 			// Check if the command succeeded or failed as expected
 			if tc.shouldSucceed {
@@ -303,7 +303,7 @@ func TestRegistryPrefixTransformation(t *testing.T) {
 				"--output-file", outputFile,
 			}
 
-			output, stderr, err := h.ExecuteIRRWithStderr(nil, args...)
+			output, stderr, err := h.ExecuteIRRWithStderr(nil, false, args...)
 			require.NoError(t, err, "override command should succeed: %s", stderr)
 			t.Logf("Override output: %s", output)
 			t.Logf("Stderr: %s", stderr)

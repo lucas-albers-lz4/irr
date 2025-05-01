@@ -27,7 +27,7 @@ func runLogLevelTest(
 		args := baseArgs
 		args = append(args, "--chart-path", harness.chartPath, "--output-file", harness.GeneratedOverridesFile())
 		args = append(args, extraArgs...)
-		_, stderr, err := harness.ExecuteIRRWithStderr(envOverrides, args...)
+		_, stderr, err := harness.ExecuteIRRWithStderr(envOverrides, false, args...)
 		require.NoError(t, err)
 		for _, s := range contains {
 			assert.Contains(t, stderr, s)

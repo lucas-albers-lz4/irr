@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -225,12 +226,17 @@ func (g *Generator) filterEligibleImages(detectedImages []analysis.ImagePattern)
 
 	for _, pattern := range detectedImages {
 		// Handle potential errors during parsing more gracefully
+		log.Debug("Filtering: Checking pattern", "path", pattern.Path, "value", pattern.Value)
 		imgRef, err := g.processImagePattern(pattern)
 		if err != nil {
+			// If processing fails, skip this pattern for eligibility
+			log.Debug("Filtering: Skipping pattern due to processing error", "path", pattern.Path, "error", err)
 			continue
 		}
 
 		if imgRef == nil {
+			// If imgRef is nil even without error (shouldn't happen ideally)
+			log.Debug("Filtering: Skipping pattern due to nil imgRef", "path", pattern.Path)
 			continue
 		}
 
@@ -238,9 +244,13 @@ func (g *Generator) filterEligibleImages(detectedImages []analysis.ImagePattern)
 		normalizedReg := image.NormalizeRegistry(imgRef.Registry)
 		isSource := normalizedSources[normalizedReg]
 		isExcluded := normalizedExcludes[normalizedReg]
+		log.Debug("Filtering: Registry checks", "path", pattern.Path, "registry", imgRef.Registry, "normalized", normalizedReg, "isSource", isSource, "isExcluded", isExcluded)
 
 		if isSource && !isExcluded {
 			eligibleImages = append(eligibleImages, pattern)
+			log.Debug("Filtering: Pattern added as eligible", "path", pattern.Path)
+		} else {
+			log.Debug("Filtering: Pattern skipped (not source or excluded)", "path", pattern.Path)
 		}
 	}
 
@@ -251,24 +261,46 @@ func (g *Generator) filterEligibleImages(detectedImages []analysis.ImagePattern)
 // determineTargetPathAndRegistry calculates the target registry and the new repository path
 // for a given image reference based on the configured registry mappings and path strategy.
 // It applies mappings first, then uses the path strategy to construct the final path.
-func (g *Generator) determineTargetPathAndRegistry(imgRef *image.Reference) (targetReg, newPath string, err error) {
-	targetReg = g.targetRegistry
+func (g *Generator) determineTargetPathAndRegistry(imgRef *image.Reference) (targetReg, newRepoPath string, err error) {
+	targetReg = g.targetRegistry // Start with the global target registry
 
-	// Check for registry mappings
+	// Check for explicit registry mappings
 	if g.mappings != nil {
 		if mappedTarget := g.mappings.GetTargetRegistry(imgRef.Registry); mappedTarget != "" {
 			targetReg = mappedTarget // Use mapped target if found
+			log.Debug("Using mapped target registry", "originalRegistry", imgRef.Registry, "mappedTarget", targetReg)
 		}
 	}
 
-	// Generate the new repository path using the strategy
-	newPath, err = g.pathStrategy.GeneratePath(imgRef, targetReg)
+	// Generate the base repository path using the strategy (Strategy should NOT add prefix)
+	baseRepoPath, err := g.pathStrategy.GeneratePath(imgRef, targetReg) // Pass targetReg for context if needed
 	if err != nil {
-		return "", "", fmt.Errorf("path generation failed for '%s': %w", imgRef.String(), err)
+		return "", "", fmt.Errorf("base path generation failed for '%s': %w", imgRef.String(), err)
+	}
+	log.Debug("Generated base path from strategy", "baseRepoPath", baseRepoPath, "original", imgRef.Original)
+
+	// Determine if prefixing is needed based on source registries
+	newRepoPath = baseRepoPath // Default to base path
+	normalizedOriginalReg := image.NormalizeRegistry(imgRef.Registry)
+	needsPrefix := false
+	for _, sourceReg := range g.sourceRegistries {
+		if image.NormalizeRegistry(sourceReg) == normalizedOriginalReg {
+			needsPrefix = true
+			log.Debug("Prefix needed check", "sourceReg", sourceReg, "normalizedOriginalReg", normalizedOriginalReg, "result", true)
+			break
+		}
+		log.Debug("Prefix needed check", "sourceReg", sourceReg, "normalizedOriginalReg", normalizedOriginalReg, "result", false)
 	}
 
-	log.Debug("Generated new path", "new_path", newPath, "original", imgRef.Original)
-	return targetReg, newPath, nil
+	if needsPrefix {
+		prefix := image.SanitizeRegistryForPath(imgRef.Registry)
+		newRepoPath = path.Join(prefix, baseRepoPath)
+		log.Debug("Applied source registry prefix", "prefix", prefix, "baseRepoPath", baseRepoPath, "newRepoPath", newRepoPath)
+	} else {
+		log.Debug("Skipping source registry prefix", "originalRegistry", imgRef.Registry, "normalizedOriginalReg", normalizedOriginalReg)
+	}
+
+	return targetReg, newRepoPath, nil
 }
 
 // processImage attempts to generate and apply an override for a single image pattern.
@@ -309,6 +341,7 @@ func (g *Generator) processImage(pattern analysis.ImagePattern, overrides map[st
 	overrideValue := g.createOverride(pattern, imgRef, targetReg, newPath)
 
 	// 4. Set the Override Path
+	log.Debug("Preparing to set override path", "path", pattern.Path, "targetReg", targetReg, "newPath", newPath, "overrideValueType", fmt.Sprintf("%T", overrideValue), "overrideValue", overrideValue)
 	if err := g.setOverridePath(overrides, pattern, overrideValue); err != nil {
 		log.Warn("Failed to set override", "path", pattern.Path, "error", err)
 		unsupported := &override.UnsupportedStructure{
@@ -502,12 +535,23 @@ func (g *Generator) Generate() (*override.File, error) {
 
 	// 2. Filter Eligible Images
 	eligibleImages := g.filterEligibleImages(analysisResult.ImagePatterns)
-	eligibleCount := len(eligibleImages)
+
+	// <<< Deduplicate eligibleImages based on Path >>>
+	dedupedEligibleImages := make([]analysis.ImagePattern, 0, len(eligibleImages))
+	seenPaths := make(map[string]bool)
+	for _, img := range eligibleImages {
+		if !seenPaths[img.Path] {
+			dedupedEligibleImages = append(dedupedEligibleImages, img)
+			seenPaths[img.Path] = true
+		}
+	}
+	// Use the deduplicated list for further processing
+	eligibleCount := len(dedupedEligibleImages)
 	log.Info("Finished chart analysis", "total_images", result.TotalCount, "eligible_images", eligibleCount, "unsupported_count", len(result.Unsupported))
 
 	// 3. Process Eligible Images & Collect Errors
-	processingErrors, processedCount := g.processEligibleImagesLoop(eligibleImages, result.Values)
-	result.ProcessedCount = processedCount // Store processed count
+	processingErrors, processedCount := g.processEligibleImagesLoop(dedupedEligibleImages, result.Values) // Use deduped list
+	result.ProcessedCount = processedCount                                                                // Store processed count
 
 	// 4. Calculate and Store Success Rate
 	var successRate float64
@@ -709,9 +753,9 @@ func validateHelmTemplateInternal(chartPath string, overrides []byte) error {
 // findValueByPath traverses a nested map using a slice of path segments
 // and returns the value found at that path.
 // It returns the value and a boolean indicating if the path was found.
-func findValueByPath(data map[string]interface{}, path []string) (interface{}, bool) {
+func findValueByPath(data map[string]interface{}, pathElems []string) (interface{}, bool) {
 	current := interface{}(data)
-	for i, part := range path { // Keep index i for potential error messages
+	for i, part := range pathElems { // Keep index i for potential error messages
 		mapData, ok := current.(map[string]interface{})
 		if !ok {
 			log.Debug("findValueByPath: Cannot traverse non-map value", "path_segment_index", i, "path_part", part, "current_type", fmt.Sprintf("%T", current))
@@ -776,15 +820,17 @@ func (g *Generator) createOverride(pattern analysis.ImagePattern, imgRef *image.
 		if imgRef.Digest != "" {
 			overrideMap["digest"] = imgRef.Digest
 		} else {
-			originalTag := imgRef.Tag // Default to parsed tag
-			// Access tag from Structure map, checking existence and type
-			if pattern.Structure != nil {
-				if tagVal, ok := pattern.Structure["tag"]; ok { // Check if "tag" key exists
-					if tagStr, ok := tagVal.(string); ok && tagStr != "" { // Check if it's a non-empty string
+			// Prioritize tag from the original structure (merged values) if available
+			originalTag := imgRef.Tag     // Default to parsed tag from default value string
+			if pattern.Structure != nil { // Direct check for nil map
+				if tagVal, exists := pattern.Structure["tag"]; exists {
+					if tagStr, ok := tagVal.(string); ok && tagStr != "" {
 						originalTag = tagStr
+						log.Debug("[DEBUG IRR OVERRIDE CREATE MAP TAG] Using tag from pattern.Structure", "path", pattern.Path, "tag", originalTag)
 					}
 				}
 			}
+			log.Debug("[DEBUG IRR OVERRIDE CREATE MAP TAG FINAL]", "path", pattern.Path, "finalTag", originalTag)
 			overrideMap["tag"] = originalTag
 		}
 		log.Debug("[DEBUG IRR OVERRIDE CREATE MAP RESULT] Override map generated", "path", pattern.Path, "map", overrideMap)
@@ -819,20 +865,29 @@ func (g *Generator) setOverridePath(overrides map[string]interface{}, pattern an
 			log.Debug("Set override value", "path", pattern.Path, "segment", segment, "value_type", fmt.Sprintf("%T", overrideValue))
 		} else {
 			// Intermediate segment: Ensure a map exists and move down
-			if _, ok := currentLevel[segment]; !ok {
-				// Create a new map if the key doesn't exist
-				currentLevel[segment] = make(map[string]interface{})
-				log.Debug("Created intermediate map", "path", pattern.Path, "segment", segment)
-			}
-
-			// Check if the existing value is a map, otherwise, it's an error (path conflict)
-			nextLevel, ok := currentLevel[segment].(map[string]interface{})
+			existingVal, ok := currentLevel[segment]
 			if !ok {
-				log.Error("Path conflict: intermediate key exists but is not a map", "path", pattern.Path, "segment", segment, "existing_type", fmt.Sprintf("%T", currentLevel[segment]))
-				return fmt.Errorf("failed to set override path '%s': segment '%s' is not a map (existing type: %T)", pattern.Path, segment, currentLevel[segment])
+				// Create a new map directly in the parent map
+				currentLevel[segment] = make(map[string]interface{})
+				// Now update currentLevel to point to the map we just created
+				if nextLevel, ok := currentLevel[segment].(map[string]interface{}); ok {
+					currentLevel = nextLevel
+				} else {
+					log.Error("Failed type assertion for intermediate map", "path", pattern.Path, "segment", segment)
+					return fmt.Errorf("failed to set override path '%s': segment '%s' could not be asserted as map[string]interface{}", pattern.Path, segment)
+				}
+				log.Debug("Created intermediate map", "path", pattern.Path, "segment", segment)
+			} else {
+				// Key exists, ensure it's a map
+				nextLevel, ok := existingVal.(map[string]interface{})
+				if !ok {
+					// Path conflict: intermediate key exists but is not a map
+					log.Error("Path conflict: intermediate key exists but is not a map", "path", pattern.Path, "segment", segment, "existing_type", fmt.Sprintf("%T", existingVal))
+					return fmt.Errorf("failed to set override path '%s': segment '%s' is not a map (existing type: %T)", pattern.Path, segment, existingVal)
+				}
+				currentLevel = nextLevel // Move down to the existing map
+				log.Debug("Traversed to next level map", "path", pattern.Path, "segment", segment)
 			}
-			currentLevel = nextLevel
-			log.Debug("Traversed to next level map", "path", pattern.Path, "segment", segment)
 		}
 	}
 

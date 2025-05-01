@@ -51,6 +51,11 @@ var (
 )
 */
 
+var (
+	validate bool // Declare validate variable
+	// contextAware bool // REMOVED redeclaration, assuming declared in inspect.go or elsewhere
+)
+
 // GeneratorConfig struct with strategy field but no threshold field
 type GeneratorConfig struct {
 	// ChartPath is the path to the Helm chart directory or archive
@@ -247,7 +252,9 @@ func setupOverrideFlags(cmd *cobra.Command) {
 	cmd.Flags().StringSlice("set-string", nil, "Set STRING values on the command line (can be specified multiple times)")
 	cmd.Flags().StringSlice("set-file", nil, "Set values from files (can be specified multiple times)")
 
-	// Remove the context-aware flag, as it's now the default behavior
+	// Add new flags
+	cmd.Flags().BoolVar(&validate, "validate", false, "Run helm template to validate generated overrides")
+	cmd.Flags().Bool("context-aware", false, "Use context-aware analyzer that handles subchart value merging (experimental)")
 }
 
 // getRequiredFlags retrieves and validates the required flags for the override command
@@ -496,7 +503,7 @@ func setupGeneratorConfig(cmd *cobra.Command, _ string) (config GeneratorConfig,
 	return config, nil
 }
 
-func setupPathStrategy(_ *cobra.Command, config *GeneratorConfig) error {
+func setupPathStrategy(cmd *cobra.Command, config *GeneratorConfig) error {
 	// Add nil check for safety, although runOverride should prevent this call with nil config
 	if config == nil {
 		return errors.New("internal error: setupPathStrategy called with nil config")
@@ -664,7 +671,7 @@ func getAnalysisControlFlags(cmd *cobra.Command) (includePatterns, excludePatter
 }
 
 // createAndExecuteGenerator creates and executes a generator for the given chart source
-func createAndExecuteGenerator(chartSource *ChartSource, config *GeneratorConfig) ([]byte, error) {
+func createAndExecuteGenerator(chartSource *ChartSource, config *GeneratorConfig, contextAware bool) ([]byte, error) {
 	if chartSource == nil {
 		return nil, &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitGeneralRuntimeError,
@@ -683,7 +690,7 @@ func createAndExecuteGenerator(chartSource *ChartSource, config *GeneratorConfig
 	log.Info("Initializing override generator", "source", chartSourceDescription)
 
 	// Create a new generator and run it
-	generator, err := createGenerator(chartSource, config)
+	generator, err := createGenerator(config, contextAware)
 	if err != nil {
 		return nil, err
 	}
@@ -703,73 +710,102 @@ func createAndExecuteGenerator(chartSource *ChartSource, config *GeneratorConfig
 	return yamlBytes, nil
 }
 
-// createGenerator creates a generator for the given chart source using context-aware chart loading
-func createGenerator(_ *ChartSource, config *GeneratorConfig) (GeneratorInterface, error) {
+// createGenerator creates a generator based on the context-aware flag.
+func createGenerator(config *GeneratorConfig, contextAware bool) (GeneratorInterface, error) {
 	// Validate the config
 	if config == nil {
 		return nil, errors.New("config is nil")
 	}
 
-	// Create value options from the command line
-	valueOpts := &values.Options{}
+	var preloadedLoader *PreloadedChartLoader
+	var generatorErr error
 
-	// Get Helm CLI arguments for value loading - use env vars if running as plugin
-	if isRunningAsHelmPlugin() {
-		// Retrieve values from environment variables set by Helm
-		valuesFiles := os.Getenv("HELM_PLUGIN_VALUES")
-		if valuesFiles != "" {
-			valueOpts.ValueFiles = strings.Split(valuesFiles, ";")
+	if contextAware {
+		log.Info("Creating generator using context-aware analysis...")
+		// --- Context-Aware Path ---
+		valueOpts := &values.Options{}
+		// Get Helm CLI arguments for value loading - use env vars if running as plugin
+		if isRunningAsHelmPlugin() {
+			// (Code to get values from env vars remains the same)
+			valuesFiles := os.Getenv("HELM_PLUGIN_VALUES")
+			if valuesFiles != "" {
+				valueOpts.ValueFiles = strings.Split(valuesFiles, ";")
+			}
+			setValues := os.Getenv("HELM_PLUGIN_SET")
+			if setValues != "" {
+				valueOpts.Values = strings.Split(setValues, ";")
+			}
+			setStringValues := os.Getenv("HELM_PLUGIN_SET_STRING")
+			if setStringValues != "" {
+				valueOpts.StringValues = strings.Split(setStringValues, ";")
+			}
+			setFileValues := os.Getenv("HELM_PLUGIN_SET_FILE")
+			if setFileValues != "" {
+				valueOpts.FileValues = strings.Split(setFileValues, ";")
+			}
 		}
 
-		setValues := os.Getenv("HELM_PLUGIN_SET")
-		if setValues != "" {
-			valueOpts.Values = strings.Split(setValues, ";")
+		loaderOptions := &internalhelm.ChartLoaderOptions{
+			ChartPath:  config.ChartPath,
+			ValuesOpts: *valueOpts,
 		}
 
-		setStringValues := os.Getenv("HELM_PLUGIN_SET_STRING")
-		if setStringValues != "" {
-			valueOpts.StringValues = strings.Split(setStringValues, ";")
+		chartLoader := internalhelm.NewChartLoader()
+		chartAnalysisContext, err := chartLoader.LoadChartAndTrackOrigins(loaderOptions)
+		if err != nil {
+			generatorErr = &exitcodes.ExitCodeError{Code: exitcodes.ExitChartLoadFailed, Err: fmt.Errorf("failed to load chart with values: %w", err)}
+		} else {
+			contextAnalyzer := internalhelm.NewContextAwareAnalyzer(chartAnalysisContext)
+			chartAnalysis, err := contextAnalyzer.AnalyzeContext()
+			if err != nil {
+				generatorErr = &exitcodes.ExitCodeError{Code: exitcodes.ExitChartProcessingFailed, Err: fmt.Errorf("context-aware analysis failed: %w", err)}
+			} else {
+				preloadedLoader = &PreloadedChartLoader{
+					chart:    chartAnalysisContext.Chart,
+					analysis: chartAnalysis,
+				}
+			}
 		}
-
-		setFileValues := os.Getenv("HELM_PLUGIN_SET_FILE")
-		if setFileValues != "" {
-			valueOpts.FileValues = strings.Split(setFileValues, ";")
+	} else {
+		log.Info("Creating generator using legacy analysis...")
+		// --- Legacy Path ---
+		// Use the standard chart loader from pkg/chart
+		legacyLoader := chart.NewLoader() // Assuming NewLoader exists in pkg/chart
+		loadedChart, err := legacyLoader.Load(config.ChartPath)
+		if err != nil {
+			generatorErr = &exitcodes.ExitCodeError{Code: exitcodes.ExitChartLoadFailed, Err: fmt.Errorf("legacy chart load failed: %w", err)}
+		} else {
+			// Use the legacy analyzer from pkg/analysis
+			analyzer := analysis.NewAnalyzer(config.ChartPath, legacyLoader) // Pass loader if needed
+			legacyAnalysis, err := analyzer.Analyze()
+			if err != nil {
+				generatorErr = &exitcodes.ExitCodeError{Code: exitcodes.ExitChartProcessingFailed, Err: fmt.Errorf("legacy analysis failed: %w", err)}
+			} else {
+				preloadedLoader = &PreloadedChartLoader{
+					chart:    loadedChart,
+					analysis: legacyAnalysis, // Use analysis result from legacy analyzer
+				}
+			}
 		}
 	}
 
-	// Create chart loader options for context-aware analysis
-	loaderOptions := &internalhelm.ChartLoaderOptions{
-		ChartPath:  config.ChartPath,
-		ValuesOpts: *valueOpts,
+	if generatorErr != nil {
+		return nil, generatorErr
 	}
 
-	// Use the new context-aware chart loader
-	chartLoader := internalhelm.NewChartLoader()
-	chartAnalysisContext, err := chartLoader.LoadChartAndTrackOrigins(loaderOptions)
-	if err != nil {
-		return nil, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitChartLoadFailed,
-			Err:  fmt.Errorf("failed to load chart with values: %w", err),
-		}
+	if preloadedLoader == nil {
+		return nil, errors.New("internal error: failed to prepare chart analysis data for generator")
 	}
 
-	// Create context-aware analyzer and perform analysis
-	contextAnalyzer := internalhelm.NewContextAwareAnalyzer(chartAnalysisContext)
-	chartAnalysis, err := contextAnalyzer.AnalyzeContext()
-	if err != nil {
-		return nil, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitChartProcessingFailed, // Use existing exit code
-			Err:  fmt.Errorf("context-aware analysis failed: %w", err),
-		}
-	}
+	// Add log before calling NewGenerator
+	log.Debug("Creating generator instance",
+		"config_ptr", fmt.Sprintf("%p", config),
+		"chartPath", config.ChartPath,
+		"targetRegistry", config.TargetRegistry,
+		"strategy_type", fmt.Sprintf("%T", config.Strategy),
+		"strategy_is_nil", config.Strategy == nil)
 
-	// Create a custom loader that returns the pre-loaded chart
-	preloadedLoader := &PreloadedChartLoader{
-		chart:    chartAnalysisContext.Chart,
-		analysis: chartAnalysis,
-	}
-
-	// --- Create Override Generator ---
+	// --- Create Override Generator (Common logic) ---
 	generator := chart.NewGenerator(
 		config.ChartPath,
 		config.TargetRegistry,
@@ -871,6 +907,13 @@ func runOverridePluginMode(cmd *cobra.Command, releaseName, namespace, outputFil
 	if err := setupPathStrategy(cmd, &config); err != nil {
 		return err
 	}
+
+	// Add log AFTER setupPathStrategy
+	log.Debug("Strategy after setupPathStrategy",
+		"config_ptr", fmt.Sprintf("%p", &config),
+		"strategy_type", fmt.Sprintf("%T", config.Strategy),
+		"strategy_is_nil", config.Strategy == nil)
+
 	if err := loadRegistryMappings(cmd, &config); err != nil {
 		return err
 	}
@@ -893,6 +936,16 @@ func runOverrideStandaloneMode(cmd *cobra.Command, outputFile string, dryRun boo
 		return err // Config setup failed
 	}
 
+	// Read the context-aware flag
+	contextAware, err := getBoolFlag(cmd, "context-aware")
+	if err != nil {
+		log.Warn("Failed to get context-aware flag, defaulting to false", "error", err)
+		contextAware = false
+	}
+
+	// Add logging after reading the flag:
+	log.Debug("Read context-aware flag", "value", contextAware)
+
 	// Auto-detect chart path if not provided
 	if config.ChartPath == "" { // Check config.ChartPath which setupGeneratorConfig sets
 		log.Info("No chart path provided, attempting to detect chart...")
@@ -911,10 +964,16 @@ func runOverrideStandaloneMode(cmd *cobra.Command, outputFile string, dryRun boo
 		log.Info("Using detected chart path", "absolute", detectedPath, "relative", relativePath)
 	}
 
-	// --- Common Config Setup (after mode-specific gathering) ---
+	// --- Common Config Setup (Re-insert this block) ---
 	if err := setupPathStrategy(cmd, &config); err != nil {
 		return err
 	}
+	// Log AFTER setupPathStrategy
+	log.Debug("Strategy after setupPathStrategy",
+		"config_ptr", fmt.Sprintf("%p", &config),
+		"strategy_type", fmt.Sprintf("%T", config.Strategy),
+		"strategy_is_nil", config.Strategy == nil)
+
 	if err := loadRegistryMappings(cmd, &config); err != nil {
 		return err
 	}
@@ -924,13 +983,19 @@ func runOverrideStandaloneMode(cmd *cobra.Command, outputFile string, dryRun boo
 	}
 	// --- End Common Config Setup ---
 
+	// Log which path is taken
+	if contextAware {
+		log.Debug("Executing context-aware generator path")
+	} else {
+		log.Debug("Executing legacy generator path")
+	}
 	chartSource := &ChartSource{
 		SourceType: ChartSourceTypeChart,
 		ChartPath:  config.ChartPath,
 	}
 
-	// Execute the generator
-	yamlBytes, err := createAndExecuteGenerator(chartSource, &config)
+	// Execute the generator - PASS the (presumably global) contextAware flag here
+	yamlBytes, err := createAndExecuteGenerator(chartSource, &config, contextAware)
 	if err != nil {
 		return handleGenerateError(err) // Handles exit codes
 	}

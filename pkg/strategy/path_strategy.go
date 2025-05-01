@@ -85,11 +85,9 @@ func (s *PrefixSourceRegistryStrategy) GeneratePath(originalRef *image.Reference
 	}
 	// --- End Base Repository Path Calculation ---
 
-	// Construct the final repository path part by joining the prefix and base path
-	finalRepoPathPart := path.Join(pathPrefix, baseRepoPath)
-
-	log.Debug("PrefixSourceRegistryStrategy: Generated final repo path part", "finalRepoPathPart", finalRepoPathPart)
-	return finalRepoPathPart, nil
+	// Return only the base path. Prefixing is handled by the caller (Generator.determineTargetPathAndRegistry)
+	log.Debug("PrefixSourceRegistryStrategy: Returning base repo path", "baseRepoPath", baseRepoPath)
+	return baseRepoPath, nil
 }
 
 // FlatStrategy creates a flat path by replacing slashes with dashes.

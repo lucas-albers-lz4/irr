@@ -124,6 +124,9 @@ It properly handles subcharts and dependency values according to Helm's value me
 	cmd.Flags().StringSlice("set-string", nil, "Set STRING values on the command line (can be specified multiple times)")
 	cmd.Flags().StringSlice("set-file", nil, "Set values from files (can be specified multiple times)")
 
+	// Added new flags
+	cmd.Flags().Bool("context-aware", false, "Use context-aware analyzer that handles subchart value merging (experimental)")
+
 	return cmd
 }
 

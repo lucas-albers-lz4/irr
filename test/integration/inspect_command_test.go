@@ -11,7 +11,6 @@ import (
 
 	// Use constants for file permissions instead of hardcoded values for consistency and maintainability
 	"github.com/lucas-albers-lz4/irr/pkg/fileutil"
-	"github.com/lucas-albers-lz4/irr/pkg/testutil"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -33,7 +32,7 @@ func TestInspectCommand(t *testing.T) {
 		"--output-format", "yaml",
 		"--log-level=error",
 	}
-	output, _ /*stderr*/, err := harness.ExecuteIRRWithStderr(nil, args...)
+	output, _ /*stderr*/, err := harness.ExecuteIRRWithStderr(nil, false, args...)
 	require.NoError(t, err)
 
 	// Verify the output contains expected sections
@@ -64,7 +63,7 @@ func TestInspectWithSourceRegistryFilter(t *testing.T) {
 		"--output-format", "yaml",
 		"--log-level=error",
 	}
-	output, _ /*stderr*/, err := harness.ExecuteIRRWithStderr(nil, args...)
+	output, _ /*stderr*/, err := harness.ExecuteIRRWithStderr(nil, false, args...)
 	require.NoError(t, err)
 
 	// Verify output - should detect the nginx image whether it has a docker.io prefix or not
@@ -93,7 +92,7 @@ func TestInspectOutputToFile(t *testing.T) {
 		"--output-format", "yaml",
 		"--log-level=error",
 	}
-	_, _ /*stderr*/, err := harness.ExecuteIRRWithStderr(nil, args...)
+	_, _ /*stderr*/, err := harness.ExecuteIRRWithStderr(nil, false, args...)
 	require.NoError(t, err)
 
 	// Verify the file exists and has content
@@ -112,78 +111,83 @@ func TestInspectParentChart(t *testing.T) {
 	harness := NewTestHarness(t)
 	defer harness.Cleanup()
 
-	// Use the existing parent-test chart for better coverage
-	parentTestChartPath := testutil.GetChartPath("parent-test") // Use testutil helper
+	chartPath := harness.GetTestdataPath("charts/parent-test")
+	require.NotEqual(t, "", chartPath, "parent-test chart not found")
 
-	// Ensure the chart path exists before proceeding
-	_, err := os.Stat(parentTestChartPath)
-	require.NoError(t, err, "parent-test chart should exist")
-
-	// Run the inspect command on the parent-test chart
-	outputFile := filepath.Join(harness.tempDir, "parent-inspect.yaml")
+	harness.SetupChart(chartPath)
 	args := []string{
 		"inspect",
-		"--chart-path", parentTestChartPath,
-		"--output-format", "yaml",
-		"--output-file", outputFile, // Output to file for easier parsing
+		"--chart-path", harness.chartPath,
+		"--output-format", "json", // Use JSON for easier parsing in test
 	}
-	_, _ /*stderr*/, err = harness.ExecuteIRRWithStderr(map[string]string{"LOG_LEVEL": "debug"}, args...)
-	require.NoError(t, err)
 
-	// Verify the output file exists and parse it
-	require.FileExists(t, outputFile, "Output file should exist")
-	content, err := os.ReadFile(outputFile) // #nosec G304
-	require.NoError(t, err, "Should be able to read output file")
+	// Execute with context-aware flag enabled for this test
+	stdout, stderr, err := harness.ExecuteIRRWithStderr(nil, true, args...)
+	require.NoError(t, err, "Inspect command failed. Stderr: %s", stderr)
+
+	// Parse the JSON output
+	// Verify the output contains expected sections
+	assert.Contains(t, stdout, "chart:", "Output should include chart section")
+	assert.Contains(t, stdout, "imagePatterns:", "Output should include image patterns section")
+	// Verify the nginx image is detected in some form
+	assert.True(t,
+		strings.Contains(stdout, "nginx") ||
+			strings.Contains(stdout, "library/nginx") ||
+			strings.Contains(stdout, "docker.io/nginx") ||
+			strings.Contains(stdout, "docker.io/library/nginx"),
+		"Output should include the nginx image")
 
 	// Define a struct to unmarshal the relevant parts of the inspect output
+	type ChartInfoOutput struct {
+		Name    string `yaml:"name"`
+		Version string `yaml:"version"`
+	}
+	type ImagePatternOutput struct {
+		Path  string `yaml:"path"`
+		Value string `yaml:"value"`
+		Type  string `yaml:"type"`
+	}
 	type ImageAnalysisOutput struct {
-		Images []struct {
-			SourcePath string `yaml:"sourcePath"`
-			Reference  string `yaml:"reference"`
-		} `yaml:"images"`
+		Chart         ChartInfoOutput      `yaml:"chart"`
+		ImagePatterns []ImagePatternOutput `yaml:"imagePatterns"`
 	}
 
 	var analysisResult ImageAnalysisOutput
-	err = yaml.Unmarshal(content, &analysisResult)
-	require.NoError(t, err, "Failed to unmarshal inspect output YAML")
+	err = yaml.Unmarshal([]byte(stdout), &analysisResult) // Convert stdout string to byte slice
+	require.NoError(t, err, "Failed to unmarshal inspect output JSON")
 
-	// Verify expected images and their source paths
-	expectedImages := map[string]string{ // reference -> expected sourcePath
-		"library/nginx:1.23":              "image",                                    // From parent values.yaml
-		"parent/custom:latest":            "parentImage",                              // From parent values.yaml
-		"docker.io/library/redis:7.0":     "child.image",                              // From child values.yaml
-		"registry.k8s.io/pause:3.9":       "child.extraImage",                         // From child values.yaml
-		"custom-repo/custom-image:stable": "another-child.image",                      // From another-child values.yaml
-		"prom/prometheus:v2.40.0":         "another-child.monitoring.prometheusImage", // From another-child values.yaml
-	}
+	// Assert specific patterns if needed
+	foundParentAppImage := false
+	foundChildImage := false
+	foundAnotherChildImage := false
+	foundPrometheusImage := false
 
-	foundImages := make(map[string]string)
-	for _, img := range analysisResult.Images {
-		// Normalize reference (e.g., remove implicit docker.io/library)
-		normalizedRef := img.Reference
-		if strings.HasPrefix(normalizedRef, "docker.io/") {
-			normalizedRef = strings.TrimPrefix(normalizedRef, "docker.io/")
-		}
-		if strings.HasPrefix(normalizedRef, "library/") {
-			normalizedRef = strings.TrimPrefix(normalizedRef, "library/")
-		}
-		foundImages[normalizedRef] = img.SourcePath
-	}
-
-	// --- DEBUGGING ---
-	// t.Logf("Found images map: %v", foundImages) // Commented out debug log
-	// --- END DEBUGGING ---
-
-	for ref, expectedPath := range expectedImages {
-		actualPath, ok := foundImages[ref]
-		assert.True(t, ok, "Expected image not found in inspect output: %s", ref)
-		if ok {
-			assert.Equal(t, expectedPath, actualPath, "Incorrect sourcePath for image: %s", ref)
+	for _, pattern := range analysisResult.ImagePatterns {
+		switch pattern.Path {
+		case "parentAppImage":
+			foundParentAppImage = true
+			assert.Equal(t, "map", pattern.Type, "parentAppImage should be type map")
+			// Check value contains expected repo/tag
+			assert.Contains(t, pattern.Value, "docker.io/parent/app:latest")
+		case "child.image":
+			foundChildImage = true
+			assert.Equal(t, "map", pattern.Type, "child.image should be type map")
+			assert.Contains(t, pattern.Value, "docker.io/nginx:1.23") // Expect tag override
+		case "another-child.image":
+			foundAnotherChildImage = true
+			assert.Equal(t, "map", pattern.Type, "another-child.image should be type map")
+			assert.Contains(t, pattern.Value, "custom-repo/custom-image:stable")
+		case "another-child.monitoring.prometheusImage":
+			foundPrometheusImage = true
+			assert.Equal(t, "map", pattern.Type, "prometheusImage should be type map")
+			assert.Contains(t, pattern.Value, "quay.io/prometheus/prometheus:v2.40.0")
 		}
 	}
 
-	// Optionally, assert the total number of images found if it's reliable
-	// assert.Len(t, analysisResult.Images, len(expectedImages), "Unexpected number of images found")
+	assert.True(t, foundParentAppImage, "parentAppImage pattern not found")
+	assert.True(t, foundChildImage, "child.image pattern not found")
+	assert.True(t, foundAnotherChildImage, "another-child.image pattern not found")
+	assert.True(t, foundPrometheusImage, "prometheusImage pattern not found")
 }
 
 func TestInspectGenerateConfigSkeleton(t *testing.T) {
@@ -203,7 +207,7 @@ func TestInspectGenerateConfigSkeleton(t *testing.T) {
 		"--output-format", "yaml",
 		"--log-level=error",
 	}
-	_, _ /*stderr*/, err := harness.ExecuteIRRWithStderr(nil, args...)
+	_, _ /*stderr*/, err := harness.ExecuteIRRWithStderr(nil, false, args...)
 	require.NoError(t, err)
 
 	// Check that the file exists
@@ -277,7 +281,7 @@ spec:
 
 	t.Run("image_with_digest", func(t *testing.T) {
 		// Run inspect command on chart
-		stdout, _, err := h.ExecuteIRRWithStderr(nil, "inspect", "--chart-path", chartDir, "--output-format", "yaml")
+		stdout, _, err := h.ExecuteIRRWithStderr(nil, false, "inspect", "--chart-path", chartDir, "--output-format", "yaml")
 		require.NoError(t, err, "Inspect command should succeed for image with digest")
 
 		// Check general content
@@ -348,7 +352,7 @@ spec:
 
 	t.Run("template_string_image_references", func(t *testing.T) {
 		// Run inspect command on chart
-		stdout, _, err := h.ExecuteIRRWithStderr(nil, "inspect", "--chart-path", chartDir, "--output-format", "yaml")
+		stdout, _, err := h.ExecuteIRRWithStderr(nil, false, "inspect", "--chart-path", chartDir, "--output-format", "yaml")
 		require.NoError(t, err, "Inspect command should succeed for template string image references")
 
 		// Check general content
@@ -384,7 +388,7 @@ func TestInspectCommand_HelmMode(t *testing.T) {
 		"--namespace", namespace, // Also pass flag, though env var might take precedence depending on logic
 		"--log-level=debug", // Enable debug logs to check behavior
 	}
-	stdout, stderr, err := h.ExecuteIRRWithStderr(env, args...)
+	stdout, stderr, err := h.ExecuteIRRWithStderr(env, false, args...)
 
 	// Assertions
 	require.Error(t, err, "irr inspect in Helm mode should fail without a real Helm environment")

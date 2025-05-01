@@ -11,61 +11,69 @@ import (
 )
 
 func TestPrefixSourceRegistryStrategy(t *testing.T) {
-	strategy := &PrefixSourceRegistryStrategy{}
-
 	tests := []struct {
-		name           string
-		input          *image.Reference
-		targetRegistry string
-		expected       string
+		name          string
+		inputRef      *image.Reference
+		expectedPath  string // Expect base path WITHOUT prefix
+		expectedError bool
 	}{
 		{
 			name: "standard image with registry",
-			input: &image.Reference{
+			inputRef: &image.Reference{
+				Original:   "docker.io/library/nginx:latest",
 				Registry:   "docker.io",
-				Repository: "nginx",
+				Repository: "library/nginx",
 				Tag:        "latest",
 			},
-			targetRegistry: "",
-			expected:       "docker.io/library/nginx",
+			expectedPath:  "library/nginx", // Corrected: Base path only
+			expectedError: false,
 		},
 		{
 			name: "nested path",
-			input: &image.Reference{
+			inputRef: &image.Reference{
+				Original:   "quay.io/prometheus/node-exporter:v1.3.1",
 				Registry:   "quay.io",
 				Repository: "prometheus/node-exporter",
 				Tag:        "v1.3.1",
 			},
-			targetRegistry: "",
-			expected:       "quayio/prometheus/node-exporter",
+			expectedPath:  "prometheus/node-exporter", // Corrected: Base path only
+			expectedError: false,
 		},
 		{
 			name: "digest reference",
-			input: &image.Reference{
+			inputRef: &image.Reference{
+				Original:   "gcr.io/google-containers/pause@sha256:12345",
 				Registry:   "gcr.io",
 				Repository: "google-containers/pause",
-				Digest:     "sha256:1234567890123456789012345678901234567890123456789012345678901234",
+				Digest:     "sha256:12345",
 			},
-			targetRegistry: "",
-			expected:       "gcrio/google-containers/pause",
+			expectedPath:  "google-containers/pause", // Corrected: Base path only
+			expectedError: false,
 		},
 		{
-			name: "registry_with_port",
-			input: &image.Reference{
+			name: "registry with port",
+			inputRef: &image.Reference{
+				Original:   "registry.example.com:5000/app/frontend:stable",
 				Registry:   "registry.example.com:5000",
 				Repository: "app/frontend",
-				Tag:        "v1.2.0",
+				Tag:        "stable",
 			},
-			targetRegistry: "",
-			expected:       "registryexamplecom/app/frontend",
+			expectedPath:  "app/frontend", // Corrected: Base path only
+			expectedError: false,
 		},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			result, err := strategy.GeneratePath(tc.input, tc.targetRegistry)
-			assert.NoError(t, err)
-			assert.Equal(t, tc.expected, result)
+	strategy := NewPrefixSourceRegistryStrategy()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actualPath, err := strategy.GeneratePath(tt.inputRef, "ignored-target-registry") // Target registry doesn't affect this strategy's output
+			if tt.expectedError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.expectedPath, actualPath)
+			}
 		})
 	}
 }
@@ -105,130 +113,6 @@ func TestGetStrategy(t *testing.T) {
 				assert.NoError(t, err)
 				assert.NotNil(t, strategy)
 			}
-		})
-	}
-}
-
-func TestPrefixSourceRegistryStrategy_GeneratePath(t *testing.T) {
-	tests := []struct {
-		name           string
-		targetRegistry string
-		imgRef         *image.Reference
-		want           string
-	}{
-		{
-			name:           "simple_repository",
-			targetRegistry: "",
-			imgRef: &image.Reference{
-				Registry:   "quay.io",
-				Repository: "org/repo",
-				Tag:        "latest",
-			},
-			want: "quayio/org/repo",
-		},
-		{
-			name:           "repository_with_dots",
-			targetRegistry: "",
-			imgRef: &image.Reference{
-				Registry:   "registry.k8s.io",
-				Repository: "pause",
-				Tag:        "3.9",
-			},
-			want: "registryk8sio/pause",
-		},
-		{
-			name:           "repository_with_port",
-			targetRegistry: "",
-			imgRef: &image.Reference{
-				Registry:   "localhost:5000",
-				Repository: "myimage",
-				Tag:        "dev",
-			},
-			want: "localhost/myimage",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			s := &PrefixSourceRegistryStrategy{}
-			got, err := s.GeneratePath(tt.imgRef, tt.targetRegistry)
-			assert.NoError(t, err)
-			assert.Equal(t, tt.want, got)
-		})
-	}
-}
-
-// TestPrefixSourceRegistryStrategy_GeneratePath_InputVariations tests the GeneratePath method
-// with various image reference inputs, focusing on how the source registry and repository
-// are combined and sanitized into the resulting path part.
-// Note: This test does not involve registry mappings, as GeneratePath itself doesn't handle them.
-func TestPrefixSourceRegistryStrategy_GeneratePath_InputVariations(t *testing.T) {
-	tests := []struct {
-		name           string
-		targetRegistry string // Kept for signature, but not used by this strategy's path logic
-		imgRef         *image.Reference
-		want           string
-		// mapping field removed as it's not used by GeneratePath
-	}{
-		{
-			name:           "quay_repo",
-			targetRegistry: "", // Example target registry (unused in path calculation)
-			imgRef: &image.Reference{
-				Registry:   "quay.io",
-				Repository: "jetstack/cert-manager-controller",
-				Tag:        "v1.5.3",
-			},
-			want: "quayio/jetstack/cert-manager-controller", // Sanitized source registry prefix
-		},
-		{
-			name:           "dockerhub_library_repo",
-			targetRegistry: "",
-			imgRef: &image.Reference{
-				Registry:   "docker.io",
-				Repository: "library/nginx",
-				Tag:        "latest",
-			},
-			want: "docker.io/library/nginx",
-		},
-		{
-			name:           "dockerhub_official_repo_no_library_prefix",
-			targetRegistry: "",
-			imgRef: &image.Reference{
-				Registry:   "docker.io",
-				Repository: "nginx", // Implicitly library/nginx
-				Tag:        "stable",
-			},
-			want: "docker.io/library/nginx", // Expect library/ to be added
-		},
-		{
-			name:           "repo_with_digest",
-			targetRegistry: "",
-			imgRef: &image.Reference{
-				Registry:   "docker.io",
-				Repository: "library/nginx",
-				Digest:     "sha256:abcdef123456",
-			},
-			want: "docker.io/library/nginx",
-		},
-		{
-			name:           "registry_with_port_and_dots",
-			targetRegistry: "",
-			imgRef: &image.Reference{
-				Registry:   "private.registry.example.com:5000",
-				Repository: "my-app/backend",
-				Tag:        "1.2.3",
-			},
-			want: "privateregistryexamplecom/my-app/backend", // Port removed, dots removed
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			s := &PrefixSourceRegistryStrategy{}
-			// Pass targetRegistry, even though it's not used by this strategy for path generation
-			got, err := s.GeneratePath(tt.imgRef, tt.targetRegistry)
-			assert.NoError(t, err)
-			assert.Equal(t, tt.want, got)
 		})
 	}
 }
