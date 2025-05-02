@@ -337,7 +337,6 @@ def add_helm_repositories():
         "prometheus-community": "https://prometheus-community.github.io/helm-charts",
         "grafana": "https://grafana.github.io/helm-charts",
         "fluxcd": "https://fluxcd-community.github.io/helm-charts",
-        "apache": "https://apache.github.io/airflow-helm-chart/",
         "aqua": "https://aquasecurity.github.io/helm-charts/",
         "akri": "https://project-akri.github.io/akri/",
         "argo": "https://argoproj.github.io/argo-helm",
@@ -350,6 +349,22 @@ def add_helm_repositories():
         "cilium": "https://helm.cilium.io/",
         "istio": "https://istio-release.storage.googleapis.com/charts",
         "kubevela": "https://kubevela.github.io/charts",
+        # Added for CNCF Graduated Projects
+        "coredns": "https://coredns.github.io/helm",
+        "cubefs": "https://cubefs.github.io/cubefs-helm/",
+        "dapr": "https://dapr.github.io/helm-charts/",
+        "falcosecurity": "https://falcosecurity.github.io/charts",
+        "fluent": "https://fluent.github.io/helm-charts",
+        "goharbor": "https://helm.goharbor.io",
+        "jaegertracing": "https://jaegertracing.github.io/helm-charts",
+        "linkerd": "https://helm.linkerd.io/stable",
+        "gatekeeper": "https://open-policy-agent.github.io/gatekeeper/charts/",
+        "rook": "https://charts.rook.io/release",
+        "spiffe": "https://spiffe.github.io/helm-charts/",
+        #don't work so just commenting them out for now
+        #"kubeedge": "https://kubeedge.github.io/charts/",
+        #"tikv": "https://tikv.github.io/charts",
+        #"vitess": "https://vitess.github.io/charts",
     }
 
     # Add repositories sequentially to avoid race conditions
@@ -440,6 +455,33 @@ def list_charts() -> List[str]:
     return unique_charts
 
 
+# List of canonical charts for Graduated CNCF projects
+CNCF_GRADUATED_CHARTS = [
+    "argo/argo-cd",
+    "jetstack/cert-manager",
+    "cilium/cilium",
+    "coredns/coredns",
+    "cubefs/cubefs",
+    "dapr/dapr",
+    "bitnami/etcd",
+    "falcosecurity/falco",
+    "fluent/fluentd",
+    "fluxcd-community/flux2", # Note: repo name is 'fluxcd' in add_helm_repositories
+    "goharbor/harbor",
+    "istio/istiod",
+    "jaegertracing/jaeger",
+    "kedacore/keda",
+    "kubeedge/kubeedge",
+    "linkerd/linkerd-control-plane",
+    "gatekeeper/gatekeeper",
+    "prometheus-community/kube-prometheus-stack",
+    "rook-ceph/rook-ceph",
+    "spiffe/spire",
+    "tikv/tikv-operator",
+    "vitess/vitess",
+]
+
+
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(description="Pull and cache Helm charts")
@@ -464,6 +506,11 @@ def main():
         type=float,
         help="Additional delay between requests in seconds",
         default=0,
+    )
+    parser.add_argument(
+        "--cncf-graduated-only",
+        action="store_true",
+        help="Only process specified CNCF Graduated charts"
     )
     args = parser.parse_args()
 
@@ -498,8 +545,13 @@ def main():
 
     try:
         # Get list of charts
-        print("\nGathering chart list...")
-        charts = list_charts()
+        charts = []
+        if args.cncf_graduated_only:
+            print("\nProcessing only specified CNCF Graduated charts...")
+            charts = CNCF_GRADUATED_CHARTS
+        else:
+            print("\nGathering chart list...")
+            charts = list_charts()
 
         # Apply chart filtering
         if args.chart_filter:
