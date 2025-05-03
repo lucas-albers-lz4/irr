@@ -137,6 +137,11 @@ func (m *Mappings) GetTargetRegistry(source string) string {
 		if normalizedSourceInput == normalizedMappingSource {
 			target := strings.TrimSpace(mapping.Target)
 			log.Debug("GetTargetRegistry: Match found! Returning target: '%s'", target)
+			// If the target contains a path, return it as is
+			if strings.Contains(target, "/") {
+				return target
+			}
+			// Otherwise, return just the registry part
 			return target
 		}
 	}

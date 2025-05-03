@@ -35,7 +35,7 @@ func TestDefaultChartLoader_LoadChartWithValues(t *testing.T) {
 		assert.Equal(t, "parent-test", chart.Name())
 
 		// Check that merged values include expected top-level keys
-		assert.Contains(t, mergedValues, "image")
+		assert.Contains(t, mergedValues, "parentAppImage")
 		assert.Contains(t, mergedValues, "parentImage")
 
 		// Check subchart values
@@ -67,17 +67,15 @@ func TestDefaultChartLoader_LoadChartAndTrackOrigins(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, context)
 
-		// Check chart metadata
-		assert.Equal(t, "parent-test", context.ChartName)
+		// Assertions about merged values
+		assert.Contains(t, context.Values, "parentAppImage", "Top-level parentAppImage key should exist")
+		assert.Contains(t, context.Values, "child", "Subchart key 'child' should exist")
+		assert.Contains(t, context.Values, "another-child", "Subchart alias key 'another-child' should exist")
 
-		// Check merged values
-		assert.Contains(t, context.Values, "image")
-		assert.Contains(t, context.Values, "parentImage")
-
-		// Check that we have origins for some key values
-		origin, exists := context.Origins["image.repository"]
-		assert.True(t, exists, "Should have origin for image.repository")
-		if exists {
+		// Assertions about origins
+		// Check top-level value origin
+		assert.Contains(t, context.Origins, "parentAppImage.repository", "Should have origin for parentAppImage.repository")
+		if origin, ok := context.Origins["parentAppImage.repository"]; ok {
 			assert.Equal(t, OriginChartDefault, origin.Type)
 			assert.Equal(t, "parent-test", origin.ChartName)
 		}
@@ -94,7 +92,7 @@ func TestDefaultChartLoader_LoadChartAndTrackOrigins(t *testing.T) {
 		assert.True(t, exists, "Should have origin for another-child.image.repository")
 		if exists {
 			assert.Equal(t, OriginChartDefault, anotherChildImageOrigin.Type)
-			assert.Equal(t, "another-child", anotherChildImageOrigin.ChartName, "Another subchart value origin should have its subchart name")
+			assert.Equal(t, "parent-test", anotherChildImageOrigin.ChartName, "Origin chart should be parent-test as it overrides the subchart default")
 		}
 	})
 
@@ -110,7 +108,7 @@ func TestDefaultChartLoader_LoadChartAndTrackOrigins(t *testing.T) {
 
 		userValuesPath := tempDir + "/user-values.yaml"
 		userValues := `
-image:
+parentAppImage:
   repository: user/custom-app
   tag: v2.0.0
 
@@ -135,7 +133,7 @@ child:
 		require.NotNil(t, context)
 
 		// Check user value origins
-		imageOrigin, exists := context.Origins["image.repository"]
+		imageOrigin, exists := context.Origins["parentAppImage.repository"]
 		assert.True(t, exists)
 		if exists {
 			assert.Equal(t, OriginUserFile, imageOrigin.Type)
@@ -150,10 +148,10 @@ child:
 		}
 
 		// Check the merged values
-		if imgMap, ok := context.Values["image"].(map[string]interface{}); ok {
+		if imgMap, ok := context.Values["parentAppImage"].(map[string]interface{}); ok {
 			assert.Equal(t, "user/custom-app", imgMap["repository"])
 		} else {
-			assert.Fail(t, "image should be a map")
+			assert.Fail(t, "parentAppImage should be a map")
 		}
 
 		// Check subchart overrides

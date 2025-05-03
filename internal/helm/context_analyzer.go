@@ -37,6 +37,13 @@ func (a *ContextAwareAnalyzer) AnalyzeContext() (*analysis.ChartAnalysis, error)
 
 	chartAnalysis := analysis.NewChartAnalysis()
 
+	// Log top-level keys of the merged values
+	topLevelKeys := []string{}
+	for k := range a.context.Values {
+		topLevelKeys = append(topLevelKeys, k)
+	}
+	log.Debug("AnalyzeContext: Top-level keys in merged values", "keys", topLevelKeys)
+
 	// Analyze the merged values from the context
 	if err := a.analyzeValues(a.context.Values, "", chartAnalysis); err != nil {
 		return nil, fmt.Errorf("failed to analyze values: %w", err)
@@ -108,25 +115,84 @@ func (a *ContextAwareAnalyzer) analyzeMapValue(val map[string]interface{}, curre
 
 		pattern := analysis.ImagePattern{
 			Type:      analysis.PatternTypeMap,
-			Path:      a.getSourcePathForValue(currentPath),
+			Path:      currentPath,
 			Value:     fmt.Sprintf("%s/%s:%s", registry, repository, tag),
 			Structure: imageStructure,
 			Count:     1,
 		}
 
+		// --- Start: Populate OriginalRegistry AND SourceOrigin ---
+		originPath := "values.yaml" // Default origin file
+		sourceChartName := ""       // Default chart name
+		if origin, exists := a.context.Origins[currentPath]; exists {
+			// Use origin.Path if it's a file path, otherwise keep default
+			if strings.HasSuffix(origin.Path, ".yaml") || strings.HasSuffix(origin.Path, ".yml") {
+				originPath = origin.Path
+			}
+			sourceChartName = origin.ChartName // Get chart name from origin
+		}
+		pattern.SourceOrigin = originPath // Set the source origin (file path)
+
+		// Use sourceChartName for OriginalRegistry logic
+		if sourceChartName != "" && sourceChartName != a.context.Chart.Metadata.Name {
+			log.Debug("Value originates from subchart", "path", currentPath, "sourceChart", sourceChartName)
+
+			// --- Find Subchart AppVersion --- START ---
+			var sourceChartAppVersion string
+			for _, dep := range a.context.Chart.Dependencies() {
+				if dep.Metadata.Name == sourceChartName {
+					sourceChartAppVersion = dep.Metadata.AppVersion
+					log.Debug("Found AppVersion for source subchart", "chart", sourceChartName, "appVersion", sourceChartAppVersion)
+					break
+				}
+			}
+			if sourceChartAppVersion != "" {
+				pattern.SourceChartAppVersion = sourceChartAppVersion
+			}
+			// --- Find Subchart AppVersion --- END ---
+
+			// Determine original registry from the raw map value *before* normalization
+			originalRegistry := ""
+			if regVal, ok := val["registry"].(string); ok && regVal != "" {
+				originalRegistry = regVal
+				log.Debug("Found original registry in map structure", "path", currentPath, "originalRegistry", originalRegistry)
+			} else {
+				// If registry key wasn't present, it effectively used the default OR whatever the string value implied
+				// We rely on the parsed registry from normalizeImageValues in this case
+				originalRegistry = registry // Use the normalized registry as the effective original
+				log.Debug("No explicit registry in map, using normalized as original", "path", currentPath, "originalRegistry", originalRegistry)
+			}
+
+			// Populate if different from the final *normalized* registry
+			if pattern.Structure != nil {
+				if finalRegistry, ok := pattern.Structure["registry"].(string); ok {
+					if originalRegistry != finalRegistry {
+						pattern.OriginalRegistry = originalRegistry
+						log.Debug("Setting OriginalRegistry in pattern", "path", currentPath, "original", originalRegistry, "final", finalRegistry)
+					}
+				} else {
+					log.Warn("Could not access final registry in pattern structure", "path", currentPath)
+				}
+			} else {
+				log.Warn("Pattern structure is nil, cannot set OriginalRegistry", "path", currentPath)
+			}
+		}
+		// --- End: Populate OriginalRegistry AND SourceOrigin ---
+
 		// Add the pattern to the analysis
 		chartAnalysis.ImagePatterns = append(chartAnalysis.ImagePatterns, pattern)
 
-		// If it IS an image map definition, we *might* still need to recurse
-		// if other keys exist alongside repository/tag/registry.
-		// Let's recurse anyway for now, analyzeValues handles individual fields.
-		// The isDirectImageMapDefinition check prevents infinite loops for simple image maps.
-		log.Debug("analyzeMapValue: identified as direct image map, but recursing anyway", "path", currentPath)
+		// If we identified this map as a direct image definition, STOP recursion here.
+		// We've captured the image; recursing further would create spurious patterns
+		// for the '.repository', '.tag', etc. keys within the image map.
+		log.Debug("analyzeMapValue: identified as direct image map, stopping recursion", "path", currentPath)
+		return nil
 	}
 
 	// Always recurse into child map values, analyzeValues handles skipping non-map/string/array leaves.
 	// The isDirectImageMapDefinition check above is primarily to *detect* the pattern,
 	// not necessarily to stop all recursion for that map.
+	// If it wasn't a direct image map, recurse into its children.
 	return a.analyzeValues(val, currentPath, chartAnalysis)
 }
 
@@ -140,7 +206,7 @@ func (a *ContextAwareAnalyzer) analyzeStringValue(key, val, currentPath string, 
 		// Create an image pattern
 		pattern := analysis.ImagePattern{
 			Type:  analysis.PatternTypeString,
-			Path:  a.getSourcePathForValue(currentPath),
+			Path:  currentPath,
 			Value: val,
 			Count: 1,
 		}
@@ -153,6 +219,53 @@ func (a *ContextAwareAnalyzer) analyzeStringValue(key, val, currentPath string, 
 				"tag":        tag,
 			}
 		}
+
+		// --- Start: Populate OriginalRegistry AND SourceOrigin ---
+		originPath := "values.yaml" // Default origin file
+		sourceChartName := ""       // Default chart name
+		if origin, exists := a.context.Origins[currentPath]; exists {
+			// Use origin.Path if it's a file path, otherwise keep default
+			if strings.HasSuffix(origin.Path, ".yaml") || strings.HasSuffix(origin.Path, ".yml") {
+				originPath = origin.Path
+			}
+			sourceChartName = origin.ChartName // Get chart name from origin
+		}
+		pattern.SourceOrigin = originPath // Set the source origin (file path)
+
+		// Use sourceChartName for OriginalRegistry logic
+		if sourceChartName != "" && sourceChartName != a.context.Chart.Metadata.Name {
+			log.Debug("Value originates from subchart", "path", currentPath, "sourceChart", sourceChartName)
+
+			// --- Find Subchart AppVersion --- START ---
+			var sourceChartAppVersion string
+			for _, dep := range a.context.Chart.Dependencies() {
+				if dep.Metadata.Name == sourceChartName {
+					sourceChartAppVersion = dep.Metadata.AppVersion
+					log.Debug("Found AppVersion for source subchart", "chart", sourceChartName, "appVersion", sourceChartAppVersion)
+					break
+				}
+			}
+			if sourceChartAppVersion != "" {
+				pattern.SourceChartAppVersion = sourceChartAppVersion
+			}
+			// --- Find Subchart AppVersion --- END ---
+
+			// Determine original registry from the raw map value *before* normalization
+			parsedReg, _, _ := a.parseImageStringNoDefaults(val)
+			originalRegistry := parsedReg
+			if originalRegistry == "" {
+				originalRegistry = DefaultRegistry // Apply default if parsing yielded nothing
+			}
+			log.Debug("Determined original registry from string parse", "path", currentPath, "originalRegistry", originalRegistry)
+
+			// Populate if different from the final *parsed* registry
+			finalRegistry := registry // From the main parseImageString call above
+			if originalRegistry != finalRegistry {
+				pattern.OriginalRegistry = originalRegistry
+				log.Debug("Setting OriginalRegistry in pattern", "path", currentPath, "original", originalRegistry, "final", finalRegistry)
+			}
+		}
+		// --- End: Populate OriginalRegistry AND SourceOrigin ---
 
 		// Add the pattern to the analysis
 		chartAnalysis.ImagePatterns = append(chartAnalysis.ImagePatterns, pattern)
@@ -231,7 +344,6 @@ func (a *ContextAwareAnalyzer) isImageString(key, val string) bool {
 func (a *ContextAwareAnalyzer) normalizeImageValues(val map[string]interface{}) (registry, repository, tag string) {
 	// Defaults
 	registry = DefaultRegistry
-	repository = ""
 	tag = defaultImageTag
 
 	// Prioritize values directly from the map
@@ -317,16 +429,65 @@ func (a *ContextAwareAnalyzer) parseImageString(val string) (registry, repositor
 }
 
 // getSourcePathForValue resolves the effective source path for a value based on origin.
-// For now, it returns the structural path as determined by traversal.
-// TODO: Enhance this to properly use origin information if needed for more complex scenarios (e.g., aliases).
+// It should return the path as it exists in the *merged* value structure.
 func (a *ContextAwareAnalyzer) getSourcePathForValue(valuePath string) string {
-	// Simply return the structural path derived from map traversal.
-	// The path already includes prefixes like "child." based on the merged value structure.
+	// For context-aware analysis, the ValuePath used in ImageInfo should reflect
+	// the path within the fully merged values map (e.g., "subchartAlias.key.subkey").
+	// The 'Path' field within analysis.ImagePattern might be repurposed by the analyzer
+	// to store the *originating* file/path, but the path passed *into* here
+	// during the recursive analysis (`analyzeValues`, `analyzeSingleValue` etc.)
+	// represents the structural path in the merged map.
 	log.Debug("getSourcePathForValue returning structural path", "path", valuePath)
 	return valuePath
 }
 
-// GetContext returns the analysis context.
+// parseImageStringNoDefaults parses an image string without applying default registry.
+func (a *ContextAwareAnalyzer) parseImageStringNoDefaults(val string) (registry, repository, tag string) {
+	// Simplified parsing logic focused on extracting parts without defaulting registry
+	// This is a placeholder - a robust implementation should use a proper parser library
+	// like docker/distribution/reference, but configured not to default.
+	registry = ""
+	tag = ""
+	remaining := val
+
+	// Check for digest first
+	digestIdx := strings.Index(remaining, "@sha256:")
+	if digestIdx != -1 {
+		// We ignore digest here, just remove it
+		remaining = remaining[:digestIdx]
+	}
+
+	// Check for tag
+	tagIdx := strings.LastIndex(remaining, ":")
+	slashIdx := strings.LastIndex(remaining, "/")
+
+	if tagIdx != -1 && tagIdx > slashIdx { // Ensure colon is for tag, not port in registry
+		tag = remaining[tagIdx+1:]
+		remaining = remaining[:tagIdx]
+	}
+
+	// What's left is [registry/]repository
+	slashIdx = strings.Index(remaining, "/")
+	if slashIdx != -1 {
+		firstPart := remaining[:slashIdx]
+		// Simple heuristic: if first part contains '.' or ':', assume it's a registry
+		if strings.Contains(firstPart, ".") || strings.Contains(firstPart, ":") {
+			registry = firstPart
+			repository = remaining[slashIdx+1:]
+		} else {
+			// No registry marker found, assume default was intended implicitly OR it's just repo
+			repository = remaining
+		}
+	} else {
+		// No slash, must be just repository (potentially Docker Hub library image)
+		repository = remaining
+	}
+
+	log.Debug("parseImageStringNoDefaults result", "input", val, "registry", registry, "repository", repository, "tag", tag)
+	return registry, repository, tag
+}
+
+// GetContext returns the underlying ChartAnalysisContext.
 func (a *ContextAwareAnalyzer) GetContext() *ChartAnalysisContext {
 	return a.context
 }

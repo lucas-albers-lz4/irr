@@ -1,0 +1,17 @@
+# Default values for minimal-child
+
+image:
+  # No registry here - should inherit from global
+  repository: busybox
+  tag: "1.0"
+
+# Internal image that should use different global value
+internalImage:
+  repository: child/component
+  # No registry or tag - will use global.imageRegistry and default tag
+  
+# Explicit image that doesn't use globals
+standaloneImage:
+  registry: mcr.microsoft.com
+  repository: standalone/component
+  tag: "20.04" 

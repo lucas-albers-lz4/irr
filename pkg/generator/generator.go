@@ -135,8 +135,8 @@ func (g *Generator) Generate(_ string, values map[string]interface{}) (map[strin
 func normalizeKubeStateMetricsOverrides(
 	detectedImages []image.DetectedImage,
 	overrides map[string]interface{},
-	p strategy.PathStrategy,
-	m *registry.Mappings,
+	_ strategy.PathStrategy, // Strategy isn't used in this function but kept for potential future use
+	_ *registry.Mappings, // Mappings aren't used in this function but kept for potential future use
 ) {
 	ksmImageOverride := make(map[string]interface{}) // To store the canonical KSM image block
 	var ksmDetectedPath []string                     // Store the path where KSM was originally detected
@@ -152,31 +152,24 @@ func normalizeKubeStateMetricsOverrides(
 		if strings.Contains(ref.Repository, "kube-state-metrics") {
 			log.Debug("Found potential KSM image", ref.String(), "at path", detected.Path)
 
-			// Generate the override value structure for KSM
-			var mappedRegistry string
-			if m != nil {
-				mappedRegistry = m.GetTargetRegistry(ref.Registry)
-			}
-			newRepoPath, pathErr := p.GeneratePath(ref, mappedRegistry)
-			if pathErr != nil {
-				log.Debug("Error generating path for KSM image", ref.String(), "error", pathErr)
-				continue // Skip if path generation fails
+			// Find the existing override at the detected path
+			existingOverride, found := findValueByPath(overrides, detected.Path)
+			if !found {
+				log.Debug("Could not find existing override for KSM image at path", detected.Path)
+				continue
 			}
 
-			imageMap := map[string]interface{}{
-				"registry":   mappedRegistry,
-				"repository": newRepoPath,
-			}
-			if ref.Digest != "" {
-				imageMap["digest"] = ref.Digest
-			} else {
-				imageMap["tag"] = ref.Tag
+			// Extract the override map
+			existingMap, ok := existingOverride.(map[string]interface{})
+			if !ok {
+				log.Debug("Existing override is not a map", "path", detected.Path, "type", fmt.Sprintf("%T", existingOverride))
+				continue
 			}
 
-			// Store the correctly structured override and the path it was found at
-			ksmImageOverride = imageMap
+			// Reuse the existing override values
+			ksmImageOverride = existingMap
 			ksmDetectedPath = detected.Path
-			log.Debug("Prepared KSM override block", ksmImageOverride)
+			log.Debug("Reusing existing KSM override block", ksmImageOverride)
 			break // Assume only one KSM image needs this handling
 		}
 	}
@@ -205,6 +198,30 @@ func normalizeKubeStateMetricsOverrides(
 			removeValueAtPath(overrides, ksmDetectedPath)
 		}
 	}
+}
+
+// findValueByPath finds a value in a nested map by path.
+// Returns the value and true if found, nil and false if not found.
+func findValueByPath(data map[string]interface{}, path []string) (interface{}, bool) {
+	if len(path) == 0 {
+		return data, true
+	}
+
+	key := path[0]
+	value, ok := data[key]
+	if !ok {
+		return nil, false
+	}
+
+	if len(path) == 1 {
+		return value, true
+	}
+
+	if nextMap, ok := value.(map[string]interface{}); ok {
+		return findValueByPath(nextMap, path[1:])
+	}
+
+	return nil, false
 }
 
 // removeValueAtPath recursively removes a value from a nested map based on a path.

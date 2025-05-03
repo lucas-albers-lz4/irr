@@ -61,7 +61,15 @@ func NormalizeRegistry(registry string) string {
 }
 
 // SanitizeRegistryForPath makes a registry name safe for use in a path component.
-// It primarily removes dots and ports.
+// It primarily removes ports while preserving the essential domain structure.
+//
+// IMPORTANT: We intentionally preserve dots (.) in registry names because:
+// 1. Dots are valid characters in path components and filenames
+// 2. Keeping dots maintains readability and recognizability of registry domains
+// 3. Preserving the domain structure helps with debugging and traceability
+// 4. A sanitized "quay.io" is much more meaningful than "quayio"
+//
+// Only port numbers are removed as they aren't part of the registry's identity.
 func SanitizeRegistryForPath(registry string) string {
 	// Handle docker.io special case first - it retains the dot
 	if registry == defaultRegistry || registry == "index.docker.io" {
@@ -79,14 +87,11 @@ func SanitizeRegistryForPath(registry string) string {
 		}
 	}
 
-	// Remove dots
-	sanitized := strings.ReplaceAll(registry, ".", "")
-
+	// DO NOT remove dots - they are valid in registry names
 	// DO NOT replace slashes
-
 	// DO NOT add port back
 
-	return sanitized
+	return registry
 }
 
 // IsSourceRegistry checks if the image reference's registry matches any of the source registries

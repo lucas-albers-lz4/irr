@@ -4,9 +4,9 @@ package helm
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
+	log "github.com/lucas-albers-lz4/irr/pkg/log"
 	"github.com/pkg/errors"
 	"gopkg.in/yaml.v3"
 	"helm.sh/helm/v3/pkg/chart"
@@ -19,6 +19,8 @@ import (
 const (
 	// setFilePartsExpected is the expected number of parts when splitting a --set-file value
 	setFilePartsExpected = 2
+	// OriginUserFileSet indicates a value set by --set-file
+	OriginUserFileSet ValueOriginType = "user-set-file" // Origin from --set-file
 )
 
 // ChartLoaderOptions contains the options for loading a chart.
@@ -78,57 +80,194 @@ func (l *DefaultChartLoader) LoadChartAndTrackOrigins(opts *ChartLoaderOptions) 
 		return nil, errors.Wrap(err, "failed to load chart")
 	}
 
-	// Create origins tracking map
-	origins := make(map[string]ValueOrigin)
-
-	// Track chart default values
-	trackChartDefaultValues(loadedChart, origins, "")
-
-	// Process user-provided values
-	userValues := map[string]interface{}{}
-
-	// Process values files
-	for _, file := range opts.ValuesOpts.ValueFiles {
-		if err := mergeUserValuesFileWithOrigin(file, userValues, origins); err != nil {
-			return nil, errors.Wrapf(err, "failed to merge values file %s", file)
-		}
+	// 1. Process USER-PROVIDED values into userValues map
+	userValues, err := processUserProvidedValues(opts)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to process user provided values")
 	}
 
-	// Process set values
-	for _, val := range opts.ValuesOpts.Values {
-		if err := applySetValueWithOrigin(val, userValues, origins); err != nil {
-			return nil, errors.Wrapf(err, "failed to apply set value %s", val)
-		}
-	}
-
-	// Process stringValues
-	for _, val := range opts.ValuesOpts.StringValues {
-		if err := applySetValueWithOrigin(val, userValues, origins); err != nil {
-			return nil, errors.Wrapf(err, "failed to apply string value %s", val)
-		}
-	}
-
-	// Process fileValues
-	for _, val := range opts.ValuesOpts.FileValues {
-		if err := applySetValueWithOrigin(val, userValues, origins); err != nil {
-			return nil, errors.Wrapf(err, "failed to apply file value %s", val)
-		}
-	}
-
-	// Merge chart values with user values
+	// 2. Merge chart default values with processed user values to get FINAL structure
+	log.Debug("LoadChartAndTrackOrigins: Coalescing final values...")
 	mergedValues, err := chartutil.CoalesceValues(loadedChart, userValues)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to coalesce values")
+		return nil, errors.Wrap(err, "failed to coalesce final values")
+	}
+	log.Debug("LoadChartAndTrackOrigins: Final merged values structure obtained (before alias correction)", "keys", mapKeys(mergedValues))
+
+	// 3. Track Origins based on precedence (User > Parent Default > Subchart Default)
+	origins, err := trackValueOrigins(loadedChart, opts, userValues, mergedValues)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to track value origins")
 	}
 
-	// Create context
+	// 4. Perform Alias Correction on FINAL mergedValues map
+	log.Debug("LoadChartAndTrackOrigins: Starting alias correction on final merged values...")
+	correctedMergedValues := applyAliasCorrection(loadedChart, mergedValues)
+	log.Debug("LoadChartAndTrackOrigins: Finished alias correction.")
+	finalKeys := []string{}
+	for k := range correctedMergedValues {
+		finalKeys = append(finalKeys, k)
+	}
+	log.Debug("LoadChartAndTrackOrigins: Final keys in corrected merged values", "keys", finalKeys)
+
+	// 5. Create context with final values and origins
+	log.Debug("LoadChartAndTrackOrigins: Final keys in origins map before return", "keys", mapKeysFromOrigin(origins))
 	return NewChartAnalysisContext(
 		loadedChart,
-		mergedValues,
-		origins,
+		correctedMergedValues, // Use the alias-corrected map
+		origins,               // Use the layered origins map
 		opts.ValuesOpts.ValueFiles,
 		append(append(opts.ValuesOpts.Values, opts.ValuesOpts.StringValues...), opts.ValuesOpts.FileValues...),
 	), nil
+}
+
+// processUserProvidedValues extracts user-provided values from options.
+func processUserProvidedValues(opts *ChartLoaderOptions) (map[string]interface{}, error) {
+	log.Debug("processUserProvidedValues: Processing user-provided values...")
+	userValues := map[string]interface{}{}
+	// Process values files
+	for _, file := range opts.ValuesOpts.ValueFiles {
+		if err := mergeUserValuesFileWithOrigin(file, userValues, nil); err != nil { // Pass nil for origins
+			return nil, errors.Wrapf(err, "failed to merge values file %s", file)
+		}
+	}
+	// Process set values
+	for _, val := range opts.ValuesOpts.Values {
+		if err := applySetValueWithOrigin(val, userValues, nil); err != nil { // Pass nil for origins
+			return nil, errors.Wrapf(err, "failed to apply set value %s", val)
+		}
+	}
+	// Process stringValues
+	for _, val := range opts.ValuesOpts.StringValues {
+		if err := applySetValueWithOrigin(val, userValues, nil); err != nil { // Pass nil for origins
+			return nil, errors.Wrapf(err, "failed to apply string value %s", val)
+		}
+	}
+	// Process fileValues
+	for _, val := range opts.ValuesOpts.FileValues {
+		key, fileContent, err := parseFileSet(val)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to parse file value %s", val)
+		}
+		if err := strvals.ParseInto(key+"="+fileContent, userValues); err != nil {
+			return nil, errors.Wrapf(err, "failed applying file value content for %s", key)
+		}
+	}
+	log.Debug("processUserProvidedValues: Finished processing user-provided values", "keys", mapKeys(userValues))
+	return userValues, nil
+}
+
+// trackValueOrigins tracks origins based on precedence.
+func trackValueOrigins(loadedChart *chart.Chart, opts *ChartLoaderOptions, _, _ map[string]interface{}) (map[string]ValueOrigin, error) {
+	log.Debug("trackValueOrigins: Starting origin tracking...")
+	origins := make(map[string]ValueOrigin)
+
+	// Track User File Origins
+	log.Debug("trackValueOrigins: Tracking origins from user files...")
+	for _, file := range opts.ValuesOpts.ValueFiles {
+		bytes, err := os.ReadFile(file) //nolint:gosec // filePath is validated earlier in the process
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to re-read values file %s for origin tracking", file)
+		}
+		var fileValues map[string]interface{}
+		if err := yaml.Unmarshal(bytes, &fileValues); err != nil {
+			return nil, errors.Wrapf(err, "failed to re-parse values file %s for origin tracking", file)
+		}
+		forceFlattenAndTrackOrigins(fileValues, origins, ValueOrigin{Type: OriginUserFile, Path: file}, "")
+	}
+
+	// Track User --set Origins
+	log.Debug("trackValueOrigins: Tracking origins from --set values...")
+	// Recombine set values for iteration (appendAssign fix applied here requires this approach)
+	allSetValues := make([]string, 0, len(opts.ValuesOpts.Values)+len(opts.ValuesOpts.StringValues))
+	allSetValues = append(allSetValues, opts.ValuesOpts.Values...)
+	allSetValues = append(allSetValues, opts.ValuesOpts.StringValues...)
+	for _, val := range allSetValues {
+		key, _, err := parseSetKey(val)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed parsing key from set value %s for origin tracking", val)
+		}
+		origins[key] = ValueOrigin{Type: OriginUserSet, Path: val}
+		// TODO: Handle nested keys from --set
+	}
+
+	// Track User --set-file Origins
+	log.Debug("trackValueOrigins: Tracking origins from --set-file values...")
+	for _, val := range opts.ValuesOpts.FileValues {
+		key, _, err := parseFileSet(val)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed parsing key from file value %s for origin tracking", val)
+		}
+		origins[key] = ValueOrigin{Type: OriginUserFileSet, Path: val}
+		// TODO: Handle nested keys from --set-file?
+	}
+
+	// Track Parent Default Origins
+	log.Debug("trackValueOrigins: Tracking origins from parent defaults...")
+	if loadedChart.Values != nil {
+		flattenAndTrackValues(loadedChart.Values, origins, ValueOrigin{
+			Type: OriginChartDefault, ChartName: loadedChart.Name(), Path: "values.yaml",
+		}, "")
+	}
+
+	// Track Subchart Default Origins
+	log.Debug("trackValueOrigins: Tracking origins from subchart defaults...")
+	trackAllSubchartValues(loadedChart, origins, ".")
+
+	log.Debug("trackValueOrigins: Finished origin tracking.")
+	return origins, nil
+}
+
+// applyAliasCorrection adjusts the merged values map based on dependency aliases.
+func applyAliasCorrection(loadedChart *chart.Chart, mergedValues map[string]interface{}) map[string]interface{} {
+	correctedMergedValues := make(map[string]interface{})
+	processedDependencyKeys := make(map[string]bool)
+
+	if loadedChart != nil && loadedChart.Metadata != nil && loadedChart.Metadata.Dependencies != nil {
+		for _, parentDepEntry := range loadedChart.Metadata.Dependencies {
+			depName := parentDepEntry.Name
+			depAlias := parentDepEntry.Alias
+			log.Debug("Alias Correction: Checking dependency", "name", depName, "alias", depAlias)
+			if originalValue, exists := mergedValues[depName]; exists {
+				log.Debug("Alias Correction: Found key matching dependency name", "key", depName)
+				mergeKey := depName
+				if depAlias != "" {
+					mergeKey = depAlias
+					log.Debug("Alias Correction: Using alias as merge key", "alias", mergeKey)
+				}
+				correctedMergedValues[mergeKey] = originalValue
+				processedDependencyKeys[depName] = true
+				log.Debug("Alias Correction: Added/Replaced key in corrected map", "key", mergeKey, "processed_original", depName)
+			} else {
+				log.Debug("Alias Correction: Key matching dependency name NOT found in merged values", "key", depName)
+			}
+		}
+	}
+
+	log.Debug("Alias Correction: Copying remaining non-dependency keys...")
+	for k, v := range mergedValues {
+		if !processedDependencyKeys[k] {
+			correctedMergedValues[k] = v
+			log.Debug("Alias Correction: Copied non-dependency key", "key", k)
+		}
+	}
+	return correctedMergedValues
+}
+
+// Helper function to parse --set-file argument
+func parseFileSet(fileSet string) (key, content string, err error) {
+	parts := strings.SplitN(fileSet, "=", setFilePartsExpected)
+	if len(parts) != setFilePartsExpected {
+		return "", "", fmt.Errorf("invalid --set-file format: %s", fileSet)
+	}
+	key = parts[0]
+	filePath := parts[1]
+	bytes, err := os.ReadFile(filePath) //nolint:gosec // filePath is validated earlier in the process
+	if err != nil {
+		return key, "", errors.Wrapf(err, "failed reading file path %s for --set-file key %s", filePath, key)
+	}
+	content = string(bytes)
+	return key, content, nil
 }
 
 // processValuesOptions processes values options and returns a merged map.
@@ -196,47 +335,46 @@ func processValuesOptions(valuesOpts *values.Options) (map[string]interface{}, e
 	return base, nil
 }
 
-// trackChartDefaultValues recursively records origin information for chart default values.
-func trackChartDefaultValues(c *chart.Chart, origins map[string]ValueOrigin, parentPath string) {
-	// Track origin for this chart's values.yaml
-	if c.Values != nil {
-		flattenAndTrackValues(c.Values, origins, ValueOrigin{
-			Type:      OriginChartDefault,
-			ChartName: c.Name(), // Use the current chart's name
-			Path:      filepath.Join(parentPath, "values.yaml"),
-		}, "")
+// trackAllSubchartValues recursively traverses dependencies and tracks their default values.
+func trackAllSubchartValues(parentChart *chart.Chart, origins map[string]ValueOrigin, parentPrefix string) {
+	if parentChart == nil || parentChart.Metadata == nil {
+		return
 	}
 
-	// Recursively process subcharts
-	for _, subchart := range c.Dependencies() {
-		// Determine the path prefix for values within this subchart
-		// Helm merges subchart values under a key matching the subchart's name or alias.
-		// We need to reflect this structure when tracking origins.
-		// Note: Helm's alias mechanism isn't directly accessible here easily,
-		// but CoalesceValues handles the merging correctly later.
-		// Our origin tracking primarily needs the correct *source* chart name.
-		subchartValuePrefix := subchart.Name() // Use subchart name as the key prefix
-
-		// Create a *new* origin struct specific to this subchart's defaults
-		subchartOrigin := ValueOrigin{
-			Type:      OriginChartDefault,
-			ChartName: subchart.Name(),                                                     // Correctly set the subchart name
-			Path:      filepath.Join(parentPath, "charts", subchart.Name(), "values.yaml"), // Path within the chart structure
+	for _, dep := range parentChart.Dependencies() { // Dependencies() returns []*chart.Chart
+		if dep == nil || dep.Metadata == nil {
+			continue
 		}
 
-		// Flatten and track the subchart's default values under its prefix
-		if subchart.Values != nil {
-			flattenAndTrackValues(subchart.Values, origins, subchartOrigin, subchartValuePrefix)
+		// Determine the correct key prefix for this subchart's values
+		// ALWAYS use the dependency NAME for tracking default value origins,
+		// as aliases are applied later during value merging.
+		depPrefix := dep.Name()
+		log.Debug("Using name for subchart default value origin prefix", "subchart", dep.Name())
+
+		// Construct the full path prefix for origin tracking
+		fullPrefix := depPrefix
+		if parentPrefix != "." { // Avoid prefixes like ".child"
+			fullPrefix = parentPrefix + "." + depPrefix
 		}
 
-		// Recursively process the dependencies of the subchart
-		// Pass the correct arguments (chart, origins, new parent path)
-		trackChartDefaultValues(subchart, origins, filepath.Join(parentPath, "charts", subchart.Name())) // Corrected arguments
+		// Track this subchart's default values
+		if dep.Values != nil {
+			log.Debug("Tracking default values for subchart", "subchart", dep.Name(), "prefix", fullPrefix, "keys", mapKeys(dep.Values))
+			flattenAndTrackValues(dep.Values, origins, ValueOrigin{
+				Type:      OriginChartDefault,
+				ChartName: dep.Name(), // Origin is the subchart itself
+				Path:      "values.yaml",
+			}, fullPrefix) // Use the calculated prefix
+		}
+
+		// Recurse into the subchart's dependencies
+		trackAllSubchartValues(dep, origins, fullPrefix)
 	}
 }
 
 // flattenAndTrackValues recursively flattens a values map and tracks origins.
-// The prefix parameter indicates the path hierarchy (e.g., "childChart.key").
+// It now respects precedence and does NOT overwrite existing origins.
 func flattenAndTrackValues(valuesMap map[string]interface{}, origins map[string]ValueOrigin, origin ValueOrigin, prefix string) {
 	for k, v := range valuesMap {
 		keyPath := k
@@ -245,24 +383,22 @@ func flattenAndTrackValues(valuesMap map[string]interface{}, origins map[string]
 		}
 
 		// Only record the origin if this path hasn't been recorded yet.
-		// This prioritizes the first source encountered (parent defaults over subchart defaults).
+		// This prioritizes higher-precedence sources (user files, --set) tracked earlier.
 		if _, exists := origins[keyPath]; !exists {
+			log.Debug("flattenAndTrackValues: Tracking origin for key (first time)", "keyPath", keyPath, "originChart", origin.ChartName, "originType", origin.Type, "originPath", origin.Path)
 			origins[keyPath] = origin
+		} else {
+			log.Debug("flattenAndTrackValues: Skipping origin tracking for key (already exists)", "keyPath", keyPath)
 		}
 
-		// Recursively process nested maps
-		if nestedMap, ok := v.(map[string]interface{}); ok {
-			// Pass the original origin down for nested structures within the same file/source.
-			// The existence check above handles precedence between different sources.
-			flattenAndTrackValues(nestedMap, origins, origin, keyPath)
+		if recursiveMap, ok := v.(map[string]interface{}); ok {
+			flattenAndTrackValues(recursiveMap, origins, origin, keyPath)
 		}
-		// TODO: Handle lists/arrays if necessary? Helm treats them mostly as atomic values during merge.
 	}
 }
 
-// mergeUserValuesFileWithOrigin merges values from a user-provided file and tracks their origin.
-// It *overwrites* existing origins for the paths defined in the file.
-func mergeUserValuesFileWithOrigin(fileName string, valuesMap map[string]interface{}, origins map[string]ValueOrigin) error {
+// mergeUserValuesFileWithOrigin only merges values now, origin tracking happens later.
+func mergeUserValuesFileWithOrigin(fileName string, valuesMap map[string]interface{}, _ map[string]ValueOrigin /* origins no longer modified here */) error {
 	// Read and parse the file
 	// G304: Potential file inclusion vulnerability - fileName needs validation.
 	bytes, err := os.ReadFile(fileName) //nolint:gosec // NOTE: Needs validation to prevent reading arbitrary files.
@@ -275,69 +411,18 @@ func mergeUserValuesFileWithOrigin(fileName string, valuesMap map[string]interfa
 		return errors.Wrapf(err, "failed to parse values file %s", fileName)
 	}
 
-	// Directly track origins for these values, overwriting defaults.
-	origin := ValueOrigin{
-		Type: OriginUserFile,
-		Path: fileName,
-		// ChartName is not applicable for user files
-	}
-	// Call a helper to flatten and *overwrite* origins for this specific source.
-	// We cannot use the main flattenAndTrackValues as it prevents overwrites.
-	forceFlattenAndTrackOrigins(fileValues, origins, origin, "")
-
 	// Merge with existing values (mutates the 'values' map)
+	// Note: CoalesceTables merges fileValues INTO valuesMap
 	chartutil.CoalesceTables(valuesMap, fileValues)
 	return nil
 }
 
-// forceFlattenAndTrackOrigins is similar to flattenAndTrackValues but *always* sets the origin,
-// effectively overwriting any previous origin for the same path. Used for higher-precedence sources.
-func forceFlattenAndTrackOrigins(valuesMap map[string]interface{}, origins map[string]ValueOrigin, origin ValueOrigin, prefix string) {
-	for k, v := range valuesMap {
-		keyPath := k
-		if prefix != "" {
-			keyPath = prefix + "." + k
-		}
-
-		// Always set/overwrite the origin for this path
-		origins[keyPath] = origin
-
-		// Recursively process nested maps
-		if nestedMap, ok := v.(map[string]interface{}); ok {
-			// Pass the same origin down for nested structures within this source.
-			forceFlattenAndTrackOrigins(nestedMap, origins, origin, keyPath)
-		}
-	}
-}
-
-// applySetValueWithOrigin applies a --set value and tracks its origin.
-func applySetValueWithOrigin(setValue string, valuesMap map[string]interface{}, origins map[string]ValueOrigin) error {
-	// Parse the key=value string first to get the key path
-	key, _, err := parseSetKey(setValue) // Helper to extract just the key needed for origin map, ignore value
-	if err != nil {
-		return errors.Wrapf(err, "failed parsing key from set value %s", setValue)
-	}
-
-	// Record the origin *before* applying the value, as ParseInto mutates
-	origins[key] = ValueOrigin{
-		Type: OriginUserSet,
-		Path: setValue, // Store the original "key=value" string
-		// ChartName is not applicable for --set
-	}
-
+// applySetValueWithOrigin only applies --set value now, origin tracking happens later.
+func applySetValueWithOrigin(setValue string, valuesMap map[string]interface{}, _ map[string]ValueOrigin /* origins no longer modified here */) error {
 	// Apply the set value (mutates the 'values' map)
 	if err := strvals.ParseInto(setValue, valuesMap); err != nil {
-		// If parsing fails, potentially remove the optimistic origin entry? Or leave it?
-		// Leaving it might be confusing if the value wasn't actually applied.
-		// Let's remove it for consistency.
-		delete(origins, key)
 		return errors.Wrapf(err, "failed to parse set value %s", setValue)
 	}
-
-	// TODO: Handle complex --set paths like list indices (key[0]=val) if needed.
-	// flattenAndTrackValues might need adjustments for lists if we track sub-elements.
-	// For now, tracking the top-level key assigned by --set.
-
 	return nil
 }
 
@@ -354,6 +439,48 @@ func parseSetKey(setValue string) (key, value string, err error) {
 	key = setValue[:idx]
 	value = setValue[idx+1:]
 	return key, value, nil
+}
+
+// Helper to get keys from ValueOrigin map
+func mapKeysFromOrigin(m map[string]ValueOrigin) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+// mapKeys returns the keys of a map[string]interface{}.
+func mapKeys(m map[string]interface{}) []string {
+	if m == nil {
+		return nil
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+// forceFlattenAndTrackOrigins is similar to flattenAndTrackValues but *always* sets the origin,
+// effectively overwriting any previous origin for the same path. Used for higher-precedence sources.
+func forceFlattenAndTrackOrigins(valuesMap map[string]interface{}, origins map[string]ValueOrigin, origin ValueOrigin, prefix string) {
+	for k, v := range valuesMap {
+		keyPath := k
+		if prefix != "" {
+			keyPath = prefix + "." + k
+		}
+
+		// Always set/overwrite the origin for this path
+		log.Debug("forceFlattenAndTrackOrigins: Setting/Overwriting origin", "keyPath", keyPath, "originType", origin.Type, "originPath", origin.Path)
+		origins[keyPath] = origin
+
+		// Recursively process nested maps
+		if nestedMap, ok := v.(map[string]interface{}); ok {
+			// Pass the same origin down for nested structures within this source.
+			forceFlattenAndTrackOrigins(nestedMap, origins, origin, keyPath)
+		}
+	}
 }
 
 // END OF FILE - Ensure no other definitions of these functions exist below.

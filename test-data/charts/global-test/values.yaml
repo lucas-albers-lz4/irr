@@ -1,0 +1,30 @@
+# Global variables
+global:
+  imageRegistry: docker.io
+  imagePullSecrets: []
+  
+  # Global image used by multiple components
+  image:
+    registry: quay.io  # Overrides imageRegistry for this specific image 
+    repository: organization/shared-app
+    tag: "1.0.0"
+
+# Regular images for comparison
+parentImage:
+  # Will inherit from global.imageRegistry
+  repository: parent/app
+  tag: "v1.0.0"
+
+# Another image with explicit registry (should not use global)
+explicitImage:
+  registry: ghcr.io  # Overrides global
+  repository: explicit/component
+  tag: "latest"
+  
+# Override for minimal-child subchart
+minimal-child:
+  # Use global registry for the image
+  image:
+    # registry will be inherited from global.imageRegistry
+    repository: custom/subchart-image
+    tag: "v2.3.4" 

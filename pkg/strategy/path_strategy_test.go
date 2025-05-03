@@ -25,7 +25,18 @@ func TestPrefixSourceRegistryStrategy(t *testing.T) {
 				Repository: "library/nginx",
 				Tag:        "latest",
 			},
-			expectedPath:  "library/nginx", // Corrected: Base path only
+			expectedPath:  "docker.io/library/nginx",
+			expectedError: false,
+		},
+		{
+			name: "standard image without registry (defaults to docker hub)",
+			inputRef: &image.Reference{
+				Original:   "docker.io/nginx:latest",
+				Registry:   "docker.io",
+				Repository: "nginx",
+				Tag:        "latest",
+			},
+			expectedPath:  "docker.io/library/nginx",
 			expectedError: false,
 		},
 		{
@@ -36,7 +47,7 @@ func TestPrefixSourceRegistryStrategy(t *testing.T) {
 				Repository: "prometheus/node-exporter",
 				Tag:        "v1.3.1",
 			},
-			expectedPath:  "prometheus/node-exporter", // Corrected: Base path only
+			expectedPath:  "quay.io/prometheus/node-exporter",
 			expectedError: false,
 		},
 		{
@@ -47,7 +58,7 @@ func TestPrefixSourceRegistryStrategy(t *testing.T) {
 				Repository: "google-containers/pause",
 				Digest:     "sha256:12345",
 			},
-			expectedPath:  "google-containers/pause", // Corrected: Base path only
+			expectedPath:  "gcr.io/google-containers/pause",
 			expectedError: false,
 		},
 		{
@@ -58,12 +69,14 @@ func TestPrefixSourceRegistryStrategy(t *testing.T) {
 				Repository: "app/frontend",
 				Tag:        "stable",
 			},
-			expectedPath:  "app/frontend", // Corrected: Base path only
+			expectedPath:  "registry.example.com/app/frontend",
 			expectedError: false,
 		},
 	}
 
-	strategy := NewPrefixSourceRegistryStrategy()
+	// Create a mappings instance
+	mappings := &registry.Mappings{}
+	strategy := NewPrefixSourceRegistryStrategy(mappings)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -133,7 +146,7 @@ func TestFlatStrategy_GeneratePath(t *testing.T) {
 				Repository: "org/repo",
 				Tag:        "latest",
 			},
-			want: "quayio-org-repo",
+			want: "quay.io-org-repo",
 		},
 		{
 			name:           "nested_path",
@@ -163,7 +176,7 @@ func TestFlatStrategy_GeneratePath(t *testing.T) {
 				Repository: "ingress-nginx/controller",
 				Tag:        "v1.2.0",
 			},
-			want: "registryk8sio-ingress-nginx-controller",
+			want: "registry.k8s.io-ingress-nginx-controller",
 		},
 		{
 			name:           "repository_with_port",
@@ -183,7 +196,7 @@ func TestFlatStrategy_GeneratePath(t *testing.T) {
 				Repository: "google-containers/kubernetes/dashboard",
 				Tag:        "v2.0.0",
 			},
-			want: "gcrio-google-containers-kubernetes-dashboard",
+			want: "gcr.io-google-containers-kubernetes-dashboard",
 		},
 	}
 

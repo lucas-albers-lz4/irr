@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-minimal-child-globals
+  labels:
+    app: minimal-child
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minimal-child
+  template:
+    metadata:
+      labels:
+        app: minimal-child
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: main
+          image: "{{ .Values.global.imageRegistry | default .Values.image.registry }}/{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: IfNotPresent
+        - name: internal
+          image: "{{ .Values.global.imageRegistry }}/{{ .Values.internalImage.repository }}:{{ .Values.global.image.tag | default "latest" }}"
+          imagePullPolicy: IfNotPresent
+        - name: standalone
+          image: "{{ .Values.standaloneImage.registry }}/{{ .Values.standaloneImage.repository }}:{{ .Values.standaloneImage.tag }}"
+          imagePullPolicy: IfNotPresent 

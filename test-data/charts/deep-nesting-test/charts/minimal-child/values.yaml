@@ -1,0 +1,12 @@
+# Base images for subchart
+image:
+  registry: docker.io
+  repository: busybox
+  tag: "1.0"
+  
+# Default nested structure 
+nestedStruct:
+  deeperImage:
+    registry: docker.io
+    repository: subchart/default-image
+    tag: "beta" 

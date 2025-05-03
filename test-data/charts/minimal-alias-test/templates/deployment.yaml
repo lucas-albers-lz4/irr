@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-alias-test
+  labels:
+    app: alias-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alias-test
+  template:
+    metadata:
+      labels:
+        app: alias-test
+    spec:
+      containers:
+        - name: alias
+          image: "{{ .Values.theAlias.image.registry }}/{{ .Values.theAlias.image.repository }}:{{ .Values.theAlias.image.tag }}" 

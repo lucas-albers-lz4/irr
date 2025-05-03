@@ -1,0 +1,15 @@
+Compatibility:
+  IgnoreEmptyFields: true
+Registries:
+  DefaultTarget: registry.local/default
+  Mappings:
+  - Description: Mapping for docker.io
+    Enabled: true
+    Source: docker.io
+    Target: harbor.home.arpa/docker
+  - Description: Mapping for quay.io
+    Enabled: true
+    Source: quay.io
+    Target: harbor.home.arpa/quay
+  StrictMode: false
+Version: "1.0"

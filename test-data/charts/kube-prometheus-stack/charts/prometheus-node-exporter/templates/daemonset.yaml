@@ -44,7 +44,10 @@ spec:
         {{- $servicePort := ternary 8100 .Values.service.port .Values.kubeRBACProxy.enabled }}
         - name: node-exporter
           image: {{ include "prometheus-node-exporter.image" . }}
+          {{- $imageTag := default .Chart.AppVersion .Values.image.tag }}
+          {{- if semverCompare ">1.4.0" $imageTag }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- end }}
           args:
             - --path.procfs=/host/proc
             - --path.sysfs=/host/sys

@@ -27,9 +27,14 @@ const (
 type ImagePattern struct {
 	Path      string                 // Path in values where pattern was found (e.g., "image" or "deployment.image")
 	Type      PatternType            // Type of pattern (map or string)
-	Structure map[string]interface{} // For map type, the full structure (registry, repository, tag)
+	Structure map[string]interface{} `json:"structure,omitempty" yaml:"structure,omitempty"` // Detailed structure if Type is map
 	Value     string                 // For string type, the image reference (e.g., "docker.io/nginx:1.19")
-	Count     int                    // Number of occurrences of this pattern
+	Count     int                    `json:"count" yaml:"count"` // How many times this exact pattern was found
+	// Added for context-aware analysis:
+	OriginalRegistry string `json:"originalRegistry,omitempty" yaml:"originalRegistry,omitempty"` // Original registry from source chart if different
+	SourceOrigin     string `json:"sourceOrigin,omitempty" yaml:"sourceOrigin,omitempty"`         // Originating file/path from context analysis
+	// Added for subchart app version fallback:
+	SourceChartAppVersion string `json:"sourceChartAppVersion,omitempty" yaml:"sourceChartAppVersion,omitempty"` // AppVersion of the originating chart
 }
 
 // GlobalPattern represents a global registry configuration found in the chart.

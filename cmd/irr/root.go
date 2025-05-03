@@ -40,9 +40,6 @@ var (
 
 	// TestAnalyzeMode is a global flag to enable test mode (originally for analyze command, now for inspect)
 	TestAnalyzeMode bool
-
-	// New variables for initConfig
-	isTestMode bool
 )
 
 // AppFs defines the filesystem interface to use, allows mocking in tests.

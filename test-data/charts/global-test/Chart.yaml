@@ -1,0 +1,10 @@
+apiVersion: v2
+name: global-test
+description: A Helm chart for testing global variable handling with context-aware analysis
+version: 0.1.0
+appVersion: "1.0"
+
+dependencies:
+  - name: minimal-child
+    version: "0.1.0"
+    repository: "file://./charts/minimal-child" 

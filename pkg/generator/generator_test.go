@@ -18,9 +18,9 @@ func TestGenerate(t *testing.T) {
 	testValues := map[string]interface{}{
 		"image": "old-registry.com/my-app:v1",
 	}
-	testStrategy := strategy.NewPrefixSourceRegistryStrategy()
 	// Provide minimal non-nil mappings struct
 	mappings := &registry.Mappings{}
+	testStrategy := strategy.NewPrefixSourceRegistryStrategy(mappings)
 
 	generator := NewGenerator(
 		mappings,
@@ -36,8 +36,8 @@ func TestGenerate(t *testing.T) {
 
 	expectedOverrides := map[string]interface{}{
 		"image": map[string]interface{}{
-			"registry":   "", // No mapping, so target registry is empty
-			"repository": "old-registrycom/my-app",
+			"registry":   "",
+			"repository": "old-registry.com/my-app",
 			"tag":        "v1",
 		},
 	}
@@ -77,13 +77,13 @@ func TestGenerate_WithMappings(t *testing.T) {
 			"config": "excluded.com/app3:v3", // Should be ignored (not an image path)
 		},
 	}
-	testStrategy := strategy.NewPrefixSourceRegistryStrategy()
 	mappings := &registry.Mappings{
 		Entries: []registry.Mapping{
 			{Source: "old-registry.com", Target: "mapped-registry.com/oldreg"},
 			// No mapping for other-registry.com
 		},
 	}
+	testStrategy := strategy.NewPrefixSourceRegistryStrategy(mappings)
 
 	generator := NewGenerator(
 		mappings,
@@ -99,14 +99,14 @@ func TestGenerate_WithMappings(t *testing.T) {
 
 	expectedOverrides := map[string]interface{}{
 		"image": map[string]interface{}{
-			"registry":   "mapped-registry.com/oldreg", // Mapped target registry
-			"repository": "old-registrycom/app1",
+			"registry":   "mapped-registry.com/oldreg",
+			"repository": "mapped-registry.com/oldreg/app1",
 			"tag":        "v1",
 		},
 		"nested": map[string]interface{}{
 			"image": map[string]interface{}{
-				"registry":   "", // No mapping for other-registry.com
-				"repository": "other-registrycom/app2",
+				"registry":   "",
+				"repository": "other-registry.com/app2",
 				"tag":        "v2",
 			},
 		},
@@ -227,15 +227,15 @@ func TestRemoveValueAtPath(t *testing.T) {
 }
 
 func TestNormalizeKubeStateMetricsOverrides(t *testing.T) {
-	// Mock path strategy (replace with actual mock if needed)
-	mockStrategy := strategy.NewPrefixSourceRegistryStrategy()
-	// Mock mappings (replace with actual mock if needed)
+	// Mock mappings
 	mockMappings := &registry.Mappings{
 		Entries: []registry.Mapping{
 			{Source: "registry.k8s.io", Target: "my-target.com/k8s"},
 			{Source: "quay.io", Target: "my-target.com/quay"},
 		},
 	}
+	// Mock path strategy with mappings
+	mockStrategy := strategy.NewPrefixSourceRegistryStrategy(mockMappings)
 
 	tests := []struct {
 		name              string
@@ -274,7 +274,7 @@ func TestNormalizeKubeStateMetricsOverrides(t *testing.T) {
 				"other": map[string]interface{}{ // Other image override remains
 					"image": map[string]interface{}{ // Structure may vary slightly
 						"registry":   "my-target.com/quay",
-						"repository": "quayiocom/prometheus/node-exporter",
+						"repository": "quayio/prometheus/node-exporter",
 						"tag":        "v1.7.0",
 					},
 				},
@@ -290,7 +290,7 @@ func TestNormalizeKubeStateMetricsOverrides(t *testing.T) {
 				"other": map[string]interface{}{ // Other image override remains
 					"image": map[string]interface{}{ // Structure may vary slightly
 						"registry":   "my-target.com/quay",
-						"repository": "quayiocom/prometheus/node-exporter",
+						"repository": "quayio/prometheus/node-exporter",
 						"tag":        "v1.7.0",
 					},
 				},

@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-global-test
+  labels:
+    app: global-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: global-test
+  template:
+    metadata:
+      labels:
+        app: global-test
+    spec:
+      containers:
+        - name: parent
+          image: "{{ .Values.global.imageRegistry }}/{{ .Values.parentImage.repository }}:{{ .Values.parentImage.tag }}"
+        - name: global-image
+          image: "{{ .Values.global.image.registry }}/{{ .Values.global.image.repository }}:{{ .Values.global.image.tag }}"
+        - name: explicit
+          image: "{{ .Values.explicitImage.registry }}/{{ .Values.explicitImage.repository }}:{{ .Values.explicitImage.tag }}" 

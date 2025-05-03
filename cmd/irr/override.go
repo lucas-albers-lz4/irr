@@ -25,9 +25,9 @@ import (
 	"github.com/lucas-albers-lz4/irr/pkg/strategy"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 	helmchart "helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/cli/values"
-	"sigs.k8s.io/yaml"
 )
 
 const (
@@ -41,7 +41,6 @@ const (
 	// trueString represents the string literal "true", commonly used for boolean env vars.
 	trueString = "true"
 	// unknownSourceDescription is used when the chart source cannot be determined.
-	unknownSourceDescription = "unknown"
 )
 
 // Variables for testing - isTestMode declaration REMOVED, it's defined in root.go
@@ -503,13 +502,13 @@ func setupGeneratorConfig(cmd *cobra.Command, _ string) (config GeneratorConfig,
 	return config, nil
 }
 
-func setupPathStrategy(_ *cobra.Command, config *GeneratorConfig) error {
+func setupPathStrategy(config *GeneratorConfig) error {
 	// Add nil check for safety, although runOverride should prevent this call with nil config
 	if config == nil {
 		return errors.New("internal error: setupPathStrategy called with nil config")
 	}
 	// The --path-strategy flag has been removed. Always use the default.
-	config.Strategy = strategy.NewPrefixSourceRegistryStrategy()
+	config.Strategy = strategy.NewPrefixSourceRegistryStrategy(config.Mappings)
 	return nil
 }
 
@@ -543,6 +542,21 @@ func loadRegistryMappings(cmd *cobra.Command, config *GeneratorConfig) error {
 		shouldSkipCheck := skipCWDCheck()
 		log.Debug("Calling registry.LoadStructuredConfig", "configFile", configFile, "skipCWDRestriction", shouldSkipCheck)
 
+		// Add extra debug logging to help diagnose mapping loading issues
+		fileInfo, statErr := AppFs.Stat(configFile)
+		if statErr != nil {
+			log.Warn("Failed to stat config file", "file", configFile, "error", statErr)
+		} else {
+			log.Debug("Config file stat successful", "file", configFile, "size", fileInfo.Size(), "isDir", fileInfo.IsDir())
+		}
+		fileContents, readErr := afero.ReadFile(AppFs, configFile)
+		if readErr != nil {
+			log.Warn("Failed to read config file contents", "file", configFile, "error", readErr)
+		} else {
+			log.Debug("Config file read successful", "file", configFile, "contentLength", len(fileContents))
+			log.Debug("Config file contents", "content", string(fileContents))
+		}
+
 		// Use LoadStructuredConfig instead of LoadMappings
 		configObj, err := registry.LoadStructuredConfig(AppFs, configFile, shouldSkipCheck)
 		if err != nil {
@@ -562,24 +576,17 @@ func loadRegistryMappings(cmd *cobra.Command, config *GeneratorConfig) error {
 		// Convert to Mappings format
 		config.Mappings = configObj.ToMappings()
 		log.Debug("Successfully loaded mappings from file", "count", len(config.Mappings.Entries))
+
+		// Add debug logging to show the actual entries
+		if config.Mappings != nil && len(config.Mappings.Entries) > 0 {
+			for i, entry := range config.Mappings.Entries {
+				log.Debug("Mapping entry", "index", i, "source", entry.Source, "target", entry.Target)
+			}
+		} else {
+			log.Warn("No mappings loaded from config file or mappings is nil")
+		}
 	}
 	return nil
-}
-
-func logConfigMode(config *GeneratorConfig) {
-	// Add nil check for safety
-	if config == nil {
-		log.Warn("logConfigMode called with nil config")
-		return
-	}
-	if config.StrictMode {
-		log.Info("Running in strict mode - will fail on unrecognized registries or unsupported structures")
-	} else {
-		log.Info("Running in normal mode - will skip unrecognized registries with warnings")
-	}
-	if len(config.SourceRegistries) > 0 {
-		log.Info("Using source registries", "registries", strings.Join(config.SourceRegistries, ", "))
-	}
 }
 
 // validateUnmappableRegistries checks if all provided source registries are covered by mappings.
@@ -670,51 +677,147 @@ func getAnalysisControlFlags(cmd *cobra.Command) (includePatterns, excludePatter
 	return
 }
 
+// Helper to populate values.Options from flags with error checking
+func getValuesOptionsFromFlags(cmd *cobra.Command) (values.Options, error) {
+	var valueOpts values.Options
+	var err error
+
+	valueOpts.ValueFiles, err = getStringSliceFlag(cmd, "values")
+	if err != nil {
+		return valueOpts, err
+	}
+	valueOpts.Values, err = getStringSliceFlag(cmd, "set")
+	if err != nil {
+		return valueOpts, err
+	}
+	valueOpts.StringValues, err = getStringSliceFlag(cmd, "set-string")
+	if err != nil {
+		return valueOpts, err
+	}
+	valueOpts.FileValues, err = getStringSliceFlag(cmd, "set-file")
+	if err != nil {
+		return valueOpts, err
+	}
+	return valueOpts, nil
+}
+
+// Helper to perform context-aware chart analysis (deduplicates logic)
+func performContextAwareAnalysis(chartPath string, valueOpts *values.Options) (*helmchart.Chart, *analysis.ChartAnalysis, error) {
+	loaderOptions := &internalhelm.ChartLoaderOptions{
+		ChartPath:  chartPath,
+		ValuesOpts: *valueOpts,
+	}
+	chartLoader := internalhelm.NewChartLoader()
+	chartAnalysisContext, loadErr := chartLoader.LoadChartAndTrackOrigins(loaderOptions)
+	switch {
+	case loadErr != nil:
+		return nil, nil, &exitcodes.ExitCodeError{Code: exitcodes.ExitChartLoadFailed, Err: fmt.Errorf("failed to load chart with values: %w", loadErr)}
+	case chartAnalysisContext == nil:
+		return nil, nil, errors.New("internal error: LoadChartAndTrackOrigins returned nil context without error")
+	case chartAnalysisContext.Chart == nil:
+		return nil, nil, &exitcodes.ExitCodeError{Code: exitcodes.ExitChartLoadFailed, Err: errors.New("failed to load chart details from context")}
+	}
+	contextAnalyzer := internalhelm.NewContextAwareAnalyzer(chartAnalysisContext)
+	chartAnalysis, analyzeErr := contextAnalyzer.AnalyzeContext()
+	if analyzeErr != nil {
+		return nil, nil, &exitcodes.ExitCodeError{Code: exitcodes.ExitChartProcessingFailed, Err: fmt.Errorf("context analysis failed: %w", analyzeErr)}
+	}
+	return chartAnalysisContext.Chart, chartAnalysis, nil
+}
+
 // createAndExecuteGenerator creates and executes a generator for the given chart source
-func createAndExecuteGenerator(chartSource *ChartSource, config *GeneratorConfig, contextAware bool) ([]byte, error) {
-	if chartSource == nil {
-		return nil, &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitGeneralRuntimeError,
-			Err:  errors.New("chartSource is nil"),
+func createAndExecuteGenerator(cmd *cobra.Command, config *GeneratorConfig, contextAware bool) ([]byte, error) {
+	log.Info("Initializing override generation", "chartPath", config.ChartPath)
+
+	var loadedChart *helmchart.Chart
+	var analysisResult *analysis.ChartAnalysis
+	var loadAnalysisErr error
+
+	valueOpts, err := getValuesOptionsFromFlags(cmd)
+	if err != nil {
+		return nil, err
+	}
+
+	if contextAware {
+		log.Info("Performing context-aware chart analysis...")
+		loadedChart, analysisResult, loadAnalysisErr = performContextAwareAnalysis(config.ChartPath, &valueOpts)
+	} else {
+		log.Info("Performing legacy chart analysis...")
+		legacyLoader := chart.NewLoader()
+		var loadErr error
+		var legacyLoadedChart *helmchart.Chart
+		legacyLoadedChart, loadErr = legacyLoader.Load(config.ChartPath)
+		if loadErr != nil {
+			loadAnalysisErr = &exitcodes.ExitCodeError{Code: exitcodes.ExitChartLoadFailed, Err: fmt.Errorf("legacy chart load failed: %w", loadErr)}
+		} else {
+			loadedChart = legacyLoadedChart
+			analyzer := analysis.NewAnalyzer(config.ChartPath, legacyLoader)
+			var legacyAnalysisResult *analysis.ChartAnalysis
+			legacyAnalysisResult, loadErr = analyzer.Analyze()
+			if loadErr != nil {
+				loadAnalysisErr = &exitcodes.ExitCodeError{Code: exitcodes.ExitChartProcessingFailed, Err: fmt.Errorf("legacy analysis failed: %w", loadErr)}
+			} else {
+				analysisResult = legacyAnalysisResult
+			}
 		}
 	}
 
-	// Get chart source description for comments
-	var chartSourceDescription string
-	if chartSource != nil {
-		chartSourceDescription = chartSource.Message // Use the message generated by getChartSource
-	} else {
-		chartSourceDescription = unknownSourceDescription // Fallback if chartSource is somehow nil
+	if loadAnalysisErr != nil {
+		log.Error("Chart loading/analysis failed", "error", loadAnalysisErr)
+		return nil, loadAnalysisErr
+	}
+	if loadedChart == nil {
+		log.Error("Internal error: loadedChart is nil after load/analysis phase without error")
+		return nil, &exitcodes.ExitCodeError{Code: exitcodes.ExitGeneralRuntimeError, Err: errors.New("internal error: loadedChart missing")}
+	}
+	if analysisResult == nil {
+		log.Warn("Analysis result is nil (e.g., chart has no values/images), proceeding with empty analysis.")
+		analysisResult = analysis.NewChartAnalysis()
 	}
 
-	log.Info("Initializing override generator", "source", chartSourceDescription)
+	if err := setupPathStrategy(config); err != nil {
+		return nil, fmt.Errorf("failed to set up path strategy: %w", err)
+	}
 
-	// Create a new generator and run it
 	generator, err := createGenerator(config, contextAware)
 	if err != nil {
 		return nil, err
 	}
 
-	// Generate the override file content
-	overrideFile, err := generator.Generate()
+	log.Debug("Creating generator instance just before NewGenerator call",
+		"chartPath", config.ChartPath,
+		"targetRegistry", config.TargetRegistry,
+		"strategy_type", fmt.Sprintf("%T", config.Strategy),
+		"strategy_is_nil", config.Strategy == nil,
+		"config_ptr", fmt.Sprintf("%p", config))
+
+	overrideResult, err := generator.Generate(loadedChart, analysisResult)
 	if err != nil {
 		return nil, handleGenerateError(err)
 	}
 
-	// Serialize the overrides to YAML
-	yamlBytes, err := yaml.Marshal(overrideFile.Values)
+	yamlBytes, err := yaml.Marshal(overrideResult.Values)
 	if err != nil {
-		return nil, fmt.Errorf("failed to serialize overrides to YAML: %w", err)
+		return nil, fmt.Errorf("failed to marshal overrides to YAML: %w", err)
 	}
 
 	return yamlBytes, nil
 }
 
 // createGenerator creates a generator based on the context-aware flag.
-func createGenerator(config *GeneratorConfig, contextAware bool) (GeneratorInterface, error) {
-	// Validate the config
+func createGenerator(config *GeneratorConfig, contextAware bool) (*chart.Generator, error) {
 	if config == nil {
-		return nil, errors.New("config is nil")
+		return nil, errors.New("nil generator config")
+	}
+
+	// Ensure strategy is initialized
+	if config.Strategy == nil {
+		var err error
+		config.Strategy, err = strategy.GetStrategy("prefix-source-registry", config.Mappings)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize default strategy: %w", err)
+		}
+		log.Debug("Strategy was nil, set default", "strategy", config.Strategy)
 	}
 
 	var preloadedLoader *PreloadedChartLoader
@@ -723,43 +826,27 @@ func createGenerator(config *GeneratorConfig, contextAware bool) (GeneratorInter
 	if contextAware {
 		log.Info("Creating generator using context-aware analysis...")
 		// --- Context-Aware Path ---
-		valueOpts := &values.Options{}
-		// Get Helm CLI arguments for value loading - use env vars if running as plugin
-		if isRunningAsHelmPlugin() {
-			// (Code to get values from env vars remains the same)
-			valuesFiles := os.Getenv("HELM_PLUGIN_VALUES")
-			if valuesFiles != "" {
-				valueOpts.ValueFiles = strings.Split(valuesFiles, ";")
-			}
-			setValues := os.Getenv("HELM_PLUGIN_SET")
-			if setValues != "" {
-				valueOpts.Values = strings.Split(setValues, ";")
-			}
-			setStringValues := os.Getenv("HELM_PLUGIN_SET_STRING")
-			if setStringValues != "" {
-				valueOpts.StringValues = strings.Split(setStringValues, ";")
-			}
-			setFileValues := os.Getenv("HELM_PLUGIN_SET_FILE")
-			if setFileValues != "" {
-				valueOpts.FileValues = strings.Split(setFileValues, ";")
-			}
-		}
-
 		loaderOptions := &internalhelm.ChartLoaderOptions{
-			ChartPath:  config.ChartPath,
-			ValuesOpts: *valueOpts,
+			ChartPath: config.ChartPath,
+			// No other options needed for initial load in standalone mode
 		}
-
 		chartLoader := internalhelm.NewChartLoader()
-		chartAnalysisContext, err := chartLoader.LoadChartAndTrackOrigins(loaderOptions)
-		if err != nil {
-			generatorErr = &exitcodes.ExitCodeError{Code: exitcodes.ExitChartLoadFailed, Err: fmt.Errorf("failed to load chart with values: %w", err)}
-		} else {
+		chartAnalysisContext, loadErr := chartLoader.LoadChartAndTrackOrigins(loaderOptions)
+		switch {
+		case loadErr != nil:
+			generatorErr = &exitcodes.ExitCodeError{Code: exitcodes.ExitChartLoadFailed, Err: fmt.Errorf("context-aware chart load failed: %w", loadErr)}
+		case chartAnalysisContext == nil:
+			generatorErr = &exitcodes.ExitCodeError{Code: exitcodes.ExitInternalError, Err: errors.New("internal error: nil chart context without error")}
+		case chartAnalysisContext.Chart == nil:
+			generatorErr = &exitcodes.ExitCodeError{Code: exitcodes.ExitChartLoadFailed, Err: errors.New("loaded chart context contains nil chart")}
+		default:
+			// Chart is loaded, create analyzer
 			contextAnalyzer := internalhelm.NewContextAwareAnalyzer(chartAnalysisContext)
-			chartAnalysis, err := contextAnalyzer.AnalyzeContext()
-			if err != nil {
-				generatorErr = &exitcodes.ExitCodeError{Code: exitcodes.ExitChartProcessingFailed, Err: fmt.Errorf("context-aware analysis failed: %w", err)}
+			chartAnalysis, analyzeErr := contextAnalyzer.AnalyzeContext()
+			if analyzeErr != nil {
+				generatorErr = &exitcodes.ExitCodeError{Code: exitcodes.ExitChartProcessingFailed, Err: fmt.Errorf("context analysis failed: %w", analyzeErr)}
 			} else {
+				// Analysis completed, prepare preloader
 				preloadedLoader = &PreloadedChartLoader{
 					chart:    chartAnalysisContext.Chart,
 					analysis: chartAnalysis,
@@ -771,19 +858,22 @@ func createGenerator(config *GeneratorConfig, contextAware bool) (GeneratorInter
 		// --- Legacy Path ---
 		// Use the standard chart loader from pkg/chart
 		legacyLoader := chart.NewLoader() // Assuming NewLoader exists in pkg/chart
-		loadedChart, err := legacyLoader.Load(config.ChartPath)
-		if err != nil {
-			generatorErr = &exitcodes.ExitCodeError{Code: exitcodes.ExitChartLoadFailed, Err: fmt.Errorf("legacy chart load failed: %w", err)}
+		var loadedChart *helmchart.Chart
+		var analysisResult *analysis.ChartAnalysis
+		var loadErr error // Declare loadErr for this block scope
+		loadedChart, loadErr = legacyLoader.Load(config.ChartPath)
+		if loadErr != nil {
+			generatorErr = &exitcodes.ExitCodeError{Code: exitcodes.ExitChartLoadFailed, Err: fmt.Errorf("legacy chart load failed: %w", loadErr)}
 		} else {
-			// Use the legacy analyzer from pkg/analysis
-			analyzer := analysis.NewAnalyzer(config.ChartPath, legacyLoader) // Pass loader if needed
-			legacyAnalysis, err := analyzer.Analyze()
-			if err != nil {
-				generatorErr = &exitcodes.ExitCodeError{Code: exitcodes.ExitChartProcessingFailed, Err: fmt.Errorf("legacy analysis failed: %w", err)}
+			analyzer := analysis.NewAnalyzer(config.ChartPath, legacyLoader)
+			analysisResult, loadErr = analyzer.Analyze()
+			if loadErr != nil {
+				generatorErr = &exitcodes.ExitCodeError{Code: exitcodes.ExitChartProcessingFailed, Err: fmt.Errorf("legacy analysis failed: %w", loadErr)}
 			} else {
+				// Setup preloaded loader on success
 				preloadedLoader = &PreloadedChartLoader{
 					chart:    loadedChart,
-					analysis: legacyAnalysis, // Use analysis result from legacy analyzer
+					analysis: analysisResult,
 				}
 			}
 		}
@@ -798,12 +888,12 @@ func createGenerator(config *GeneratorConfig, contextAware bool) (GeneratorInter
 	}
 
 	// Add log before calling NewGenerator
-	log.Debug("Creating generator instance",
-		"config_ptr", fmt.Sprintf("%p", config),
+	log.Debug("Creating generator instance just before NewGenerator call",
 		"chartPath", config.ChartPath,
 		"targetRegistry", config.TargetRegistry,
 		"strategy_type", fmt.Sprintf("%T", config.Strategy),
-		"strategy_is_nil", config.Strategy == nil)
+		"strategy_is_nil", config.Strategy == nil,
+		"config_ptr", fmt.Sprintf("%p", config))
 
 	// --- Create Override Generator (Common logic) ---
 	generator := chart.NewGenerator(
@@ -814,12 +904,9 @@ func createGenerator(config *GeneratorConfig, contextAware bool) (GeneratorInter
 		config.Strategy,
 		config.Mappings,
 		config.StrictMode,
-		0,               // Threshold parameter is not used anymore
-		preloadedLoader, // Use our custom loader with pre-analyzed chart
-		config.IncludePatterns,
-		config.ExcludePatterns,
-		nil,                 // KnownImagePaths parameter is not used anymore
-		config.RulesEnabled, // Pass rules enabled status here
+		0,
+		preloadedLoader,
+		config.RulesEnabled,
 	)
 
 	// Log message if rules are disabled
@@ -847,589 +934,66 @@ func (l *PreloadedChartLoader) Analyze(_ string) (*analysis.ChartAnalysis, error
 	return l.analysis, nil
 }
 
-// runOverridePluginMode handles the logic when override is run in plugin mode.
-func runOverridePluginMode(cmd *cobra.Command, releaseName, namespace, outputFile string, dryRun bool) error {
-	log.Debug("Plugin mode detected", "releaseName", releaseName)
-	var config GeneratorConfig
-	// Gather required flags directly, skipping chart-path validation
-	targetRegistry, err := getStringFlag(cmd, "target-registry")
-	if err != nil {
-		return err
-	}
-	if targetRegistry == "" {
-		return &exitcodes.ExitCodeError{Code: exitcodes.ExitMissingRequiredFlag, Err: errors.New("required flag \"target-registry\" not set")}
-	}
-
-	sourceRegistries, err := getStringSliceFlag(cmd, "source-registries")
-	if err != nil {
-		return err
-	}
-	// Check source-registries requirement, allowing skip if config file is present
-	configFile, err := getStringFlag(cmd, "config")
-	if err != nil {
-		return err
-	}
-	if len(sourceRegistries) == 0 && configFile == "" {
-		return &exitcodes.ExitCodeError{Code: exitcodes.ExitMissingRequiredFlag, Err: errors.New("required flag \"source-registries\" not set (or provide --config)")}
-	}
-
-	config.TargetRegistry = targetRegistry
-	config.SourceRegistries = sourceRegistries
-	config.ChartPath = "" // Explicitly set ChartPath to empty for plugin mode config
-
-	// Gather optional flags for plugin mode
-	excludeRegistries, err := getStringSliceFlag(cmd, "exclude-registries")
-	if err != nil {
-		return err
-	}
-	config.ExcludeRegistries = excludeRegistries
-
-	strictMode, err := getBoolFlag(cmd, "strict")
-	if err != nil {
-		return err
-	}
-	config.StrictMode = strictMode
-
-	includePatterns, excludePatterns, err := getAnalysisControlFlags(cmd)
-	if err != nil {
-		return err
-	}
-	config.IncludePatterns = includePatterns
-	config.ExcludePatterns = excludePatterns
-
-	disableRules, err := getBoolFlag(cmd, "disable-rules")
-	if err != nil {
-		return err
-	}
-	config.RulesEnabled = !disableRules
-
-	// --- Common Config Setup (after mode-specific gathering) ---
-	if err := setupPathStrategy(cmd, &config); err != nil {
-		return err
-	}
-
-	// Add log AFTER setupPathStrategy
-	log.Debug("Strategy after setupPathStrategy",
-		"config_ptr", fmt.Sprintf("%p", &config),
-		"strategy_type", fmt.Sprintf("%T", config.Strategy),
-		"strategy_is_nil", config.Strategy == nil)
-
-	if err := loadRegistryMappings(cmd, &config); err != nil {
-		return err
-	}
-	logConfigMode(&config)
-	if err := validateUnmappableRegistries(&config); err != nil {
-		return err
-	}
-	// --- End Common Config Setup ---
-
-	// Call plugin-specific handler
-	return handleHelmPluginOverride(cmd, releaseName, namespace, &config, "", outputFile, dryRun)
-}
-
-// runOverrideStandaloneMode handles the logic when override is run in standalone mode.
+// runOverrideStandaloneMode handles override generation when running in standalone mode.
 func runOverrideStandaloneMode(cmd *cobra.Command, outputFile string, dryRun bool) error {
-	log.Debug("Standalone mode detected (no release name provided)")
-	// Call original setup which requires chart-path
-	config, err := setupGeneratorConfig(cmd, "") // releaseName is "" here
+	generatorConfig, err := setupGeneratorConfig(cmd, "")
 	if err != nil {
-		return err // Config setup failed
+		return err
 	}
 
-	// Read the context-aware flag
+	// Load registry mappings after setting up the basic config
+	if err := loadRegistryMappings(cmd, &generatorConfig); err != nil {
+		return err
+	}
+
+	// Add debug logging to check if mappings were loaded
+	if generatorConfig.Mappings != nil && len(generatorConfig.Mappings.Entries) > 0 {
+		log.Debug("Registry mappings loaded correctly in runOverrideStandaloneMode",
+			"entries_count", len(generatorConfig.Mappings.Entries))
+	} else {
+		log.Warn("No registry mappings loaded in runOverrideStandaloneMode")
+	}
+
 	contextAware, err := getBoolFlag(cmd, "context-aware")
 	if err != nil {
-		log.Warn("Failed to get context-aware flag, defaulting to false", "error", err)
-		contextAware = false
-	}
-
-	// Add logging after reading the flag:
-	log.Debug("Read context-aware flag", "value", contextAware)
-
-	// Auto-detect chart path if not provided
-	if config.ChartPath == "" { // Check config.ChartPath which setupGeneratorConfig sets
-		log.Info("No chart path provided, attempting to detect chart...")
-		var relativePath string // Declare relativePath
-		var detectErr error     // Declare detectErr
-		// Call the updated function and capture all return values
-		detectedPath, relativePath, detectErr := detectChartIfNeeded(AppFs, ".")
-		if detectErr != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitChartLoadFailed,
-				Err:  fmt.Errorf("chart path not provided and could not auto-detect chart: %w", detectErr),
-			}
-		}
-		config.ChartPath = detectedPath // Update config
-		// Log both paths for consistency, even if relativePath is unused here
-		log.Info("Using detected chart path", "absolute", detectedPath, "relative", relativePath)
-	}
-
-	// --- Common Config Setup (Re-insert this block) ---
-	if err := setupPathStrategy(cmd, &config); err != nil {
 		return err
 	}
-	// Log AFTER setupPathStrategy
-	log.Debug("Strategy after setupPathStrategy",
-		"config_ptr", fmt.Sprintf("%p", &config),
-		"strategy_type", fmt.Sprintf("%T", config.Strategy),
-		"strategy_is_nil", config.Strategy == nil)
-
-	if err := loadRegistryMappings(cmd, &config); err != nil {
-		return err
-	}
-	logConfigMode(&config)
-	if err := validateUnmappableRegistries(&config); err != nil {
-		return err
-	}
-	// --- End Common Config Setup ---
-
-	// Log which path is taken
-	if contextAware {
-		log.Debug("Executing context-aware generator path")
-	} else {
-		log.Debug("Executing legacy generator path")
-	}
-	chartSource := &ChartSource{
-		SourceType: ChartSourceTypeChart,
-		ChartPath:  config.ChartPath,
-	}
-
-	// Execute the generator - PASS the (presumably global) contextAware flag here
-	yamlBytes, err := createAndExecuteGenerator(chartSource, &config, contextAware)
+	yamlBytes, err := createAndExecuteGenerator(cmd, &generatorConfig, contextAware)
 	if err != nil {
-		return handleGenerateError(err) // Handles exit codes
+		return err
 	}
-
-	// Validate the generated overrides
-	noValidate, noValErr := getBoolFlag(cmd, "no-validate")
-	if noValErr != nil {
-		log.Warn("Failed to get no-validate flag, defaulting to false (validation will run)", "error", noValErr)
-		noValidate = false // Default to running validation if flag access fails
-	}
-
-	log.Debug("Standalone Mode Validation Check", "noValidateFlag", noValidate)
-
-	// If no-validate is false, run validation
-	if !noValidate {
-		log.Debug("Standalone Mode: Running internal validation.")
-
-		if err := validateChart(cmd, yamlBytes, &config, true, false, "", ""); err != nil {
-			return err
-		}
-	}
-
-	// Output the results
 	return outputOverrides(cmd, yamlBytes, outputFile, dryRun)
 }
 
 // runOverride is the main execution function for the override command
 func runOverride(cmd *cobra.Command, args []string) error {
-	// Determine if running in test mode
-	isTestMode, err := getBoolFlag(cmd, "test-mode")
-	if err != nil {
-		log.Warn("Failed to get test-mode flag, defaulting to false", "error", err)
-		isTestMode = false
-	}
+	log.Debug("Executing runOverride")
 
-	// Get release name and namespace
-	releaseName, namespace, err := getReleaseNameAndNamespace(cmd, args)
+	outputFile, dryRun, err := getOutputFlags(cmd, "")
 	if err != nil {
 		return err
 	}
 
-	// Handle test mode early if enabled
-	if isTestMode {
-		return handleTestModeOverride(cmd, releaseName)
-	}
+	isPlugin := isRunningAsHelmPlugin()
+	releaseName := ""
 
-	// Get output flags (needed regardless of mode)
-	outputFile, dryRun, err := getOutputFlags(cmd, releaseName)
-	if err != nil {
-		return err
+	if isPlugin {
+		log.Debug("Running in Helm Plugin mode")
+		if len(args) == 0 {
+			var getErr error
+			releaseName, getErr = getStringFlag(cmd, "release-name")
+			if getErr != nil {
+				return getErr
+			}
+			if releaseName == "" {
+				return &exitcodes.ExitCodeError{Code: exitcodes.ExitMissingRequiredFlag, Err: errors.New("release name required in plugin mode (provide as argument or --release-name flag)")}
+			}
+		}
+		log.Error("Helm plugin mode execution for override is not yet fully refactored. Please use standalone mode.")
+		return &exitcodes.ExitCodeError{Code: exitcodes.ExitGeneralRuntimeError, Err: errors.New("plugin mode not implemented after refactor")}
 	}
-
-	// Handle Helm plugin mode vs. Standalone mode
-	if releaseName != "" { // Plugin Mode
-		return runOverridePluginMode(cmd, releaseName, namespace, outputFile, dryRun)
-	}
-
-	// Standalone Mode
+	log.Debug("Running in Standalone mode")
 	return runOverrideStandaloneMode(cmd, outputFile, dryRun)
-}
-
-// getReleaseNameAndNamespace gets the release name and namespace from the command
-func getReleaseNameAndNamespace(cmd *cobra.Command, args []string) (releaseName, namespace string, err error) {
-	// Use common function to get release name and namespace
-	return getReleaseNameAndNamespaceCommon(cmd, args)
-}
-
-// handleHelmPluginOverride handles the override command when running as a Helm plugin
-func handleHelmPluginOverride(cmd *cobra.Command, releaseName, namespace string, config *GeneratorConfig, pathStrategy, outputFile string, dryRun bool) error {
-	// Add nil check for config
-	if config == nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitGeneralRuntimeError,
-			Err:  errors.New("internal error: generator config is nil in handleHelmPluginOverride"),
-		}
-	}
-
-	// Create a new Helm client and adapter
-	adapter, err := createHelmAdapter()
-	if err != nil {
-		return err
-	}
-
-	// Get command context
-	ctx := getCommandContext(cmd)
-
-	// Get the target registry
-	targetRegistry := config.TargetRegistry
-
-	// Add debug logging to troubleshoot nil pointer issue
-	log.Debug("handleHelmPluginOverride details", "releaseName", releaseName, "namespace", namespace, "targetRegistry", targetRegistry)
-	log.Debug("handleHelmPluginOverride sourceRegistries", "sourceRegistries", config.SourceRegistries)
-	log.Debug("handleHelmPluginOverride pathStrategy", "pathStrategy", pathStrategy)
-	log.Debug("handleHelmPluginOverride strictMode", "strictMode", config.StrictMode)
-
-	// Call the adapter's OverrideRelease method
-	overrideFile, err := adapter.OverrideRelease(ctx, releaseName, namespace, targetRegistry,
-		config.SourceRegistries, pathStrategy, internalhelm.OverrideOptions{
-			StrictMode: config.StrictMode,
-		})
-	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitHelmInteractionError,
-			Err:  fmt.Errorf("failed to override release: %w", err),
-		}
-	}
-
-	// Handle output based on different conditions - pass config parameter
-	return handlePluginOverrideOutput(cmd, string(overrideFile), outputFile, dryRun, releaseName, namespace, config)
-}
-
-// handlePluginOverrideOutput handles the output of the override operation
-// Remove the contextAware parameter
-func handlePluginOverrideOutput(cmd *cobra.Command, overrideFile, outputFile string, dryRun bool, releaseName, namespace string, config *GeneratorConfig) error {
-	switch {
-	case dryRun:
-		// Dry run mode - output to stdout with headers
-		if _, err := fmt.Fprintln(cmd.OutOrStdout(), "--- Dry Run: Generated Overrides ---"); err != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitGeneralRuntimeError,
-				Err:  fmt.Errorf("failed to write dry run header: %w", err),
-			}
-		}
-		if _, err := fmt.Fprintln(cmd.OutOrStdout(), overrideFile); err != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitGeneralRuntimeError,
-				Err:  fmt.Errorf("failed to write overrides in dry run mode: %w", err),
-			}
-		}
-		if _, err := fmt.Fprintln(cmd.OutOrStdout(), "--- End Dry Run ---"); err != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitGeneralRuntimeError,
-				Err:  fmt.Errorf("failed to write dry run footer: %w", err),
-			}
-		}
-	case outputFile != "":
-		// Use the common file handling utility
-		err := writeOutputFile(outputFile, []byte(overrideFile), "Successfully wrote overrides to %s")
-		if err != nil {
-			return err
-		}
-	default:
-		// Just output to stdout
-		_, err := fmt.Fprintln(cmd.OutOrStdout(), overrideFile)
-		if err != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitGeneralRuntimeError,
-				Err:  fmt.Errorf("failed to write overrides to stdout: %w", err),
-			}
-		}
-	}
-	// Validate the chart with overrides if requested - pass config parameter
-	return validatePluginOverrides(cmd, overrideFile, outputFile, dryRun, releaseName, namespace, config)
-}
-
-// validatePluginOverrides validates the generated overrides using Helm template.
-// Remove the contextAware parameter
-func validatePluginOverrides(cmd *cobra.Command, overrideFile, outputFile string, dryRun bool, releaseName, namespace string, config *GeneratorConfig) error {
-	log.Debug("Entering validatePluginOverrides", "overrideFile", overrideFile, "outputFile", outputFile, "dryRun", dryRun)
-
-	// Get the --no-validate flag value
-	noValidate, err := cmd.Flags().GetBool("no-validate")
-	if err != nil {
-		log.Error("Failed to read --no-validate flag", "error", err)
-		noValidate = false // Default to validating if flag access fails
-	}
-
-	log.Debug("Plugin Mode Validation Check", "noValidateFlag", noValidate)
-
-	// Skip validation if --no-validate is set
-	if noValidate {
-		log.Info("Skipping validation due to --no-validate flag.")
-		return nil
-	}
-
-	// If we reach here, validation should run.
-	log.Debug("Plugin Mode: Proceeding with internal validation.")
-
-	// If dry-run, validation should still conceptually happen, but we don't read a file.
-	// The overrideFile variable in dry-run mode should contain the YAML content directly.
-
-	var yamlBytes []byte
-	if dryRun {
-		// In dry-run, overrideFile argument holds the content, not a path
-		yamlBytes = []byte(overrideFile)
-		log.Debug("Dry-run mode: Using override content directly for validation")
-	} else {
-		// Read the generated override file content if not dry-run
-		yamlBytes, err = os.ReadFile(overrideFile) // #nosec G304 - overrideFile is generated by this process, not user-supplied
-		if err != nil {
-			log.Error("Failed to read generated override file for validation", "file", overrideFile, "error", err)
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitHelmCommandFailed, // Use existing code for validation failure
-				Err:  fmt.Errorf("failed to read generated override file '%s': %w", overrideFile, err),
-			}
-		}
-	}
-
-	// Perform the validation using the common validateChart function
-	log.Info("Validating generated overrides with Helm template...")
-	if err := validateChart(cmd, yamlBytes, config, false, true, releaseName, namespace); err != nil {
-		log.Error("Validation failed: Chart could not be rendered with generated overrides.", "error", err)
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitHelmCommandFailed, // Use existing code for validation failure
-			Err:  fmt.Errorf("validation failed: %w", err),
-		}
-	}
-
-	log.Info("Validation successful.")
-	return nil
-}
-
-// handleTestModeOverride handles the override logic when running in test mode.
-func handleTestModeOverride(cmd *cobra.Command, releaseName string) error {
-	// Get output flags
-	outputFile, dryRun, err := getOutputFlags(cmd, releaseName)
-	if err != nil {
-		return err
-	}
-
-	releaseNameProvided := releaseName != "" && isRunningAsHelmPlugin()
-
-	// Log what we're doing
-	if releaseNameProvided {
-		log.Info("Using release name from positional argument", "releaseName", releaseName)
-	} else {
-		chartPath, err := cmd.Flags().GetString("chart-path")
-		if err != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitInputConfigurationError,
-				Err:  fmt.Errorf("failed to get chart-path flag: %w", err),
-			}
-		}
-		log.Info("Using chart path", "path", chartPath)
-	}
-
-	// Get validation flag status based on --no-validate
-	noValidate, err := cmd.Flags().GetBool("no-validate")
-	if err != nil {
-		// Log error but assume validation should run if flag access fails in test mode?
-		// Or maybe assume validation is skipped? Let's assume skipped for safety in test helper.
-		log.Warn("Failed to get no-validate flag in test mode, assuming validation is skipped", "error", err)
-		noValidate = true
-	}
-	shouldValidate := !noValidate // Determine if validation should happen
-
-	// Create mock output
-	yamlContent := "mock: true\ngenerated: true\n"
-	if releaseNameProvided {
-		yamlContent += fmt.Sprintf("release: %s\n", releaseName)
-
-		// Add namespace information for tests
-		namespace, err := getStringFlag(cmd, "namespace")
-		if err != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitInputConfigurationError,
-				Err:  fmt.Errorf("failed to get namespace flag: %w", err),
-			}
-		}
-		if namespace == "" {
-			namespace = validateTestNamespace
-		}
-		yamlContent += fmt.Sprintf("namespace: %s\n", namespace)
-	}
-
-	targetRegistry, err := cmd.Flags().GetString("target-registry")
-	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get target-registry flag: %w", err),
-		}
-	}
-	if targetRegistry != "" {
-		yamlContent += fmt.Sprintf("targetRegistry: %s\n", targetRegistry)
-	}
-
-	// Create the output file if specified
-	switch {
-	case outputFile != "" && !dryRun:
-		if mkDirErr := AppFs.MkdirAll(filepath.Dir(outputFile), fileutil.ReadWriteExecuteUserReadExecuteOthers); mkDirErr != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitGeneralRuntimeError,
-				Err:  fmt.Errorf("failed to create output directory: %w", mkDirErr),
-			}
-		}
-		exists, checkErr := afero.Exists(AppFs, outputFile)
-		if checkErr != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitIOError,
-				Err:  fmt.Errorf("failed to check if output file exists: %w", checkErr),
-			}
-		}
-		if exists {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitIOError,
-				Err:  fmt.Errorf("output file '%s' already exists", outputFile),
-			}
-		}
-		if writeErr := afero.WriteFile(AppFs, outputFile, []byte(yamlContent), fileutil.ReadWriteUserReadOthers); writeErr != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitGeneralRuntimeError,
-				Err:  fmt.Errorf("failed to write override file: %w", writeErr),
-			}
-		}
-		log.Info("Successfully wrote overrides to %s", outputFile)
-	case dryRun:
-		if _, err := fmt.Fprintln(cmd.OutOrStdout(), "--- Dry Run: Generated Overrides ---"); err != nil {
-			return fmt.Errorf("failed to write dry run header: %w", err) // Wrap error
-		}
-		if _, err := fmt.Fprintln(cmd.OutOrStdout(), yamlContent); err != nil {
-			return fmt.Errorf("failed to write overrides in dry run mode: %w", err) // Wrap error
-		}
-
-		// Add validation output to dry run if requested
-		if shouldValidate { // Check the derived validation status
-			if _, err := fmt.Fprintln(cmd.OutOrStdout(), "Validation successful! Chart renders correctly with overrides."); err != nil {
-				return &exitcodes.ExitCodeError{
-					Code: exitcodes.ExitGeneralRuntimeError,
-					Err:  fmt.Errorf("failed to write validation success message: %w", err),
-				}
-			}
-		}
-	default:
-		// Default case: Output to stdout when no file is specified and not dry run
-		if _, err := fmt.Fprintln(cmd.OutOrStdout(), yamlContent); err != nil {
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitGeneralRuntimeError,
-				Err:  fmt.Errorf("failed to write override content to stdout: %w", err),
-			}
-		}
-	}
-
-	return nil
-}
-
-// validateChart validates a chart with the generated overrides
-func validateChart(cmd *cobra.Command, yamlBytes []byte, config *GeneratorConfig, loadFromPath, loadFromRelease bool, releaseName, namespace string) error {
-	// Add nil check for config
-	if config == nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitGeneralRuntimeError,
-			Err:  errors.New("internal error: generator config is nil in validateChart"),
-		}
-	}
-
-	// Create a temporary file to store the overrides
-	tempFile, err := afero.TempFile(AppFs, "", "irr-override-*.yaml")
-	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitIOError,
-			Err:  fmt.Errorf("failed to create temporary file for validation: %w", err),
-		}
-	}
-	// Add explicit nil check, as afero.TempFile might theoretically return (nil, nil)
-	if tempFile == nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitIOError,
-			Err:  errors.New("failed to create temporary file: file handle is nil"),
-		}
-	}
-	defer func() {
-		if err := tempFile.Close(); err != nil {
-			log.Warn("Failed to close temporary file", "error", err)
-		}
-		if err := AppFs.Remove(tempFile.Name()); err != nil {
-			log.Warn("Failed to remove temporary file", "error", err)
-		}
-	}()
-
-	// Write the overrides to the temporary file
-	if _, err := tempFile.Write(yamlBytes); err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitIOError,
-			Err:  fmt.Errorf("failed to write overrides to temporary file: %w", err),
-		}
-	}
-
-	// Get Helm version flag
-	kubeVersion, err := cmd.Flags().GetString("kube-version")
-	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  fmt.Errorf("failed to get kube-version flag: %w", err),
-		}
-	}
-	// If not specified, use default
-	if kubeVersion == "" {
-		kubeVersion = DefaultKubernetesVersion
-	}
-
-	// Get strict mode flag
-	strictMode := config.StrictMode
-
-	var validationResult string
-	switch {
-	case loadFromPath:
-		// Validate chart with overrides
-		validationResult, err = validateChartWithFiles(config.ChartPath, "", "", []string{tempFile.Name()}, strictMode, kubeVersion)
-	case loadFromRelease:
-		// For release, use adapter to validate
-		adapter, adapterErr := createHelmAdapter()
-		if adapterErr != nil {
-			return adapterErr
-		}
-
-		// Get command context
-		ctx := getCommandContext(cmd)
-
-		// Validate the release with the overrides
-		valErr := adapter.ValidateRelease(ctx, releaseName, namespace, []string{tempFile.Name()}, kubeVersion)
-		if valErr != nil {
-			err = &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitHelmCommandFailed,
-				Err:  fmt.Errorf("failed to validate release: %w", valErr),
-			}
-		} else {
-			validationResult = "Validation successful! Chart renders correctly with overrides."
-		}
-	default:
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitInputConfigurationError,
-			Err:  errors.New("internal error: neither loadFromPath nor loadFromRelease is true"),
-		}
-	}
-
-	if err != nil {
-		return &exitcodes.ExitCodeError{
-			Code: exitcodes.ExitHelmCommandFailed,
-			Err:  fmt.Errorf("failed to validate chart with overrides: %w", err),
-		}
-	}
-
-	log.Info(validationResult)
-	return nil
 }
 
 // isStdOutRequested returns true if output should go to stdout (either specifically requested or dry-run mode)

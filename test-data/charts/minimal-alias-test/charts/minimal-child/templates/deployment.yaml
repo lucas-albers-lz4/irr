@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-minimal-child
+  labels:
+    app: minimal-child
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minimal-child
+  template:
+    metadata:
+      labels:
+        app: minimal-child
+    spec:
+      containers:
+        - name: main
+          image: "{{ .Values.image.registry }}/{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: IfNotPresent 

@@ -264,10 +264,10 @@ func TestSanitizeRegistryForPath(t *testing.T) {
 		expected string
 	}{
 		{"docker.io", "docker.io"},
-		{"quay.io", "quayio"},
-		{"k8s.gcr.io", "k8sgcrio"},
+		{"quay.io", "quay.io"},
+		{"k8s.gcr.io", "k8s.gcr.io"},
 		{"registry:5000", "registry"},
-		{"internal-registry.example.com:5000", "internal-registryexamplecom"},
+		{"internal-registry.example.com:5000", "internal-registry.example.com"},
 	}
 
 	for _, tc := range tests {

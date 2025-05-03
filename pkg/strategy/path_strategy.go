@@ -3,7 +3,6 @@ package strategy
 
 import (
 	"fmt"
-	"path"
 	"strings"
 
 	"github.com/lucas-albers-lz4/irr/pkg/image"
@@ -11,10 +10,8 @@ import (
 	"github.com/lucas-albers-lz4/irr/pkg/registry"
 )
 
-const (
-	// maxSplitTwo is used when splitting strings into at most two parts
-	maxSplitTwo = 2
-)
+// DefaultLibraryRepoPrefix is the prefix used for official Docker Hub images.
+const DefaultLibraryRepoPrefix = "library" // Duplicated from pkg/analysis to avoid import cycle.
 
 // PathStrategy defines the interface for generating new image paths.
 type PathStrategy interface {
@@ -24,13 +21,13 @@ type PathStrategy interface {
 }
 
 // GetStrategy returns a path strategy based on the name
-func GetStrategy(name string, _ *registry.Mappings) (PathStrategy, error) {
+func GetStrategy(name string, mappings *registry.Mappings) (PathStrategy, error) {
 	log.Debug("GetStrategy: Getting strategy for name", "name", name)
 
 	switch name {
 	case "prefix-source-registry":
 		log.Debug("GetStrategy: Using PrefixSourceRegistryStrategy")
-		return NewPrefixSourceRegistryStrategy(), nil
+		return NewPrefixSourceRegistryStrategy(mappings), nil
 	case "flat":
 		log.Debug("GetStrategy: Using FlatStrategy")
 		return NewFlatStrategy(), nil
@@ -42,52 +39,70 @@ func GetStrategy(name string, _ *registry.Mappings) (PathStrategy, error) {
 
 // PrefixSourceRegistryStrategy uses the source registry as a prefix in the new path.
 // Example: docker.io/library/nginx -> target-registry.com/docker.io/library/nginx
-type PrefixSourceRegistryStrategy struct{}
-
-// NewPrefixSourceRegistryStrategy creates a new PrefixSourceRegistryStrategy.
-func NewPrefixSourceRegistryStrategy() *PrefixSourceRegistryStrategy {
-	return &PrefixSourceRegistryStrategy{}
+type PrefixSourceRegistryStrategy struct {
+	mappings *registry.Mappings
 }
 
-// GeneratePath implements the PathStrategy interface.
-func (s *PrefixSourceRegistryStrategy) GeneratePath(originalRef *image.Reference, targetRegistry string) (string, error) {
-	if originalRef == nil {
-		return "", fmt.Errorf("cannot generate path for nil reference")
+// NewPrefixSourceRegistryStrategy creates a new PrefixSourceRegistryStrategy.
+func NewPrefixSourceRegistryStrategy(mappings *registry.Mappings) *PrefixSourceRegistryStrategy {
+	return &PrefixSourceRegistryStrategy{
+		mappings: mappings,
 	}
+}
 
-	log.Debug("PrefixSourceRegistryStrategy: Generating path for original reference", "originalRef", originalRef)
-	log.Debug("PrefixSourceRegistryStrategy: Target registry", "targetRegistry", targetRegistry)
+// GeneratePath constructs a target path by prefixing the
+// original repository path with the sanitized source registry name.
+// Example: docker.io/library/nginx -> <target_registry>/docker.io/library/nginx
+func (s *PrefixSourceRegistryStrategy) GeneratePath(imgRef *image.Reference, effectiveTargetRegistry string) (string, error) {
+	log.Debug("PrefixSourceRegistryStrategy: Generating path for original reference", "originalRef", imgRef)
+	log.Debug("PrefixSourceRegistryStrategy: Target registry", "targetRegistry", effectiveTargetRegistry)
 
-	// Split repository into org/name parts
-	repoPathParts := strings.SplitN(originalRef.Repository, "/", maxSplitTwo)
-
-	// Always use the sanitized source registry name as the prefix
-	pathPrefix := image.SanitizeRegistryForPath(originalRef.Registry)
-	log.Debug("PrefixSourceRegistryStrategy: Using sanitized source registry prefix", "pathPrefix", pathPrefix)
-
-	// --- Base Repository Path Calculation (Keep existing logic) ---
-	// Ensure we only use the repository path part, excluding any original registry prefix
-	baseRepoPath := originalRef.Repository
-	if len(repoPathParts) > 1 {
-		if len(repoPathParts) > 1 && (strings.Contains(repoPathParts[0], ".") || strings.Contains(repoPathParts[0], ":") || repoPathParts[0] == "localhost") {
-			// Heuristic: First part looks like a registry (contains '.' or ':'), so strip it.
-			// This handles cases like "quay.io/prometheus/node-exporter"
-			log.Debug("PrefixSourceRegistryStrategy: Stripping potential registry prefix", "repoPathParts", repoPathParts[0], "originalRef.Repository", originalRef.Repository)
-			baseRepoPath = strings.Join(repoPathParts[1:], "/")
+	// IMPORTANT: The chart.Generator already handles registry mappings and passes us the
+	// effectiveTargetRegistry. We should NOT do mapping lookups again, as that creates
+	// a double-handling situation.
+	//
+	// However, we keep this logic for backward compatibility with direct usage of the strategy.
+	// In normal usage through the generator, this code shouldn't be reached since
+	// effectiveTargetRegistry would already be set correctly.
+	if effectiveTargetRegistry == "" && s.mappings != nil {
+		if mappedTarget := s.mappings.GetTargetRegistry(imgRef.Registry); mappedTarget != "" {
+			log.Debug("PrefixSourceRegistryStrategy: Found registry mapping", "source", imgRef.Registry, "target", mappedTarget)
+			// Extract the repository path from the mapped target
+			if strings.Contains(mappedTarget, "/") {
+				// If the mapped target contains a path, use it as a prefix
+				log.Debug("PrefixSourceRegistryStrategy: Using mapped target path as prefix", "mappedTarget", mappedTarget)
+				return fmt.Sprintf("%s/%s", strings.TrimSuffix(mappedTarget, "/"), imgRef.Repository), nil
+			}
+			// Store the mapped target for use in path construction
+			effectiveTargetRegistry = mappedTarget
+			log.Debug("PrefixSourceRegistryStrategy: Updated effective target registry", "effectiveTargetRegistry", effectiveTargetRegistry)
 		}
 	}
-	log.Debug("PrefixSourceRegistryStrategy: Using base repository path", "baseRepoPath", baseRepoPath)
 
-	// Handle Docker Hub official images (add library/ prefix if needed)
-	if (image.NormalizeRegistry(originalRef.Registry) == "docker.io") && !strings.Contains(baseRepoPath, "/") {
-		log.Debug("PrefixSourceRegistryStrategy: Prepending 'library/' to Docker Hub image path", "baseRepoPath", baseRepoPath)
-		baseRepoPath = path.Join("library", baseRepoPath)
+	// Normalize the registry name for path-friendly formatting
+	normalizedReg := image.NormalizeRegistry(imgRef.Registry)
+	log.Debug("NormalizeRegistry: Input '%s' -> Normalized '%s'", imgRef.Registry, normalizedReg)
+
+	// Generate path prefix for the repository
+	// Important: For compatibility with tests and expected behavior, we need to
+	// preserve the original registry name (with dots) in the repository path.
+
+	// Get the original repository path
+	finalRepo := imgRef.Repository
+
+	// Handle Docker Hub official images
+	if normalizedReg == image.DefaultRegistry && !strings.Contains(finalRepo, "/") {
+		// This is a Docker Hub official image (e.g., "nginx" without a namespace)
+		// We prepend the "library/" prefix as per Docker Hub convention
+		finalRepo = DefaultLibraryRepoPrefix + "/" + finalRepo
+		log.Debug("PrefixSourceRegistryStrategy: Prepended 'library/' to Docker Hub image path", "baseRepoPath", finalRepo)
 	}
-	// --- End Base Repository Path Calculation ---
 
-	// Return only the base path. Prefixing is handled by the caller (Generator.determineTargetPathAndRegistry)
-	log.Debug("PrefixSourceRegistryStrategy: Returning base repo path", "baseRepoPath", baseRepoPath)
-	return baseRepoPath, nil
+	// Preserve the original registry with dots in the path
+	finalPath := fmt.Sprintf("%s/%s", normalizedReg, finalRepo)
+	log.Debug("PrefixSourceRegistryStrategy: Returning final path", "finalPath", finalPath)
+
+	return finalPath, nil
 }
 
 // FlatStrategy creates a flat path by replacing slashes with dashes.

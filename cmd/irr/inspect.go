@@ -40,18 +40,20 @@ type ChartInfo struct {
 
 // ImageInfo represents image information found in the chart
 type ImageInfo struct {
-	Registry   string `json:"registry" yaml:"registry"`
-	Repository string `json:"repository" yaml:"repository"`
-	Tag        string `json:"tag,omitempty" yaml:"tag,omitempty"`
-	Digest     string `json:"digest,omitempty" yaml:"digest,omitempty"`
-	Source     string `json:"source" yaml:"source"`
+	Registry         string `json:"registry" yaml:"registry"`                                     // The registry detected (might be default)
+	Repository       string `json:"repository" yaml:"repository"`                                 // The repository path
+	Tag              string `json:"tag,omitempty" yaml:"tag,omitempty"`                           // The tag, if present
+	Digest           string `json:"digest,omitempty" yaml:"digest,omitempty"`                     // The digest, if present
+	Source           string `json:"source" yaml:"source"`                                         // The dot-notation path in values where found
+	OriginalRegistry string `json:"originalRegistry,omitempty" yaml:"originalRegistry,omitempty"` // Added: Original registry from source if different
+	ValuePath        string `json:"valuePath,omitempty" yaml:"valuePath,omitempty"`               // Added: Full path from context-aware analysis
 }
 
 // ImageAnalysis represents the result of analyzing a chart for images
 type ImageAnalysis struct {
 	Chart         ChartInfo               `json:"chart" yaml:"chart"`
 	Images        []ImageInfo             `json:"images" yaml:"images"`
-	ImagePatterns []analyzer.ImagePattern `json:"imagePatterns" yaml:"imagePatterns"`
+	ImagePatterns []analysis.ImagePattern `json:"imagePatterns" yaml:"imagePatterns"`
 	Errors        []string                `json:"errors,omitempty" yaml:"errors,omitempty"`
 	Skipped       []string                `json:"skipped,omitempty" yaml:"skipped,omitempty"`
 }
@@ -475,13 +477,10 @@ func setupAnalyzerAndLoadChart(cmd *cobra.Command, flags *InspectFlags) (string,
 		}
 	}
 
-	// Convert analysis.ImagePattern to analyzer.ImagePattern for compatibility
-	analyzerImagePatterns := convertAnalysisPatternsToAnalyzerPatterns(chartAnalysisResult.ImagePatterns)
+	// Process image patterns using the original analysis patterns
+	images, skipped := processImagePatterns(chartAnalysisResult.ImagePatterns)
 
-	// Process image patterns using the converted type
-	images, skipped := processImagePatterns(analyzerImagePatterns)
-
-	// Create image analysis for the CLI output, using the converted patterns
+	// Create image analysis for the CLI output, using the original patterns
 	analysisResult := &ImageAnalysis{
 		Chart: ChartInfo{
 			Name:         chartAnalysisContext.Chart.Metadata.Name,
@@ -490,7 +489,7 @@ func setupAnalyzerAndLoadChart(cmd *cobra.Command, flags *InspectFlags) (string,
 			Dependencies: len(chartAnalysisContext.Chart.Dependencies()),
 		},
 		Images:        images,
-		ImagePatterns: analyzerImagePatterns,
+		ImagePatterns: chartAnalysisResult.ImagePatterns, // Use original patterns
 		Skipped:       skipped,
 	}
 
@@ -522,7 +521,7 @@ func filterImagesBySourceRegistries(_ *cobra.Command, flags *InspectFlags, analy
 
 	// Also filter imagePatterns (simple approach: remove if no resulting image matches)
 	// A more robust approach might analyze pattern structure itself.
-	filteredPatterns := make([]analyzer.ImagePattern, 0, len(analysisResult.ImagePatterns))
+	filteredPatterns := make([]analysis.ImagePattern, 0, len(analysisResult.ImagePatterns))
 	for _, pattern := range analysisResult.ImagePatterns {
 		imgRef, err := image.ParseImageReference(pattern.Value) // Assuming pattern.Value holds the image string or similar
 		if err == nil {
@@ -631,17 +630,13 @@ func inspectHelmRelease(cmd *cobra.Command, flags *InspectFlags, releaseName, na
 			Err:  fmt.Errorf("release values analysis failed: %w", analysisErr),
 		}
 	}
-
-	// Process image patterns found in values
-	images, skipped := processImagePatterns(analysisPatterns)
-
-	// Create analysis result
+	convertedPatterns := convertAnalyzerPatternsToAnalysis(analysisPatterns)
+	images, skipped := processImagePatterns(convertedPatterns)
 	analysisResult := &ImageAnalysis{
 		Chart:         chartInfo,
 		Images:        images,
-		ImagePatterns: analysisPatterns, // Patterns found in values
+		ImagePatterns: convertedPatterns,
 		Skipped:       skipped,
-		// Errors from analysis are included in the error return above
 	}
 
 	// Apply source registry filtering if needed
@@ -883,78 +878,49 @@ func getAnalysisPatterns(cmd *cobra.Command) (includePatterns, excludePatterns [
 	return includePatterns, excludePatterns, nil
 }
 
-// processImagePatterns converts analyzer.ImagePattern structs into ImageInfo structs,
+// processImagePatterns converts analysis.ImagePattern structs into ImageInfo structs,
 // attempting to parse image references and logging skipped patterns.
-func processImagePatterns(patterns []analyzer.ImagePattern) (images []ImageInfo, skipped []string) {
+func processImagePatterns(patterns []analysis.ImagePattern) (images []ImageInfo, skipped []string) {
 	images = make([]ImageInfo, 0, len(patterns))
 	skipped = make([]string, 0)
+	seen := make(map[string]bool)
 
-	for _, pattern := range patterns {
-		// Handle Map-based patterns
-		if pattern.Type == "map" && pattern.Structure != nil {
-			// Attempt to reconstruct the full image string from the structured map
-			reg := image.DefaultRegistry // Use imported constant
-			repo := pattern.Structure.Repository
-			tag := "latest" // Default tag
-
-			if pattern.Structure.Registry != "" {
-				reg = pattern.Structure.Registry
-			}
-			if pattern.Structure.Tag != "" {
-				tag = pattern.Structure.Tag
-			}
-
-			if repo == "" {
-				skipped = append(skipped, fmt.Sprintf("%s (map type): missing repository field", pattern.Path))
-				continue
-			}
-
-			// Normalize registry (e.g., add library/ for docker.io)
-			if reg == image.DefaultRegistry && !strings.Contains(repo, "/") {
-				repo = "library/" + repo
-			}
-
-			imageRefStr := fmt.Sprintf("%s/%s:%s", reg, repo, tag)
-
-			// Parse the reconstructed image reference
-			imgRef, err := image.ParseImageReference(imageRefStr)
-			if err != nil {
-				skipped = append(skipped, fmt.Sprintf("%s (map type: %s): %v", pattern.Path, imageRefStr, err))
-				continue
-			}
-
-			images = append(images, ImageInfo{
-				Registry:   imgRef.Registry,
-				Repository: imgRef.Repository,
-				Tag:        imgRef.Tag,
-				Digest:     imgRef.Digest,
-				Source:     pattern.Path, // Path is already string
-			})
-			continue // Move to the next pattern
+	for _, p := range patterns {
+		if p.Value == "" {
+			log.Debug("Skipping pattern with empty value", "path", p.Path)
+			continue
 		}
 
-		// Handle String-based patterns
-		if pattern.Type == "string" {
-			imgRef, err := image.ParseImageReference(pattern.Value)
-			if err != nil {
-				skipped = append(skipped, fmt.Sprintf("%s (string type: %s): %v", pattern.Path, pattern.Value, err))
-				continue
-			}
+		// Use p.Path (merged value path) for deduplication key
+		dedupeKey := p.Path
+		if seen[dedupeKey] {
+			log.Debug("Skipping duplicate image pattern path", "mergedPath", dedupeKey)
+			continue
+		}
+		seen[dedupeKey] = true
 
-			images = append(images, ImageInfo{
-				Registry:   imgRef.Registry,
-				Repository: imgRef.Repository,
-				Tag:        imgRef.Tag,
-				Digest:     imgRef.Digest,
-				Source:     pattern.Path, // Path is already string
-			})
-			continue // Move to the next pattern
+		// Attempt to parse the image reference
+		imgRef, err := image.ParseImageReference(p.Value)
+		if err != nil {
+			log.Warn("Failed to parse image reference, skipping", "path", p.Path, "value", p.Value, "error", err)
+			// Use dedupeKey (merged value path) in the skipped message for clarity
+			skipped = append(skipped, fmt.Sprintf("%s: %s (parse error: %v)", dedupeKey, p.Value, err))
+			continue
 		}
 
-		// Skip other pattern types
-		skipped = append(skipped, fmt.Sprintf("%s (type %s): skipping direct processing", pattern.Path, pattern.Type))
+		info := ImageInfo{
+			Registry:   imgRef.Registry,
+			Repository: imgRef.Repository,
+			Tag:        imgRef.Tag,
+			Digest:     imgRef.Digest,
+			Source:     p.SourceOrigin,
+			ValuePath:  p.Path,
+		}
+		if p.OriginalRegistry != "" && p.OriginalRegistry != info.Registry {
+			info.OriginalRegistry = p.OriginalRegistry
+		}
+		images = append(images, info)
 	}
-
 	return images, skipped
 }
 
@@ -1222,22 +1188,21 @@ func analyzeRelease(release *helm.ReleaseElement, helmAdapter *helm.Adapter, fla
 	if analysisErr != nil {
 		return nil, nil, fmt.Errorf("analysis failed for release %s/%s: %w", release.Namespace, release.Name, analysisErr)
 	}
-
-	// Process image patterns found in values
-	originalImages, skipped := processImagePatterns(analysisPatterns)
+	convertedPatterns := convertAnalyzerPatternsToAnalysis(analysisPatterns)
+	images, skipped := processImagePatterns(convertedPatterns)
 
 	// Create analysis result structure
 	analysisResult := ImageAnalysis{
 		Chart:         chartInfo,
-		Images:        originalImages, // Start with original images
-		ImagePatterns: analysisPatterns,
+		Images:        images,
+		ImagePatterns: convertedPatterns,
 		Skipped:       skipped,
 	}
 
 	// --- Filtering Logic ---
 	// Keep a copy of original images for skeleton generation, even if filtered for output
-	unfilteredImagesForSkeleton := make([]ImageInfo, len(originalImages))
-	copy(unfilteredImagesForSkeleton, originalImages)
+	unfilteredImagesForSkeleton := make([]ImageInfo, len(images))
+	copy(unfilteredImagesForSkeleton, images)
 
 	// Apply source registry filtering if needed FOR THE OUTPUT ANALYSIS
 	if len(flags.SourceRegistries) > 0 {
@@ -1250,7 +1215,7 @@ func analyzeRelease(release *helm.ReleaseElement, helmAdapter *helm.Adapter, fla
 
 		// Filter images for the output
 		filteredImagesForOutput := make([]ImageInfo, 0)
-		for _, img := range originalImages { // Iterate original images
+		for _, img := range images { // Iterate original images
 			normalizedRegistry := image.NormalizeRegistry(img.Registry)
 			if registryMap[normalizedRegistry] {
 				filteredImagesForOutput = append(filteredImagesForOutput, img)
@@ -1635,32 +1600,36 @@ func extractImagesFromContainers(podSpec map[string]interface{}, containerType s
 	}
 }
 
-// convertAnalysisPatternsToAnalyzerPatterns converts the analysis package patterns
-// to the analyzer package patterns for compatibility with existing functions.
-func convertAnalysisPatternsToAnalyzerPatterns(analysisPatterns []analysis.ImagePattern) []analyzer.ImagePattern {
-	analyzerPatterns := make([]analyzer.ImagePattern, 0, len(analysisPatterns))
-	for _, ap := range analysisPatterns {
-		var azStruct *analyzer.ImageStructure
-		if ap.Type == analysis.PatternTypeMap && ap.Structure != nil {
-			azStruct = &analyzer.ImageStructure{}
-			if reg, ok := ap.Structure["registry"].(string); ok {
-				azStruct.Registry = reg
-			}
-			if repo, ok := ap.Structure["repository"].(string); ok {
-				azStruct.Repository = repo
-			}
-			if tag, ok := ap.Structure["tag"].(string); ok {
-				azStruct.Tag = tag
-			}
-		}
-
-		analyzerPatterns = append(analyzerPatterns, analyzer.ImagePattern{
-			Path:      ap.Path,
-			Type:      string(ap.Type),
-			Value:     ap.Value,
-			Structure: azStruct,
-			Count:     ap.Count,
-		})
+// Helper to convert *analyzer.ImageStructure to map[string]interface{}
+func analyzerImageStructureToMap(s *analyzer.ImageStructure) map[string]interface{} {
+	if s == nil {
+		return nil
 	}
-	return analyzerPatterns
+	m := make(map[string]interface{})
+	if s.Registry != "" {
+		m["registry"] = s.Registry
+	}
+	if s.Repository != "" {
+		m["repository"] = s.Repository
+	}
+	if s.Tag != "" {
+		m["tag"] = s.Tag
+	}
+	return m
+}
+
+// Helper to convert []analyzer.ImagePattern to []analysis.ImagePattern (only common fields)
+func convertAnalyzerPatternsToAnalysis(src []analyzer.ImagePattern) []analysis.ImagePattern {
+	result := make([]analysis.ImagePattern, len(src))
+	for i, p := range src {
+		result[i] = analysis.ImagePattern{
+			Path:      p.Path,
+			Type:      analysis.PatternType(p.Type),
+			Structure: analyzerImageStructureToMap(p.Structure),
+			Value:     p.Value,
+			Count:     p.Count,
+			// analyzer.ImagePattern does not have OriginalRegistry, SourceOrigin, SourceChartAppVersion
+		}
+	}
+	return result
 }

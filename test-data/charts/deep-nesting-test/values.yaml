@@ -1,0 +1,47 @@
+# Deep nesting test values
+level1:
+  level2:
+    level3:
+      level4:
+        level5:
+          image:
+            registry: docker.io
+            repository: deepnest/extreme-depth
+            tag: "v1.2.3"
+            
+# Deeply nested array with image
+services:
+  frontend:
+    containers:
+      - name: main
+        image:
+          registry: quay.io
+          repository: frontend/webapp
+          tag: "stable"
+      - name: sidecar
+        image:
+          registry: ghcr.io
+          repository: sidecar/proxy
+          tag: "latest"
+          
+  backend:
+    containers:
+      - name: api
+        image:
+          registry: mcr.microsoft.com
+          repository: backend/api
+          tag: "v2.0"
+          
+# Regular nested image for comparison
+normalImage:
+  registry: docker.io
+  repository: library/nginx
+  tag: "1.21.6"
+  
+# Minimal-child overrides for more depth
+minimal-child:
+  nestedStruct:
+    deeperImage:
+      registry: docker.io
+      repository: subchart/deep-image
+      tag: "alpha" 

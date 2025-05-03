@@ -3,6 +3,7 @@ package integration
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -13,6 +14,7 @@ import (
 
 	"log/slog"
 
+	"github.com/lucas-albers-lz4/irr/pkg/analysis"
 	"github.com/lucas-albers-lz4/irr/pkg/fileutil"
 	"github.com/lucas-albers-lz4/irr/pkg/image"
 	"github.com/lucas-albers-lz4/irr/pkg/log"
@@ -1160,4 +1162,36 @@ func (h *TestHarness) RunIrrCommand(args ...string) (stdout, stderr string, exit
 	}
 
 	return output, errOut, exitCode
+}
+
+// ExecuteAnalysisOnly runs irr inspect and returns the parsed analysis result.
+// TODO: Implement the actual command execution and parsing logic.
+func (h *TestHarness) ExecuteAnalysisOnly(chartPath string, extraArgs ...string) (*analysis.ChartAnalysis, error) {
+	h.t.Helper()
+	h.logger.Info("Executing analysis only (placeholder)", "chartPath", chartPath)
+
+	// Placeholder implementation: Replace with actual command execution
+	args := []string{
+		"inspect",
+		"--chart-path", chartPath,
+		"--output-format", "json", // Assuming JSON output is easiest to parse
+	}
+	args = append(args, extraArgs...)
+
+	// Need to run the command and capture/parse JSON output
+	// For now, return a dummy result or error
+	stdout, stderr, err := h.ExecuteIRRWithStderr(nil, true, args...)
+	if err != nil {
+		h.logger.Error("Analysis command execution failed", "stderr", stderr, "error", err)
+		return nil, fmt.Errorf("analysis command failed: %w\nstderr: %s", err, stderr)
+	}
+
+	// Parse stdout JSON into analysis.ChartAnalysis
+	var analysisResult analysis.ChartAnalysis
+	if parseErr := json.Unmarshal([]byte(stdout), &analysisResult); parseErr != nil {
+		h.logger.Error("Failed to parse analysis JSON output", "stdout", stdout, "error", parseErr)
+		return nil, fmt.Errorf("failed to parse analysis JSON: %w", parseErr)
+	}
+
+	return &analysisResult, nil
 }

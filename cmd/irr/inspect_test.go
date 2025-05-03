@@ -2,12 +2,13 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"testing"
 
 	"github.com/lucas-albers-lz4/irr/internal/helm"
-	"github.com/lucas-albers-lz4/irr/pkg/analyzer"
+	"github.com/lucas-albers-lz4/irr/pkg/analysis"
 	"github.com/lucas-albers-lz4/irr/pkg/exitcodes"
 	"github.com/lucas-albers-lz4/irr/pkg/fileutil"
 	"github.com/spf13/afero"
@@ -17,6 +18,15 @@ import (
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
+
+// InspectOutput is a struct to hold the expected structure of the JSON output
+// for the inspect command in tests.
+type InspectOutput struct {
+	ChartPath     string                  `json:"chartPath"`
+	ChartName     string                  `json:"chartName"`
+	ChartVersion  string                  `json:"chartVersion"`
+	ImagePatterns []analysis.ImagePattern `json:"imagePatterns"`
+}
 
 // --- Mock Factories (Global for Test Overrides) ---
 var (
@@ -205,12 +215,12 @@ func runYamlOutputTest(t *testing.T, chartPath, chartName, chartVersion, imageVa
 		t.Fatalf("Failed to write mock values.yaml: %v", err)
 	}
 
-	analysis := &ImageAnalysis{
+	imgAnalysis := &ImageAnalysis{
 		Chart: ChartInfo{
 			Name:    chartName,
 			Version: chartVersion,
 		},
-		ImagePatterns: []analyzer.ImagePattern{
+		ImagePatterns: []analysis.ImagePattern{
 			{
 				Path:  "image",
 				Type:  "string",
@@ -219,7 +229,7 @@ func runYamlOutputTest(t *testing.T, chartPath, chartName, chartVersion, imageVa
 		},
 	}
 
-	cmd := mockInspectCmd(analysis, &InspectFlags{})
+	cmd := mockInspectCmd(imgAnalysis, &InspectFlags{})
 	args := []string{"--chart-path", chartPath}
 	if setOutputFormat {
 		args = append(args, "--output-format", "yaml")
@@ -239,29 +249,24 @@ func runYamlOutputTest(t *testing.T, chartPath, chartName, chartVersion, imageVa
 	assert.NotContains(t, output, "\"chart\":") // Should not be JSON
 }
 
-// setupInspectTest handles common setup for inspect tests, including mock filesystem and test mode.
+// setupTest handles common setup for inspect tests, including mock filesystem.
 // It returns a cleanup function that should be deferred.
-func setupInspectTest(t *testing.T) func() {
+func setupTest(t *testing.T) func() {
 	t.Helper()
 
 	// Setup mock filesystem
 	originalAppFs := AppFs
-	mockFs := afero.NewMemMapFs()
-	AppFs = mockFs
+	AppFs = afero.NewMemMapFs()
 
-	// Save and restore original test mode flag
-	originalTestMode := isTestMode
-	isTestMode = true // Enable test mode for mock chart loading
 	// Return cleanup function
 	return func() {
 		AppFs = originalAppFs
-		isTestMode = originalTestMode
 	}
 }
 
 // TestInspectStandaloneYAML tests inspecting a chart path with default YAML output to stdout.
 func TestInspectStandaloneYAML(t *testing.T) {
-	cleanup := setupInspectTest(t)
+	cleanup := setupTest(t)
 	defer cleanup()
 
 	// Reuse the existing helper logic for this specific YAML test
@@ -270,7 +275,7 @@ func TestInspectStandaloneYAML(t *testing.T) {
 
 // TestInspectStandaloneDefaultYAML tests inspecting a chart path uses YAML by default.
 func TestInspectStandaloneDefaultYAML(t *testing.T) {
-	cleanup := setupInspectTest(t)
+	cleanup := setupTest(t)
 	defer cleanup()
 
 	// Reuse the existing helper logic, setting setOutputFormat to false
@@ -279,7 +284,7 @@ func TestInspectStandaloneDefaultYAML(t *testing.T) {
 
 // TestInspectStandaloneJSONFile tests inspecting a chart path with JSON output to file.
 func TestInspectStandaloneJSONFile(t *testing.T) {
-	cleanup := setupInspectTest(t)
+	cleanup := setupTest(t)
 	defer cleanup()
 
 	mockFs := AppFs // AppFs is already afero.Fs, assertion removed
@@ -335,7 +340,7 @@ func TestInspectStandaloneJSONFile(t *testing.T) {
 
 // TestInspectChartNotFound tests error handling when chart path does not exist.
 func TestInspectChartNotFound(t *testing.T) {
-	cleanup := setupInspectTest(t)
+	cleanup := setupTest(t)
 	defer cleanup()
 
 	mockFs := AppFs // AppFs is already afero.Fs, assertion removed
@@ -368,7 +373,7 @@ func TestInspectChartNotFound(t *testing.T) {
 
 // TestInspectPluginMode tests inspecting a release name in plugin mode.
 func TestInspectPluginMode(t *testing.T) {
-	cleanup := setupInspectTest(t)
+	cleanup := setupTest(t)
 	defer cleanup()
 
 	// Save original helm adapter factory and restore after
@@ -421,7 +426,7 @@ func TestInspectPluginMode(t *testing.T) {
 
 // TestInspectInvalidOutputFormat tests error handling for invalid output format.
 func TestInspectInvalidOutputFormat(t *testing.T) {
-	cleanup := setupInspectTest(t)
+	cleanup := setupTest(t)
 	defer cleanup()
 
 	mockFs := AppFs // AppFs is already afero.Fs, assertion removed
@@ -455,7 +460,7 @@ func TestInspectInvalidOutputFormat(t *testing.T) {
 // TestInspectAllNamespacesSkeleton verifies that `inspect -A --generate-config-skeleton`
 // correctly aggregates registries from all releases.
 func TestInspectAllNamespacesSkeleton(t *testing.T) {
-	cleanup := setupInspectTest(t) // Sets up mock FS and test mode
+	cleanup := setupTest(t) // Sets up mock FS and test mode
 	defer cleanup()
 
 	// --- Mock Helm Interaction ---
@@ -576,7 +581,7 @@ func TestInspectAllNamespacesSkeleton(t *testing.T) {
 // TestInspectAllNamespacesSkeletonWithFilter verifies that `inspect -A --generate-config-skeleton`
 // correctly aggregates registries even when `--source-registries` is used for filtering output.
 func TestInspectAllNamespacesSkeletonWithFilter(t *testing.T) {
-	cleanup := setupInspectTest(t) // Sets up mock FS and test mode
+	cleanup := setupTest(t) // Sets up mock FS and test mode
 	defer cleanup()
 
 	// --- Mock Helm Interaction ---
@@ -670,7 +675,7 @@ func TestInspectAllNamespacesSkeletonWithFilter(t *testing.T) {
 // TestInspectAllNamespacesStandardOutput verifies that `inspect -A` produces correct
 // standard YAML output containing releases from multiple namespaces.
 func TestInspectAllNamespacesStandardOutput(t *testing.T) {
-	cleanup := setupInspectTest(t)
+	cleanup := setupTest(t)
 	defer cleanup()
 
 	// --- Mock Helm Interaction ---
@@ -753,7 +758,7 @@ func TestInspectAllNamespacesStandardOutput(t *testing.T) {
 // TestInspectAllNamespacesWithFilterStandardOutput verifies that `inspect -A --source-registries`
 // correctly filters the standard YAML output across multiple namespaces.
 func TestInspectAllNamespacesWithFilterStandardOutput(t *testing.T) {
-	cleanup := setupInspectTest(t)
+	cleanup := setupTest(t)
 	defer cleanup()
 
 	// --- Mock Helm Interaction ---
@@ -846,3 +851,153 @@ func TestInspectAllNamespacesWithFilterStandardOutput(t *testing.T) {
 }
 
 // TestRunInspect tests the RunInspect function.
+
+// TestInspectParentChart verifies context-aware inspection of a parent chart
+// with subcharts, checking for correct paths and source registries.
+func TestInspectParentChart(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode.")
+	}
+	t.Parallel() // Mark test as parallelizable
+
+	chartPath := "../../test-data/charts/parent-test"
+	outputFormat := outputFormatJSON
+
+	// Expected image details (focus on the one coming from the subchart)
+	expectedPath := "another-child.monitoring.prometheusImage" // Path including subchart alias
+	expectedOriginalRegistry := "quay.io"                      // Original registry from subchart values
+	expectedSourceOrigin := "another-child/values.yaml"        // Source is the subchart's values
+
+	args := []string{
+		"inspect",
+		"--chart-path", chartPath,
+		"--context-aware",
+		"--output-format", outputFormat,
+	}
+
+	// Capture stdout and stderr
+	var stdoutBuf, stderrBuf bytes.Buffer
+	cmd := newInspectCmd()
+	cmd.SetArgs(args)
+	cmd.SetOut(&stdoutBuf)
+	cmd.SetErr(&stderrBuf)
+	err := cmd.Execute()
+
+	// Log stderr for debugging, even on success
+	if stderrBuf.Len() > 0 {
+		t.Logf("stderr:\n%s", stderrBuf.String())
+	}
+
+	// Check for execution errors
+	require.NoError(t, err, "Command execution failed")
+
+	// Parse the JSON output
+	var output InspectOutput
+	err = json.Unmarshal(stdoutBuf.Bytes(), &output)
+	require.NoError(t, err, "Failed to unmarshal JSON output")
+
+	// Basic checks on the output structure
+	require.NotEmpty(t, output.ChartPath, "ChartPath should not be empty")
+	assert.Equal(t, chartPath, output.ChartPath, "ChartPath mismatch")
+	require.NotEmpty(t, output.ImagePatterns, "ImagePatterns should not be empty")
+
+	// Find the relevant image pattern by Path
+	foundPattern := false
+	for _, p := range output.ImagePatterns {
+		if p.Path != expectedPath {
+			continue
+		}
+		foundPattern = true
+		t.Logf("Found matching image pattern: %+v", p) // Log the found pattern
+
+		// Assertions for the parent chart test case
+		assert.Equal(t, expectedPath, p.Path, "Path mismatch")
+		// No separate TagValuePath in analysis.ImagePattern
+		assert.Equal(t, expectedOriginalRegistry, p.OriginalRegistry, "OriginalRegistry mismatch")
+		assert.Equal(t, expectedSourceOrigin, p.SourceOrigin, "SourceOrigin mismatch")
+		if p.Path == expectedPath {
+			foundPattern = true
+			t.Logf("Found matching image pattern: %+v", p) // Log the found pattern
+
+			// Assertions for the parent chart test case
+			assert.Equal(t, expectedPath, p.Path, "Path mismatch")
+			// No separate TagValuePath in analysis.ImagePattern
+			assert.Equal(t, expectedOriginalRegistry, p.OriginalRegistry, "OriginalRegistry mismatch")
+			assert.Equal(t, expectedSourceOrigin, p.SourceOrigin, "SourceOrigin mismatch")
+			// No separate TagSourceOrigin
+			break // Found the pattern, no need to check others
+		}
+	}
+
+	assert.True(t, foundPattern, "Expected pattern with path '%s' not found in output", expectedPath)
+}
+
+// TestInspectAlias verifies context-aware inspection correctly handles aliases.
+// It ensures that the ValuePath reported in the output uses the alias defined
+// in the parent chart, not the original subchart name.
+func TestInspectAlias(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode.")
+	}
+	t.Parallel() // Mark test as parallelizable
+
+	chartPath := "../../test-data/charts/minimal-alias-test"
+	outputFormat := outputFormatJSON
+
+	// Expected image details
+	expectedAlias := "theAlias"
+	expectedPath := fmt.Sprintf("%s.image", expectedAlias) // Path should point to the image map using the alias
+	expectedOriginalRegistry := "docker.io"                // Assuming default
+	expectedSourceOrigin := "minimal-child/values.yaml"    // Source is the subchart's values
+
+	args := []string{
+		"inspect",
+		"--chart-path", chartPath,
+		"--context-aware",
+		"--output-format", outputFormat,
+	}
+
+	// Capture stdout and stderr
+	var stdoutBuf, stderrBuf bytes.Buffer
+	cmd := newInspectCmd()
+	cmd.SetArgs(args)
+	cmd.SetOut(&stdoutBuf)
+	cmd.SetErr(&stderrBuf)
+	err := cmd.Execute()
+
+	// Log stderr for debugging, even on success
+	if stderrBuf.Len() > 0 {
+		t.Logf("stderr:\n%s", stderrBuf.String())
+	}
+
+	// Check for execution errors
+	require.NoError(t, err, "Command execution failed")
+
+	// Parse the JSON output
+	var output InspectOutput
+	err = json.Unmarshal(stdoutBuf.Bytes(), &output)
+	require.NoError(t, err, "Failed to unmarshal JSON output")
+
+	// Basic checks on the output structure
+	require.NotEmpty(t, output.ChartPath, "ChartPath should not be empty")
+	assert.Equal(t, chartPath, output.ChartPath, "ChartPath mismatch")
+	require.NotEmpty(t, output.ImagePatterns, "ImagePatterns should not be empty")
+
+	// Find the relevant image pattern
+	foundImage := false
+	for _, p := range output.ImagePatterns {
+		if p.Path != expectedPath {
+			continue
+		}
+		foundImage = true
+		t.Logf("Found matching image pattern: %+v", p) // Log the found pattern
+
+		// Assertions for the alias test case
+		assert.Equal(t, expectedPath, p.Path, "Path should use alias") // Use correct field
+		assert.Equal(t, expectedOriginalRegistry, p.OriginalRegistry, "OriginalRegistry mismatch")
+		assert.Equal(t, expectedSourceOrigin, p.SourceOrigin, "SourceOrigin mismatch")
+		break // Found the image, no need to check others
+	}
+
+	assert.True(t, foundImage, "Expected image pattern with path '%s' not found in output", expectedPath)
+}

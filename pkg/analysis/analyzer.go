@@ -315,11 +315,21 @@ func (a *Analyzer) analyzeMapValue(val map[string]interface{}, currentPath strin
 		// Log structure details before appending
 		log.Debug("analyzeMapValue: IS image map", "path", currentPath, "value", imageValue, "structure", fmt.Sprintf("%#v", val))
 
+		// Construct the normalized structure map
+		normalizedStructure := map[string]interface{}{
+			"registry":   registry,
+			"repository": repository,
+		}
+		if tag != "" { // Only include tag if it's not empty after normalization
+			normalizedStructure["tag"] = tag
+		}
+		// Potentially add digest here if needed in the future
+
 		analysis.ImagePatterns = append(analysis.ImagePatterns, ImagePattern{
 			Path:      currentPath,
 			Type:      PatternTypeMap,
-			Value:     imageValue, // Use normalized value string here
-			Structure: val,        // Store original map structure
+			Value:     imageValue,          // Use normalized value string here
+			Structure: normalizedStructure, // Store NORMALIZED map structure
 			Count:     1,
 		})
 		// **DO NOT RETURN EARLY HERE** - continue analyzing children
