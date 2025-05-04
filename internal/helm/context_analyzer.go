@@ -15,6 +15,8 @@ const (
 	DefaultRegistry = "docker.io"
 	// defaultImageTag is the default tag used when none is specified.
 	defaultImageTag = "latest"
+	// MaxSplitParts defines the maximum number of parts to split registry/repo paths into.
+	MaxSplitParts = 2
 )
 
 // ContextAwareAnalyzer is an analyzer that uses the ChartAnalysisContext to analyze charts
@@ -197,80 +199,139 @@ func (a *ContextAwareAnalyzer) analyzeMapValue(val map[string]interface{}, curre
 	return a.analyzeValues(val, currentPath, chartAnalysis)
 }
 
-// analyzeStringValue handles analysis of string values for image references.
+// analyzeStringValue handles analysis of string values for image references using Two-Phase Parsing & Structural Validation.
 func (a *ContextAwareAnalyzer) analyzeStringValue(key, val, currentPath string, chartAnalysis *analysis.ChartAnalysis) error {
-	// Check if the string looks like an image reference
-	if a.isImageString(key, val) {
-		// Try to parse the image string
-		registry, repository, tag := a.parseImageString(val)
-
-		// Create an image pattern
-		pattern := analysis.ImagePattern{
-			Type:  analysis.PatternTypeString,
-			Path:  currentPath,
-			Value: val,
-			Count: 1,
-		}
-
-		// If we successfully parsed the image components, add the structure
-		if repository != "" {
-			pattern.Structure = map[string]interface{}{
-				"registry":   registry,
-				"repository": repository,
-				"tag":        tag,
-			}
-		}
-
-		// --- Start: Populate OriginalRegistry AND SourceOrigin ---
-		originPath := "values.yaml" // Default origin file
-		sourceChartName := ""       // Default chart name
-		if origin, exists := a.context.Origins[currentPath]; exists {
-			// Use origin.Path if it's a file path, otherwise keep default
-			if strings.HasSuffix(origin.Path, ".yaml") || strings.HasSuffix(origin.Path, ".yml") {
-				originPath = origin.Path
-			}
-			sourceChartName = origin.ChartName // Get chart name from origin
-		}
-		pattern.SourceOrigin = originPath // Set the source origin (file path)
-
-		// Use sourceChartName for OriginalRegistry logic
-		if sourceChartName != "" && sourceChartName != a.context.Chart.Metadata.Name {
-			log.Debug("Value originates from subchart", "path", currentPath, "sourceChart", sourceChartName)
-
-			// --- Find Subchart AppVersion --- START ---
-			var sourceChartAppVersion string
-			for _, dep := range a.context.Chart.Dependencies() {
-				if dep.Metadata.Name == sourceChartName {
-					sourceChartAppVersion = dep.Metadata.AppVersion
-					log.Debug("Found AppVersion for source subchart", "chart", sourceChartName, "appVersion", sourceChartAppVersion)
-					break
-				}
-			}
-			if sourceChartAppVersion != "" {
-				pattern.SourceChartAppVersion = sourceChartAppVersion
-			}
-			// --- Find Subchart AppVersion --- END ---
-
-			// Determine original registry from the raw map value *before* normalization
-			parsedReg, _, _ := a.parseImageStringNoDefaults(val)
-			originalRegistry := parsedReg
-			if originalRegistry == "" {
-				originalRegistry = DefaultRegistry // Apply default if parsing yielded nothing
-			}
-			log.Debug("Determined original registry from string parse", "path", currentPath, "originalRegistry", originalRegistry)
-
-			// Populate if different from the final *parsed* registry
-			finalRegistry := registry // From the main parseImageString call above
-			if originalRegistry != finalRegistry {
-				pattern.OriginalRegistry = originalRegistry
-				log.Debug("Setting OriginalRegistry in pattern", "path", currentPath, "original", originalRegistry, "final", finalRegistry)
-			}
-		}
-		// --- End: Populate OriginalRegistry AND SourceOrigin ---
-
-		// Add the pattern to the analysis
-		chartAnalysis.ImagePatterns = append(chartAnalysis.ImagePatterns, pattern)
+	// 1. Initial Context Check (Optional Optimization)
+	// Quickly skip sections unlikely to contain images based on common Helm/K8s patterns.
+	if !a.isProbableImageKeyPath(key, currentPath) {
+		log.Debug("analyzeStringValue: Skipping non-probable image path", "path", currentPath)
+		return nil
 	}
+
+	// 2. Basic Validation
+	trimmedVal := strings.TrimSpace(val)
+	if trimmedVal == "" {
+		log.Debug("analyzeStringValue: Skipping empty value", "path", currentPath)
+		return nil
+	}
+	if strings.HasPrefix(trimmedVal, "/") {
+		log.Debug("analyzeStringValue: Skipping path-like value", "path", currentPath, "value", trimmedVal)
+		return nil
+	}
+
+	// 3. Parse WITHOUT Defaults
+	parsedReg, parsedRepo, _ := a.parseImageStringNoDefaults(trimmedVal) // Ignore tag from this parse
+
+	// 4. Structural Validation (Core Filter)
+	// Does the string *itself* contain structure suggesting an image (registry or path separator)?
+	hasStructure := (parsedReg != "" || strings.Contains(parsedRepo, "/"))
+	if !hasStructure {
+		log.Debug("analyzeStringValue: Skipping value lacking inherent image structure", "path", currentPath, "value", trimmedVal, "parsedReg", parsedReg, "parsedRepo", parsedRepo)
+		return nil // Value only looked like an image due to defaulting, ignore it.
+	}
+
+	// 5. Parse WITH Defaults (for Final Structure)
+	// Now that we have higher confidence, parse with defaults for the final structure.
+	// Use image.ParseImageReference for potentially more robust parsing than our simple internal one.
+	ref, err := image.ParseImageReference(trimmedVal)
+	if err != nil {
+		log.Debug("analyzeStringValue: Parse error after structural validation, skipping", "path", currentPath, "value", trimmedVal, "error", err)
+		return nil // Should be rare if step 4 passed, but handle anyway.
+	}
+	// Ensure parsing yielded a repository part.
+	if ref.Repository == "" {
+		log.Debug("analyzeStringValue: Parsed ref (with defaults) has no repository, skipping", "path", currentPath, "value", trimmedVal)
+		return nil
+	}
+
+	// 6. Minimal Keyword Check
+	lowerVal := strings.ToLower(trimmedVal)
+	if lowerVal == "true" || lowerVal == "false" || lowerVal == "null" {
+		log.Debug("analyzeStringValue: Skipping common keyword value after parsing", "path", currentPath, "value", lowerVal)
+		return nil
+	}
+
+	// *** Passed All Checks: Record Image Pattern ***
+	log.Debug("analyzeStringValue: Identified image string via structural validation", "path", currentPath, "value", val)
+
+	// Use the defaulted components from image.ParseImageReference for the final structure
+	registry := ref.Registry
+	repository := ref.Repository
+	tag := ref.Tag
+	// Apply Docker Hub 'library/' normalization explicitly if needed (ParseImageReference might not always do this)
+	if registry == DefaultRegistry && !strings.Contains(repository, "/") {
+		repository = "library/" + repository
+	}
+	// Ensure tag is populated if empty after parsing
+	if tag == "" {
+		tag = defaultImageTag
+	}
+
+	// Create an image pattern
+	pattern := analysis.ImagePattern{
+		Type:  analysis.PatternTypeString,
+		Path:  currentPath,
+		Value: val, // Store the original value
+		Count: 1,
+	}
+
+	// Add the structure based on successful parsing
+	pattern.Structure = map[string]interface{}{
+		"registry":   registry,
+		"repository": repository,
+		"tag":        tag,
+	}
+
+	// --- Start: Populate OriginalRegistry AND SourceOrigin ---
+	originPath := "values.yaml" // Default origin file
+	sourceChartName := ""       // Default chart name
+	if origin, exists := a.context.Origins[currentPath]; exists {
+		// Use origin.Path if it's a file path, otherwise keep default
+		if strings.HasSuffix(origin.Path, ".yaml") || strings.HasSuffix(origin.Path, ".yml") {
+			originPath = origin.Path
+		}
+		sourceChartName = origin.ChartName // Get chart name from origin
+	}
+	pattern.SourceOrigin = originPath // Set the source origin (file path)
+
+	// Use sourceChartName for OriginalRegistry logic
+	if sourceChartName != "" && sourceChartName != a.context.Chart.Metadata.Name {
+		log.Debug("Value originates from subchart", "path", currentPath, "sourceChart", sourceChartName)
+
+		// --- Find Subchart AppVersion --- START ---
+		var sourceChartAppVersion string
+		for _, dep := range a.context.Chart.Dependencies() {
+			if dep.Metadata.Name == sourceChartName {
+				sourceChartAppVersion = dep.Metadata.AppVersion
+				log.Debug("Found AppVersion for source subchart", "chart", sourceChartName, "appVersion", sourceChartAppVersion)
+				break
+			}
+		}
+		if sourceChartAppVersion != "" {
+			pattern.SourceChartAppVersion = sourceChartAppVersion
+		}
+		// --- Find Subchart AppVersion --- END ---
+
+		// Determine original registry from the raw string value *without* defaults
+		// Use the non-defaulted parse result from step 3
+		originalRegistry := parsedReg // Use registry parsed without defaults
+		if originalRegistry == "" {
+			// If no registry was explicit in the string, the effective original *was* the default
+			originalRegistry = DefaultRegistry
+		}
+		log.Debug("Determined original registry from non-default parse", "path", currentPath, "originalRegistry", originalRegistry)
+
+		// Populate if different from the final *defaulted* registry
+		finalRegistry := registry // From the defaulted parse in step 5
+		if originalRegistry != finalRegistry {
+			pattern.OriginalRegistry = originalRegistry
+			log.Debug("Setting OriginalRegistry in pattern", "path", currentPath, "original", originalRegistry, "final", finalRegistry)
+		}
+	}
+	// --- End: Populate OriginalRegistry AND SourceOrigin ---
+
+	// Add the pattern to the analysis
+	chartAnalysis.ImagePatterns = append(chartAnalysis.ImagePatterns, pattern)
 
 	return nil
 }
@@ -326,31 +387,35 @@ func (a *ContextAwareAnalyzer) isDirectImageMapDefinition(val map[string]interfa
 	return true
 }
 
-// isImageString uses heuristics to check if a string likely represents a container image reference.
-func (a *ContextAwareAnalyzer) isImageString(key, val string) bool {
-	// Basic check: Ignore empty strings or Go templates
-	if val == "" || strings.Contains(val, "{{") {
-		return false
-	}
-
-	// Attempt to parse using the standard library. If it parses without error,
-	// it's very likely an image reference.
-	_, err := image.ParseImageReference(val) // Use the library's parser
-	if err == nil {
-		log.Debug("isImageString: Passed ParseImageReference check", "value", val)
+// isProbableImageKeyPath checks if the key and path suggest the value might be an image.
+// Acts as an optional optimization filter before more detailed parsing.
+func (a *ContextAwareAnalyzer) isProbableImageKeyPath(key, currentPath string) bool {
+	lowerKey := strings.ToLower(key)
+	// Check for exact key names that almost always indicate an image map or string
+	if lowerKey == "image" || lowerKey == "repository" {
+		log.Debug("isProbableImageKeyPath: true (exact key match)", "key", key)
 		return true
 	}
 
-	// Fallback Heuristic: If parsing fails, check if the key suggests an image
-	// AND the value contains a slash (might be an incomplete reference user wants to fix)
-	keyLower := strings.ToLower(key)
-	if (strings.Contains(keyLower, "image") || strings.Contains(keyLower, "repository")) && strings.Contains(val, "/") {
-		log.Debug("isImageString: Failed ParseImageReference, but key/value suggest potential image", "key", key, "value", val)
-		return true // Keep potentially incomplete references if key implies image
+	// Check for common path suffixes
+	lowerPath := strings.ToLower(currentPath)
+	pathSuffixes := []string{".image", ".repository", ".imageref", ".imageuri"}
+	for _, suffix := range pathSuffixes {
+		if strings.HasSuffix(lowerPath, suffix) {
+			log.Debug("isProbableImageKeyPath: true (path suffix match)", "path", currentPath, "suffix", suffix)
+			return true
+		}
 	}
 
-	log.Debug("isImageString: Failed all checks", "key", key, "value", val, "parseError", err)
-	return false
+	// Consider the key itself ending with 'Image' (common pattern)
+	if strings.HasSuffix(key, "Image") {
+		log.Debug("isProbableImageKeyPath: true (key suffix 'Image')", "key", key)
+		return true
+	}
+
+	// Default to false if no strong indicator found
+	log.Debug("isProbableImageKeyPath: false (no strong indicators)", "key", key, "path", currentPath)
+	return false // Changed default to false - only proceed if context is suggestive
 }
 
 // normalizeImageValues extracts and normalizes image components from a map.
@@ -358,7 +423,6 @@ func (a *ContextAwareAnalyzer) normalizeImageValues(val map[string]interface{}) 
 	// Defaults
 	registry = DefaultRegistry // Assume docker.io initially
 	tag = defaultImageTag
-	repository = "" // Start with empty repository
 
 	explicitRegistry := ""
 	if r, ok := val["registry"].(string); ok && r != "" {
@@ -394,7 +458,7 @@ func (a *ContextAwareAnalyzer) normalizeImageValues(val map[string]interface{}) 
 		// Keep the original repository value if no registry was parsed out
 		// Also, check if a tag was embedded in this simple repository string
 		if strings.Contains(repository, ":") {
-			repoParts := strings.SplitN(repository, ":", 2)
+			repoParts := strings.SplitN(repository, ":", MaxSplitParts)
 			repository = repoParts[0]
 			if len(repoParts) > 1 {
 				tag = repoParts[1]
@@ -428,65 +492,6 @@ func (a *ContextAwareAnalyzer) normalizeImageValues(val map[string]interface{}) 
 
 	log.Debug("normalizeImageValues: Final normalized values", "registry", registry, "repository", repository, "tag", tag)
 	return registry, repository, tag
-}
-
-// parseImageString attempts to parse a string into image components.
-func (a *ContextAwareAnalyzer) parseImageString(val string) (registry, repository, tag string) {
-	// Default values
-	registry = DefaultRegistry
-	tag = defaultImageTag // Use constant
-
-	// Basic parsing for format "registry/repository:tag"
-	parts := strings.Split(val, "/")
-	if len(parts) == 1 {
-		// Just repository[:tag]
-		repoParts := strings.Split(parts[0], ":")
-		repository = repoParts[0]
-		if len(repoParts) > 1 {
-			tag = repoParts[1]
-		}
-	} else {
-		// registry/repository[:tag] or repository/subpath[:tag]
-		registry = parts[0]
-
-		// Check if this is docker.io/library/... or another registry
-		if strings.Contains(registry, ".") || registry == "localhost" {
-			// Likely a registry
-			repository = strings.Join(parts[1:], "/")
-		} else {
-			// Likely just a repository path, default to docker.io
-			registry = DefaultRegistry
-			repository = val // Use the full original value as repo path if first part is not a registry
-		}
-
-		// Handle tag (extract from the repository part if present)
-		if strings.Contains(repository, ":") {
-			repoParts := strings.Split(repository, ":")
-			repository = repoParts[0]
-			if len(repoParts) > 1 {
-				tag = repoParts[1]
-			}
-		}
-	}
-
-	// Normalize docker.io references
-	if registry == DefaultRegistry && !strings.Contains(repository, "/") {
-		repository = "library/" + repository
-	}
-	return registry, repository, tag
-}
-
-// getSourcePathForValue resolves the effective source path for a value based on origin.
-// It should return the path as it exists in the *merged* value structure.
-func (a *ContextAwareAnalyzer) getSourcePathForValue(valuePath string) string {
-	// For context-aware analysis, the ValuePath used in ImageInfo should reflect
-	// the path within the fully merged values map (e.g., "subchartAlias.key.subkey").
-	// The 'Path' field within analysis.ImagePattern might be repurposed by the analyzer
-	// to store the *originating* file/path, but the path passed *into* here
-	// during the recursive analysis (`analyzeValues`, `analyzeSingleValue` etc.)
-	// represents the structural path in the merged map.
-	log.Debug("getSourcePathForValue returning structural path", "path", valuePath)
-	return valuePath
 }
 
 // parseImageStringNoDefaults parses an image string without applying default registry.
@@ -526,6 +531,13 @@ func (a *ContextAwareAnalyzer) parseImageStringNoDefaults(val string) (registry,
 			// No registry marker found, assume default was intended implicitly OR it's just repo
 			repository = remaining
 		}
+		if tag == "" && strings.Contains(repository, ":") { // Check again if tag was embedded in repo part
+			repoParts := strings.SplitN(repository, ":", MaxSplitParts)
+			if len(repoParts) > 1 {
+				repository = repoParts[0]
+				tag = repoParts[1]
+			}
+		}
 	} else {
 		// No slash, must be just repository (potentially Docker Hub library image)
 		repository = remaining
@@ -533,6 +545,19 @@ func (a *ContextAwareAnalyzer) parseImageStringNoDefaults(val string) (registry,
 
 	log.Debug("parseImageStringNoDefaults result", "input", val, "registry", registry, "repository", repository, "tag", tag)
 	return registry, repository, tag
+}
+
+// getSourcePathForValue resolves the effective source path for a value based on origin.
+// It should return the path as it exists in the *merged* value structure.
+func (a *ContextAwareAnalyzer) getSourcePathForValue(valuePath string) string {
+	// For context-aware analysis, the ValuePath used in ImageInfo should reflect
+	// the path within the fully merged values map (e.g., "subchartAlias.key.subkey").
+	// The 'Path' field within analysis.ImagePattern might be repurposed by the analyzer
+	// to store the *originating* file/path, but the path passed *into* here
+	// during the recursive analysis (`analyzeValues`, `analyzeSingleValue` etc.)
+	// represents the structural path in the merged map.
+	log.Debug("getSourcePathForValue returning structural path", "path", valuePath)
+	return valuePath
 }
 
 // GetContext returns the underlying ChartAnalysisContext.

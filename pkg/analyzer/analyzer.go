@@ -14,6 +14,11 @@ import (
 	"github.com/lucas-albers-lz4/irr/pkg/log"
 )
 
+const (
+	// MaxSplitParts defines the maximum number of parts to split registry/repo paths into.
+	MaxSplitParts = 2
+)
+
 // ImagePattern represents a detected image string and its location.
 type ImagePattern struct {
 	Path      string          `json:"path"`                // The path within the values structure where the image was found (e.g., "service.image.repository")
@@ -198,7 +203,7 @@ func analyzeMapValue(path string, val reflect.Value, patterns *[]ImagePattern, c
 					log.Warn("Failed to parse repository string '%s' with standard parser: %v. Assuming default registry.", repository, err)
 					registry = image.DefaultRegistry
 					if strings.Contains(repository, ":") {
-						repoParts := strings.SplitN(repository, ":", 2)
+						repoParts := strings.SplitN(repository, ":", MaxSplitParts)
 						repository = repoParts[0]
 						if len(repoParts) > 1 {
 							tag = repoParts[1]
@@ -214,7 +219,7 @@ func analyzeMapValue(path string, val reflect.Value, patterns *[]ImagePattern, c
 				}
 				// Also clean tag from repo if explicit registry was used
 				if strings.Contains(repository, ":") {
-					repoParts := strings.SplitN(repository, ":", 2)
+					repoParts := strings.SplitN(repository, ":", MaxSplitParts)
 					repository = repoParts[0]
 					if len(repoParts) > 1 && tag == "" { // Only override tag if not already set
 						tag = repoParts[1]
