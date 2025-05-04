@@ -1,4 +1,7 @@
 // Package generator orchestrates the process of loading charts, detecting images, and generating override files.
+// DEPRECATED: This is the legacy generator package. The primary override generation logic
+// used by the 'irr override' command now resides in 'pkg/chart/generator.go'.
+// This package might be kept for specific testing or comparison purposes.
 package generator
 
 import (
