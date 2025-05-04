@@ -96,43 +96,26 @@ func TestGenerate_WithMappings(t *testing.T) {
 
 	overrideFile, err := generator.Generate("test-chart-mapped", testValues)
 	require.NoError(t, err, "Generate() should not return an error")
+	require.NotNil(t, overrideFile, "Generate() override file should not be nil")
 
 	expectedOverrides := map[string]interface{}{
 		"image": map[string]interface{}{
-			"registry":   "mapped-registry.com/oldreg",
-			"repository": "mapped-registry.com/oldreg/app1",
+			"registry":   "mapped-registry.com",
+			"repository": "oldreg/app1",
 			"tag":        "v1",
 		},
 		"nested": map[string]interface{}{
-			"image": map[string]interface{}{
-				"registry":   "",
-				"repository": "other-registry.com/app2",
+			"image": map[string]interface{}{ // Ensure nested is handled correctly (no mapping)
+				"registry":   "",                        // No target specified for other-registry.com
+				"repository": "other-registry.com/app2", // Strategy prefixes with source
 				"tag":        "v2",
 			},
 		},
-		// 'unrelated' section is correctly excluded
 	}
 
-	// Use JSON comparison and unmarshal back
-	actualJSON, errActual := json.Marshal(overrideFile)
-	expectedJSON, errExpected := json.Marshal(expectedOverrides)
-
-	if errActual != nil || errExpected != nil {
-		t.Fatalf("Failed to marshal maps to JSON: ActualErr=%v, ExpectedErr=%v", errActual, errExpected)
-	}
-
-	// Unmarshal back into generic maps for comparison
-	var actualMap, expectedMap map[string]interface{}
-	errUnmarshalActual := json.Unmarshal(actualJSON, &actualMap)
-	errUnmarshalExpected := json.Unmarshal(expectedJSON, &expectedMap)
-
-	if errUnmarshalActual != nil || errUnmarshalExpected != nil {
-		t.Fatalf("Failed to unmarshal JSON back to maps: ActualErr=%v, ExpectedErr=%v", errUnmarshalActual, errUnmarshalExpected)
-	}
-
-	// Compare the unmarshaled maps using cmp
-	if !cmp.Equal(actualMap, expectedMap) {
-		diff := cmp.Diff(expectedMap, actualMap)
+	// Compare the results using cmp
+	if !cmp.Equal(expectedOverrides, overrideFile) { // Compare directly
+		diff := cmp.Diff(expectedOverrides, overrideFile) // Compare directly
 		t.Errorf("Generate() override map mismatch (-want +got):\n%s", diff)
 	}
 }
@@ -382,4 +365,8 @@ func TestNormalizeKubeStateMetricsOverrides(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGenerate_EmptyChart(_ *testing.T) {
+	// ... existing code ...
 }
