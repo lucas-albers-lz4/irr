@@ -575,6 +575,9 @@ func (g *Generator) Generate(loadedChart *chart.Chart, analysisResult *analysis.
 	processingErrors, processedCount := g.processEligibleImagesLoop(eligibleImages, result.Values)
 	result.ProcessedCount = processedCount // Store processed count
 
+	// Ensure global.imageRegistry is set in the overrides map
+	g.ensureGlobalImageRegistry(result.Values, analysisResult.GlobalPatterns)
+
 	// Log map address after loop
 	log.Debug("Generate: Map address AFTER loop", "map_addr", fmt.Sprintf("%p", result.Values))
 
@@ -624,6 +627,34 @@ func (g *Generator) Generate(loadedChart *chart.Chart, analysisResult *analysis.
 
 	log.Debug("Generate finished successfully", "override_keys", mapKeys(result.Values))
 	return result, nil
+}
+
+// ensureGlobalImageRegistry ensures the global.imageRegistry field is included in overrides
+// when a target registry is specified, even if no corresponding pattern was detected.
+func (g *Generator) ensureGlobalImageRegistry(overrides map[string]interface{}, _ []analysis.GlobalPattern) {
+	if g.targetRegistry == "" {
+		return // No target registry, nothing to set
+	}
+
+	// Check if global.imageRegistry already exists in overrides
+	globalSection, ok := overrides["global"]
+	if !ok {
+		// Create global section if it doesn't exist
+		globalSection = make(map[string]interface{})
+		overrides["global"] = globalSection
+	}
+
+	// Type assertion for the global section
+	globalMap, ok := globalSection.(map[string]interface{})
+	if !ok {
+		// Create a new map if type assertion fails
+		globalMap = make(map[string]interface{})
+		overrides["global"] = globalMap
+	}
+
+	// Set imageRegistry value
+	globalMap["imageRegistry"] = g.targetRegistry
+	log.Debug("Ensured global.imageRegistry is set", "registry", g.targetRegistry)
 }
 
 // ValidateHelmTemplate runs `helm template` on the chart with the provided overrides
