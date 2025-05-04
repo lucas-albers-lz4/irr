@@ -79,6 +79,7 @@ const (
 	outputFormatYAML              = "yaml"
 	outputFormatJSON              = "json"
 	defaultNamespace              = "default" // Added const for default namespace
+	sliceGrowthBuffer             = 10        // Buffer size for growing slices
 )
 
 // ReleaseAnalysisResult represents the analysis result for a single Helm release
@@ -892,20 +893,51 @@ func processImagePatterns(patterns []analysis.ImagePattern) (images []ImageInfo,
 			imgInfo.Source = p.Path
 		}
 
-		if p.Type == analysis.PatternTypeMap && p.Structure != nil {
+		// Determine registry based on pattern type
+		var regStr string
+		// Use a switch statement for clarity as suggested by gocritic
+		switch {
+		case p.Type == analysis.PatternTypeMap && p.Structure != nil:
+			if regVal, ok := p.Structure["registry"].(string); ok {
+				regStr = regVal
+			}
+		case p.Type == analysis.PatternTypeString && p.Structure != nil:
+			if regVal, ok := p.Structure["registry"].(string); ok {
+				regStr = regVal
+			}
+		default:
+			// Attempt basic parsing if structure is missing or type is unexpected
+			// Use a temporary variable to avoid shadowing
+			imgRef, err := image.ParseImageReference(p.Value)
+			if err == nil && imgRef != nil {
+				regStr = imgRef.Registry
+			}
+		}
+
+		// Add source registry to the set if it looks valid
+		if regStr != "" {
+			imgInfo.Registry = regStr
+		}
+
+		// Use a switch statement for clarity as suggested by gocritic
+		switch p.Type {
+		case analysis.PatternTypeMap:
+			if p.Structure == nil {
+				log.Warn("Skipping map pattern with nil structure", "path", p.Path, "value", p.Value)
+				skipped = append(skipped, fmt.Sprintf("%s: %v (map type with nil structure)", p.Path, p.Value))
+				continue
+			}
 			// For map types, use the pre-parsed structure directly
 			// Use type assertion with ok check for safety
-			if reg, ok := p.Structure["registry"].(string); ok {
-				imgInfo.Registry = reg
+			if repoVal, ok := p.Structure["repository"].(string); ok {
+				imgInfo.Repository = repoVal
 			}
-			if repo, ok := p.Structure["repository"].(string); ok {
-				imgInfo.Repository = repo
-			}
-			if tag, ok := p.Structure["tag"].(string); ok {
-				imgInfo.Tag = tag
+			if tagVal, ok := p.Structure["tag"].(string); ok {
+				imgInfo.Tag = tagVal
 			}
 			log.Debug("processImagePatterns [MAP]: Using structure", "path", p.Path, "registry", imgInfo.Registry, "repo", imgInfo.Repository)
-		} else if p.Type == analysis.PatternTypeString {
+
+		case analysis.PatternTypeString:
 			// For string types, parse the Value string using the correct function
 			ref, err := image.ParseImageReference(p.Value)
 			if err != nil {
@@ -915,14 +947,17 @@ func processImagePatterns(patterns []analysis.ImagePattern) (images []ImageInfo,
 			}
 
 			// Populate from parsed reference
+			// Note: Registry might be overwritten here if ParseImageReference finds one
+			// and the earlier structure check didn't (e.g., for complex strings)
 			imgInfo.Registry = ref.Registry
 			imgInfo.Repository = ref.Repository
 			imgInfo.Tag = ref.Tag
 			imgInfo.Digest = ref.Digest
 			log.Debug("processImagePatterns [STRING]: Parsed value", "path", p.Path, "value", p.Value, "registry", imgInfo.Registry, "repo", imgInfo.Repository)
-		} else {
+
+		default:
 			// Skip other types or maps without structure
-			log.Warn("Skipping pattern with unhandled type or missing structure", "path", p.Path, "type", p.Type, "value", p.Value)
+			log.Warn("Skipping pattern with unhandled type", "path", p.Path, "type", p.Type, "value", p.Value)
 			skipped = append(skipped, fmt.Sprintf("%s: %s (unhandled type: %s)", p.Path, p.Value, p.Type))
 			continue
 		}
@@ -1278,21 +1313,20 @@ func analyzeRelease(release *helm.ReleaseElement, helmAdapter *helm.Adapter, fla
 	}, unfilteredImagesForSkeleton, nil // Return unfiltered images here
 }
 
-// isValidRegistryHostname checks if a string looks like a valid registry hostname.
-// It allows names with dots or colons (for ports) but excludes pure IPv4/IPv6 addresses.
-// Allows 'localhost' specifically.
-func isValidRegistryHostname(registry string) bool {
-	if registry == "localhost" {
-		return true
+// isValidRegistryHostname checks if a registry string looks like a valid hostname.
+// Parameter renamed to avoid shadowing the 'registry' package.
+func isValidRegistryHostname(hostname string) bool {
+	// Basic checks: not empty, doesn't contain invalid characters, doesn't start with /
+	if hostname == "" || strings.ContainsAny(hostname, " \t\n\r:/@") || strings.HasPrefix(hostname, "/") {
+		return false
 	}
 	// Must contain a dot or a colon
-	if !strings.Contains(registry, ".") && !strings.Contains(registry, ":") {
+	if !strings.Contains(hostname, ".") && !strings.Contains(hostname, ":") {
 		return false
 	}
 	// Try to parse as IP - if successful, it's NOT a valid hostname registry (unless it has a port)
-	if !strings.Contains(registry, ":") { // Only check for pure IPs if no port is present
-		if net.ParseIP(registry) != nil {
-			log.Debug("isValidRegistryHostname: Rejecting pure IP address", "registry", registry)
+	if !strings.Contains(hostname, ":") { // Only check for pure IPs if no port is present
+		if net.ParseIP(hostname) != nil {
 			return false // It's a bare IP address
 		}
 	}
@@ -1303,24 +1337,40 @@ func isValidRegistryHostname(registry string) bool {
 
 // processAllReleases iterates through all releases, analyzes them, and aggregates results.
 func processAllReleases(releases []*helm.ReleaseElement, helmAdapter *helm.Adapter, flags *InspectFlags) ([]*ReleaseAnalysisResult, []string, []ImageInfo, error) {
+	// Initialize return values
 	var allResults []*ReleaseAnalysisResult
 	var skippedReleases []string
-	uniqueRegistries := make(map[string]bool) // Map to store unique registry strings
-	var allUnfilteredImages []ImageInfo       // Slice to hold all images before filtering for skeleton
+	var allUnfilteredImages []ImageInfo // Will collect all images before filtering
 
+	// Track unique registries for skeleton generation
+	uniqueRegistries := make(map[string]bool)
+
+	// Process each release
 	for _, release := range releases {
+		// Analyze the release
 		result, unfilteredImages, err := analyzeRelease(release, helmAdapter, flags)
 		if err != nil {
 			log.Error("Error analyzing release", "release", release.Name, "namespace", release.Namespace, "error", err)
 			skippedReleases = append(skippedReleases, fmt.Sprintf("%s/%s: %v", release.Namespace, release.Name, err))
 			continue
 		}
+
+		// Add to results collection
 		allResults = append(allResults, result)
-		allUnfilteredImages = append(allUnfilteredImages, unfilteredImages...)
+
+		// Add images to the collection for skeleton
+		// Create a new slice with enough capacity to avoid append problems
+		if len(unfilteredImages) > 0 {
+			newSlice := make([]ImageInfo, len(allUnfilteredImages), len(allUnfilteredImages)+len(unfilteredImages)+sliceGrowthBuffer)
+			copy(newSlice, allUnfilteredImages)
+			allUnfilteredImages = newSlice
+			// Now safe to use append
+			allUnfilteredImages = append(allUnfilteredImages, unfilteredImages...)
+		}
 
 		// Accumulate unique registries FROM THE UNFILTERED IMAGES for skeleton generation
 		log.Debug("Processing release for skeleton registry aggregation", "release", release.Name, "namespace", release.Namespace, "unfiltered_image_count", len(unfilteredImages))
-		for _, img := range unfilteredImages { // Use the unfiltered list here
+		for _, img := range unfilteredImages {
 			log.Debug("SKELETON_CHECK: Checking ImageInfo for skeleton", "registry", img.Registry, "repository", img.Repository, "tag", img.Tag, "source", img.Source, "valuePath", img.ValuePath)
 			if img.Registry != "" { // Ensure we don't add empty registries
 				if !uniqueRegistries[img.Registry] {

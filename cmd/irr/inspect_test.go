@@ -1001,3 +1001,47 @@ func TestInspectAlias(t *testing.T) {
 
 	assert.True(t, foundImage, "Expected image pattern with path '%s' not found in output", expectedPath)
 }
+
+func TestIsValidRegistryHostname(t *testing.T) {
+	testCases := []struct {
+		name     string
+		registry string
+		expected bool
+	}{
+		// Valid Hostnames/Registries
+		{"Valid Standard Registry", "docker.io", true},
+		{"Valid Registry with Subdomain", "my.registry.com", true},
+		{"Valid Registry with Port", "registry.local:5000", true},
+		{"Valid GHCR", "ghcr.io", true},
+		{"Valid GCR", "gcr.io", true},
+		{"Valid Quay", "quay.io", true},
+		{"Valid K8s Registry", "registry.k8s.io", true},
+		{"Valid Localhost", "localhost", true},
+		{"Valid Hostname with Hyphens", "my-internal-registry.svc.cluster.local", true},
+
+		// Invalid Strings
+		{"Invalid Path String", "/tmp/cilium-bootstrap.d", false},
+		{"Invalid Simple String", "nodename", false},
+		{"Invalid String with Hyphens only", "no-dots-here", false},
+		{"Invalid K8s Label Key/Value Part", "app.kubernetes.io", true}, // NOTE: This *is* a valid hostname, issue is upstream parsing
+		{"Invalid K8s Node Role", "node-role.kubernetes.io", true},      // NOTE: This *is* a valid hostname
+		{"Invalid K8s Node Name Part", "node.kubernetes.io", true},      // NOTE: This *is* a valid hostname
+		{"Invalid Type Annotation Part", "type!=kubernetes.io", true},   // NOTE: This *is* a valid hostname (TLD .io exists)
+		{"Invalid Pure IPv4", "192.168.1.1", false},
+		{"Invalid Pure IPv6", "::1", false}, // This parses as IP
+		{"Invalid Empty String", "", false},
+		{"Invalid String with only Colon", "myrepo:", false},
+		{"Invalid String with only Dot", ".", false},
+
+		// Edge Cases
+		{"Valid IPv4 with Port", "1.2.3.4:5000", true}, // Considered valid as it has a port
+		{"Valid IPv6 with Port", "[::1]:5000", true},   // Considered valid as it has a port
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			actual := isValidRegistryHostname(tc.registry)
+			assert.Equal(t, tc.expected, actual, "Registry: %s", tc.registry)
+		})
+	}
+}
