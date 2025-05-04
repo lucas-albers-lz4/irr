@@ -132,9 +132,39 @@ Enhance the analyzer and downstream components (generator, inspector) to correct
 #### Phase 9.1: Implement Discrepancy Warning (User Feedback Stop-Gap) [OBSOLETE]
 - This was a temporary measure before full subchart support.
 
-#### Phase 9.2: Subchart Discrepancy Analysis [COMPLETED]
-- **Goal:** Systematically analyze charts exhibiting discrepancies between `irr inspect` output and `helm template` rendering, categorize root causes at scale, and document findings to inform the Phase 9.3 refactor.
-    - **Conclusion:** Analysis highlighted limitations in the old analyzer and confirmed the need for replicating Helm's value merging logic (Phase 9.3).
+#### Phase 9.2: Refine Analyzer Context-Driven Image Identification [IN PROGRESS]
+_Objective: Fix over-matching of non-image strings in context-aware analysis (`inspect -A`) by adopting a robust, structurally-aware algorithm, validated by a rigorous testing framework._
+
+**Problem:** The initial context-aware analyzer (Phase 9.3) successfully identified value paths but interpreted too many generic strings (e.g., "IfNotPresent", "Cluster", hook annotations, Prometheus relabel configs) as images. This occurred because `image.ParseImageReference` adds defaults (`docker.io/library/`, `:latest`), making simple strings appear image-like. Blacklist filtering proved brittle.
+
+**Refined Algorithm ("Two-Phase Parsing & Structural Validation"):**
+1.  **Initial Context Check (Optional Optimization):** Use a simplified `isProbableImageKeyPath` helper to quickly identify common image locations (e.g., key is `image`/`repository`, path ends `.image`/`.repository`/`.imageRef`). If false, skip parsing for this path.
+2.  **Basic Validation:** Trim the string value (`trimmedVal`). If empty or starts with `/`, return `nil`.
+3.  **Parse WITHOUT Defaults:** Call `parseImageStringNoDefaults(trimmedVal)` to get `parsedReg`, `parsedRepo`, `parsedTag`.
+4.  **Structural Validation (Core Filter):** Check if the string has inherent image structure: `hasStructure := (parsedReg != "" || strings.Contains(parsedRepo, "/"))`. If `!hasStructure` (it's just a simple word/identifier), **return `nil`**. This is the key step to filter strings that only parse due to defaulting.
+5.  **Parse WITH Defaults:** If structural validation passed, parse *with* defaults: `ref, err := image.ParseImageReference(trimmedVal)`. Handle errors or empty `ref.Repository` by returning `nil`.
+6.  **Minimal Keyword Check:** Reject `trimmedVal` if it matches `true`, `false`, or `null` (case-insensitive).
+7.  **Record Pattern:** If all checks pass, record the `analysis.ImagePattern` using components from the defaulted parse (`ref`) for `Structure` and the original `val` for `Value`.
+
+**Testing Framework & Feedback Loop:**
+1.  **Ground Truth Creation:**
+    *   Select a diverse corpus of charts (10-20+) from `test/chart-cache` and real-world examples.
+    *   Manually annotate values: For each chart (including dependencies), meticulously review `values.yaml` files and create a map `{(chart_name, path): is_image}` marking every path *intended* to hold an image (string or map).
+    *   **Supplementary Validation:** During annotation or analysis, known image name patterns (e.g., `debian`, `alpine`, `nginx` + version tag) can serve as *confidence signals* to help verify the ground truth or evaluate algorithm performance, but these patterns **must not** become the primary detection logic in the algorithm itself.
+2.  **Test Harness Implementation:**
+    *   Create a tool that takes a chart path and two `irr` versions/analyzer functions (e.g., current vs. new algorithm).
+    *   For each algorithm, run `irr inspect --chart-path <chart> -o json` and parse the output.
+    *   Compare identified `imagePatterns[].Path` against the ground truth for that chart.
+    *   Calculate and report metrics: True Positives (TP), False Positives (FP), False Negatives (FN), Precision (TP / (TP + FP)), Recall (TP / (TP + FN)).
+    *   (Optional) Compare `irr` image count against `helm template <chart> | <parse_rendered_image_count>` as a heuristic baseline.
+3.  **Analysis & Refinement:**
+    *   Run the harness across the corpus.
+    *   Compare aggregate Precision/Recall. Aim to significantly increase Precision without decreasing Recall.
+    *   Analyze specific FPs/FNs to identify algorithm weaknesses and refine the logic (e.g., adjust structural validation, minimal keyword check, or `isProbableImageKeyPath`).
+
+**Verification:** Implement the algorithm, build the harness (or manually test on the corpus initially), compare results, and iterate based on Precision/Recall metrics and FP/FN analysis.
+
+**Status:** This refined algorithm and testing plan is the active task to resolve `inspect -A` accuracy issues before proceeding with Phase 9.4.
 
 #### Phase 9.3: Refactor Analyzer for Full Subchart Support (The Correct Fix) [COMPLETED]
 _Objective: Ensure the analyzer can fully replicate Helm's value merging, including subcharts, to enable accurate image path detection._
@@ -142,8 +172,10 @@ _Objective: Ensure the analyzer can fully replicate Helm's value merging, includ
 - [x]   **Phase 9.3.1 - 9.3.10:** Completed tasks related to prototyping Helm value merging, designing context structures, adapting analyzer traversal, implementing chart loading utilities, integrating into commands, identifying test cases, adding unit tests, and updating documentation regarding the *analyzer's* capabilities.
     - **Outcome:** The analyzer (`internal/helm/context_analyzer.go`) now correctly identifies images and their source paths (e.g., `child.image`) within merged value structures.
 
-#### Phase 9.4: Align Generator and Inspector with Context-Aware Analysis [IN PROGRESS]
+#### Phase 9.4: Align Generator and Inspector with Context-Aware Analysis
 _Objective: Ensure the override generator and inspect command correctly process the paths and structures identified by the context-aware analyzer, especially for subchart values, resolving current integration test failures._
+
+**Dependency:** This phase depends on the successful implementation and verification of the refined context-driven analyzer logic in **Phase 9.2**. The analyzer must provide accurate image patterns as input.
 
 **Current Status (Integration Test Failures):**
 - **Parent Chart Tests (`TestOverrideParentChart`, `TestInspectParentChart`):**
@@ -154,7 +186,7 @@ _Objective: Ensure the override generator and inspect command correctly process 
 - **Bitnami Chart Tests (`TestComplexChartFeatures/ingress-nginx...`, `TestClickhouseOperator`, `TestRulesSystemIntegration/Bitnami_ValidationSucceeds`):**
     - Fail validation (`exit 16`) due to Bitnami's internal container validation logic triggered by rewritten image paths. Requires chart-specific flags (e.g., `global.security.allowInsecureImages=true`) during validation, which is outside the scope of Phase 9 and relates to **Phase 10**.
 
-- [ ] **Phase 9.4.1: [P1] Debug & Fix Override Generator (`pkg/chart/generator.go`)** [IN PROGRESS]
+- [ ] **Phase 9.4.1: [P1] Debug & Fix Override Generator (`pkg/chart/generator.go`)**
     - [x] **Goal:** Resolve failures in context-aware override tests (`TestOverrideParentChart`, `TestCertManager`, `TestOverrideAlias`, `TestOverrideDeepNesting`, `TestOverrideGlobals`).
     - [x] **Tasks:**
         - [x] Analyze `panic` and incorrect values in `TestOverrideParentChart` failures. -> **Resolved panic by fixing strategy initialization.**
@@ -163,11 +195,10 @@ _Objective: Ensure the override generator and inspect command correctly process 
         - [x] Fix `global.imageRegistry` handling for `TestOverrideGlobals` -> **`TestOverrideGlobals` now passing.**
         - [x] Fix `PrefixSourceRegistryStrategy` to handle dots in registry names correctly -> **Added comments explaining the importance of preserving dots for readability.**
         - [x] Fix special case for `TestRegistryPrefixTransformation` to transform registry names by removing dots when used as path prefixes -> **Registry prefix transformation tests now passing.**
-        - [x] Fix registry mapping loading in `runOverrideStandaloneMode` -> **Registry mapping file tests now passing.**
+        - [x] Fix registry mapping loading in `runOverrideStandaloneMode` -> **Registry mapping file tests (`TestRegistryMappingFile`, `TestConfigFileMappings`) now passing.**
     - [x] **Integration Test Failures (Phase 9.4.1 Continued):**
-      - Fixed path_strategy.go to correctly handle registry paths with dots
-      - Updated tests to match the corrected behavior
-      - Ensured subcharts can get values from parent charts
+      - [x] Fix `TestOverrideParentChart` and `TestInspectParentChart` failures related to incorrect repository path prefix (`docker.io/` vs `quayio/`) and inspect output format/registry detection for subchart images. -> **Fixed strategy path generation and updated outdated test assertions.**
+      - [ ] Fix `TestComplexChartFeatures/ingress-nginx...` failures related to Bitnami validation (Move to Phase 10).
 
 - [x] **Phase 9.5: Implement New Context-Aware Tests** [COMPLETED]
     - [x] **Goal:** Implement planned tests for aliases, deep nesting, globals interaction.
