@@ -21,13 +21,89 @@
 #
 registries:
     mappings:
+        - source: /tmp/cilium-bootstrap.d
+          target: registry.local//tmp/cilium-bootstrap-d
+          description: Mapping for /tmp/cilium-bootstrap.d
+          enabled: true
+        - source: app.kubernetes.io
+          target: registry.local/app-kubernetes-io
+          description: Mapping for app.kubernetes.io
+          enabled: true
+        - source: cert-manager.io
+          target: registry.local/cert-manager-io
+          description: Mapping for cert-manager.io
+          enabled: true
+        - source: cilium.io
+          target: registry.local/cilium-io
+          description: Mapping for cilium.io
+          enabled: true
+        - source: clusterissuers.cert-manager.io
+          target: registry.local/clusterissuers-cert-manager-io
+          description: Mapping for clusterissuers.cert-manager.io
+          enabled: true
         - source: docker.io
           target: registry.local/docker-io
           description: Mapping for docker.io
           enabled: true
+        - source: gateway.networking.k8s.io
+          target: registry.local/gateway-networking-k8s-io
+          description: Mapping for gateway.networking.k8s.io
+          enabled: true
+        - source: gcr.io
+          target: registry.local/gcr-io
+          description: Mapping for gcr.io
+          enabled: true
+        - source: ghcr.io
+          target: registry.local/ghcr-io
+          description: Mapping for ghcr.io
+          enabled: true
+        - source: harbor.home.arpa
+          target: registry.local/harbor-home-arpa
+          description: Mapping for harbor.home.arpa
+          enabled: true
+        - source: issuers.cert-manager.io
+          target: registry.local/issuers-cert-manager-io
+          description: Mapping for issuers.cert-manager.io
+          enabled: true
+        - source: k8s.io
+          target: registry.local/k8s-io
+          description: Mapping for k8s.io
+          enabled: true
+        - source: keda.sh
+          target: registry.local/keda-sh
+          description: Mapping for keda.sh
+          enabled: true
+        - source: kubernetes.io
+          target: registry.local/kubernetes-io
+          description: Mapping for kubernetes.io
+          enabled: true
+        - source: node-role.kubernetes.io
+          target: registry.local/node-role-kubernetes-io
+          description: Mapping for node-role.kubernetes.io
+          enabled: true
+        - source: node.cilium.io
+          target: registry.local/node-cilium-io
+          description: Mapping for node.cilium.io
+          enabled: true
+        - source: node.cloudprovider.kubernetes.io
+          target: registry.local/node-cloudprovider-kubernetes-io
+          description: Mapping for node.cloudprovider.kubernetes.io
+          enabled: true
+        - source: node.kubernetes.io
+          target: registry.local/node-kubernetes-io
+          description: Mapping for node.kubernetes.io
+          enabled: true
         - source: quay.io
           target: registry.local/quay-io
           description: Mapping for quay.io
+          enabled: true
+        - source: registry.k8s.io
+          target: registry.local/registry-k8s-io
+          description: Mapping for registry.k8s.io
+          enabled: true
+        - source: type!=kubernetes.io/dockercfg,type!=kubernetes.io/service-account-token,type!=helm.sh
+          target: registry.local/type!=kubernetes-io/dockercfg,type!=kubernetes-io/service-account-token,type!=helm-sh
+          description: Mapping for type!=kubernetes.io/dockercfg,type!=kubernetes.io/service-account-token,type!=helm.sh
           enabled: true
     defaultTarget: registry.local/default
 version: "1.0"

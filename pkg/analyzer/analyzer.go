@@ -159,22 +159,82 @@ func analyzeMapValue(path string, val reflect.Value, patterns *[]ImagePattern, c
 	if repoVal, repoOk := mapValue["repository"]; repoOk {
 		if repoStr, ok := repoVal.(string); ok && repoStr != "" {
 			isImageMap = true
-			repository = repoStr
-			log.Debug("Found 'repository' key at '%s': '%s'", path, repository)
+			log.Debug("Found 'repository' key at '%s': '%s'", path, repoStr)
 
-			// Handle optional registry and tag. DO NOT apply defaults here.
+			// --- Improved Parsing Logic for Legacy Analyzer ---
+			// Initialize
 			registry = ""
+			repository = repoStr // Start with the full string
+			tag = ""
+
+			// 1. Check for explicit registry key first
 			if regVal, regOk := mapValue["registry"]; regOk {
 				if regStr, ok := regVal.(string); ok && regStr != "" {
 					registry = regStr
+					log.Debug("Using explicit 'registry' key: %s", registry)
 				}
 			}
-			tag = ""
+
+			// 2. If no explicit registry, try parsing the repository string
+			if registry == "" {
+				// Use the standard parser. It defaults registry to docker.io if absent.
+				parsedRef, err := image.ParseImageReference(repository)
+				if err == nil {
+					// Check if parsing actually found a different registry than the default
+					// or if the original repo string contained the default registry explicitly
+					if parsedRef.Registry != image.DefaultRegistry || strings.Contains(repository, image.DefaultRegistry+"/") {
+						log.Debug("Parsed registry='%s' from repository string='%s'", parsedRef.Registry, repository)
+						registry = parsedRef.Registry
+						repository = parsedRef.Repository
+						tag = parsedRef.Tag // Use tag from parsed ref
+					} else {
+						// Parsing resulted in default registry, and it wasn't explicit in the string
+						registry = image.DefaultRegistry
+						repository = parsedRef.Repository // Use repo from parsed ref
+						tag = parsedRef.Tag               // Use tag from parsed ref
+					}
+				} else {
+					// Parsing failed, assume default registry and try to split tag manually
+					log.Warn("Failed to parse repository string '%s' with standard parser: %v. Assuming default registry.", repository, err)
+					registry = image.DefaultRegistry
+					if strings.Contains(repository, ":") {
+						repoParts := strings.SplitN(repository, ":", 2)
+						repository = repoParts[0]
+						if len(repoParts) > 1 {
+							tag = repoParts[1]
+						}
+					} // else repository remains as is, tag remains empty
+				}
+			} else {
+				// Explicit registry was present, ensure repo path is clean
+				// If repo string *still* looks like full path, use only the path part
+				// (e.g., registry: quay.io, repository: quay.io/...) -> repo = ...
+				if strings.HasPrefix(repository, registry+"/") {
+					repository = strings.TrimPrefix(repository, registry+"/")
+				}
+				// Also clean tag from repo if explicit registry was used
+				if strings.Contains(repository, ":") {
+					repoParts := strings.SplitN(repository, ":", 2)
+					repository = repoParts[0]
+					if len(repoParts) > 1 && tag == "" { // Only override tag if not already set
+						tag = repoParts[1]
+					}
+				}
+			}
+
+			// 3. Handle explicit tag key - this OVERRIDES any tag parsed from repo
 			if tagVal, tagOk := mapValue["tag"]; tagOk {
 				if tagStr, ok := tagVal.(string); ok && tagStr != "" {
 					tag = tagStr
+					log.Debug("Using explicit 'tag' key: %s", tag)
 				}
 			}
+
+			// 4. Apply Docker Hub library prefix *after* splitting registry/repo
+			if registry == image.DefaultRegistry && !strings.Contains(repository, "/") {
+				repository = "library/" + repository
+			}
+			// --- End Improved Parsing Logic ---
 		}
 	}
 

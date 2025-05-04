@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,6 +15,7 @@ import (
 	"github.com/spf13/afero"
 	"gopkg.in/yaml.v3"
 	"helm.sh/helm/v3/pkg/action"
+	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/chartutil"
 	"helm.sh/helm/v3/pkg/cli/values"
@@ -878,48 +880,66 @@ func getAnalysisPatterns(cmd *cobra.Command) (includePatterns, excludePatterns [
 	return includePatterns, excludePatterns, nil
 }
 
-// processImagePatterns converts analysis.ImagePattern structs into ImageInfo structs,
-// attempting to parse image references and logging skipped patterns.
+// processImagePatterns converts analyzer patterns to ImageInfo and identifies skipped patterns.
 func processImagePatterns(patterns []analysis.ImagePattern) (images []ImageInfo, skipped []string) {
-	images = make([]ImageInfo, 0, len(patterns))
-	skipped = make([]string, 0)
-	seen := make(map[string]bool)
-
 	for _, p := range patterns {
-		if p.Value == "" {
-			log.Debug("Skipping pattern with empty value", "path", p.Path)
+		imgInfo := ImageInfo{
+			Source:    p.SourceOrigin, // Use SourceOrigin if available, else Path
+			ValuePath: p.Path,         // Path represents the structural path in merged values
+		}
+		// If SourceOrigin is empty (e.g., from legacy analyzer), fallback to Path
+		if imgInfo.Source == "" {
+			imgInfo.Source = p.Path
+		}
+
+		if p.Type == analysis.PatternTypeMap && p.Structure != nil {
+			// For map types, use the pre-parsed structure directly
+			// Use type assertion with ok check for safety
+			if reg, ok := p.Structure["registry"].(string); ok {
+				imgInfo.Registry = reg
+			}
+			if repo, ok := p.Structure["repository"].(string); ok {
+				imgInfo.Repository = repo
+			}
+			if tag, ok := p.Structure["tag"].(string); ok {
+				imgInfo.Tag = tag
+			}
+			log.Debug("processImagePatterns [MAP]: Using structure", "path", p.Path, "registry", imgInfo.Registry, "repo", imgInfo.Repository)
+		} else if p.Type == analysis.PatternTypeString {
+			// For string types, parse the Value string using the correct function
+			ref, err := image.ParseImageReference(p.Value)
+			if err != nil {
+				log.Warn("Skipping string pattern due to parse error", "path", p.Path, "value", p.Value, "error", err)
+				skipped = append(skipped, fmt.Sprintf("%s: %s (parse error: %v)", p.Path, p.Value, err))
+				continue
+			}
+
+			// Populate from parsed reference
+			imgInfo.Registry = ref.Registry
+			imgInfo.Repository = ref.Repository
+			imgInfo.Tag = ref.Tag
+			imgInfo.Digest = ref.Digest
+			log.Debug("processImagePatterns [STRING]: Parsed value", "path", p.Path, "value", p.Value, "registry", imgInfo.Registry, "repo", imgInfo.Repository)
+		} else {
+			// Skip other types or maps without structure
+			log.Warn("Skipping pattern with unhandled type or missing structure", "path", p.Path, "type", p.Type, "value", p.Value)
+			skipped = append(skipped, fmt.Sprintf("%s: %s (unhandled type: %s)", p.Path, p.Value, p.Type))
 			continue
 		}
 
-		// Use p.Path (merged value path) for deduplication key
-		dedupeKey := p.Path
-		if seen[dedupeKey] {
-			log.Debug("Skipping duplicate image pattern path", "mergedPath", dedupeKey)
-			continue
-		}
-		seen[dedupeKey] = true
-
-		// Attempt to parse the image reference
-		imgRef, err := image.ParseImageReference(p.Value)
-		if err != nil {
-			log.Warn("Failed to parse image reference, skipping", "path", p.Path, "value", p.Value, "error", err)
-			// Use dedupeKey (merged value path) in the skipped message for clarity
-			skipped = append(skipped, fmt.Sprintf("%s: %s (parse error: %v)", dedupeKey, p.Value, err))
-			continue
+		// Add original registry info if available from the pattern (context-aware only)
+		if p.OriginalRegistry != "" {
+			imgInfo.OriginalRegistry = p.OriginalRegistry
 		}
 
-		info := ImageInfo{
-			Registry:   imgRef.Registry,
-			Repository: imgRef.Repository,
-			Tag:        imgRef.Tag,
-			Digest:     imgRef.Digest,
-			Source:     p.SourceOrigin,
-			ValuePath:  p.Path,
+		// Only add if we have a valid repository
+		if imgInfo.Repository != "" {
+			log.Debug("processImagePatterns: Adding ImageInfo", "path", p.Path, "finalRegistry", imgInfo.Registry, "finalRepo", imgInfo.Repository)
+			images = append(images, imgInfo)
+		} else {
+			log.Warn("Skipping processed pattern due to empty repository", "path", p.Path, "type", p.Type, "value", p.Value)
+			skipped = append(skipped, fmt.Sprintf("%s: %s (empty repository after processing)", p.Path, p.Value))
 		}
-		if p.OriginalRegistry != "" && p.OriginalRegistry != info.Registry {
-			info.OriginalRegistry = p.OriginalRegistry
-		}
-		images = append(images, info)
 	}
 	return images, skipped
 }
@@ -1045,6 +1065,7 @@ func createConfigSkeleton(images []ImageInfo, outputFile string) error {
 	// Create structured registry mappings
 	mappings := make([]registry.RegMapping, 0, len(registryList))
 	for _, reg := range registryList {
+		log.Debug("CREATE_SKELETON: Creating mapping entry", "source_registry_key", reg)
 		// Generate a sanitized target registry path
 		targetPath := strings.ReplaceAll(reg, ".", "-")
 		mappings = append(mappings, registry.RegMapping{
@@ -1180,22 +1201,45 @@ func analyzeRelease(release *helm.ReleaseElement, helmAdapter *helm.Adapter, fla
 		Name:    chartMetadata.Name,
 		Version: chartMetadata.Version,
 		Path:    fmt.Sprintf("helm-release://%s/%s", release.Namespace, release.Name),
+		// Dependencies might be missing when inspecting a release directly
 	}
 
-	// Analyze the release values using the provided analyzer config
-	log.Debug("Analyzing release values for", "name", release.Name, "namespace", release.Namespace)
-	analysisPatterns, analysisErr := analyzer.AnalyzeHelmValues(releaseValues, flags.AnalyzerConfig)
-	if analysisErr != nil {
-		return nil, nil, fmt.Errorf("analysis failed for release %s/%s: %w", release.Namespace, release.Name, analysisErr)
+	// --- Use Context-Aware Analyzer for Release Inspection ---
+	log.Debug("Analyzing release values using ContextAwareAnalyzer", "name", release.Name, "namespace", release.Namespace)
+
+	// Create a minimal ChartAnalysisContext based on release data
+	// NOTE: Chart dependencies and origins are NOT available when inspecting a live release this way.
+	// The context-aware analyzer might behave differently without full dependency info.
+	// We assume the releaseValues are the fully rendered values.
+	// A dummy chart object is created to satisfy the analyzer's needs.
+	dummyChart := &chart.Chart{ // Use the imported chart.Chart type
+		Metadata: &chart.Metadata{
+			Name:    chartMetadata.Name,
+			Version: chartMetadata.Version,
+		},
+		// Dependencies and other fields will be empty/nil
 	}
-	convertedPatterns := convertAnalyzerPatternsToAnalysis(analysisPatterns)
-	images, skipped := processImagePatterns(convertedPatterns)
+	analysisContext := &helm.ChartAnalysisContext{
+		Chart:   dummyChart,
+		Values:  releaseValues,
+		Origins: map[string]helm.ValueOrigin{}, // Initialize as map of VALUES, not pointers
+	}
+
+	contextAnalyzer := helm.NewContextAwareAnalyzer(analysisContext)
+	chartAnalysisResult, analysisErr := contextAnalyzer.AnalyzeContext()
+	if analysisErr != nil {
+		// Use the context-aware analyzer's result
+		return nil, nil, fmt.Errorf("context-aware analysis failed for release %s/%s: %w", release.Namespace, release.Name, analysisErr)
+	}
+
+	// Process the patterns from the context-aware analyzer
+	images, skipped := processImagePatterns(chartAnalysisResult.ImagePatterns) // Use patterns directly
 
 	// Create analysis result structure
 	analysisResult := ImageAnalysis{
 		Chart:         chartInfo,
 		Images:        images,
-		ImagePatterns: convertedPatterns,
+		ImagePatterns: chartAnalysisResult.ImagePatterns, // Use patterns directly from context-aware analyzer
 		Skipped:       skipped,
 	}
 
@@ -1234,63 +1278,83 @@ func analyzeRelease(release *helm.ReleaseElement, helmAdapter *helm.Adapter, fla
 	}, unfilteredImagesForSkeleton, nil // Return unfiltered images here
 }
 
-// processAllReleases processes all releases and returns the aggregated results
+// isValidRegistryHostname checks if a string looks like a valid registry hostname.
+// It allows names with dots or colons (for ports) but excludes pure IPv4/IPv6 addresses.
+// Allows 'localhost' specifically.
+func isValidRegistryHostname(registry string) bool {
+	if registry == "localhost" {
+		return true
+	}
+	// Must contain a dot or a colon
+	if !strings.Contains(registry, ".") && !strings.Contains(registry, ":") {
+		return false
+	}
+	// Try to parse as IP - if successful, it's NOT a valid hostname registry (unless it has a port)
+	if !strings.Contains(registry, ":") { // Only check for pure IPs if no port is present
+		if net.ParseIP(registry) != nil {
+			log.Debug("isValidRegistryHostname: Rejecting pure IP address", "registry", registry)
+			return false // It's a bare IP address
+		}
+	}
+
+	// Basic check passed
+	return true
+}
+
+// processAllReleases iterates through all releases, analyzes them, and aggregates results.
 func processAllReleases(releases []*helm.ReleaseElement, helmAdapter *helm.Adapter, flags *InspectFlags) ([]*ReleaseAnalysisResult, []string, []ImageInfo, error) {
 	var allResults []*ReleaseAnalysisResult
 	var skippedReleases []string
-	uniqueRegistries := make(map[string]bool)
+	uniqueRegistries := make(map[string]bool) // Map to store unique registry strings
+	var allUnfilteredImages []ImageInfo       // Slice to hold all images before filtering for skeleton
 
-	// Process each release
 	for _, release := range releases {
-		// Call analyzeRelease, which now returns unfiltered images as well
 		result, unfilteredImages, err := analyzeRelease(release, helmAdapter, flags)
 		if err != nil {
-			log.Warn("Failed to analyze release", "name", release.Name, "namespace", release.Namespace, "error", err)
-			skippedReleases = append(skippedReleases, fmt.Sprintf("%s/%s", release.Namespace, release.Name))
+			log.Error("Error analyzing release", "release", release.Name, "namespace", release.Namespace, "error", err)
+			skippedReleases = append(skippedReleases, fmt.Sprintf("%s/%s: %v", release.Namespace, release.Name, err))
 			continue
 		}
-
-		allResults = append(allResults, result) // Keep the potentially filtered result for output
+		allResults = append(allResults, result)
+		allUnfilteredImages = append(allUnfilteredImages, unfilteredImages...)
 
 		// Accumulate unique registries FROM THE UNFILTERED IMAGES for skeleton generation
 		log.Debug("Processing release for skeleton registry aggregation", "release", release.Name, "namespace", release.Namespace, "unfiltered_image_count", len(unfilteredImages))
 		for _, img := range unfilteredImages { // Use the unfiltered list here
-			log.Debug("Checking image registry for skeleton set", "registry", img.Registry, "source_path", img.Source)
+			log.Debug("SKELETON_CHECK: Checking ImageInfo for skeleton", "registry", img.Registry, "repository", img.Repository, "tag", img.Tag, "source", img.Source, "valuePath", img.ValuePath)
 			if img.Registry != "" { // Ensure we don't add empty registries
 				if !uniqueRegistries[img.Registry] {
-					log.Debug("Adding new unique registry to skeleton set", "registry", img.Registry)
+					log.Debug("SKELETON_ADD: Adding potential unique registry to skeleton set", "registry", img.Registry)
 				}
-				uniqueRegistries[img.Registry] = true // Add registry to the map
+				uniqueRegistries[img.Registry] = true // Add registry to the map (will be filtered later)
 			} else {
-				log.Debug("Skipping image with empty registry for skeleton set", "source_path", img.Source, "repository", img.Repository)
+				log.Debug("SKELETON_SKIP: Skipping ImageInfo with empty registry", "repository", img.Repository, "source", img.Source)
 			}
 		}
 	}
 
-	// Handle no results case (check uniqueRegistries as well)
-	if len(allResults) == 0 && len(uniqueRegistries) == 0 {
-		msg := "No releases were successfully analyzed or no registries found"
-		if len(skippedReleases) > 0 {
-			msg += fmt.Sprintf(". %d releases were skipped due to errors", len(skippedReleases))
-		}
-		log.Warn(msg)
-		// Return nil for skeletonImages here as well
-		return nil, skippedReleases, nil, errors.New(msg)
-	}
-
-	// Create images list for skeleton generation from the unique registries map
-	var skeletonImages []ImageInfo
+	// --- Filter uniqueRegistries for skeleton generation ---
+	validatedRegistries := make(map[string]bool)
+	log.Debug("Filtering collected unique registries for skeleton generation...")
 	for registry := range uniqueRegistries {
+		if isValidRegistryHostname(registry) {
+			log.Debug("SKELETON_VALIDATE: Keeping valid registry hostname", "registry", registry)
+			validatedRegistries[registry] = true
+		} else {
+			log.Debug("SKELETON_VALIDATE: Discarding invalid registry hostname", "registry", registry)
+		}
+	}
+	log.Debug("Finished filtering registries", "initial_count", len(uniqueRegistries), "validated_count", len(validatedRegistries))
+
+	// Create ImageInfo slice specifically for skeleton generation from VALIDATED registries
+	var skeletonImages []ImageInfo
+	for registry := range validatedRegistries { // Iterate the FILTERED map
 		skeletonImages = append(skeletonImages, ImageInfo{
-			Registry: registry,
+			Registry: registry, // Use the validated registry key
 		})
 	}
 
-	// Sort skeleton images by registry for consistent output
-	sort.Slice(skeletonImages, func(i, j int) bool {
-		return skeletonImages[i].Registry < skeletonImages[j].Registry
-	})
-
+	// Return results, skipped releases, and the VALIDATED skeleton image list
 	return allResults, skippedReleases, skeletonImages, nil
 }
 

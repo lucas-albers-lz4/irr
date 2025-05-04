@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/lucas-albers-lz4/irr/pkg/analysis"
+	"github.com/lucas-albers-lz4/irr/pkg/image"
 	"github.com/lucas-albers-lz4/irr/pkg/log"
 )
 
@@ -327,58 +328,105 @@ func (a *ContextAwareAnalyzer) isDirectImageMapDefinition(val map[string]interfa
 
 // isImageString uses heuristics to check if a string likely represents a container image reference.
 func (a *ContextAwareAnalyzer) isImageString(key, val string) bool {
-	// Basic check: at least one slash (/) and optionally a colon (:)
-	if strings.Contains(val, "/") && !strings.Contains(val, "{{") {
+	// Basic check: Ignore empty strings or Go templates
+	if val == "" || strings.Contains(val, "{{") {
+		return false
+	}
+
+	// Attempt to parse using the standard library. If it parses without error,
+	// it's very likely an image reference.
+	_, err := image.ParseImageReference(val) // Use the library's parser
+	if err == nil {
+		log.Debug("isImageString: Passed ParseImageReference check", "value", val)
 		return true
 	}
 
-	// Keys with 'image' in their name might indicate an image string
-	if strings.Contains(strings.ToLower(key), "image") && !strings.Contains(val, "{{") {
-		return true
+	// Fallback Heuristic: If parsing fails, check if the key suggests an image
+	// AND the value contains a slash (might be an incomplete reference user wants to fix)
+	keyLower := strings.ToLower(key)
+	if (strings.Contains(keyLower, "image") || strings.Contains(keyLower, "repository")) && strings.Contains(val, "/") {
+		log.Debug("isImageString: Failed ParseImageReference, but key/value suggest potential image", "key", key, "value", val)
+		return true // Keep potentially incomplete references if key implies image
 	}
 
+	log.Debug("isImageString: Failed all checks", "key", key, "value", val, "parseError", err)
 	return false
 }
 
 // normalizeImageValues extracts and normalizes image components from a map.
 func (a *ContextAwareAnalyzer) normalizeImageValues(val map[string]interface{}) (registry, repository, tag string) {
 	// Defaults
-	registry = DefaultRegistry
+	registry = DefaultRegistry // Assume docker.io initially
 	tag = defaultImageTag
+	repository = "" // Start with empty repository
 
-	// Prioritize values directly from the map
+	explicitRegistry := ""
 	if r, ok := val["registry"].(string); ok && r != "" {
-		registry = r
-	}
-	if repoVal, ok := val["repository"].(string); ok && repoVal != "" {
-		repository = repoVal // Use repository directly from map
-	}
-	if tagVal, ok := val["tag"].(string); ok && tagVal != "" {
-		tag = tagVal // Use tag directly from map
+		explicitRegistry = r // Store explicitly provided registry
+		log.Debug("normalizeImageValues: Found explicit registry key", "registry", explicitRegistry)
 	}
 
-	// Basic check: If repository is missing, it's not a valid image map for our purposes
-	if repository == "" {
-		log.Warn("normalizeImageValues: 'repository' key missing or empty", "map", val)
+	// Get repository value
+	if repoVal, ok := val["repository"].(string); ok && repoVal != "" {
+		repository = repoVal // Use repository value directly from map
+	} else {
+		log.Warn("normalizeImageValues: 'repository' key missing, empty, or not a string", "map", val)
 		return "", "", "" // Cannot proceed without repository
 	}
 
-	// REFINED TAG LOGIC:
-	// If tag wasn't explicitly in map, AND repo string looks like it might contain a tag
-	if tag == defaultImageTag && strings.Contains(repository, ":") {
-		_, parsedRepo, parsedTag := a.parseImageString(repository)
-		if parsedRepo != "" && parsedTag != "" {
-			log.Debug("normalizeImageValues: Using tag parsed from repository string", "parsedTag", parsedTag)
-			repository = parsedRepo // Update repo if tag was embedded
-			tag = parsedTag         // Use tag found in repo string
+	// --- Registry Parsing Logic ---
+	// Try parsing the REPOSITORY string itself for a registry component
+	parsedReg, parsedRepo, parsedTagFromRepo := a.parseImageStringNoDefaults(repository)
+
+	if parsedReg != "" {
+		// Registry was found within the repository string
+		log.Debug("normalizeImageValues: Parsed registry from repository string", "parsedRegistry", parsedReg)
+		registry = parsedReg         // Use the parsed registry
+		repository = parsedRepo      // Use the remaining part as repository
+		if parsedTagFromRepo != "" { // If tag was also in repo string
+			tag = parsedTagFromRepo
+			log.Debug("normalizeImageValues: Using tag parsed from repository string", "parsedTag", tag)
+		}
+	} else {
+		// No registry found in the repository string itself
+		// Repository is just the path, keep the initial default registry (docker.io)
+		log.Debug("normalizeImageValues: No registry found in repository string, keeping default/initial", "registry", registry)
+		// Keep the original repository value if no registry was parsed out
+		// Also, check if a tag was embedded in this simple repository string
+		if strings.Contains(repository, ":") {
+			repoParts := strings.SplitN(repository, ":", 2)
+			repository = repoParts[0]
+			if len(repoParts) > 1 {
+				tag = repoParts[1]
+				log.Debug("normalizeImageValues: Using tag parsed from simple repository string", "parsedTag", tag)
+			}
 		}
 	}
 
-	// Final normalization (e.g., docker.io/library/) - Apply AFTER deciding repo/tag
+	// If an EXPLICIT registry key was provided, it OVERRIDES any parsed/default registry
+	if explicitRegistry != "" {
+		if explicitRegistry != registry {
+			log.Warn("normalizeImageValues: Explicit 'registry' key overrides parsed/default registry", "explicit", explicitRegistry, "parsedOrDef", registry)
+			registry = explicitRegistry
+		}
+	}
+	// --- End Registry Parsing Logic ---
+
+	// Get tag value - OVERRIDES tag parsed from repository string if present
+	if tagVal, ok := val["tag"].(string); ok && tagVal != "" {
+		if tagVal != tag {
+			log.Debug("normalizeImageValues: Explicit 'tag' key overrides parsed tag", "explicitTag", tagVal, "parsedTag", tag)
+			tag = tagVal // Use explicit tag from map
+		}
+	}
+
+	// Apply Docker Hub library normalization AFTER determining the final registry and repository
 	if registry == DefaultRegistry && !strings.Contains(repository, "/") {
+		log.Debug("normalizeImageValues: Applying Docker Hub library/ prefix", "repository", repository)
 		repository = "library/" + repository
 	}
 
+	log.Debug("normalizeImageValues: Final normalized values", "registry", registry, "repository", repository, "tag", tag)
 	return registry, repository, tag
 }
 
