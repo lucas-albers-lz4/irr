@@ -120,6 +120,9 @@ func TestGenerator_Generate_Simple(t *testing.T) {
 	expectedOverrides := override.File{
 		ChartPath: "test-chart",
 		Values: map[string]interface{}{
+			"global": map[string]interface{}{
+				"imageRegistry": "target.registry.com",
+			},
 			"image": map[string]interface{}{
 				"registry":   "target.registry.com",
 				"repository": "mockpath/library/nginx",
@@ -208,6 +211,9 @@ func TestGenerator_Generate_ThresholdMet(t *testing.T) {
 	// Verify the expected overrides for both images
 	expectedOverrides := override.File{
 		Values: map[string]interface{}{
+			"global": map[string]interface{}{
+				"imageRegistry": "target.registry.com",
+			},
 			"image": map[string]interface{}{
 				"registry":   "target.registry.com",
 				"repository": "mockpath/library/nginx",
@@ -653,6 +659,9 @@ func TestGenerator_Generate_ImagePatternError(t *testing.T) {
 		// Check that the good image was processed
 		expectedOverrides := override.File{
 			Values: map[string]interface{}{ // Expect map now due to createOverride
+				"global": map[string]interface{}{
+					"imageRegistry": "target.registry.com",
+				},
 				"goodImage": map[string]interface{}{
 					"registry":   "target.registry.com",
 					"repository": "mockpath/app/image1",
