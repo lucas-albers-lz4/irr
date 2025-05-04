@@ -92,6 +92,7 @@ func TestParentChart(t *testing.T) {
 		"--target-registry", h.targetReg,
 		"--source-registries", strings.Join(h.sourceRegs, ","),
 		"--output-file", outputFile,
+		"--context-aware",
 	)
 	require.NoError(t, err, "override command should succeed")
 	t.Logf("Override output: %s", output)
@@ -109,8 +110,8 @@ func TestParentChart(t *testing.T) {
 	content := string(overrideBytes)
 	t.Logf("Override content: %s", content)
 
-	// Check if docker.io registry path is preserved (not transformed to dockerio)
-	assert.Contains(t, content, "docker.io/docker.io/bitnami/nginx", "Override should include transformed repository with preserved registry name")
+	// Check that the repository path includes the source registry prefix
+	assert.Contains(t, content, "repository: docker.io/bitnami/nginx", "Override should include transformed repository with source registry prefix")
 }
 
 // validateExpectedImages checks if all expected image repositories are found in the actual repositories
@@ -403,6 +404,7 @@ func TestRegistryMappingFile(t *testing.T) {
 		"--source-registries", strings.Join(sourceRegs, ","),
 		"--config", mappingsFile,
 		"--output-file", h.overridePath,
+		"--debug",
 	)
 	require.NoError(t, err, "override command should succeed with registry mappings file")
 	t.Logf("Override output: %s", output)

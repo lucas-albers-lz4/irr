@@ -140,7 +140,7 @@ func TestOverrideParentChart(t *testing.T) {
 	parentAppImageRepo, ok := parentAppImageMapTyped["repository"].(string)
 	assert.True(t, ok, "parentAppImage map should have repository string")
 	// Path strategy preserves registry with dots
-	assert.Contains(t, parentAppImageRepo, "docker.io/docker.io/parent/app", "Parent app image repo override incorrect")
+	assert.Contains(t, parentAppImageRepo, "docker.io/parent/app", "Parent app image repo override incorrect")
 
 	parentAppImageTag, ok := parentAppImageMapTyped["tag"].(string)
 	assert.True(t, ok, "parentAppImage map should have tag string")
@@ -159,8 +159,8 @@ func TestOverrideParentChart(t *testing.T) {
 
 	childImageRepo, ok := childImageMapTyped["repository"].(string)
 	assert.True(t, ok, "child.image map should have repository string")
-	// Path strategy preserves registry with dots
-	assert.Contains(t, childImageRepo, "docker.io/docker.io/nginx", "Child image repo override incorrect")
+	// Path strategy preserves registry with dots and adds library/
+	assert.Contains(t, childImageRepo, "docker.io/library/nginx", "Child image repo override incorrect")
 
 	childImageTag, ok := childImageMapTyped["tag"].(string)
 	assert.True(t, ok, "child.image map should have tag string")

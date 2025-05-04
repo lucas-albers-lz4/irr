@@ -177,7 +177,7 @@ func TestInspectParentChart(t *testing.T) {
 		case "child.image": // Child image, uses default registry, overridden tag
 			foundChildImage = true
 			assert.Equal(t, "docker.io", img.Registry, "child.image registry")
-			assert.Equal(t, "docker.io/nginx", img.Repository, "child.image repository") // Check actual value for now
+			assert.Equal(t, "library/nginx", img.Repository, "child.image repository") // Expect normalized 'library/' prefix
 			assert.Equal(t, "1.23", img.Tag, "child.image tag (overridden)")
 			// Source reflects origin of final value override (tag from parent values)
 			assert.Equal(t, "values.yaml", img.Source, "child.image source path") // Expect file path of final override
