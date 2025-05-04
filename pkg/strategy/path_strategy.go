@@ -10,8 +10,14 @@ import (
 	"github.com/lucas-albers-lz4/irr/pkg/registry"
 )
 
-// DefaultLibraryRepoPrefix is the prefix used for official Docker Hub images.
-const DefaultLibraryRepoPrefix = "library" // Duplicated from pkg/analysis to avoid import cycle.
+// Constants for path handling
+const (
+	// DefaultLibraryRepoPrefix is the prefix used for official Docker Hub images.
+	DefaultLibraryRepoPrefix = "library" // Duplicated from pkg/analysis to avoid import cycle.
+
+	// MaxSplitParts is the maximum number of parts when splitting paths.
+	MaxSplitParts = 2
+)
 
 // PathStrategy defines the interface for generating new image paths.
 type PathStrategy interface {
@@ -61,17 +67,26 @@ func (s *PrefixSourceRegistryStrategy) GeneratePath(imgRef *image.Reference, eff
 	// effectiveTargetRegistry. We should NOT do mapping lookups again, as that creates
 	// a double-handling situation.
 	//
-	// However, we keep this logic for backward compatibility with direct usage of the strategy.
-	// In normal usage through the generator, this code shouldn't be reached since
-	// effectiveTargetRegistry would already be set correctly.
+	// Note: The Generator now splits registry paths (like "registry.com/path") and handles
+	// adding the path component to the repository path. We should assume effectiveTargetRegistry
+	// is just the registry part without any path components.
+
 	if effectiveTargetRegistry == "" && s.mappings != nil {
 		if mappedTarget := s.mappings.GetTargetRegistry(imgRef.Registry); mappedTarget != "" {
 			log.Debug("PrefixSourceRegistryStrategy: Found registry mapping", "source", imgRef.Registry, "target", mappedTarget)
-			// Extract the repository path from the mapped target
+			// Extract the registry and path components
 			if strings.Contains(mappedTarget, "/") {
-				// If the mapped target contains a path, use it as a prefix
-				log.Debug("PrefixSourceRegistryStrategy: Using mapped target path as prefix", "mappedTarget", mappedTarget)
-				return fmt.Sprintf("%s/%s", strings.TrimSuffix(mappedTarget, "/"), imgRef.Repository), nil
+				// Split at the first slash
+				parts := strings.SplitN(mappedTarget, "/", MaxSplitParts)
+				log.Debug("PrefixSourceRegistryStrategy: Split mapped target", "registry", parts[0], "path", parts[1])
+
+				// In this legacy direct strategy invocation case, handle both parts
+				if imgRef.Repository == "" {
+					// If we have no repository, use only the mapped path
+					return parts[1], nil
+				}
+				// Otherwise, combine the mapped path with the repository
+				return fmt.Sprintf("%s/%s", parts[1], imgRef.Repository), nil
 			}
 			// Store the mapped target for use in path construction
 			effectiveTargetRegistry = mappedTarget
@@ -98,8 +113,15 @@ func (s *PrefixSourceRegistryStrategy) GeneratePath(imgRef *image.Reference, eff
 		log.Debug("PrefixSourceRegistryStrategy: Prepended 'library/' to Docker Hub image path", "baseRepoPath", finalRepo)
 	}
 
-	// Preserve the original registry with dots in the path
-	finalPath := fmt.Sprintf("%s/%s", normalizedReg, finalRepo)
+	// Construct the final path by prefixing the final repository path
+	// with the sanitized original source registry name.
+	pathPrefix := normalizedReg // ALWAYS use the normalized original registry for the path prefix
+	log.Debug("PrefixSourceRegistryStrategy: Using normalized original registry as path prefix", "prefix", pathPrefix)
+
+	// Combine the prefix and the final repository path.
+	// Ensure no double slashes.
+	finalPath := fmt.Sprintf("%s/%s", strings.TrimSuffix(pathPrefix, "/"), strings.TrimPrefix(finalRepo, "/"))
+
 	log.Debug("PrefixSourceRegistryStrategy: Returning final path", "finalPath", finalPath)
 
 	return finalPath, nil
@@ -116,8 +138,9 @@ func NewFlatStrategy() *FlatStrategy {
 
 // GeneratePath implements the PathStrategy interface.
 func (s *FlatStrategy) GeneratePath(originalRef *image.Reference, targetRegistry string) (string, error) {
+	// Add check for nil reference, indicating upstream parsing failure
 	if originalRef == nil {
-		return "", fmt.Errorf("original image reference is nil")
+		return "", fmt.Errorf("cannot generate path from nil image reference (parsing likely failed)")
 	}
 
 	log.Debug("FlatStrategy: Generating path for original reference", "originalRef", originalRef)

@@ -8,123 +8,131 @@ import (
 	"github.com/lucas-albers-lz4/irr/pkg/image"
 	"github.com/lucas-albers-lz4/irr/pkg/registry"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPrefixSourceRegistryStrategy(t *testing.T) {
-	tests := []struct {
-		name          string
-		inputRef      *image.Reference
-		expectedPath  string // Expect base path WITHOUT prefix
-		expectedError bool
+	strategy := NewPrefixSourceRegistryStrategy(nil)
+	targetRegistry := "ignored-target-registry"
+
+	testCases := []struct {
+		name           string
+		originalImage  string
+		expectedPath   string
+		expectedError  bool
+		targetRegistry string
 	}{
 		{
-			name: "standard image with registry",
-			inputRef: &image.Reference{
-				Original:   "docker.io/library/nginx:latest",
-				Registry:   "docker.io",
-				Repository: "library/nginx",
-				Tag:        "latest",
-			},
+			name:          "standard image with registry",
+			originalImage: "docker.io/library/nginx:latest",
 			expectedPath:  "docker.io/library/nginx",
-			expectedError: false,
 		},
 		{
-			name: "standard image without registry (defaults to docker hub)",
-			inputRef: &image.Reference{
-				Original:   "docker.io/nginx:latest",
-				Registry:   "docker.io",
-				Repository: "nginx",
-				Tag:        "latest",
-			},
+			name:          "standard image without registry (defaults to docker hub)",
+			originalImage: "nginx:latest",
 			expectedPath:  "docker.io/library/nginx",
-			expectedError: false,
 		},
 		{
-			name: "nested path",
-			inputRef: &image.Reference{
-				Original:   "quay.io/prometheus/node-exporter:v1.3.1",
-				Registry:   "quay.io",
-				Repository: "prometheus/node-exporter",
-				Tag:        "v1.3.1",
-			},
+			name:          "nested path",
+			originalImage: "quay.io/prometheus/node-exporter:v1",
 			expectedPath:  "quay.io/prometheus/node-exporter",
-			expectedError: false,
 		},
 		{
-			name: "digest reference",
-			inputRef: &image.Reference{
-				Original:   "gcr.io/google-containers/pause@sha256:12345",
-				Registry:   "gcr.io",
-				Repository: "google-containers/pause",
-				Digest:     "sha256:12345",
-			},
+			name:          "digest reference",
+			originalImage: "gcr.io/google-containers/pause@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			expectedPath:  "gcr.io/google-containers/pause",
-			expectedError: false,
 		},
 		{
-			name: "registry with port",
-			inputRef: &image.Reference{
-				Original:   "registry.example.com:5000/app/frontend:stable",
-				Registry:   "registry.example.com:5000",
-				Repository: "app/frontend",
-				Tag:        "stable",
-			},
+			name:          "registry with port",
+			originalImage: "registry.example.com:5000/app/frontend:stable",
 			expectedPath:  "registry.example.com/app/frontend",
-			expectedError: false,
+		},
+		{
+			name:          "empty image string",
+			originalImage: "",
+			expectedError: true,
+		},
+		{
+			name:          "invalid image string (double colon)",
+			originalImage: ":::",
+			expectedError: true,
+		},
+		{
+			name:           "no target registry provided",
+			originalImage:  "docker.io/library/redis:alpine",
+			targetRegistry: "",
+			expectedPath:   "docker.io/library/redis",
 		},
 	}
 
-	// Create a mappings instance
-	mappings := &registry.Mappings{}
-	strategy := NewPrefixSourceRegistryStrategy(mappings)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			imgRef, err := image.ParseImageReference(tc.originalImage)
+			if err != nil && !tc.expectedError {
+				t.Fatalf("Failed to parse test image reference '%s': %v", tc.originalImage, err)
+			}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			actualPath, err := strategy.GeneratePath(tt.inputRef, "ignored-target-registry") // Target registry doesn't affect this strategy's output
-			if tt.expectedError {
-				assert.Error(t, err)
+			currentTargetRegistry := targetRegistry
+			if tc.targetRegistry != "" || tc.name == "no target registry provided" {
+				currentTargetRegistry = tc.targetRegistry
+			}
+
+			var generatedPath string
+			var genErr error
+			if imgRef != nil {
+				generatedPath, genErr = strategy.GeneratePath(imgRef, currentTargetRegistry)
+			}
+
+			if tc.expectedError {
+				assert.True(t, err != nil || genErr != nil, "Expected an error from parsing or generation, but got none (parse err: %v, gen err: %v)", err, genErr)
 			} else {
-				assert.NoError(t, err)
-				assert.Equal(t, tt.expectedPath, actualPath)
+				require.NoError(t, err, "Parsing image reference failed unexpectedly")
+				require.NoError(t, genErr, "GeneratePath returned an unexpected error")
+				assert.Equal(t, tc.expectedPath, generatedPath)
 			}
 		})
 	}
 }
 
 func TestGetStrategy(t *testing.T) {
-	tests := []struct {
-		name         string
-		strategyName string
-		mappings     *registry.Mappings
-		wantErr      bool
-		errMsg       string
+	testCases := []struct {
+		name          string
+		strategyName  string
+		mappings      *registry.Mappings
+		expectedType  interface{}
+		expectedError bool
 	}{
 		{
-			name:         "valid strategy",
+			name:         "prefix-source-registry",
 			strategyName: "prefix-source-registry",
-			mappings:     nil,
-			wantErr:      false,
+			mappings:     &registry.Mappings{},
+			expectedType: &PrefixSourceRegistryStrategy{},
 		},
 		{
-			name:         "unknown strategy",
-			strategyName: "unknown",
+			name:         "flat",
+			strategyName: "flat",
 			mappings:     nil,
-			wantErr:      true,
-			errMsg:       "unknown path strategy: unknown",
+			expectedType: &FlatStrategy{},
+		},
+		{
+			name:          "unknown",
+			strategyName:  "unknown",
+			mappings:      nil,
+			expectedError: true,
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			strategy, err := GetStrategy(tt.strategyName, tt.mappings)
-			if tt.wantErr {
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			strategy, err := GetStrategy(tc.strategyName, tc.mappings)
+
+			if tc.expectedError {
 				assert.Error(t, err)
-				if tt.errMsg != "" {
-					assert.Contains(t, err.Error(), tt.errMsg)
-				}
+				assert.Nil(t, strategy)
 			} else {
 				assert.NoError(t, err)
 				assert.NotNil(t, strategy)
+				assert.IsType(t, tc.expectedType, strategy)
 			}
 		})
 	}
@@ -250,6 +258,77 @@ func TestGetStrategy_WithFlatStrategy(t *testing.T) {
 				assert.NoError(t, err)
 				assert.NotNil(t, strategy)
 				assert.Equal(t, tt.strategyType, fmt.Sprintf("%T", strategy))
+			}
+		})
+	}
+}
+
+func TestFlatStrategy(t *testing.T) {
+	strategy := NewFlatStrategy()
+	targetRegistry := "target.registry"
+
+	testCases := []struct {
+		name          string
+		originalImage string
+		expectedPath  string
+		expectedError bool
+	}{
+		{
+			name:          "standard docker hub image",
+			originalImage: "nginx:latest",
+			expectedPath:  "docker.io-library-nginx",
+		},
+		{
+			name:          "docker hub library image",
+			originalImage: "docker.io/library/redis:alpine",
+			expectedPath:  "docker.io-library-redis",
+		},
+		{
+			name:          "nested path image",
+			originalImage: "quay.io/prometheus/node-exporter:v1",
+			expectedPath:  "quay.io-prometheus-node-exporter",
+		},
+		{
+			name:          "registry with port",
+			originalImage: "myregistry.com:5000/app/backend:v2",
+			expectedPath:  "myregistry.com-app-backend",
+		},
+		{
+			name:          "digest reference",
+			originalImage: "gcr.io/distroless/static@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			expectedPath:  "gcr.io-distroless-static",
+		},
+		{
+			name:          "empty image string",
+			originalImage: "",
+			expectedError: true,
+		},
+		{
+			name:          "invalid image string (ambiguous tag/repo)",
+			originalImage: "some/repo/without/registry:",
+			expectedError: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			imgRef, err := image.ParseImageReference(tc.originalImage)
+			if err != nil && !tc.expectedError {
+				t.Fatalf("Failed to parse test image reference '%s': %v", tc.originalImage, err)
+			}
+
+			var generatedPath string
+			var genErr error
+			if imgRef != nil {
+				generatedPath, genErr = strategy.GeneratePath(imgRef, targetRegistry)
+			}
+
+			if tc.expectedError {
+				assert.True(t, err != nil || genErr != nil, "Expected an error from parsing or generation, but got none (parse err: %v, gen err: %v)", err, genErr)
+			} else {
+				require.NoError(t, err, "Parsing image reference failed unexpectedly")
+				require.NoError(t, genErr, "GeneratePath returned an unexpected error")
+				assert.Equal(t, tc.expectedPath, generatedPath)
 			}
 		})
 	}
