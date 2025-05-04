@@ -190,11 +190,22 @@ func parseWithRegex(imageRef string) (*Reference, error) {
 		tagParts := strings.Split(imageRef, ":")
 		if len(tagParts) > 1 {
 			tag := tagParts[len(tagParts)-1]
+
+			// ADDED CHECK: Ensure tag is not empty if colon is present
+			if tag == "" {
+				log.Debug("Invalid tag format: empty tag after colon in '%s'", imageRef)
+				return nil, ErrInvalidImageReference // Return error for empty tag
+			}
+
 			// Quick validation for obviously invalid tag formats
 			if strings.Contains(tag, "/") || strings.Contains(tag, "\\") {
 				log.Debug("Invalid tag format detected: %s", tag)
 				return nil, ErrInvalidImageReference
 			}
+		} else {
+			// This case means the string *ended* with a colon, e.g., "myrepo:"
+			log.Debug("Invalid tag format: trailing colon in '%s'", imageRef)
+			return nil, ErrInvalidImageReference
 		}
 	}
 
