@@ -83,6 +83,7 @@ image:
 		assert.NoError(t, loadErr, "Load should succeed for valid directory")
 		require.NotNil(t, chartInstance, "Chart instance should not be nil")
 		assert.Equal(t, "testchart-realfs", chartInstance.Name(), "Chart name mismatch")
+		require.NotNil(t, chartInstance.Metadata, "Chart metadata should not be nil")
 		assert.Equal(t, "0.2.0", chartInstance.Metadata.Version, "Chart version mismatch")
 		assert.Contains(t, chartInstance.Values, "replicaCount", "Values should be loaded")
 		assert.Equal(t, float64(2), chartInstance.Values["replicaCount"], "Replica count mismatch") // Helm parses YAML numbers as float64
