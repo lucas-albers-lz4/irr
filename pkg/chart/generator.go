@@ -286,6 +286,14 @@ func (g *Generator) determineTargetPathAndRegistry(imgRef *image.Reference, _ *a
 			// If the mapped target contains a path, split it into registry and path
 			if strings.Contains(mappedTarget, "/") {
 				parts := strings.SplitN(mappedTarget, "/", MaxSplitParts)
+
+				// Add length check to prevent panic and satisfy linter
+				if len(parts) == 0 { // Check if split result is empty
+					log.Error("SplitN resulted in empty slice unexpectedly", "mappedTarget", mappedTarget)
+					return "", "", fmt.Errorf("internal error: failed to split mapped target registry path '%s'", mappedTarget)
+				}
+
+				// Now safe to access parts[0]
 				effectiveTargetRegistry = parts[0]
 
 				// For the path component, we have two options:
@@ -959,6 +967,12 @@ func (g *Generator) setOverridePath(overrides map[string]interface{}, pattern *a
 	pathElems := strings.Split(path, ".")
 	log.Debug("setOverridePath: START", "path", path, "elements", pathElems, "valueType", fmt.Sprintf("%T", value))
 
+	// Defensive check: Ensure pathElems is not empty, although Split usually returns [""] for empty path.
+	if len(pathElems) == 0 {
+		log.Error("Internal error: Path split resulted in empty slice", "path", path)
+		return fmt.Errorf("internal error: cannot process empty path elements for path '%s'", path)
+	}
+
 	currentMap := overrides
 	// Traverse path until the second-to-last element, creating maps if necessary
 	for i := 0; i < len(pathElems)-1; i++ {
@@ -1041,6 +1055,11 @@ func (g *Generator) setOverridePath(overrides map[string]interface{}, pattern *a
 	}
 
 	// Set the final value at the last key
+	// Check again if pathElems is empty before accessing the last element (already covered by the check above, but kept for clarity)
+	if len(pathElems) == 0 {
+		// This should be unreachable due to the check after Split
+		return fmt.Errorf("internal error: path elements became empty unexpectedly for path '%s'", path)
+	}
 	finalKey := pathElems[len(pathElems)-1]
 
 	// Handle array index in the final key

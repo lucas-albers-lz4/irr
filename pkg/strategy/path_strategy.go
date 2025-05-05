@@ -78,6 +78,16 @@ func (s *PrefixSourceRegistryStrategy) GeneratePath(imgRef *image.Reference, eff
 			if strings.Contains(mappedTarget, "/") {
 				// Split at the first slash
 				parts := strings.SplitN(mappedTarget, "/", MaxSplitParts)
+
+				// Add length check to prevent panic and satisfy linter
+				if len(parts) < MaxSplitParts {
+					// This case should theoretically not happen due to the strings.Contains check above,
+					// but we handle it defensively.
+					log.Warn("PrefixSourceRegistryStrategy: SplitN produced fewer parts than expected", "mappedTarget", mappedTarget, "partsCount", len(parts))
+					// Depending on desired behavior, might return an error or default path
+					return "", fmt.Errorf("failed to split mapped registry target '%s' into registry and path", mappedTarget)
+				}
+
 				log.Debug("PrefixSourceRegistryStrategy: Split mapped target", "registry", parts[0], "path", parts[1])
 
 				// In this legacy direct strategy invocation case, handle both parts

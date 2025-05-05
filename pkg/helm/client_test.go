@@ -93,6 +93,7 @@ func TestMockHelmClient_GetChartFromRelease(t *testing.T) {
 	// Verify result
 	require.NoError(t, err)
 	require.NotNil(t, result)
+	require.NotNil(t, result.Metadata, "GetChartFromRelease returned chart with nil Metadata")
 	assert.Equal(t, "test-chart", result.Metadata.Name)
 	assert.Equal(t, "1.0.0", result.Metadata.Version)
 
@@ -214,6 +215,7 @@ func TestNewMockHelmClient(t *testing.T) {
 	chartObj, err := client.GetChartFromRelease(context.Background(), "some-release", "some-namespace")
 	require.NoError(t, err)
 	assert.NotNil(t, chartObj)
+	require.NotNil(t, chartObj.Metadata, "Default GetChartFromRelease mock returned chart with nil Metadata")
 	assert.Equal(t, "mock-chart", chartObj.Metadata.Name)
 
 	metadata, err := client.GetReleaseMetadata(context.Background(), "some-release", "some-namespace")

@@ -41,6 +41,7 @@ const (
 	// trueString represents the string literal "true", commonly used for boolean env vars.
 	trueString = "true"
 	// unknownSourceDescription is used when the chart source cannot be determined.
+	nilConfigPlaceholder = "<nil config>"
 )
 
 // Variables for testing - isTestMode declaration REMOVED, it's defined in root.go
@@ -703,9 +704,18 @@ func getValuesOptionsFromFlags(cmd *cobra.Command) (values.Options, error) {
 
 // Helper to perform context-aware chart analysis (deduplicates logic)
 func performContextAwareAnalysis(chartPath string, valueOpts *values.Options) (*helmchart.Chart, *analysis.ChartAnalysis, error) {
+	// Add nil check for valueOpts, although the call site should prevent this
+	if valueOpts == nil {
+		log.Error("Internal error: performContextAwareAnalysis called with nil valueOpts")
+		// Return an internal error, as this indicates a programming mistake in the caller
+		return nil, nil, &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInternalError,
+			Err:  errors.New("internal error: valueOpts cannot be nil in performContextAwareAnalysis"),
+		}
+	}
 	loaderOptions := &internalhelm.ChartLoaderOptions{
 		ChartPath:  chartPath,
-		ValuesOpts: *valueOpts,
+		ValuesOpts: *valueOpts, // Dereference is now safe
 	}
 	chartLoader := internalhelm.NewChartLoader()
 	chartAnalysisContext, loadErr := chartLoader.LoadChartAndTrackOrigins(loaderOptions)
@@ -784,12 +794,26 @@ func createAndExecuteGenerator(cmd *cobra.Command, config *GeneratorConfig, cont
 		return nil, err
 	}
 
+	// Add nil check for config before accessing its fields for logging
+	logChartPath := nilConfigPlaceholder
+	logTargetReg := nilConfigPlaceholder
+	logStrategyType := nilConfigPlaceholder
+	logStrategyIsNil := true
+	logConfigPtr := nilConfigPlaceholder
+	if config != nil {
+		logChartPath = config.ChartPath
+		logTargetReg = config.TargetRegistry
+		logStrategyType = fmt.Sprintf("%T", config.Strategy)
+		logStrategyIsNil = config.Strategy == nil
+		logConfigPtr = fmt.Sprintf("%p", config)
+	}
+
 	log.Debug("Creating generator instance just before NewGenerator call",
-		"chartPath", config.ChartPath,
-		"targetRegistry", config.TargetRegistry,
-		"strategy_type", fmt.Sprintf("%T", config.Strategy),
-		"strategy_is_nil", config.Strategy == nil,
-		"config_ptr", fmt.Sprintf("%p", config))
+		"chartPath", logChartPath,
+		"targetRegistry", logTargetReg,
+		"strategy_type", logStrategyType,
+		"strategy_is_nil", logStrategyIsNil,
+		"config_ptr", logConfigPtr)
 
 	overrideResult, err := generator.Generate(loadedChart, analysisResult)
 	if err != nil {

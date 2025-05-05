@@ -204,9 +204,16 @@ func analyzeMapValue(path string, val reflect.Value, patterns *[]ImagePattern, c
 					registry = image.DefaultRegistry
 					if strings.Contains(repository, ":") {
 						repoParts := strings.SplitN(repository, ":", MaxSplitParts)
-						repository = repoParts[0]
-						if len(repoParts) > 1 {
-							tag = repoParts[1]
+						// Add check for empty slice before accessing element 0
+						if len(repoParts) > 0 {
+							repository = repoParts[0]
+							if len(repoParts) > 1 {
+								tag = repoParts[1]
+							}
+						} else {
+							// Handle unexpected empty split result, though Contains should prevent this
+							log.Warn("SplitN on repository string resulted in empty slice unexpectedly", "repository", repository)
+							// Keep original repository value if split fails unexpectedly
 						}
 					} // else repository remains as is, tag remains empty
 				}
@@ -220,9 +227,16 @@ func analyzeMapValue(path string, val reflect.Value, patterns *[]ImagePattern, c
 				// Also clean tag from repo if explicit registry was used
 				if strings.Contains(repository, ":") {
 					repoParts := strings.SplitN(repository, ":", MaxSplitParts)
-					repository = repoParts[0]
-					if len(repoParts) > 1 && tag == "" { // Only override tag if not already set
-						tag = repoParts[1]
+					// Add check for empty slice before accessing element 0
+					if len(repoParts) > 0 {
+						repository = repoParts[0]
+						if len(repoParts) > 1 && tag == "" { // Only override tag if not already set
+							tag = repoParts[1]
+						}
+					} else {
+						// Handle unexpected empty split result
+						log.Warn("SplitN on repository string resulted in empty slice unexpectedly during tag cleaning", "repository", repository)
+						// Keep original repository value if split fails unexpectedly
 					}
 				}
 			}

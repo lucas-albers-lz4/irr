@@ -606,7 +606,14 @@ func (h *TestHarness) buildEnv(envOverrides map[string]string) []string {
 		if len(parts) == envSplitCount {
 			envMap[parts[0]] = parts[1]
 		} else {
-			envMap[parts[0]] = "" // Handle variables without values
+			// Handle variables without values or potentially empty env vars
+			// Add check to ensure parts is not empty before accessing index 0
+			if len(parts) > 0 {
+				envMap[parts[0]] = ""
+			} else {
+				// Log unexpected case where SplitN returned an empty slice
+				h.logger.Warn(fmt.Sprintf("Unexpected empty slice from SplitN on env var: '%s'", envVar))
+			}
 		}
 	}
 

@@ -730,7 +730,11 @@ func TestGenerator_Generate_OverrideError(t *testing.T) {
 	require.Error(t, combinedError, "Expected a combined error due to partial failure")
 	var procErr *ProcessingError
 	require.ErrorAs(t, combinedError, &procErr, "Error should be of type ProcessingError")
+	// Add explicit nil check for procErr before accessing fields, though require.ErrorAs should ensure it's non-nil
+	require.NotNil(t, procErr, "procErr should not be nil after successful ErrorAs assertion")
 	require.Len(t, procErr.Errors, 1, "Expected exactly one processing error")
+	// Check length before accessing index 0
+	require.NotEmpty(t, procErr.Errors, "procErr.Errors should not be empty")
 	assert.Contains(t, procErr.Errors[0].Error(), "error determining target path for image2", "Error should be about image2 path generation")
 
 	// Result should still be non-nil containing the successful override

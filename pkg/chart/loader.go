@@ -107,7 +107,12 @@ func (l *DefaultLoader) Load(chartPath string) (*chart.Chart, error) {
 		return nil, fmt.Errorf("loaded chart %s has nil metadata", chartName)
 	}
 
-	log.Debug("Successfully loaded chart", "name", loadedChart.Name(), "version", loadedChart.Metadata.Version)
+	// Re-check Metadata before accessing Version to satisfy nilaway
+	chartVersion := "<unknown>"
+	if loadedChart.Metadata != nil {
+		chartVersion = loadedChart.Metadata.Version
+	}
+	log.Debug("Successfully loaded chart", "name", loadedChart.Name(), "version", chartVersion)
 
 	// Ensure chart has values
 	if loadedChart.Values == nil {
@@ -119,7 +124,12 @@ func (l *DefaultLoader) Load(chartPath string) (*chart.Chart, error) {
 	if len(loadedChart.Dependencies()) > 0 {
 		log.Debug("Chart has dependencies", "count", len(loadedChart.Dependencies()))
 		for i, dep := range loadedChart.Dependencies() {
-			log.Debug("Dependency", "index", i, "name", dep.Name(), "version", dep.Metadata.Version)
+			// Check dependency metadata before accessing
+			depVersion := "<unknown>"
+			if dep != nil && dep.Metadata != nil {
+				depVersion = dep.Metadata.Version
+			}
+			log.Debug("Dependency", "index", i, "name", dep.Name(), "version", depVersion)
 		}
 	} else {
 		log.Debug("Chart has no dependencies")

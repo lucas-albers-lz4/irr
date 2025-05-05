@@ -545,9 +545,13 @@ func (d *Detector) createImageReference(repoStr, regStr, tagStr, digestStr strin
 
 	// Determine which registry to apply using a switch statement instead of if-else chain
 	hasRegistryPrefix := false
-	if regStr == "" && len(strings.SplitN(repoStr, "/", MaxComponents)) > 1 {
-		firstPart := strings.SplitN(repoStr, "/", MaxComponents)[0]
-		hasRegistryPrefix = strings.ContainsAny(firstPart, ".:") || firstPart == "localhost"
+	parts := strings.SplitN(repoStr, "/", MaxComponents) // Store the result
+	if regStr == "" && len(parts) > 1 {
+		// Check length again for safety/linter before accessing index 0
+		if len(parts) > 0 {
+			firstPart := parts[0]
+			hasRegistryPrefix = strings.ContainsAny(firstPart, ".:") || firstPart == "localhost"
+		}
 	}
 
 	switch {
@@ -561,9 +565,16 @@ func (d *Detector) createImageReference(repoStr, regStr, tagStr, digestStr strin
 	case hasRegistryPrefix:
 		// Case 2: No explicit registry, but repoStr contains registry prefix
 		// Don't add anything to builder here, as registry is part of repoStr
-		firstPart := strings.SplitN(repoStr, "/", MaxComponents)[0]
-		registryApplied = firstPart + " (in repoStr)"
-		log.Debug("Detected potential registry prefix ('", firstPart, "') in repoStr ('", repoStr, "'). Skipping global registry.")
+		// Reuse 'parts' if it's guaranteed to be the same split, or re-split and check
+		repoParts := strings.SplitN(repoStr, "/", MaxComponents) // Re-split for clarity or reuse parts if context allows
+		if len(repoParts) > 0 {                                  // Add check before accessing
+			firstPart := repoParts[0]
+			registryApplied = firstPart + " (in repoStr)"
+			log.Debug("Detected potential registry prefix ('", firstPart, "') in repoStr ('", repoStr, "'). Skipping global registry.")
+		} else {
+			// Handle unexpected case where split is empty, though hasRegistryPrefix should be false then
+			log.Warn("Unexpected empty split result for repoStr despite hasRegistryPrefix being true:", repoStr)
+		}
 
 	case d.context.GlobalRegistry != "":
 		// Case 3: Use global registry

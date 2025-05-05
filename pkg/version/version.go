@@ -25,7 +25,15 @@ var execCommand = exec.Command
 func parseHelmVersionString(versionStr string) string {
 	parsed := strings.TrimSpace(versionStr)
 	parsed = strings.TrimPrefix(parsed, "v")
-	parsed = strings.Split(parsed, "+")[0]
+	parts := strings.Split(parsed, "+")
+	// Ensure the split returned at least one element before accessing index 0
+	if len(parts) > 0 {
+		parsed = parts[0]
+	} else {
+		// This case should be impossible with strings.Split, but handle defensively.
+		log.Warn("strings.Split unexpectedly returned an empty slice for version string part", "part", parsed)
+		parsed = "" // Return empty string or handle error as appropriate
+	}
 	return parsed
 }
 

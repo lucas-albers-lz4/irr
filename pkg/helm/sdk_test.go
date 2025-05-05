@@ -31,6 +31,9 @@ type mockTimeProvider struct {
 
 func (m *mockTimeProvider) Now() time.Time {
 	args := m.Called()
+	if len(args) < 1 {
+		panic("mockTimeProvider.Now: mock not configured with a return value")
+	}
 	ret, ok := args.Get(0).(time.Time)
 	if !ok {
 		panic("failed to cast to time.Time")
@@ -44,6 +47,9 @@ type mockRepositoryManager struct {
 
 func (m *mockRepositoryManager) GetRepositories() (*repo.File, error) {
 	args := m.Called()
+	if len(args) < 2 {
+		panic("mockRepositoryManager.GetRepositories: mock not configured with 2 return values (repo.File, error)")
+	}
 	if args.Get(0) == nil {
 		return nil, fmt.Errorf("mock error: %w", args.Error(1))
 	}
@@ -56,6 +62,9 @@ func (m *mockRepositoryManager) GetRepositories() (*repo.File, error) {
 
 func (m *mockRepositoryManager) GetRepositoryIndex(entry *repo.Entry) (*repo.IndexFile, error) {
 	args := m.Called(entry)
+	if len(args) < 2 {
+		panic("mockRepositoryManager.GetRepositoryIndex: mock not configured with 2 return values (repo.IndexFile, error)")
+	}
 	if args.Get(0) == nil {
 		return nil, fmt.Errorf("mock error: %w", args.Error(1))
 	}
@@ -410,7 +419,11 @@ func TestRepositoryOperations(t *testing.T) {
 			name: "successful repository operations",
 			setupMock: func() {
 				mockRepoManager.On("GetRepositories").Return(testRepoFile, nil)
-				mockRepoManager.On("GetRepositoryIndex", testRepoFile.Repositories[0]).Return(testIndex, nil)
+				if len(testRepoFile.Repositories) > 0 {
+					mockRepoManager.On("GetRepositoryIndex", testRepoFile.Repositories[0]).Return(testIndex, nil)
+				} else {
+					t.Fatal("Test setup error: testRepoFile has no repositories")
+				}
 			},
 			wantErr: false,
 		},
@@ -425,7 +438,11 @@ func TestRepositoryOperations(t *testing.T) {
 			name: "index not found",
 			setupMock: func() {
 				mockRepoManager.On("GetRepositories").Return(testRepoFile, nil)
-				mockRepoManager.On("GetRepositoryIndex", testRepoFile.Repositories[0]).Return(nil, assert.AnError)
+				if len(testRepoFile.Repositories) > 0 {
+					mockRepoManager.On("GetRepositoryIndex", testRepoFile.Repositories[0]).Return(nil, assert.AnError)
+				} else {
+					t.Fatal("Test setup error: testRepoFile has no repositories")
+				}
 			},
 			wantErr: true,
 		},
@@ -443,6 +460,8 @@ func TestRepositoryOperations(t *testing.T) {
 			assert.Equal(t, testRepoFile, repos)
 
 			if !tt.wantErr {
+				require.NotNil(t, repos, "GetRepositories returned nil repos unexpectedly")
+				require.NotEmpty(t, repos.Repositories, "GetRepositories returned repos with empty Repositories slice")
 				index, err := mockRepoManager.GetRepositoryIndex(repos.Repositories[0])
 				assert.NoError(t, err)
 				assert.Equal(t, testIndex, index)
