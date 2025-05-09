@@ -1566,6 +1566,8 @@ async def test_chart_subchart_analysis(chart_info, target_registry, irr_binary, 
                 {"image": img, "kinds": sorted(list(template_images_map[img]))}
                 for img in sorted(list(images_only_in_template))
             ], # Placeholder, needs actual kinds -> Now uses actual map
+            "analyzer_found_no_images": not analyzer_images_set,
+            "template_found_no_images": not template_images_set,
             "helm_template_return_code": helm_template_rc,
             "helm_template_stderr": helm_template_stderr.strip(),
             "yaml_parsing_errors": yaml_parsing_errors,
@@ -1616,13 +1618,34 @@ async def test_chart_subchart_analysis(chart_info, target_registry, irr_binary, 
         final_category = ""
         final_details = f"Subchart analysis completed. Status: {analysis_status}."
 
+        # Provide more detailed final_details based on findings
+        analyzer_count = len(analyzer_images_set)
+        template_count = len(template_images_set)
+        common_count = len(common_images)
+        analyzer_only_count = len(images_only_in_analyzer)
+        template_only_count = len(images_only_in_template)
+
+        base_summary = f"Inspect: {analyzer_count}, Template: {template_count}. Common: {common_count}, InspectOnly: {analyzer_only_count}, TemplateOnly: {template_only_count}."
+
         if analysis_status.startswith("ERROR"):
-             final_status = "SUBCHART_ANALYSIS_ERROR"
-             final_category = analysis_status # Use the specific error status
-             final_details = f"Subchart analysis failed. Status: {analysis_status}. Check logs."
+            final_status = "SUBCHART_ANALYSIS_ERROR"
+            final_category = analysis_status # Use the specific error status
+            final_details = f"Subchart analysis FAILED. Status: {analysis_status}. {base_summary} Check logs."
+        elif not analyzer_images_set and template_images_set:
+            final_status = "SUBCHART_DISCREPANCY_INSPECT_MISS" # New status for this key scenario
+            final_category = "DISCREPANCY"
+            final_details = f"DISCREPANCY: Inspect found 0 images, Template found {template_count} images. {base_summary}"
+        elif analyzer_images_set and not template_images_set and helm_template_rc == 0 and not yaml_parsing_errors:
+            # This is unusual: inspect found images, but a successful template run found none.
+            final_status = "SUBCHART_DISCREPANCY_TEMPLATE_MISS"
+            final_category = "DISCREPANCY"
+            final_details = f"DISCREPANCY: Inspect found {analyzer_count} images, Template found 0 images (and template was successful). {base_summary}"
+        elif not analyzer_images_set and not template_images_set:
+            final_details = f"MATCH: No images found by Inspect or Template. {base_summary}"
         elif analysis_status != "MATCH":
-             # If mismatch, add details but consider it a success for the operation itself
-             final_details += f" Discrepancy found: AnalyzerOnly={len(images_only_in_analyzer)}, TemplateOnly={len(images_only_in_template)}."
+            final_details = f"Discrepancy found. Status: {analysis_status}. {base_summary}"
+        else: # MATCH and both found images
+            final_details = f"MATCH: Image sets are identical. {base_summary}"
 
 
         log_debug(f"Subchart analysis finished. Final Status: {final_status}, Details: {final_details[:100]}...")
