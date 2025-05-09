@@ -233,3 +233,5 @@ _Objective: Ensure the override generator and inspect command correctly process 
             - [ ] Run `helm template <chart_path>` without any extra values. Record the exact error message.
             - [ ] Analyze the error: consult the chart's `values.yaml`, `README.md`, `NOTES.txt`, and template files (`templates/**.yaml`) referenced in the error.
             - [ ] Iteratively add necessary values using `--set key=value` (or `--set-string`, `--set-file`
+
+- [ ] **Phase 12: Address inspect no image found
