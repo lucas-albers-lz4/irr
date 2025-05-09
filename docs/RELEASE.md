@@ -17,7 +17,7 @@ First, update the version in `plugin.yaml`:
 ```yaml
 # plugin.yaml
 name: "irr"
-version: "0.2.2"  # Update this version number
+version: "0.0.12"  # Update this version number
 usage: "Rewrite image registries in Helm Charts"
 description: "A Helm plugin to automatically generate Helm chart override files for redirecting container images."
 command: "$HELM_PLUGIN_DIR/bin/irr"
@@ -26,13 +26,13 @@ hooks:
 useTunnel: false # Typically false for irr unless specific network reasons
 ```
 
-**Important**: Make sure the version in `plugin.yaml` matches the version used in workflow dispatch parameters in `.github/workflows/release.yml`. When using the manual workflow trigger, the input version (e.g., `v0.2.2`) should correspond to the version in plugin.yaml (without the 'v' prefix).
+**Important**: Make sure the version in `plugin.yaml` matches the version used in workflow dispatch parameters in `.github/workflows/release.yml`. When using the manual workflow trigger, the input version (e.g., `v0.0.12`) should correspond to the version in plugin.yaml (without the 'v' prefix).
 
 ### 2. Commit the Changes
 
 ```bash
 git add plugin.yaml
-git commit -m "Bump version to 0.2.2"
+git commit -m "Bump version to 0.0.12"
 git push origin main
 ```
 
@@ -48,10 +48,10 @@ git checkout main
 git pull
 
 # Create a tag
-git tag v0.2.2
+git tag v0.0.12
 
 # Push the tag to trigger the GitHub Actions workflow
-git push origin v0.2.2
+git push origin v0.0.12
 ```
 
 ### 4. Monitor Release Process
@@ -77,7 +77,7 @@ If you prefer to manually trigger the release process:
 1. Go to the "Actions" tab in your GitHub repository
 2. Select the "Release" workflow
 3. Click "Run workflow"
-4. Enter the version tag (e.g., `v0.2.2`) in the input field
+4. Enter the version tag (e.g., `v0.0.12`) in the input field
 5. Click "Run workflow"
 
 ## Verifying the Release
@@ -106,12 +106,12 @@ Fix any issues, then delete the tag and recreate it:
 
 ```bash
 # Delete local tag
-git tag -d v0.2.2
+git tag -d v0.0.12
 
 # Delete remote tag
-git push --delete origin v0.2.2
+git push --delete origin v0.0.12
 
 # Fix issues, commit, then recreate and push the tag
-git tag v0.2.2
-git push origin v0.2.2
+git tag v0.0.12
+git push origin v0.0.12
 ``` 
