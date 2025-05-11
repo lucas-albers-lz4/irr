@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -597,6 +598,340 @@ func TestOverrideGlobals(t *testing.T) {
 	assert.Equal(t, "test.registry.io", standaloneImageMap["registry"], "minimal-child.standaloneImage registry should be test.registry.io")
 	assert.Contains(t, standaloneImageMap["repository"].(string), "mcr.microsoft.com/standalone/component", "minimal-child.standaloneImage repository incorrect")
 	assert.Equal(t, "20.04", standaloneImageMap["tag"], "minimal-child.standaloneImage tag incorrect")
+}
+
+// TestOverridePluginMode_SingleReleaseNamespace verifies that 'irr override' works in Helm plugin mode for a single release/namespace.
+func TestOverridePluginMode_SingleReleaseNamespace(t *testing.T) {
+	h := NewTestHarness(t)
+	defer h.Cleanup()
+
+	// 1. Install a test chart as a release in a test namespace
+	chartPath := h.GetTestdataPath("charts/fallback-test")
+	releaseName := "test-release"
+	namespace := "test-ns"
+	_, err := h.ExecuteHelm("install", releaseName, chartPath, "--namespace", namespace, "--create-namespace")
+	require.NoError(t, err, "Helm install should succeed")
+
+	// 2. Simulate plugin mode: set HELM_PLUGIN_NAME/HELM_PLUGIN_DIR
+	env := map[string]string{
+		"HELM_PLUGIN_NAME": "irr",
+		"HELM_PLUGIN_DIR":  "/fake/plugins/irr",
+		"HELM_NAMESPACE":   namespace, // Optional, for completeness
+	}
+
+	// 3. Run irr override in plugin mode
+	stdout, stderr, err := h.ExecuteIRRWithStderr(env, false,
+		"override",
+		releaseName,
+		"-n", namespace,
+		"--target-registry", "my-target-registry.com",
+		"--source-registries", "docker.io",
+		"--log-level", "debug",
+	)
+	require.NoError(t, err, "override (plugin mode) should succeed. Stderr: %s", stderr)
+
+	// 4. Assert output contains expected registry/repo/tag
+	assert.Contains(t, stdout, "registry: my-target-registry.com", "Output should include the target registry")
+	assert.Contains(t, stdout, "repository: docker.io/library/nginx", "Output should include the image repository")
+	assert.Contains(t, stdout, "tag: latest", "Output should include the image tag")
+}
+
+// TestOverridePluginMode_NonexistentReleaseOrNamespace verifies that 'irr override' works in Helm plugin mode for a nonexistent release and/or namespace.
+func TestOverridePluginMode_NonexistentReleaseOrNamespace(t *testing.T) {
+	h := NewTestHarness(t)
+	defer h.Cleanup()
+
+	releaseName := "nonexistent-release"
+	namespace := "nonexistent-ns"
+	env := map[string]string{
+		"HELM_PLUGIN_NAME": "irr",
+		"HELM_PLUGIN_DIR":  "/fake/plugins/irr",
+		"HELM_NAMESPACE":   namespace,
+	}
+
+	stdout, stderr, err := h.ExecuteIRRWithStderr(env, false,
+		"override",
+		releaseName,
+		"-n", namespace,
+		"--target-registry", "my-target-registry.com",
+		"--source-registries", "docker.io",
+		"--log-level", "debug",
+	)
+	assert.Error(t, err, "Should error for nonexistent release/namespace")
+	assert.Contains(t, stderr+stdout, "not found", "Error message should mention not found")
+}
+
+// TestOverridePluginMode_ReleaseWithNoImages verifies that 'irr override' works in Helm plugin mode for a release with no images.
+func TestOverridePluginMode_ReleaseWithNoImages(t *testing.T) {
+	h := NewTestHarness(t)
+	defer h.Cleanup()
+
+	// Use a minimal chart with no images (assume test-data/charts/no-values-test exists)
+	chartPath := h.GetTestdataPath("charts/no-values-test")
+	releaseName := "no-images-release"
+	namespace := "no-images-ns"
+	_, err := h.ExecuteHelm("install", releaseName, chartPath, "--namespace", namespace, "--create-namespace")
+	require.NoError(t, err, "Helm install should succeed")
+
+	env := map[string]string{
+		"HELM_PLUGIN_NAME": "irr",
+		"HELM_PLUGIN_DIR":  "/fake/plugins/irr",
+		"HELM_NAMESPACE":   namespace,
+	}
+
+	stdout, stderr, err := h.ExecuteIRRWithStderr(env, false,
+		"override",
+		releaseName,
+		"-n", namespace,
+		"--target-registry", "my-target-registry.com",
+		"--source-registries", "docker.io",
+		"--log-level", "debug",
+	)
+	assert.NoError(t, err, "Should not error for release with no images. Stderr: %s", stderr)
+	assert.True(t, strings.TrimSpace(stdout) == "" || strings.Contains(stderr, "no images") || strings.Contains(stderr, "no image"), "Output should be empty or contain a warning about no images")
+}
+
+// TestOverridePluginMode_ExcludedRegistries verifies that 'irr override' works in Helm plugin mode for a release with excluded registries.
+func TestOverridePluginMode_ExcludedRegistries(t *testing.T) {
+	h := NewTestHarness(t)
+	defer h.Cleanup()
+
+	// Use a chart with images from multiple registries (assume test-data/charts/global-test exists)
+	chartPath := h.GetTestdataPath("charts/global-test")
+	releaseName := "excluded-registries-release"
+	namespace := "excluded-registries-ns"
+	_, err := h.ExecuteHelm("install", releaseName, chartPath, "--namespace", namespace, "--create-namespace")
+	require.NoError(t, err, "Helm install should succeed")
+
+	env := map[string]string{
+		"HELM_PLUGIN_NAME": "irr",
+		"HELM_PLUGIN_DIR":  "/fake/plugins/irr",
+		"HELM_NAMESPACE":   namespace,
+	}
+
+	stdout, stderr, err := h.ExecuteIRRWithStderr(env, false,
+		"override",
+		releaseName,
+		"-n", namespace,
+		"--target-registry", "my-target-registry.com",
+		"--source-registries", "docker.io,quay.io,ghcr.io,mcr.microsoft.com",
+		"--exclude-registries", "quay.io,ghcr.io",
+		"--log-level", "debug",
+	)
+	require.NoError(t, err, "override (plugin mode) should succeed. Stderr: %s", stderr)
+
+	// Assert that images from excluded registries are not present in the output
+	assert.NotContains(t, stdout, "quay.io", "Output should not contain excluded registry quay.io")
+	assert.NotContains(t, stdout, "ghcr.io", "Output should not contain excluded registry ghcr.io")
+	// Assert that images from included registries are present
+	assert.Contains(t, stdout, "docker.io", "Output should contain included registry docker.io")
+	assert.Contains(t, stdout, "mcr.microsoft.com", "Output should contain included registry mcr.microsoft.com")
+}
+
+// TestOverridePluginMode_StrictModeUnsupportedStructure verifies that 'irr override' works in Helm plugin mode for a release with an unsupported image structure.
+func TestOverridePluginMode_StrictModeUnsupportedStructure(t *testing.T) {
+	h := NewTestHarness(t)
+	defer h.Cleanup()
+
+	// Use a chart with an unsupported image structure (assume test-data/charts/unsupported-test exists)
+	chartPath := h.GetTestdataPath("charts/unsupported-test")
+	releaseName := "strict-unsupported-release"
+	namespace := "strict-unsupported-ns"
+	_, err := h.ExecuteHelm("install", releaseName, chartPath, "--namespace", namespace, "--create-namespace")
+	require.NoError(t, err, "Helm install should succeed")
+
+	env := map[string]string{
+		"HELM_PLUGIN_NAME": "irr",
+		"HELM_PLUGIN_DIR":  "/fake/plugins/irr",
+		"HELM_NAMESPACE":   namespace,
+	}
+
+	stdout, stderr, err := h.ExecuteIRRWithStderr(env, false,
+		"override",
+		releaseName,
+		"-n", namespace,
+		"--target-registry", "my-target-registry.com",
+		"--source-registries", "docker.io",
+		"--strict",
+		"--log-level", "debug",
+	)
+	assert.Error(t, err, "Should error in strict mode for unsupported structure")
+	assert.Contains(t, stderr+stdout, "unsupported", "Error message should mention unsupported structure")
+}
+
+// TestOverridePluginMode_RegistryMappingFile verifies that 'irr override' works in Helm plugin mode for a release with a registry mapping file.
+func TestOverridePluginMode_RegistryMappingFile(t *testing.T) {
+	h := NewTestHarness(t)
+	defer h.Cleanup()
+
+	// Use a chart with a known source registry (assume test-data/charts/fallback-test exists)
+	chartPath := h.GetTestdataPath("charts/fallback-test")
+	releaseName := "mappingfile-release"
+	namespace := "mappingfile-ns"
+	_, err := h.ExecuteHelm("install", releaseName, chartPath, "--namespace", namespace, "--create-namespace")
+	require.NoError(t, err, "Helm install should succeed")
+
+	// Create a custom registry mapping file
+	mappingFile := h.GetTempFilePath("custom-mapping.yaml")
+	mappingContent := `version: "1.0"
+registries:
+  mappings:
+    - source: "docker.io"
+      target: "custom.registry.io/mirror"
+      enabled: true
+`
+	require.NoError(t, os.WriteFile(mappingFile, []byte(mappingContent), 0600), "Failed to write mapping file")
+
+	env := map[string]string{
+		"HELM_PLUGIN_NAME": "irr",
+		"HELM_PLUGIN_DIR":  "/fake/plugins/irr",
+		"HELM_NAMESPACE":   namespace,
+	}
+
+	stdout, stderr, err := h.ExecuteIRRWithStderr(env, false,
+		"override",
+		releaseName,
+		"-n", namespace,
+		"--registry-file", mappingFile,
+		"--target-registry", "should-not-be-used.io",
+		"--source-registries", "docker.io",
+		"--log-level", "debug",
+	)
+	require.NoError(t, err, "override (plugin mode) with mapping file should succeed. Stderr: %s", stderr)
+	assert.Contains(t, stdout, "custom.registry.io/mirror", "Output should use mapped registry from file")
+	assert.NotContains(t, stdout, "should-not-be-used.io", "Output should not use CLI target registry when mapping file is present")
+}
+
+// TestOverridePluginMode_OutputFileAndDryRun verifies that 'irr override' works in Helm plugin mode for a release with output file and dry run behavior.
+func TestOverridePluginMode_OutputFileAndDryRun(t *testing.T) {
+	h := NewTestHarness(t)
+	defer h.Cleanup()
+
+	chartPath := h.GetTestdataPath("charts/fallback-test")
+	releaseName := "outputfile-release"
+	namespace := "outputfile-ns"
+	_, err := h.ExecuteHelm("install", releaseName, chartPath, "--namespace", namespace, "--create-namespace")
+	require.NoError(t, err, "Helm install should succeed")
+
+	outputFile := h.GetTempFilePath("plugin-output.yaml")
+	env := map[string]string{
+		"HELM_PLUGIN_NAME": "irr",
+		"HELM_PLUGIN_DIR":  "/fake/plugins/irr",
+		"HELM_NAMESPACE":   namespace,
+	}
+
+	// 1. Run with --output-file (should write file)
+	stdout, stderr, err := h.ExecuteIRRWithStderr(env, false,
+		"override",
+		releaseName,
+		"-n", namespace,
+		"--target-registry", "my-target-registry.com",
+		"--source-registries", "docker.io",
+		"--output-file", outputFile,
+		"--log-level", "debug",
+	)
+	require.NoError(t, err, "override (plugin mode) with output file should succeed. Stderr: %s", stderr)
+	content, readErr := os.ReadFile(outputFile)
+	require.NoError(t, readErr, "Should be able to read output file")
+	assert.Contains(t, string(content), "my-target-registry.com", "Output file should contain target registry")
+
+	// 2. Run again with same --output-file (should error)
+	_, stderr2, err2 := h.ExecuteIRRWithStderr(env, false,
+		"override",
+		releaseName,
+		"-n", namespace,
+		"--target-registry", "my-target-registry.com",
+		"--source-registries", "docker.io",
+		"--output-file", outputFile,
+		"--log-level", "debug",
+	)
+	assert.Error(t, err2, "Should error if output file already exists")
+	assert.Contains(t, stderr2, "already exists", "Error should mention file already exists")
+
+	// 3. Run with --dry-run (should print to stdout, not write file)
+	dryRunFile := h.GetTempFilePath("plugin-dryrun.yaml")
+	stdout3, stderr3, err3 := h.ExecuteIRRWithStderr(env, false,
+		"override",
+		releaseName,
+		"-n", namespace,
+		"--target-registry", "my-target-registry.com",
+		"--source-registries", "docker.io",
+		"--output-file", dryRunFile,
+		"--dry-run",
+		"--log-level", "debug",
+	)
+	assert.NoError(t, err3, "Dry run should not error. Stderr: %s", stderr3)
+	assert.Contains(t, stdout3, "my-target-registry.com", "Dry run output should contain target registry")
+	_, errStat := os.Stat(dryRunFile)
+	assert.True(t, os.IsNotExist(errStat), "Dry run should not write output file")
+}
+
+// TestOverridePluginMode_ComplexValueStructures verifies that 'irr override' works in Helm plugin mode for a release with complex value structures.
+func TestOverridePluginMode_ComplexValueStructures(t *testing.T) {
+	h := NewTestHarness(t)
+	defer h.Cleanup()
+
+	chartPath := h.GetTestdataPath("charts/deep-nesting-test")
+	releaseName := "complex-struct-release"
+	namespace := "complex-struct-ns"
+	_, err := h.ExecuteHelm("install", releaseName, chartPath, "--namespace", namespace, "--create-namespace")
+	require.NoError(t, err, "Helm install should succeed")
+
+	env := map[string]string{
+		"HELM_PLUGIN_NAME": "irr",
+		"HELM_PLUGIN_DIR":  "/fake/plugins/irr",
+		"HELM_NAMESPACE":   namespace,
+	}
+
+	stdout, stderr, err := h.ExecuteIRRWithStderr(env, true, // useContextAware=true
+		"override",
+		releaseName,
+		"-n", namespace,
+		"--target-registry", "my-target-registry.com",
+		"--source-registries", "docker.io,quay.io",
+		"--log-level", "debug",
+	)
+	require.NoError(t, err, "override (plugin mode) with complex value structures should succeed. Stderr: %s", stderr)
+	// Assert that deeply nested and array images are present in the output
+	assert.Contains(t, stdout, "docker.io/deepnest/extreme-depth", "Output should contain deeply nested image")
+	assert.Contains(t, stdout, "quay.io/frontend/webapp", "Output should contain array image")
+	assert.Contains(t, stdout, "docker.io/subchart/deep-image", "Output should contain subchart nested image")
+}
+
+// TestOverridePluginMode_OutputFormatJSON verifies that 'irr override' works in Helm plugin mode for a release with --output-format json.
+func TestOverridePluginMode_OutputFormatJSON(t *testing.T) {
+	h := NewTestHarness(t)
+	defer h.Cleanup()
+
+	chartPath := h.GetTestdataPath("charts/fallback-test")
+	releaseName := "jsonfmt-release"
+	namespace := "jsonfmt-ns"
+	_, err := h.ExecuteHelm("install", releaseName, chartPath, "--namespace", namespace, "--create-namespace")
+	require.NoError(t, err, "Helm install should succeed")
+
+	env := map[string]string{
+		"HELM_PLUGIN_NAME": "irr",
+		"HELM_PLUGIN_DIR":  "/fake/plugins/irr",
+		"HELM_NAMESPACE":   namespace,
+	}
+
+	stdout, stderr, err := h.ExecuteIRRWithStderr(env, false,
+		"override",
+		releaseName,
+		"-n", namespace,
+		"--target-registry", "my-target-registry.com",
+		"--source-registries", "docker.io",
+		"--output-format", "json",
+		"--log-level", "debug",
+	)
+	require.NoError(t, err, "override (plugin mode) with --output-format json should succeed. Stderr: %s", stderr)
+	assert.Contains(t, stdout, "my-target-registry.com", "JSON output should contain target registry")
+	assert.Contains(t, stdout, "docker.io/library/nginx", "JSON output should contain image repository")
+	assert.Contains(t, stdout, "latest", "JSON output should contain image tag")
+	// Check that output is valid JSON
+	var js map[string]interface{}
+	err = json.Unmarshal([]byte(stdout), &js)
+	assert.NoError(t, err, "Output should be valid JSON")
 }
 
 // Add other test functions below if needed...
