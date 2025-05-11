@@ -611,6 +611,12 @@ func TestOverridePluginMode_SingleReleaseNamespace(t *testing.T) {
 	namespace := "test-ns"
 	_, err := h.ExecuteHelm("install", releaseName, chartPath, "--namespace", namespace, "--create-namespace")
 	require.NoError(t, err, "Helm install should succeed")
+	// Clean up the helm release after the test
+	defer func() {
+		if err := h.UninstallHelmRelease(releaseName, namespace); err != nil {
+			t.Logf("Warning: Failed to uninstall release %s in namespace %s: %v", releaseName, namespace, err)
+		}
+	}()
 
 	// 2. Simulate plugin mode: set HELM_PLUGIN_NAME/HELM_PLUGIN_DIR
 	env := map[string]string{
@@ -672,6 +678,12 @@ func TestOverridePluginMode_ReleaseWithNoImages(t *testing.T) {
 	namespace := "no-images-ns"
 	_, err := h.ExecuteHelm("install", releaseName, chartPath, "--namespace", namespace, "--create-namespace")
 	require.NoError(t, err, "Helm install should succeed")
+	// Clean up the helm release after the test
+	defer func() {
+		if err := h.UninstallHelmRelease(releaseName, namespace); err != nil {
+			t.Logf("Warning: Failed to uninstall release %s in namespace %s: %v", releaseName, namespace, err)
+		}
+	}()
 
 	env := map[string]string{
 		"HELM_PLUGIN_NAME": "irr",
@@ -702,6 +714,12 @@ func TestOverridePluginMode_ExcludedRegistries(t *testing.T) {
 	namespace := "excluded-registries-ns"
 	_, err := h.ExecuteHelm("install", releaseName, chartPath, "--namespace", namespace, "--create-namespace")
 	require.NoError(t, err, "Helm install should succeed")
+	// Clean up the helm release after the test
+	defer func() {
+		if err := h.UninstallHelmRelease(releaseName, namespace); err != nil {
+			t.Logf("Warning: Failed to uninstall release %s in namespace %s: %v", releaseName, namespace, err)
+		}
+	}()
 
 	env := map[string]string{
 		"HELM_PLUGIN_NAME": "irr",
@@ -739,6 +757,12 @@ func TestOverridePluginMode_StrictModeUnsupportedStructure(t *testing.T) {
 	namespace := "strict-unsupported-ns"
 	_, err := h.ExecuteHelm("install", releaseName, chartPath, "--namespace", namespace, "--create-namespace")
 	require.NoError(t, err, "Helm install should succeed")
+	// Clean up the helm release after the test
+	defer func() {
+		if err := h.UninstallHelmRelease(releaseName, namespace); err != nil {
+			t.Logf("Warning: Failed to uninstall release %s in namespace %s: %v", releaseName, namespace, err)
+		}
+	}()
 
 	env := map[string]string{
 		"HELM_PLUGIN_NAME": "irr",
@@ -770,6 +794,12 @@ func TestOverridePluginMode_RegistryMappingFile(t *testing.T) {
 	namespace := "mappingfile-ns"
 	_, err := h.ExecuteHelm("install", releaseName, chartPath, "--namespace", namespace, "--create-namespace")
 	require.NoError(t, err, "Helm install should succeed")
+	// Clean up the helm release after the test
+	defer func() {
+		if err := h.UninstallHelmRelease(releaseName, namespace); err != nil {
+			t.Logf("Warning: Failed to uninstall release %s in namespace %s: %v", releaseName, namespace, err)
+		}
+	}()
 
 	// Create a custom registry mapping file
 	mappingFile := h.GetTempFilePath("custom-mapping.yaml")
@@ -812,6 +842,12 @@ func TestOverridePluginMode_OutputFileAndDryRun(t *testing.T) {
 	namespace := "outputfile-ns"
 	_, err := h.ExecuteHelm("install", releaseName, chartPath, "--namespace", namespace, "--create-namespace")
 	require.NoError(t, err, "Helm install should succeed")
+	// Clean up the helm release after the test
+	defer func() {
+		if err := h.UninstallHelmRelease(releaseName, namespace); err != nil {
+			t.Logf("Warning: Failed to uninstall release %s in namespace %s: %v", releaseName, namespace, err)
+		}
+	}()
 
 	outputFile := h.GetTempFilePath("plugin-output.yaml")
 	env := map[string]string{
@@ -876,6 +912,12 @@ func TestOverridePluginMode_ComplexValueStructures(t *testing.T) {
 	namespace := "complex-struct-ns"
 	_, err := h.ExecuteHelm("install", releaseName, chartPath, "--namespace", namespace, "--create-namespace")
 	require.NoError(t, err, "Helm install should succeed")
+	// Clean up the helm release after the test
+	defer func() {
+		if err := h.UninstallHelmRelease(releaseName, namespace); err != nil {
+			t.Logf("Warning: Failed to uninstall release %s in namespace %s: %v", releaseName, namespace, err)
+		}
+	}()
 
 	env := map[string]string{
 		"HELM_PLUGIN_NAME": "irr",
@@ -908,6 +950,12 @@ func TestOverridePluginMode_OutputFormatJSON(t *testing.T) {
 	namespace := "jsonfmt-ns"
 	_, err := h.ExecuteHelm("install", releaseName, chartPath, "--namespace", namespace, "--create-namespace")
 	require.NoError(t, err, "Helm install should succeed")
+	// Clean up the helm release after the test
+	defer func() {
+		if err := h.UninstallHelmRelease(releaseName, namespace); err != nil {
+			t.Logf("Warning: Failed to uninstall release %s in namespace %s: %v", releaseName, namespace, err)
+		}
+	}()
 
 	env := map[string]string{
 		"HELM_PLUGIN_NAME": "irr",

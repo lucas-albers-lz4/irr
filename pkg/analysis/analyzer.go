@@ -681,6 +681,11 @@ func (a *ChartAnalysis) mergeAnalysis(b *ChartAnalysis) {
 // It handles nil, string, int, and float64 types, returning the string
 // representation and a boolean indicating success.
 func ensureString(v interface{}) (string, bool) {
+	if v == nil {
+		log.Debug("ensureString: Received nil value, returning empty string")
+		return "", false // Still silently handle nil values as far as return values go
+	}
+
 	switch s := v.(type) {
 	case string:
 		return s, true

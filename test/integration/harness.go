@@ -1202,3 +1202,14 @@ func (h *TestHarness) ExecuteAnalysisOnly(chartPath string, extraArgs ...string)
 
 	return &analysisResult, nil
 }
+
+// UninstallHelmRelease uninstalls a Helm release in the specified namespace
+func (h *TestHarness) UninstallHelmRelease(releaseName, namespace string) error {
+	output, err := h.ExecuteHelm("uninstall", releaseName, "--namespace", namespace)
+	if err != nil {
+		h.logger.Debug("Failed to uninstall Helm release", "release", releaseName, "namespace", namespace, "error", err, "output", output)
+		return fmt.Errorf("failed to uninstall release %s in namespace %s: %w", releaseName, namespace, err)
+	}
+	h.logger.Debug("Successfully uninstalled Helm release", "release", releaseName, "namespace", namespace)
+	return nil
+}
