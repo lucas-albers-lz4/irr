@@ -1348,6 +1348,8 @@ async def test_chart_subchart_analysis(chart_info, target_registry, irr_binary, 
             str(chart_path_obj),
             "--output-format", "json", # Request JSON output
         ]
+        if getattr(args, 'context_aware', False):
+            inspect_cmd.append("--context-aware")
         if args.debug:
             inspect_cmd.append("--debug")
 
@@ -2081,6 +2083,12 @@ async def main():
     # Add lock for subchart analysis results file if needed
     # subchart_results_lock = asyncio.Lock() # Defined within the function now
 
+    parser.add_argument(
+        "--compare-context-aware",
+        action="store_true",
+        help="Compare --context-aware vs legacy analyzer for subchart analysis"
+    )
+
     args = parser.parse_args()
 
     # Ensure output directories exist
@@ -2372,6 +2380,135 @@ async def main():
 
     end_total_time = time.time()
     print(f"\nTotal execution time: {end_total_time - start_total_time:.2f} seconds")
+
+    if args.operation == "subchart" and args.compare_context_aware:
+        print("\n--- Comparing context-aware vs legacy analyzer for subchart analysis ---")
+        tasks = []
+        limiter = asyncio.Semaphore(args.max_workers)
+        for chart_name, chart_path in charts_to_process_info:
+            async def run_both_modes(chart_info):
+                async with limiter:
+                    # Legacy mode
+                    legacy_result = await test_chart_subchart_analysis(chart_info, args.target_registry, irr_binary, None, args)
+                    # Context-aware mode: patch args for this call
+                    class CAArgs:
+                        pass
+                    ca_args = type('CAArgs', (), dict(vars(args)))()
+                    ca_args.context_aware = True
+                    # Patch test_chart_subchart_analysis to add --context-aware to inspect_cmd
+                    orig_func = test_chart_subchart_analysis
+                    async def ca_func(chart_info, target_registry, irr_binary, session, ca_args):
+                        # Patch inspect_cmd to add --context-aware
+                        nonlocal orig_func
+                        import types
+                        orig_code = orig_func.__code__
+                        def patched_inspect_cmd(*a, **kw):
+                            # This is a hack: we patch the inspect_cmd construction
+                            # in the function's local scope
+                            pass # No-op, handled below
+                        # Instead, just copy-paste the function and add --context-aware
+                        # But for now, call the function and monkeypatch args
+                        ca_args = type('CAArgs', (), dict(vars(args)))()
+                        ca_args.context_aware = True
+                        # Actually, just call the function with a flag
+                        return await orig_func(chart_info, target_registry, irr_binary, session, ca_args)
+                    # Actually, just call the function with a flag
+                    ca_args = type('CAArgs', (), dict(vars(args)))()
+                    ca_args.context_aware = True
+                    ca_args.debug = args.debug
+                    ca_args.timeout = args.timeout
+                    # Patch test_chart_subchart_analysis to add --context-aware to inspect_cmd
+                    # Instead, just call the function and pass a flag
+                    # We'll patch the function below to honor ca_args.context_aware
+                    context_aware_result = await test_chart_subchart_analysis(chart_info, args.target_registry, irr_binary, None, ca_args)
+                    return (chart_info[0], legacy_result, context_aware_result)
+            tasks.append(run_both_modes((chart_name, chart_path)))
+        results = await asyncio.gather(*tasks)
+        # Summarize
+        better, same, worse = [], [], []
+        for chart_name, legacy, ca in results:
+            # Compare analyzer_image_count and status
+            legacy_count = getattr(legacy, 'analyzer_image_count', None) or getattr(legacy, 'details', '').count('Inspect:')
+            ca_count = getattr(ca, 'analyzer_image_count', None) or getattr(ca, 'details', '').count('Inspect:')
+            # Prefer status: MATCH is best
+            legacy_status = getattr(legacy, 'status', '')
+            ca_status = getattr(ca, 'status', '')
+            if ca_status == 'MATCH' and legacy_status != 'MATCH':
+                better.append(chart_name)
+            elif ca_status == legacy_status:
+                same.append(chart_name)
+            else:
+                worse.append(chart_name)
+        print("\nSummary of context-aware vs legacy analyzer:")
+        print(f"  Better with context-aware: {len(better)} charts")
+        print(f"  Same: {len(same)} charts")
+        print(f"  Worse: {len(worse)} charts")
+        if better:
+            print("  Charts better with context-aware:", ", ".join(better))
+        if worse:
+            print("  Charts worse with context-aware:", ", ".join(worse))
+        return
+
+    if args.operation == "both" and args.compare_context_aware:
+        print("\n--- Comparing context-aware vs legacy analyzer for override+validate ---")
+        tasks = []
+        limiter = asyncio.Semaphore(args.max_workers)
+        for chart_name, chart_path in charts_to_process_info:
+            async def run_both_modes(chart_info):
+                async with limiter:
+                    # Legacy mode
+                    legacy_args = type('LegacyArgs', (), dict(vars(args)))()
+                    legacy_args.context_aware = False
+                    legacy_override = await test_chart_override(chart_info, args.target_registry, irr_binary, None, legacy_args)
+                    # Validate legacy override
+                    legacy_validate = None
+                    if legacy_override and getattr(legacy_override, 'status', None) == 'SUCCESS':
+                        chart_info_dict = {
+                            "chart_name": chart_info[0],
+                            "chart_path": chart_info[1],
+                            "classification": "UNKNOWN",
+                            "override_file_path": TEST_OUTPUT_DIR / f"{chart_info[0]}-values.yaml",
+                            "override_duration": getattr(legacy_override, 'override_duration', 0),
+                        }
+                        legacy_validate = await test_chart_validate(chart_info_dict, args.target_registry, irr_binary, None, legacy_args)
+                    # Context-aware mode
+                    ca_args = type('CAArgs', (), dict(vars(args)))()
+                    ca_args.context_aware = True
+                    ca_override = await test_chart_override(chart_info, args.target_registry, irr_binary, None, ca_args)
+                    # Validate context-aware override
+                    ca_validate = None
+                    if ca_override and getattr(ca_override, 'status', None) == 'SUCCESS':
+                        chart_info_dict = {
+                            "chart_name": chart_info[0],
+                            "chart_path": chart_info[1],
+                            "classification": "UNKNOWN",
+                            "override_file_path": TEST_OUTPUT_DIR / f"{chart_info[0]}-values.yaml",
+                            "override_duration": getattr(ca_override, 'override_duration', 0),
+                        }
+                        ca_validate = await test_chart_validate(chart_info_dict, args.target_registry, irr_binary, None, ca_args)
+                    return (chart_info[0], legacy_validate, ca_validate)
+            tasks.append(run_both_modes((chart_name, chart_path)))
+        results = await asyncio.gather(*tasks)
+        # Summarize
+        better, same, worse = [], [], []
+        for chart_name, legacy, ca in results:
+            legacy_success = legacy and getattr(legacy, 'status', None) == 'SUCCESS'
+            ca_success = ca and getattr(ca, 'status', None) == 'SUCCESS'
+            if ca_success and not legacy_success:
+                better.append(chart_name)
+            elif ca_success == legacy_success:
+                same.append(chart_name)
+            else:
+                worse.append(chart_name)
+        print("\nSummary of context-aware vs legacy analyzer (override+validate):")
+        print(f"  Better with context-aware: {len(better)} charts")
+        print(f"  Same: {len(same)} charts")
+        print(f"  Worse: {len(worse)} charts")
+        if better:
+            print("  Charts better with context-aware:", ", ".join(better))
+        if worse:
+            print("  Charts worse with context-aware:", ", ".join(worse))
+        return
 
 
 if __name__ == "__main__":
