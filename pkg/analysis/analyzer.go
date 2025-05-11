@@ -149,6 +149,16 @@ func (a *Analyzer) Analyze() (*ChartAnalysis, error) {
 	return analysis, nil
 }
 
+// AnalyzeValues analyzes a values map directly and returns a ChartAnalysis.
+func (a *Analyzer) AnalyzeValues(values map[string]interface{}) (*ChartAnalysis, error) {
+	analysis := NewChartAnalysis()
+	err := a.analyzeValues(values, "", analysis)
+	if err != nil {
+		return nil, err
+	}
+	return analysis, nil
+}
+
 // normalizeImageValues extracts and normalizes image map values to ensure consistency.
 // It handles various edge cases in image definitions, including:
 // - Missing registry (defaults to docker.io)

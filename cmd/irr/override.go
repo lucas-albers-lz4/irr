@@ -8,6 +8,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -255,6 +256,7 @@ func setupOverrideFlags(cmd *cobra.Command) {
 	// Add new flags
 	cmd.Flags().BoolVar(&validate, "validate", false, "Run helm template to validate generated overrides")
 	cmd.Flags().Bool("context-aware", false, "Use context-aware analyzer that handles subchart value merging (experimental)")
+	cmd.Flags().String("output-format", outputFormatYAML, "Output format for overrides (yaml or json)")
 }
 
 // getRequiredFlags retrieves and validates the required flags for the override command
@@ -378,25 +380,59 @@ func getOutputFlags(cmd *cobra.Command, releaseName string) (outputFile string, 
 	return outputFile, dryRun, nil
 }
 
-// outputOverrides handles writing the generated YAML to the correct destination
+// outputOverrides handles writing the generated YAML or JSON to the correct destination
 // (stdout or file) or logging it for dry-run.
-func outputOverrides(cmd *cobra.Command, yamlBytes []byte, outputFile string, dryRun bool) error {
+func outputOverrides(cmd *cobra.Command, data []byte, outputFile string, dryRun bool) error {
+	// Determine output format
+	outputFormat, err := cmd.Flags().GetString("output-format")
+	if err != nil {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("failed to get output-format flag: %w", err),
+		}
+	}
+	outputFormat = strings.ToLower(outputFormat)
+	if outputFormat != outputFormatYAML && outputFormat != outputFormatJSON {
+		return &exitcodes.ExitCodeError{
+			Code: exitcodes.ExitInputConfigurationError,
+			Err:  fmt.Errorf("unsupported output format %q; supported formats: yaml, json", outputFormat),
+		}
+	}
+
+	// Marshal to the requested format if needed
+	var output []byte
+	if outputFormat == outputFormatJSON {
+		var obj interface{}
+		if err := yaml.Unmarshal(data, &obj); err != nil {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitGeneralRuntimeError,
+				Err:  fmt.Errorf("failed to unmarshal YAML for JSON output: %w", err),
+			}
+		}
+		output, err = json.MarshalIndent(obj, "", "  ")
+		if err != nil {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitGeneralRuntimeError,
+				Err:  fmt.Errorf("failed to marshal overrides to JSON: %w", err),
+			}
+		}
+	} else {
+		output = data // Already YAML
+	}
+
 	switch {
 	case dryRun:
-		// Log that we are doing a dry run and printing to stdout
 		log.Info("DRY RUN: Displaying generated override values (stdout)")
-		// Print the actual YAML to stdout
-		if _, err := fmt.Fprintln(cmd.OutOrStdout(), string(yamlBytes)); err != nil {
+		if _, err := fmt.Fprintln(cmd.OutOrStdout(), string(output)); err != nil {
 			log.Error("Failed to write dry-run output to stdout", "error", err)
 			return &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitIOError,
 				Err:  fmt.Errorf("failed to write dry-run output to stdout: %w", err),
 			}
 		}
-		return nil // Dry run successful
+		return nil
 	case outputFile == "":
-		// Just output to stdout
-		_, err := fmt.Fprintln(cmd.OutOrStdout(), string(yamlBytes))
+		_, err := fmt.Fprintln(cmd.OutOrStdout(), string(output))
 		if err != nil {
 			return &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitGeneralRuntimeError,
@@ -406,7 +442,6 @@ func outputOverrides(cmd *cobra.Command, yamlBytes []byte, outputFile string, dr
 		log.Info("Override values printed to stdout")
 		return nil
 	default:
-		// Check if file exists
 		exists, err := afero.Exists(AppFs, outputFile)
 		if err != nil {
 			return &exitcodes.ExitCodeError{
@@ -420,8 +455,6 @@ func outputOverrides(cmd *cobra.Command, yamlBytes []byte, outputFile string, dr
 				Err:  fmt.Errorf("output file '%s' already exists", outputFile),
 			}
 		}
-
-		// Create the directory if it doesn't exist
 		dir := filepath.Dir(outputFile)
 		if dir != "" && dir != "." {
 			if mkDirErr := AppFs.MkdirAll(dir, fileutil.ReadWriteExecuteUserReadExecuteOthers); mkDirErr != nil {
@@ -431,23 +464,18 @@ func outputOverrides(cmd *cobra.Command, yamlBytes []byte, outputFile string, dr
 				}
 			}
 		}
-
-		// Write the file
-		if writeErr := afero.WriteFile(AppFs, outputFile, yamlBytes, fileutil.ReadWriteUserReadOthers); writeErr != nil {
+		if writeErr := afero.WriteFile(AppFs, outputFile, output, fileutil.ReadWriteUserReadOthers); writeErr != nil {
 			return &exitcodes.ExitCodeError{
 				Code: exitcodes.ExitIOError,
 				Err:  fmt.Errorf("failed to write output file '%s': %w", outputFile, writeErr),
 			}
 		}
-
-		// Log success
 		absPath, err := filepath.Abs(outputFile)
 		if err == nil {
 			log.Info("Override values written", "path", absPath)
 		} else {
 			log.Info("Override values written", "path", outputFile)
 		}
-
 		return nil
 	}
 }
@@ -1003,7 +1031,10 @@ func runOverride(cmd *cobra.Command, args []string) error {
 
 	if isPlugin {
 		log.Debug("Running in Helm Plugin mode")
-		if len(args) == 0 {
+		// Parse release name from args or --release-name
+		if len(args) > 0 {
+			releaseName = args[0]
+		} else {
 			var getErr error
 			releaseName, getErr = getStringFlag(cmd, "release-name")
 			if getErr != nil {
@@ -1013,8 +1044,98 @@ func runOverride(cmd *cobra.Command, args []string) error {
 				return &exitcodes.ExitCodeError{Code: exitcodes.ExitMissingRequiredFlag, Err: errors.New("release name required in plugin mode (provide as argument or --release-name flag)")}
 			}
 		}
-		log.Error("Helm plugin mode execution for override is not yet fully refactored. Please use standalone mode.")
-		return &exitcodes.ExitCodeError{Code: exitcodes.ExitGeneralRuntimeError, Err: errors.New("plugin mode not implemented after refactor")}
+
+		// Get namespace from flag or HELM_NAMESPACE env
+		namespace, nsErr := cmd.Flags().GetString("namespace")
+		if nsErr != nil || namespace == "" {
+			namespace = os.Getenv("HELM_NAMESPACE")
+			if namespace == "" {
+				namespace = "default"
+			}
+		}
+
+		// Get Helm adapter
+		helmAdapter, err := helmAdapterFactory()
+		if err != nil {
+			return err
+		}
+		if helmAdapter == nil {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitGeneralRuntimeError,
+				Err:  errors.New("internal error: helmAdapterFactory returned nil adapter without error"),
+			}
+		}
+
+		// Fetch release values and chart metadata
+		releaseValues, err := helmAdapter.GetReleaseValues(cmd.Context(), releaseName, namespace)
+		if err != nil {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitHelmCommandFailed,
+				Err:  fmt.Errorf("failed to get values for release %s: %w", releaseName, err),
+			}
+		}
+		chartMetadata, err := helmAdapter.GetChartFromRelease(cmd.Context(), releaseName, namespace)
+		if err != nil {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitHelmCommandFailed,
+				Err:  fmt.Errorf("failed to get chart info for release %s: %w", releaseName, err),
+			}
+		}
+
+		// Prepare minimal chart object for generator
+		dummyChart := &helmchart.Chart{
+			Metadata: &helmchart.Metadata{
+				Name:    chartMetadata.Name,
+				Version: chartMetadata.Version,
+			},
+		}
+
+		// Prepare analysis result using context-aware analyzer
+		analyzer := analysis.NewAnalyzer("", nil) // No chart path, no loader needed for direct values
+		analysisResult, analyzeErr := analyzer.AnalyzeValues(releaseValues)
+		if analyzeErr != nil {
+			return &exitcodes.ExitCodeError{
+				Code: exitcodes.ExitChartProcessingFailed,
+				Err:  fmt.Errorf("release values analysis failed: %w", analyzeErr),
+			}
+		}
+
+		// Prepare generator config (reuse flag parsing logic)
+		generatorConfig, err := setupGeneratorConfig(cmd, "")
+		if err != nil {
+			return err
+		}
+		// Set dummy chart path for logging
+		generatorConfig.ChartPath = fmt.Sprintf("helm-release://%s/%s", namespace, releaseName)
+		if err := loadRegistryMappings(cmd, &generatorConfig); err != nil {
+			return err
+		}
+		if err := setupPathStrategy(&generatorConfig); err != nil {
+			return err
+		}
+
+		generator := chart.NewGenerator(
+			generatorConfig.ChartPath,
+			generatorConfig.TargetRegistry,
+			generatorConfig.SourceRegistries,
+			generatorConfig.ExcludeRegistries,
+			generatorConfig.Strategy,
+			generatorConfig.Mappings,
+			generatorConfig.StrictMode,
+			0,
+			&PreloadedChartLoader{chart: dummyChart, analysis: analysisResult},
+			generatorConfig.RulesEnabled,
+		)
+
+		overrideResult, err := generator.Generate(dummyChart, analysisResult)
+		if err != nil {
+			return handleGenerateError(err)
+		}
+		yamlBytes, err := yaml.Marshal(overrideResult.Values)
+		if err != nil {
+			return fmt.Errorf("failed to marshal overrides to YAML: %w", err)
+		}
+		return outputOverrides(cmd, yamlBytes, outputFile, dryRun)
 	}
 	log.Debug("Running in Standalone mode")
 	return runOverrideStandaloneMode(cmd, outputFile, dryRun)
