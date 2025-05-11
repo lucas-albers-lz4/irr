@@ -821,7 +821,7 @@ func TestOverridePluginMode_OutputFileAndDryRun(t *testing.T) {
 	}
 
 	// 1. Run with --output-file (should write file)
-	stdout, stderr, err := h.ExecuteIRRWithStderr(env, false,
+	_, stderr, err := h.ExecuteIRRWithStderr(env, false,
 		"override",
 		releaseName,
 		"-n", namespace,

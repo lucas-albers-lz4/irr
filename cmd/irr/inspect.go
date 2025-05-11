@@ -1584,7 +1584,7 @@ func checkSubchartDiscrepancy(cmd *cobra.Command, chartPath string, analysisResu
 	installAction := action.NewInstall(actionConfig)
 	installAction.DryRun = true
 	installAction.ReleaseName = "irr-subchart-check"
-	installAction.Namespace = "default"
+	installAction.Namespace = validateTestNamespace
 	installAction.ClientOnly = true
 
 	// Render the templates
