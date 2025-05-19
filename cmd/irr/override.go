@@ -21,6 +21,7 @@ import (
 	"github.com/lucas-albers-lz4/irr/pkg/chart"
 	"github.com/lucas-albers-lz4/irr/pkg/exitcodes"
 	"github.com/lucas-albers-lz4/irr/pkg/fileutil"
+	"github.com/lucas-albers-lz4/irr/pkg/image"
 	log "github.com/lucas-albers-lz4/irr/pkg/log"
 	"github.com/lucas-albers-lz4/irr/pkg/registry"
 	"github.com/lucas-albers-lz4/irr/pkg/strategy"
@@ -234,7 +235,13 @@ func setupOverrideFlags(cmd *cobra.Command) {
 
 	// Optional flags
 	cmd.Flags().StringP("output-file", "o", "", "Write output to file instead of stdout")
-	cmd.Flags().StringP("config", "f", "", "Path to registry mapping config file")
+	cmd.Flags().String("registry-file", "", "Path to YAML file with registry mappings (defaults to registry-mappings.yaml in the current directory if not provided)")
+	cmd.Flags().StringP("config", "f", "", "DEPRECATED: Path to registry mapping config file. Use --registry-file instead.")
+	if err := cmd.Flags().MarkDeprecated("config", "use --registry-file instead"); err != nil {
+		// Log an error if marking deprecated fails, but don't necessarily halt execution
+		// This is a development-time issue, not a runtime user error.
+		log.Error("Failed to mark --config flag as deprecated", "error", err)
+	}
 	cmd.Flags().Bool("strict", false, "Enable strict mode (fails on unsupported structures)")
 	cmd.Flags().StringSlice("include-pattern", []string{}, "Glob patterns for values paths to include (comma-separated)")
 	cmd.Flags().StringSlice("exclude-pattern", []string{}, "Glob patterns for values paths to exclude (comma-separated)")
@@ -287,7 +294,7 @@ func getRequiredFlags(cmd *cobra.Command, isPluginOperatingOnRelease, isConfigPr
 	if targetRegistry == "" && !isConfigProvided {
 		return "", "", nil, &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitInputConfigurationError,
-			Err:  errors.New("required flag(s) \"target-registry\" not set (or provide a config file)"),
+			Err:  errors.New("required flag(s) \"target-registry\" not set (or provide a registry mapping file via --registry-file)"),
 		}
 	}
 
@@ -302,7 +309,7 @@ func getRequiredFlags(cmd *cobra.Command, isPluginOperatingOnRelease, isConfigPr
 	if len(sourceRegistries) == 0 && !isConfigProvided {
 		return "", "", nil, &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitInputConfigurationError,
-			Err:  errors.New("required flag(s) \"source-registries\" not set (or provide a config file)"),
+			Err:  errors.New("required flag(s) \"source-registries\" not set (or provide a registry mapping file via --registry-file)"),
 		}
 	}
 
@@ -501,17 +508,82 @@ func outputOverrides(cmd *cobra.Command, data []byte, outputFile string, dryRun 
 	}
 }
 
+// deriveSourceRegistriesFromMappings populates the SourceRegistries in the config
+// from the Mappings, if SourceRegistries is not already set.
+func deriveSourceRegistriesFromMappings(config *GeneratorConfig) {
+	if config == nil {
+		log.Warn("deriveSourceRegistriesFromMappings called with nil config")
+		return
+	}
+
+	// If --source-registries flag was set (i.e., config.SourceRegistries is not empty),
+	// or if mappings were not loaded, or no mapping entries exist, do nothing.
+	switch {
+	case len(config.SourceRegistries) > 0:
+		log.Debug("Source registries explicitly provided via CLI, not deriving from mappings",
+			"count", len(config.SourceRegistries),
+			"registries", config.SourceRegistries)
+		return
+	case config.Mappings == nil:
+		log.Debug("No mappings loaded, cannot derive source registries")
+		return
+	case len(config.Mappings.Entries) == 0:
+		log.Debug("Mappings loaded but contain no entries, cannot derive source registries")
+		return
+	}
+
+	// If we reach here, we need to derive source registries from the mappings
+	var sourcesFromMappings []string
+	seenSources := make(map[string]bool)
+
+	for _, entry := range config.Mappings.Entries { // Mappings.Entries are already filtered by Enabled due to ToMappings()
+		// Normalize source from mapping for consistent matching
+		originalSourceFromMapping := entry.Source // Store original for comparison
+		normalizedMappingSource := image.NormalizeRegistry(originalSourceFromMapping)
+
+		// Log if normalization changed the source string from the mapping file
+		if originalSourceFromMapping != normalizedMappingSource {
+			log.Debug("Normalized source registry from mapping file",
+				"original", originalSourceFromMapping,
+				"normalized", normalizedMappingSource)
+		}
+
+		if normalizedMappingSource == "" { // Should not happen with valid config, but defense
+			log.Warn("Skipping mapping with empty source registry", "target", entry.Target)
+			continue
+		}
+
+		if !seenSources[normalizedMappingSource] {
+			seenSources[normalizedMappingSource] = true
+			sourcesFromMappings = append(sourcesFromMappings, normalizedMappingSource)
+		}
+	}
+
+	if len(sourcesFromMappings) > 0 {
+		log.Info("Derived source registries from registry-file mappings",
+			"count", len(sourcesFromMappings),
+			"registries", sourcesFromMappings)
+		config.SourceRegistries = sourcesFromMappings
+	} else {
+		log.Debug("No valid source registries could be derived from mappings")
+	}
+}
+
 // setupGeneratorConfig retrieves and configures all options for the generator
 // It ONLY gathers flags and populates the struct. Further processing happens in runOverride.
 func setupGeneratorConfig(cmd *cobra.Command, isPluginOperatingOnRelease bool) (config GeneratorConfig, err error) {
 	// Determine if a config file is provided, to pass to getRequiredFlags
-	configFilePath, configErr := cmd.Flags().GetString("config")
-	if configErr != nil {
-		log.Debug("Error getting config flag", "error", configErr)
-		// Continue with empty configFilePath rather than returning an error
-		configFilePath = ""
+	registryFilePath, regErr := cmd.Flags().GetString("registry-file")
+	if regErr != nil {
+		return config, fmt.Errorf("failed to get registry-file flag: %w", regErr)
 	}
-	isConfigProvided := configFilePath != ""
+
+	deprecatedConfigPath, cfgErr := cmd.Flags().GetString("config")
+	if cfgErr != nil {
+		return config, fmt.Errorf("failed to get config flag: %w", cfgErr)
+	}
+
+	isConfigProvided := registryFilePath != "" || deprecatedConfigPath != ""
 
 	// Get required flags first, now context-aware
 	chartPathVal, targetRegistryVal, sourceRegistriesVal, err := getRequiredFlags(cmd, isPluginOperatingOnRelease, isConfigProvided)
@@ -561,90 +633,74 @@ func setupGeneratorConfig(cmd *cobra.Command, isPluginOperatingOnRelease bool) (
 	return config, nil
 }
 
-func setupPathStrategy(config *GeneratorConfig) error {
-	// Add nil check for safety, although runOverride should prevent this call with nil config
+// setupPathStrategy initializes and validates the path strategy.
+func setupPathStrategy(config *GeneratorConfig) (strategy.PathStrategy, error) {
 	if config == nil {
-		return errors.New("internal error: setupPathStrategy called with nil config")
+		return nil, errors.New("nil config in setupPathStrategy")
 	}
-	// The --path-strategy flag has been removed. Always use the default.
-	config.Strategy = strategy.NewPrefixSourceRegistryStrategy(config.Mappings)
-	return nil
+	// Default to prefix-source-registry if not specified
+	strategyName := "prefix-source-registry"
+	log.Debug("Using default path strategy", "strategy", strategyName)
+
+	// Initialize and return the strategy
+	pathStrategy, err := strategy.GetStrategy(strategyName, config.Mappings)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize path strategy: %w", err)
+	}
+	return pathStrategy, nil
 }
 
-// skipCWDCheck returns true if we should skip the cwd check for registry files
-func skipCWDCheck() bool {
-	// Get the flag value (using the global variable populated by Cobra)
-	itFlag := integrationTestMode
-
-	// Check the environment variable
-	irrTestingEnv := os.Getenv("IRR_TESTING") == trueString
-
-	// Log the check results (optional but helpful for debugging)
-	// Note: Cannot use slog here easily as logger isn't passed in. Use fmt for temporary debug if needed.
-	// fmt.Fprintf(os.Stderr, "[DEBUG skipCWDCheck] integrationTestFlag=%t, irrTestingEnv=%t\n", itFlag, irrTestingEnv)
-
-	return itFlag || irrTestingEnv
-}
-
-// loadRegistryMappings loads registry mappings from config and registry files
+// loadRegistryMappings loads registry mappings from the specified file.
 func loadRegistryMappings(cmd *cobra.Command, config *GeneratorConfig) error {
+	// Nil check for safety
 	if config == nil {
 		return errors.New("loadRegistryMappings: config parameter is nil")
 	}
-	configFile, err := getStringFlag(cmd, "config")
+
+	// Prioritize the registry-file flag, fallback to the deprecated config flag
+	registryFilePath, registryErr := cmd.Flags().GetString("registry-file")
+	if registryErr != nil {
+		return fmt.Errorf("failed to get registry-file flag: %w", registryErr)
+	}
+
+	deprecatedConfigPath, configErr := cmd.Flags().GetString("config")
+	if configErr != nil {
+		return fmt.Errorf("failed to get config flag: %w", configErr)
+	}
+
+	configFileName := registryFilePath
+	if configFileName == "" {
+		// Try deprecated flag
+		configFileName = deprecatedConfigPath
+		if configFileName == "" {
+			log.Debug("No registry mapping file specified")
+			// This is not an error condition, just a configuration choice
+			return nil
+		}
+		log.Warn("Using deprecated --config flag, please use --registry-file instead")
+	}
+
+	// Get current working directory - use the global isTestMode variable
+	skipCWDRestriction := integrationTestMode || (os.Getenv("IRR_TESTING") == trueString)
+
+	// Load mappings file
+	mappingsConfig, err := registry.LoadConfigDefault(configFileName, skipCWDRestriction)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to load registry mappings from file %s: %w", configFileName, err)
 	}
-	if configFile != "" {
-		log.Info("Loading registry mappings from config file", "file", configFile)
-		// Pass the result of skipCWDCheck() here to control path validation
-		shouldSkipCheck := skipCWDCheck()
-		log.Debug("Calling registry.LoadStructuredConfig", "configFile", configFile, "skipCWDRestriction", shouldSkipCheck)
 
-		// Add extra debug logging to help diagnose mapping loading issues
-		fileInfo, statErr := AppFs.Stat(configFile)
-		if statErr != nil {
-			log.Warn("Failed to stat config file", "file", configFile, "error", statErr)
-		} else {
-			log.Debug("Config file stat successful", "file", configFile, "size", fileInfo.Size(), "isDir", fileInfo.IsDir())
-		}
-		fileContents, readErr := afero.ReadFile(AppFs, configFile)
-		if readErr != nil {
-			log.Warn("Failed to read config file contents", "file", configFile, "error", readErr)
-		} else {
-			log.Debug("Config file read successful", "file", configFile, "contentLength", len(fileContents))
-			log.Debug("Config file contents", "content", string(fileContents))
-		}
+	// Convert structured Config to the simpler Mappings
+	config.Mappings = mappingsConfig.ToMappings()
 
-		// Use LoadStructuredConfig instead of LoadMappings
-		configObj, err := registry.LoadStructuredConfig(AppFs, configFile, shouldSkipCheck)
-		if err != nil {
-			if os.IsNotExist(err) {
-				return &exitcodes.ExitCodeError{
-					Code: exitcodes.ExitInputConfigurationError,
-					Err:  fmt.Errorf("config file not found: %s", configFile),
-				}
-			}
-			// Wrap the error from LoadStructuredConfig
-			return &exitcodes.ExitCodeError{
-				Code: exitcodes.ExitInputConfigurationError,
-				Err:  fmt.Errorf("failed to load config file '%s': %w", configFile, err),
-			}
-		}
+	if config.Mappings != nil {
+		log.Info("Registry mappings loaded successfully", "count", len(config.Mappings.Entries))
 
-		// Convert to Mappings format
-		config.Mappings = configObj.ToMappings()
-		log.Debug("Successfully loaded mappings from file", "count", len(config.Mappings.Entries))
-
-		// Add debug logging to show the actual entries
-		if config.Mappings != nil && len(config.Mappings.Entries) > 0 {
-			for i, entry := range config.Mappings.Entries {
-				log.Debug("Mapping entry", "index", i, "source", entry.Source, "target", entry.Target)
-			}
-		} else {
-			log.Warn("No mappings loaded from config file or mappings is nil")
-		}
+		// Derive source registries from mappings if not explicitly provided
+		deriveSourceRegistriesFromMappings(config)
+	} else {
+		log.Info("No registry mappings loaded from file", "file", configFileName)
 	}
+
 	return nil
 }
 
@@ -843,9 +899,11 @@ func createAndExecuteGenerator(cmd *cobra.Command, config *GeneratorConfig, cont
 		analysisResult = analysis.NewChartAnalysis()
 	}
 
-	if err := setupPathStrategy(config); err != nil {
+	pathStrategy, err := setupPathStrategy(config)
+	if err != nil {
 		return nil, fmt.Errorf("failed to set up path strategy: %w", err)
 	}
+	config.Strategy = pathStrategy
 
 	generator, err := createGenerator(config, contextAware)
 	if err != nil {
@@ -1028,13 +1086,21 @@ func runOverrideStandaloneMode(cmd *cobra.Command, outputFile string, dryRun, is
 		return err
 	}
 
-	// Add debug logging to check if mappings were loaded
-	if generatorConfig.Mappings != nil && len(generatorConfig.Mappings.Entries) > 0 {
-		log.Debug("Registry mappings loaded correctly in runOverrideStandaloneMode",
-			"entries_count", len(generatorConfig.Mappings.Entries))
+	if generatorConfig.Mappings != nil {
+		log.Info("Registry mappings loaded successfully", "count", len(generatorConfig.Mappings.Entries))
 	} else {
-		log.Warn("No registry mappings loaded in runOverrideStandaloneMode")
+		log.Info("No registry mapping file provided or mappings are empty.")
 	}
+
+	// Derive source registries from mappings if not explicitly provided.
+	deriveSourceRegistriesFromMappings(&generatorConfig)
+
+	// Setup Path Strategy (must be after mappings are loaded and sources derived)
+	pathStrategy, err := setupPathStrategy(&generatorConfig)
+	if err != nil {
+		return err
+	}
+	generatorConfig.Strategy = pathStrategy
 
 	contextAware, err := getBoolFlag(cmd, "context-aware")
 	if err != nil {
@@ -1171,9 +1237,15 @@ func runOverride(cmd *cobra.Command, args []string) error {
 		if err := loadRegistryMappings(cmd, &generatorConfig); err != nil {
 			return err
 		}
-		if err := setupPathStrategy(&generatorConfig); err != nil {
+
+		// Derive source registries from mappings if not explicitly provided.
+		deriveSourceRegistriesFromMappings(&generatorConfig)
+
+		pathStrategy, err := setupPathStrategy(&generatorConfig)
+		if err != nil {
 			return err
 		}
+		generatorConfig.Strategy = pathStrategy
 
 		generator := chart.NewGenerator(
 			generatorConfig.ChartPath,

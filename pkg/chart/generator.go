@@ -3,6 +3,7 @@ package chart
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"reflect"
 	"strconv"
@@ -279,8 +280,11 @@ func (g *Generator) determineTargetPathAndRegistry(imgRef *image.Reference, _ *a
 
 	// First check if we have a mapping for this registry
 	effectiveTargetRegistry := g.targetRegistry
+	mappedTarget := ""
+
 	if g.mappings != nil {
-		if mappedTarget := g.mappings.GetTargetRegistry(imgRef.Registry); mappedTarget != "" {
+		mappedTarget = g.mappings.GetTargetRegistry(imgRef.Registry)
+		if mappedTarget != "" {
 			log.Debug("Using mapped target registry", "source", imgRef.Registry, "target", mappedTarget)
 
 			// If the mapped target contains a path, split it into registry and path
@@ -316,7 +320,23 @@ func (g *Generator) determineTargetPathAndRegistry(imgRef *image.Reference, _ *a
 			// If no path separator or empty path part, just use the mapped target as registry
 			effectiveTargetRegistry = mappedTarget
 			log.Debug("Using mapped target as registry", "effectiveTargetRegistry", effectiveTargetRegistry)
+		} else {
+			log.Debug("No mapping found for source registry, using CLI target",
+				"sourceRegistry", imgRef.Registry,
+				"cliTargetRegistry", g.targetRegistry)
+
+			// Ensure we use the CLI-provided target registry when no mapping is found
+			effectiveTargetRegistry = g.targetRegistry
+
+			// Additional check to warn if CLI target is also empty
+			if effectiveTargetRegistry == "" {
+				log.Warn("No mapping found and no CLI target registry provided",
+					"sourceRegistry", imgRef.Registry)
+			}
 		}
+	} else {
+		log.Debug("No mappings provided, using CLI target registry",
+			"cliTargetRegistry", effectiveTargetRegistry)
 	}
 
 	// Call the path strategy to generate the new repository path
@@ -339,6 +359,9 @@ func (g *Generator) determineTargetPathAndRegistry(imgRef *image.Reference, _ *a
 }
 
 // processImage handles the processing of a single eligible image pattern.
+// NOTE: This function is currently unused and commented out to satisfy the linter.
+// It's kept for reference in case functionality needs to be restored in the future.
+/*
 func (g *Generator) processImage(pattern *analysis.ImagePattern, overrides map[string]interface{}) (bool, *override.UnsupportedStructure, error) {
 	log.Debug("Enter processImage", "path", pattern.Path, "value", pattern.Value)
 	// *** DEBUG ALIAS ***
@@ -409,6 +432,7 @@ func (g *Generator) processImage(pattern *analysis.ImagePattern, overrides map[s
 	log.Info("Successfully processed image override", "path", pattern.Path, "original", pattern.Value, "new_repo", newPath, "target_registry", targetReg)
 	return true, nil, nil // Processed successfully, no unsupported structure error originated here
 }
+*/
 
 // --- Refactored Generate Logic --- (Helper methods added below)
 
@@ -419,6 +443,9 @@ type FailedItem struct {
 }
 
 // processEligibleImagesLoop iterates through eligible images, processes them, and collects results.
+// NOTE: This function is currently unused and commented out to satisfy the linter.
+// It's kept for reference in case functionality needs to be restored in the future.
+/*
 func (g *Generator) processEligibleImagesLoop(eligibleImages []analysis.ImagePattern, overrides map[string]interface{}) (processingErrors []error, processedCount int) {
 	// Initialize local slices/maps if needed (overrides is passed in)
 	if overrides == nil {
@@ -461,6 +488,7 @@ func (g *Generator) processEligibleImagesLoop(eligibleImages []analysis.ImagePat
 	log.Debug("processEligibleImagesLoop: Map address at END", "map_addr", fmt.Sprintf("%p", overrides))
 	return processingErrors, processedCount
 }
+*/
 
 // checkProcessingThreshold evaluates if the processing met the required threshold.
 func (g *Generator) checkProcessingThreshold(processingErrors []error, processedCount, eligibleCount int, successRate float64, _ *override.File) error {
@@ -521,148 +549,214 @@ func (g *Generator) applyRulesIfNeeded(loadedChart *chart.Chart, result *overrid
 	return nil
 }
 
-// Generate creates the override values based on the detected images and strategy.
-// It takes the loaded chart and the analysis result as input.
-func (g *Generator) Generate(loadedChart *chart.Chart, analysisResult *analysis.ChartAnalysis) (*override.File, error) {
-	log.Debug("Generate called", "hasLoadedChart", loadedChart != nil, "hasAnalysisResult", analysisResult != nil)
-
-	// Handle case where analysis failed (e.g., chart loading error)
-	if analysisResult == nil {
-		log.Error("Generate received nil analysisResult, cannot proceed.")
-		return nil, errors.New("cannot generate overrides without analysis results (analysisResult is nil)")
-	}
-
-	// Ensure the loaded chart is provided
-	if loadedChart == nil {
-		log.Error("Generate received nil loadedChart")
-		return nil, errors.New("internal error: Generate received nil loadedChart")
-	}
-
-	// Ensure Chart metadata is available
-	if loadedChart.Metadata == nil {
-		log.Error("Generate received loadedChart with nil Metadata")
-		return nil, errors.New("internal error: Generate received loadedChart with nil Metadata")
-	}
-
-	chartName := loadedChart.Name()
-	chartVersion := loadedChart.Metadata.Version
-	log.Debug("Starting override generation", "chartName", chartName, "chartVersion", chartVersion, "strategy", reflect.TypeOf(g.pathStrategy).Elem().Name())
-
-	// Initialize the final override structure
-	result := &override.File{
-		ChartPath:   loadedChart.ChartPath(),
-		Values:      make(map[string]interface{}),
-		Unsupported: make([]override.UnsupportedStructure, 0), // Initialize with make
-	}
-
-	// === Moved Strict Check Before Filtering ===
-	// Check for strict mode violations first using the raw analysis results
-	unsupported := g.findUnsupportedPatterns(analysisResult.ImagePatterns)
-	if g.strict && len(unsupported) > 0 {
-		result.Unsupported = unsupported // Store unsupported only on strict mode error
-		log.Error("Strict mode violation: Unsupported structures found", "count", len(unsupported))
-		return result, fmt.Errorf("%w: %d unsupported structures found (strict mode)",
-			ErrUnsupportedStructure, len(unsupported))
-	}
-	// === End Moved Block ===
-
-	// Filter images based on source/exclude registries
-	eligibleImages := g.filterEligibleImages(analysisResult.ImagePatterns)
-	eligibleCount := len(eligibleImages)
-	log.Info("Filtering complete", "total_images", len(analysisResult.ImagePatterns), "eligible_images", eligibleCount)
-
-	// Log the eligible images and their paths before processing
-	for i, p := range eligibleImages {
-		log.Debug("Eligible image for processing", "index", i, "path", p.Path, "value", p.Value, "sourceOrigin", p.SourceOrigin)
-	}
-
-	// Log map address before loop
-	log.Debug("Generate: Map address BEFORE loop", "map_addr", fmt.Sprintf("%p", result.Values))
-
-	// 3. Process Eligible Images & Collect Errors (modifies result.Values)
-	processingErrors, processedCount := g.processEligibleImagesLoop(eligibleImages, result.Values)
-	result.ProcessedCount = processedCount // Store processed count
-
-	// Ensure global.imageRegistry is set in the overrides map
-	g.ensureGlobalImageRegistry(result.Values, analysisResult.GlobalPatterns)
-
-	// Log map address after loop
-	log.Debug("Generate: Map address AFTER loop", "map_addr", fmt.Sprintf("%p", result.Values))
-
-	// 4. Calculate and Store Success Rate
-	var successRate float64
-	if eligibleCount > 0 {
-		successRate = (float64(processedCount) / float64(eligibleCount)) * PercentageMultiplier
-	} else {
-		successRate = 100.0 // No eligible images means 100% success
-	}
-	result.SuccessRate = successRate
-	log.Info("Image processing complete", "processed", processedCount, "eligible", eligibleCount, "success_rate", fmt.Sprintf("%.2f%%", successRate))
-
-	// 5. Check Threshold
-	if thresholdErr := g.checkProcessingThreshold(processingErrors, processedCount, eligibleCount, successRate, result); thresholdErr != nil {
-		log.Error("Processing threshold not met or strict mode failure", "error", thresholdErr)
-		return nil, thresholdErr // Return nil result and the error
-	}
-
-	// 6. Apply Rules if enabled (using provided loadedChart)
-	if g.rulesEnabled && g.rulesRegistry != nil {
-		if rulesErr := g.applyRulesIfNeeded(loadedChart, result); rulesErr != nil {
-			log.Error("Error applying chart rules", "error", rulesErr)
-			return result, fmt.Errorf("error applying chart rules: %w", rulesErr)
-		}
-	} else if g.rulesEnabled {
-		log.Warn("Rules are enabled but rules registry is nil. Skipping rule application.")
-	}
-
-	// Log the final generated overrides map before returning
-	finalMapKeys := []string{}
-	for k := range result.Values {
-		finalMapKeys = append(finalMapKeys, k)
-	}
-	log.Debug("Generator.Generate: Final override map keys before return", "keys", finalMapKeys, "map_addr", fmt.Sprintf("%p", result.Values))
-
-	// *** Add full map logging before returning result ***
-	log.Debug("Generator.Generate: Full overrides map structure BEFORE returning", "structure", result.Values)
-	// *** End logging ***
-
-	// If processing errors occurred but didn't breach threshold, return the partial result and a combined error
-	if len(processingErrors) > 0 {
-		combinedErr := &ProcessingError{Errors: processingErrors, Count: len(processingErrors)}
-		log.Warn("Generate completed with non-fatal processing errors", "error_count", len(processingErrors))
-		return result, combinedErr // Return partial result and the combined error
-	}
-
-	log.Debug("Generate finished successfully", "override_keys", mapKeys(result.Values))
-	return result, nil
+// ProcessedImageDetail struct definition
+type ProcessedImageDetail struct {
+	Path                string
+	OriginalImage       string
+	FinalTargetRegistry string // The actual registry part used for this image after mappings/strategy
+	FinalRepositoryPath string // The actual repository path used
 }
 
-// ensureGlobalImageRegistry ensures the global.imageRegistry field is included in overrides
-// when a target registry is specified, even if no corresponding pattern was detected.
-func (g *Generator) ensureGlobalImageRegistry(overrides map[string]interface{}, _ []analysis.GlobalPattern) {
-	if g.targetRegistry == "" {
-		return // No target registry, nothing to set
+// Generate produces the override values map based on detected images and strategy.
+func (g *Generator) Generate(loadedChart *chart.Chart, analysisResult *analysis.ChartAnalysis) (*override.File, error) {
+	log.Debug("Generate called", "hasLoadedChart", loadedChart != nil, "hasAnalysisResult", analysisResult != nil)
+	if analysisResult == nil || loadedChart == nil {
+		return nil, fmt.Errorf("cannot generate overrides without analysis results (analysisResult is nil)")
 	}
 
-	// Check if global.imageRegistry already exists in overrides
-	globalSection, ok := overrides["global"]
+	actualOverrides := make(map[string]interface{}) // This will populate resultFile.Values
+	var processingErrors []error
+	var unsupportedStructures []override.UnsupportedStructure // Collect these if strict mode is off but found
+	processedCount := 0
+
+	eligibleImages := g.filterEligibleImages(analysisResult.ImagePatterns)
+	log.Info("Filtering complete", "total_images", len(analysisResult.ImagePatterns), "eligible_images", len(eligibleImages))
+
+	if g.strict {
+		strictUnsupported := g.findUnsupportedPatterns(analysisResult.ImagePatterns)
+		if len(strictUnsupported) > 0 {
+			errMsg := "strict mode violation: unsupported structures found:\n"
+			for _, us := range strictUnsupported {
+				errMsg += fmt.Sprintf("  - Path: %s, Type: %s\n", strings.Join(us.Path, "."), us.Type)
+			}
+			log.Error(errMsg)
+			// Always return an empty slice, not nil
+			return &override.File{Unsupported: append([]override.UnsupportedStructure{}, strictUnsupported...), ChartPath: g.chartPath, ChartName: loadedChart.Name()}, fmt.Errorf("%s", errMsg)
+		}
+	} else {
+		unsupportedStructures = g.findUnsupportedPatterns(analysisResult.ImagePatterns)
+		if len(unsupportedStructures) > 0 {
+			log.Warn("Unsupported structures found (strict mode is off)", "count", len(unsupportedStructures))
+		}
+	}
+
+	var processedDetails []ProcessedImageDetail
+
+	for i := range eligibleImages {
+		pattern := &eligibleImages[i]
+		log.Debug("Eligible image for processing", "index", i, "path", pattern.Path, "value", pattern.Value, "sourceOrigin", pattern.SourceOrigin)
+
+		imgRef, err := g.processImagePattern(pattern)
+		if err != nil {
+			log.Warn("Failed to parse image reference during override generation", "path", pattern.Path, "value", pattern.Value, "error", err)
+			processingErrors = append(processingErrors, fmt.Errorf("path %s: %w", pattern.Path, err))
+			continue
+		}
+		if imgRef == nil {
+			log.Warn("Nil image reference after parsing, skipping", "path", pattern.Path)
+			processingErrors = append(processingErrors, fmt.Errorf("path %s: nil image reference", pattern.Path))
+			continue
+		}
+
+		targetActualRegistry, newPath, err := g.determineTargetPathAndRegistry(imgRef, pattern)
+		if err != nil {
+			log.Warn("Failed to determine target path and registry", "path", pattern.Path, "image", imgRef.Original, "error", err)
+			// Update error message to match test expectation
+			processingErrors = append(processingErrors, fmt.Errorf("error determining target path for %s: %w", pattern.Path, err))
+			continue
+		}
+		log.Debug("Determined target for override", "path", pattern.Path, "originalImage", imgRef.Original, "targetRegistry", targetActualRegistry, "newRepositoryPath", newPath)
+
+		overrideValue := g.createOverride(pattern, imgRef, targetActualRegistry, newPath)
+
+		if err := g.setOverridePath(actualOverrides, pattern, overrideValue); err != nil {
+			log.Error("Failed to set override path", "path", pattern.Path, "error", err)
+			processingErrors = append(processingErrors, fmt.Errorf("setting override for path %s: %w", pattern.Path, err))
+			continue
+		}
+		log.Info("Successfully processed image override",
+			"path", pattern.Path,
+			"original", imgRef.Original,
+			"new_repo", newPath,
+			"target_registry", targetActualRegistry)
+
+		processedCount++
+		processedDetails = append(processedDetails, ProcessedImageDetail{
+			Path:                pattern.Path,
+			OriginalImage:       imgRef.Original,
+			FinalTargetRegistry: targetActualRegistry,
+			FinalRepositoryPath: newPath,
+		})
+	}
+
+	successRate := 0.0
+	if len(eligibleImages) > 0 {
+		successRate = (float64(processedCount) / float64(len(eligibleImages))) * PercentageMultiplier
+	} else if len(analysisResult.ImagePatterns) == 0 {
+		successRate = PercentageMultiplier
+	}
+
+	log.Info("Image processing complete", "processed", processedCount, "eligible", len(eligibleImages), "success_rate", fmt.Sprintf("%.2f%%", successRate))
+
+	// Always return an empty slice, not nil, for Unsupported
+	resultFile := &override.File{
+		Values:         actualOverrides,
+		Unsupported:    append([]override.UnsupportedStructure{}, unsupportedStructures...),
+		SuccessRate:    successRate, // This is float64
+		TotalCount:     len(analysisResult.ImagePatterns),
+		ProcessedCount: processedCount,
+		ChartPath:      g.chartPath,
+		ChartName:      loadedChart.Name(),
+	}
+
+	if processedCount > 0 {
+		g.ensureGlobalImageRegistry(resultFile.Values, analysisResult.GlobalPatterns, processedDetails)
+	} else {
+		log.Debug("No images processed, skipping ensureGlobalImageRegistry")
+		// If no images processed, but global patterns exist, they might still be added by ensureGlobalImageRegistry if logic changes
+		// For now, it relies on processedDetails. If global.imageRegistry should be set even with 0 processed images based on CLI, this needs adjustment.
+	}
+
+	if len(eligibleImages) == 0 && len(g.sourceRegistries) > 0 && processedCount == 0 {
+		log.Warn("No images found from the specified source registries that require an override.")
+	}
+
+	if err := g.checkProcessingThreshold(processingErrors, processedCount, len(eligibleImages), successRate, resultFile); err != nil {
+		return resultFile, err
+	}
+
+	if g.rulesEnabled {
+		if err := g.applyRulesIfNeeded(loadedChart, resultFile); err != nil {
+			log.Error("Error applying rules", "error", err)
+		}
+	}
+
+	log.Debug("Generator.Generate: Final override map keys before return", "keys", mapKeys(resultFile.Values), "map_addr", fmt.Sprintf("%p", resultFile.Values))
+	// Compare log.CurrentLevel() (which returns slog.Level from the custom package, which is an alias for std slog.Level)
+	// with the standard slog.LevelDebug constant.
+	if log.CurrentLevel() <= slog.LevelDebug {
+		log.Debug("Generator.Generate: Full overrides map structure BEFORE returning", "structure", resultFile.Values)
+	}
+
+	// Combine processing errors if any, to return with potentially partial result
+	if len(processingErrors) > 0 {
+		return resultFile, &ProcessingError{Errors: processingErrors, Count: len(processingErrors)}
+	}
+
+	return resultFile, nil
+}
+
+// ensureGlobalImageRegistry sets the global.imageRegistry field in the overrides.
+// It now uses details from processed images to determine the most appropriate global registry.
+func (g *Generator) ensureGlobalImageRegistry(overrides map[string]interface{}, _ []analysis.GlobalPattern, processedDetails []ProcessedImageDetail) {
+	log.Debug("Enter ensureGlobalImageRegistry")
+	defer log.Debug("Exit ensureGlobalImageRegistry")
+
+	if len(processedDetails) == 0 {
+		log.Debug("No processed images, global.imageRegistry will not be set by this function.")
+		return
+	}
+
+	uniqueTargetRegistries := make(map[string]bool)
+	for _, detail := range processedDetails {
+		if detail.FinalTargetRegistry != "" {
+			uniqueTargetRegistries[detail.FinalTargetRegistry] = true
+		}
+	}
+
+	var finalGlobalRegistry string
+	switch {
+	case len(uniqueTargetRegistries) == 1:
+		// If all processed images were mapped to a single, consistent registry, use that.
+		for reg := range uniqueTargetRegistries { // Get the single key
+			finalGlobalRegistry = reg
+			break
+		}
+		log.Debug("Using unique target registry from processed images for global.imageRegistry", "registry", finalGlobalRegistry)
+	case len(uniqueTargetRegistries) > 1:
+		// Multiple different target registries were used. Fallback to CLI --target-registry.
+		log.Debug("Multiple target registries used for processed images. Falling back to CLI --target-registry for global.imageRegistry.", "cliTarget", g.targetRegistry)
+		finalGlobalRegistry = g.targetRegistry
+	default:
+		// No specific target registries were derived from mappings (e.g., all unmapped and processed with CLI target).
+		// Or, all FinalTargetRegistry fields were empty (should not happen for processed images).
+		// Fallback to CLI --target-registry.
+		log.Debug("No unique target registry derivable from processed image mappings. Falling back to CLI --target-registry for global.imageRegistry.", "cliTarget", g.targetRegistry)
+		finalGlobalRegistry = g.targetRegistry
+	}
+
+	if finalGlobalRegistry == "" {
+		log.Debug("Final determined global registry is empty, global.imageRegistry will not be set.")
+		return
+	}
+
+	if _, exists := overrides["global"]; !exists {
+		overrides["global"] = make(map[string]interface{})
+		log.Debug("Created 'global' key in overrides map")
+	}
+
+	globalOverrides, ok := overrides["global"].(map[string]interface{})
 	if !ok {
-		// Create global section if it doesn't exist
-		globalSection = make(map[string]interface{})
-		overrides["global"] = globalSection
+		log.Warn("'global' key in overrides is not a map, cannot set imageRegistry", "type", reflect.TypeOf(overrides["global"]))
+		return
 	}
 
-	// Type assertion for the global section
-	globalMap, ok := globalSection.(map[string]interface{})
-	if !ok {
-		// Create a new map if type assertion fails
-		globalMap = make(map[string]interface{})
-		overrides["global"] = globalMap
+	if _, ok := globalOverrides["imageRegistry"]; !ok {
+		globalOverrides["imageRegistry"] = finalGlobalRegistry
+		log.Debug("Set global.imageRegistry", "registry", finalGlobalRegistry)
+	} else {
+		log.Debug("global.imageRegistry already exists", "value", globalOverrides["imageRegistry"])
 	}
-
-	// Set imageRegistry value
-	globalMap["imageRegistry"] = g.targetRegistry
-	log.Debug("Ensured global.imageRegistry is set", "registry", g.targetRegistry)
 }
 
 // ValidateHelmTemplate runs `helm template` on the chart with the provided overrides

@@ -81,9 +81,31 @@ func LoadStructuredConfig(fs afero.Fs, path string, skipCWDRestriction bool) (*C
 
 // validateStructuredConfig performs validation on the structured config
 func validateStructuredConfig(config *Config, path string) error {
-	// Check if the mappings list itself is empty (expected by TestLoadStructuredConfig/empty_mappings)
+	// Ensure Registries.Mappings is initialized to avoid nil pointer issues
+	if config.Registries.Mappings == nil {
+		// Initialize an empty Mappings list
+		config.Registries.Mappings = []RegMapping{}
+
+		// When strictMode is false, just log a warning but don't return an error
+		if !config.Registries.StrictMode {
+			log.Warn("Mappings section is empty or nil but strictMode is false, continuing with empty mappings", "file", path)
+			return nil
+		}
+
+		// Only fail if strictMode is true
+		return fmt.Errorf("failed to parse mappings file: mappings section is nil or missing in %s", path)
+	}
+
+	// Check if the mappings list itself is empty
 	if len(config.Registries.Mappings) == 0 {
-		return fmt.Errorf("failed to parse mappings file: mappings section is empty in %s", path) // Updated error message
+		// Only fail if strictMode is true; otherwise, allow empty mappings
+		if config.Registries.StrictMode {
+			return fmt.Errorf("failed to parse mappings file: mappings section is empty in %s", path)
+		}
+
+		// When strictMode is false, just log a warning but don't return an error
+		log.Warn("Mappings section is empty but strictMode is false, continuing with empty mappings", "file", path)
+		return nil
 	}
 
 	// Check for duplicate source entries

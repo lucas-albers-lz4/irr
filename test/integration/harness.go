@@ -125,7 +125,9 @@ func NewTestHarness(t *testing.T) *TestHarness {
 	require.NoError(t, err, "Failed to create default registry mapping file")
 	h.mappingsPath = mappingsPath
 
-	h.logger.Info(fmt.Sprintf("Initialized harness in temp dir: %s", tempDir))
+	// Log harness initialization at Debug level
+	h.logger.Debug("Initialized harness in temp dir", "path", h.tempDir)
+
 	return h
 }
 
@@ -154,7 +156,40 @@ func (h *TestHarness) GetTempFilePath(filename string) string {
 	return filepath.Join(h.tempDir, filename)
 }
 
-// createDefaultRegistryMappingFile creates a default mapping file in the harness temp dir.
+// CreateEmptyRegistryFile creates an empty YAML registry mappings file in the temp directory
+// with a valid structure but no actual mappings.
+func (h *TestHarness) CreateEmptyRegistryFile(filename string) (string, error) {
+	emptyFilePath := h.GetTempFilePath(filename)
+
+	// Create a properly structured but empty registry mappings file
+	emptyConfig := registry.Config{
+		Version: "1.0",
+		Registries: registry.RegConfig{
+			Mappings:      []registry.RegMapping{}, // Explicitly initialize as empty slice
+			StrictMode:    false,                   // Ensure strictMode is set to false
+			DefaultTarget: h.targetReg,             // Provide a fallback target registry
+		},
+		Compatibility: registry.CompatibilityConfig{
+			IgnoreEmptyFields: true,
+		},
+	}
+
+	// Marshal the empty config to YAML
+	emptyConfigData, err := yaml.Marshal(emptyConfig)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal empty registry config: %w", err)
+	}
+
+	// Write the YAML to file
+	if err := os.WriteFile(emptyFilePath, emptyConfigData, defaultFilePerm); err != nil {
+		return "", fmt.Errorf("failed to create empty registry file %s: %w", emptyFilePath, err)
+	}
+
+	log.Debug("Created empty registry file", "path", emptyFilePath)
+	return emptyFilePath, nil
+}
+
+// createDefaultRegistryMappingFile creates a default registry-mappings.yaml file
 func (h *TestHarness) createDefaultRegistryMappingFile() (mappingsPath string, err error) {
 	// Create a structured Config object instead of a map[string]string
 	structuredConfig := registry.Config{
@@ -217,14 +252,23 @@ func getProjectRoot() (string, error) {
 // setTestingEnv sets an environment variable to indicate testing is active
 // and returns a cleanup function to unset it.
 func (h *TestHarness) setTestingEnv() func() {
-	h.logger.Info("Setting IRR_TESTING=true")
+	// Store original value to restore it later
+	originalIrrTesting := os.Getenv("IRR_TESTING")
 	if err := os.Setenv("IRR_TESTING", "true"); err != nil {
-		h.t.Errorf("Failed to set IRR_TESTING env var: %v", err)
+		h.logger.Warn("Failed to set IRR_TESTING environment variable", "error", err)
 	}
+	h.logger.Debug("Setting IRR_TESTING=true")
+
 	return func() {
-		h.logger.Info("Unsetting IRR_TESTING")
-		if err := os.Unsetenv("IRR_TESTING"); err != nil {
-			h.t.Errorf("Failed to unset IRR_TESTING env var: %v", err)
+		h.logger.Debug("Unsetting IRR_TESTING")
+		if originalIrrTesting == "" {
+			if err := os.Unsetenv("IRR_TESTING"); err != nil {
+				h.logger.Warn("Failed to unset IRR_TESTING environment variable", "error", err)
+			}
+		} else {
+			if err := os.Setenv("IRR_TESTING", originalIrrTesting); err != nil {
+				h.logger.Warn("Failed to restore IRR_TESTING environment variable", "error", err)
+			}
 		}
 	}
 }

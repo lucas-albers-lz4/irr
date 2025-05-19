@@ -635,6 +635,13 @@ func getRootCmdWithOutputs() (cmd *cobra.Command, stdout, stderr *bytes.Buffer) 
 	return root, stdout, stderr
 }
 
+// skipCWDCheck determines if the current working directory restriction should be skipped.
+// This is used during testing to allow access to files outside the current directory.
+func skipCWDCheck() bool {
+	// Check both the global flag and environment variable
+	return integrationTestMode || os.Getenv("IRR_TESTING") == trueString
+}
+
 func TestSkipCWDCheck(t *testing.T) {
 	// Store original values and ensure they are restored
 	originalFlagValue := integrationTestMode
@@ -1065,4 +1072,113 @@ func TestValidateUnmappableRegistries(t *testing.T) {
 
 func TestMain(_ *testing.M) {
 	// ... (rest of the code remains unchanged)
+}
+
+func TestDeriveSourceRegistriesFromMappings(t *testing.T) {
+	tests := []struct {
+		name            string
+		initialSources  []string
+		mappings        *registry.Mappings
+		expectedSources []string
+		expectedLogs    []string // For checking specific log outputs if needed (optional)
+	}{
+		{
+			name:           "SourceRegistries explicitly provided, mappings ignored",
+			initialSources: []string{"docker.io", "quay.io"},
+			mappings: &registry.Mappings{
+				Entries: []registry.Mapping{
+					{Source: "gcr.io", Target: "target/gcr"},
+				},
+			},
+			expectedSources: []string{"docker.io", "quay.io"},
+		},
+		{
+			name:           "No initial sources, derive from mappings",
+			initialSources: []string{},
+			mappings: &registry.Mappings{
+				Entries: []registry.Mapping{
+					{Source: "docker.io", Target: "target/docker"},
+					{Source: "quay.io", Target: "target/quay"},
+				},
+			},
+			expectedSources: []string{"docker.io", "quay.io"},
+		},
+		{
+			name:           "No initial sources, derive from mappings with normalization",
+			initialSources: []string{},
+			mappings: &registry.Mappings{
+				Entries: []registry.Mapping{
+					{Source: "DOCKER.IO", Target: "target/docker"},
+					{Source: "quay.io/", Target: "target/quay"},
+				},
+			},
+			expectedSources: []string{"docker.io", "quay.io"}, // image.NormalizeRegistry handles these
+		},
+		{
+			name:           "No initial sources, derive unique from duplicate mappings",
+			initialSources: []string{},
+			mappings: &registry.Mappings{
+				Entries: []registry.Mapping{
+					{Source: "docker.io", Target: "target/docker1"},
+					{Source: "quay.io", Target: "target/quay"},
+					{Source: "docker.io", Target: "target/docker2"},
+				},
+			},
+			expectedSources: []string{"docker.io", "quay.io"},
+		},
+		{
+			name:            "No initial sources, nil mappings",
+			initialSources:  []string{},
+			mappings:        nil,
+			expectedSources: []string{}, // Should be empty or nil depending on how Go handles append to nil
+		},
+		{
+			name:            "No initial sources, empty mappings entries",
+			initialSources:  []string{},
+			mappings:        &registry.Mappings{Entries: []registry.Mapping{}},
+			expectedSources: []string{}, // Should be empty or nil
+		},
+		{
+			name:           "No initial sources, mapping with empty source string",
+			initialSources: []string{},
+			mappings: &registry.Mappings{
+				Entries: []registry.Mapping{
+					{Source: "", Target: "target/empty"}, // NormalizeRegistry turns "" into "docker.io"
+					{Source: "quay.io", Target: "target/quay"},
+				},
+			},
+			// image.NormalizeRegistry("") returns "docker.io" by default
+			expectedSources: []string{"docker.io", "quay.io"},
+		},
+		{
+			name:           "Mappings exist but all are effectively empty after normalization (e.g. only spaces)",
+			initialSources: []string{},
+			mappings: &registry.Mappings{
+				Entries: []registry.Mapping{
+					{Source: "   ", Target: "target/spaces"}, // NormalizeRegistry turns " " into "docker.io"
+				},
+			},
+			expectedSources: []string{"docker.io"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := &GeneratorConfig{
+				SourceRegistries: tt.initialSources,
+				Mappings:         tt.mappings,
+			}
+
+			// NOTE: This test doesn't capture log output directly yet.
+			// For a production environment, you might want to set up a mock logger
+			// or use a testable logger to verify specific log messages if tt.expectedLogs is used.
+			deriveSourceRegistriesFromMappings(config)
+
+			if len(tt.expectedSources) == 0 {
+				assert.Empty(t, config.SourceRegistries, "SourceRegistries should be empty")
+			} else {
+				assert.ElementsMatch(t, tt.expectedSources, config.SourceRegistries, "Derived source registries do not match expected")
+			}
+		})
+	}
 }

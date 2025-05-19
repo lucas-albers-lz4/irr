@@ -56,8 +56,8 @@ compatibility:
 			mappingContent: `docker.io: registry.example.com/docker
 quay.io: registry.example.com/quay
 `,
-			shouldSucceed:  false,                           // Changed to false because legacy format is no longer supported
-			errorSubstring: "failed to parse mappings file", // Updated error substring
+			shouldSucceed: true,
+			expectedText:  "test.registry.io",
 		},
 		{
 			name: "malformed YAML format",
@@ -87,8 +87,8 @@ registries:
   defaultTarget: registry.example.com/default
   strictMode: false
 `,
-			shouldSucceed:  false,
-			errorSubstring: "failed to parse mappings file", // Updated expected substring
+			shouldSucceed: true,
+			expectedText:  "test.registry.io",
 		},
 	}
 

@@ -104,19 +104,15 @@ func (s *PrefixSourceRegistryStrategy) GeneratePath(imgRef *image.Reference, eff
 		}
 	}
 
-	// Normalize the registry name for path-friendly formatting
-	normalizedReg := image.NormalizeRegistry(imgRef.Registry)
-	log.Debug("NormalizeRegistry: Input '%s' -> Normalized '%s'", imgRef.Registry, normalizedReg)
-
-	// Generate path prefix for the repository
-	// Important: For compatibility with tests and expected behavior, we need to
-	// preserve the original registry name (with dots) in the repository path.
+	// Get the original registry name (with dots) - use original, not normalized version
+	originalRegistry := imgRef.Registry
+	log.Debug("PrefixSourceRegistryStrategy: Using original registry for path construction", "originalRegistry", originalRegistry)
 
 	// Get the original repository path
 	finalRepo := imgRef.Repository
 
 	// Handle Docker Hub official images
-	if normalizedReg == image.DefaultRegistry && !strings.Contains(finalRepo, "/") {
+	if originalRegistry == image.DefaultRegistry && !strings.Contains(finalRepo, "/") {
 		// This is a Docker Hub official image (e.g., "nginx" without a namespace)
 		// We prepend the "library/" prefix as per Docker Hub convention
 		finalRepo = DefaultLibraryRepoPrefix + "/" + finalRepo
@@ -124,13 +120,10 @@ func (s *PrefixSourceRegistryStrategy) GeneratePath(imgRef *image.Reference, eff
 	}
 
 	// Construct the final path by prefixing the final repository path
-	// with the sanitized original source registry name.
-	pathPrefix := normalizedReg // ALWAYS use the normalized original registry for the path prefix
-	log.Debug("PrefixSourceRegistryStrategy: Using normalized original registry as path prefix", "prefix", pathPrefix)
-
-	// Combine the prefix and the final repository path.
+	// with the ORIGINAL source registry name. Keep dots and structure intact!
+	// Combine the registry and the final repository path.
 	// Ensure no double slashes.
-	finalPath := fmt.Sprintf("%s/%s", strings.TrimSuffix(pathPrefix, "/"), strings.TrimPrefix(finalRepo, "/"))
+	finalPath := fmt.Sprintf("%s/%s", strings.TrimSuffix(originalRegistry, "/"), strings.TrimPrefix(finalRepo, "/"))
 
 	log.Debug("PrefixSourceRegistryStrategy: Returning final path", "finalPath", finalPath)
 
