@@ -228,7 +228,7 @@ irr override --chart-path CHART_PATH [flags]
 | `--namespace`            | Kubernetes namespace for the Helm release                | `default`                | `--namespace my-namespace`                       |
 | `--registry-file`        | YAML file with registry mappings                         | `registry-mappings.yaml` | `--registry-file my-mappings.yaml`               |
 | `-t`, `--target-registry`| Target registry URL (fallback if not in registry-file)   |                          | `--target-registry registry.example.com`         |
-| `-s`, `--source-registries`| Comma-separated source registries to rewrite             | (reads from registry-file) | `--source-registries docker.io,quay.io`        |
+| `-s`, `--source-registries`| Comma-separated source registries to rewrite. If not provided, source registries are automatically derived from all enabled mappings in the `--registry-file`. If this flag *is* provided, only these specified registries are considered for rewriting (overriding derivation from the mapping file). | (auto-derived from `--registry-file` if not set) | `--source-registries docker.io,quay.io`        |
 | `--config`               | DEPRECATED: Use `--registry-file` instead                 |                          |                                                  |
 | `--dry-run`              | Preview without writing (`stdout`)                       | false                    | `--dry-run`                                      |
 | `-o`, `--output-file`    | Output file path for overrides                           | `stdout`                 | `--output-file overrides.yaml`                   |
@@ -356,9 +356,18 @@ compatibility:
 
 ### Understanding Configuration Precedence (Override Command)
 
-When using the `irr override` command, it's important to understand how the different configuration options interact, especially regarding the target registry:
+When using the `irr override` command, there are two main aspects to consider: first, which source registries `irr` will attempt to rewrite, and second, how it determines the target path for images from those source registries.
 
-1.  **Highest Priority: Explicit Mapping:** If an image's source registry (e.g., `docker.io`) is listed in `--source-registries` and has a specific, enabled entry in the `registries.mappings` list within the configuration file, the `target` defined in that mapping entry is **always** used.
+**1. Determining Which Source Registries to Rewrite:**
+
+*   **Default Behavior (Recommended):** If you do **not** provide the `--source-registries` flag, `irr` will automatically consider all unique `source` registries from the **enabled** mappings in your `--registry-file` (e.g., `registry-mappings.yaml`) as the list of registries to rewrite. This allows your mapping file to be the single source of truth for which registries are actively being managed.
+*   **Explicit Override:** If you **do** provide the `--source-registries` flag (e.g., `--source-registries docker.io,quay.io`), then `irr` will *only* attempt to rewrite images from the registries you explicitly list. This explicitly provided list overrides the automatic derivation from the mapping file. Mappings in your `--registry-file` will still be used to determine the target for these explicitly specified source registries if a match is found.
+
+**2. Determining the Target Registry and Path for Rewritten Images:**
+
+Once `irr` has decided which source registries it's operating on (based on the logic above), it determines the target as follows:
+
+1.  **Highest Priority: Explicit Mapping:** If an image's source registry (e.g., `docker.io`) is listed in `--source-registries` (if provided, or derived from mappings if not) and has a specific, enabled entry in the `registries.mappings` list within the configuration file, the `target` defined in that mapping entry is **always** used.
 
 2.  **Fallback 1: `defaultTarget` (if `strictMode: false`)**: If an image's source registry is listed in `--source-registries` but **lacks** a specific mapping in the configuration file, *and* `registries.strictMode` is `false` (the default), `irr` checks if `registries.defaultTarget` is defined in the config file. If it is, this `defaultTarget` URL is used (combined with the selected path strategy, e.g., `prefix-source-registry`).
 

@@ -295,7 +295,7 @@ The Phase 4 implementation focuses on a standalone CLI with three core commands:
 *   **Inputs:**
     *   `--chart-path <path>` OR `--release-name <name>`
     *   `--target-registry <url>` (required, unless fully defined via mappings)
-    *   `--source-registries <list>` (required, unless using mappings)
+    *   `--source-registries <list>` (Optional. If not provided, source registries are derived from enabled entries in the `registry-file`. If provided, this list explicitly defines which source registries to process, overriding derivation from the `registry-file`.)
     *   Optional: `--output-file <path>` (defaults to stdout)
     *   Optional: `--registry-file <path>` (for registry mappings, exclusions)
     *   Optional: `--strict` (fail on unsupported structures)
