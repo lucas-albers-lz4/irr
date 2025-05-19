@@ -498,6 +498,13 @@ func (d *Detector) validateMapStructure(m map[string]interface{}, path []string)
 			return result
 		}
 		result.Tag = tagStr
+	} else if d.context != nil && d.context.ChartMetadata != nil && d.context.ChartMetadata.AppVersion != "" {
+		// If no tag is specified but Chart.AppVersion is available, use that instead of defaulting to "latest"
+		log.Debug("No tag specified in map structure, using Chart.AppVersion", "path", path, "appVersion", d.context.ChartMetadata.AppVersion)
+		result.Tag = d.context.ChartMetadata.AppVersion
+	} else {
+		// No tag and no AppVersion, will default to latest during parsing
+		log.Debug("No tag specified in map structure and no AppVersion available", "path", path)
 	}
 
 	// Process Digest (optional)
@@ -603,8 +610,14 @@ func (d *Detector) createImageReference(repoStr, regStr, tagStr, digestStr strin
 	candidateStr := builder.String()
 	log.Debug("Assembled candidate string:", "'", candidateStr, "' (Registry Applied:", registryApplied, ")")
 
-	// Parse the constructed candidate string using the canonical parser.
-	ref, err := ParseImageReference(candidateStr)
+	// Get ChartMetadata from context if available
+	var chartMetadata *ChartMetadata
+	if d.context != nil && d.context.ChartMetadata != nil {
+		chartMetadata = d.context.ChartMetadata
+	}
+
+	// Parse the constructed candidate string using the canonical parser with ChartMetadata
+	ref, err := ParseImageReference(candidateStr, chartMetadata)
 	if err != nil {
 		log.Debug("Error parsing assembled reference", "'", candidateStr, "' at path", path, ":", err)
 		return nil, fmt.Errorf("failed to parse assembled reference '%s' from path %v: %w", candidateStr, path, err)
@@ -694,6 +707,21 @@ func (d *Detector) tryExtractImageFromMap(m map[string]interface{}, path []strin
 func (d *Detector) tryExtractImageFromString(s string, path []string) (*DetectedImage, error) {
 	log.Debug("tryExtractImageFromString", "Path", path, "String", s)
 
+	// Debug ChartMetadata
+	if d.context != nil {
+		log.Debug("Context is NOT nil")
+		if d.context.ChartMetadata != nil {
+			log.Debug("ChartMetadata is available",
+				"AppVersion", d.context.ChartMetadata.AppVersion,
+				"Name", d.context.ChartMetadata.Name,
+				"Version", d.context.ChartMetadata.Version)
+		} else {
+			log.Debug("ChartMetadata is NIL")
+		}
+	} else {
+		log.Debug("Context is NIL")
+	}
+
 	// Skip template variables in normal mode
 	if containsTemplate(s) {
 		log.Debug("[DEBUG irr DETECT STRING SKIP] Skipping template string:", s)
@@ -710,7 +738,14 @@ func (d *Detector) tryExtractImageFromString(s string, path []string) (*Detected
 	// DEBUG: Log input to ParseImageReference
 	log.Debug("Calling ParseImageReference with:", s)
 
-	ref, err := ParseImageReference(s)
+	// Get the chart metadata from context if available
+	var chartMetadata *ChartMetadata
+	if d.context != nil && d.context.ChartMetadata != nil {
+		chartMetadata = d.context.ChartMetadata
+	}
+
+	// Pass the chart metadata to use AppVersion as fallback instead of "latest"
+	ref, err := ParseImageReference(s, chartMetadata)
 
 	// DEBUG: Log output from ParseImageReference
 	log.Debug("ParseImageReference returned:", "err", err)

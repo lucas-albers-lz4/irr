@@ -526,7 +526,15 @@ func filterImagesBySourceRegistries(_ *cobra.Command, flags *InspectFlags, analy
 	// A more robust approach might analyze pattern structure itself.
 	filteredPatterns := make([]analysis.ImagePattern, 0, len(analysisResult.ImagePatterns))
 	for _, pattern := range analysisResult.ImagePatterns {
-		imgRef, err := image.ParseImageReference(pattern.Value) // Assuming pattern.Value holds the image string or similar
+		// Create ChartMetadata if pattern has SourceChartAppVersion
+		var chartMetadata *image.ChartMetadata
+		if pattern.SourceChartAppVersion != "" {
+			chartMetadata = &image.ChartMetadata{
+				AppVersion: pattern.SourceChartAppVersion,
+			}
+		}
+
+		imgRef, err := image.ParseImageReference(pattern.Value, chartMetadata) // Pass chartMetadata
 		if err == nil {
 			normalizedRegistry := image.NormalizeRegistry(imgRef.Registry)
 			if sourceSet[normalizedRegistry] {
@@ -939,9 +947,20 @@ func processImagePatterns(patterns []analysis.ImagePattern) (images []ImageInfo,
 
 		case analysis.PatternTypeString:
 			// For string types, parse the Value string using the correct function
-			ref, err := image.ParseImageReference(p.Value)
+			// Create a ChartMetadata object if SourceChartAppVersion is available
+			var chartMetadata *image.ChartMetadata
+			if p.SourceChartAppVersion != "" {
+				chartMetadata = &image.ChartMetadata{
+					AppVersion: p.SourceChartAppVersion,
+				}
+				log.Debug("processImagePatterns [STRING]: Using SourceChartAppVersion", "path", p.Path, "appVersion", p.SourceChartAppVersion)
+			}
+
+			// Pass the chartMetadata to ParseImageReference
+			ref, err := image.ParseImageReference(p.Value, chartMetadata)
 			if err != nil {
 				log.Warn("Skipping string pattern due to parse error", "path", p.Path, "value", p.Value, "error", err)
+
 				skipped = append(skipped, fmt.Sprintf("%s: %s (parse error: %v)", p.Path, p.Value, err))
 				continue
 			}
@@ -953,7 +972,7 @@ func processImagePatterns(patterns []analysis.ImagePattern) (images []ImageInfo,
 			imgInfo.Repository = ref.Repository
 			imgInfo.Tag = ref.Tag
 			imgInfo.Digest = ref.Digest
-			log.Debug("processImagePatterns [STRING]: Parsed value", "path", p.Path, "value", p.Value, "registry", imgInfo.Registry, "repo", imgInfo.Repository)
+			log.Debug("processImagePatterns [STRING]: Parsed value", "path", p.Path, "value", p.Value, "registry", imgInfo.Registry, "repo", imgInfo.Repository, "tag", imgInfo.Tag)
 
 		default:
 			// Skip other types or maps without structure
@@ -969,7 +988,7 @@ func processImagePatterns(patterns []analysis.ImagePattern) (images []ImageInfo,
 
 		// Only add if we have a valid repository
 		if imgInfo.Repository != "" {
-			log.Debug("processImagePatterns: Adding ImageInfo", "path", p.Path, "finalRegistry", imgInfo.Registry, "finalRepo", imgInfo.Repository)
+			log.Debug("processImagePatterns: Adding ImageInfo", "path", p.Path, "finalRegistry", imgInfo.Registry, "finalRepo", imgInfo.Repository, "finalTag", imgInfo.Tag)
 			images = append(images, imgInfo)
 		} else {
 			log.Warn("Skipping processed pattern due to empty repository", "path", p.Path, "type", p.Type, "value", p.Value)

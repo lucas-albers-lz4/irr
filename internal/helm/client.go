@@ -27,6 +27,7 @@ type ChartMetadata struct {
 	Version    string
 	Repository string
 	Path       string
+	AppVersion string
 }
 
 // ClientInterface defines the methods needed for Helm interactions
@@ -339,8 +340,9 @@ func (c *RealHelmClient) GetChartFromRelease(_ context.Context, releaseName, nam
 		return nil, fmt.Errorf("chart or chart metadata not found for release %q in namespace %q", releaseName, targetNamespace)
 	}
 	meta := &ChartMetadata{
-		Name:    release.Chart.Metadata.Name,
-		Version: release.Chart.Metadata.Version,
+		Name:       release.Chart.Metadata.Name,
+		Version:    release.Chart.Metadata.Version,
+		AppVersion: release.Chart.Metadata.AppVersion,
 	}
 
 	// Extract repository if available

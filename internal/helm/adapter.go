@@ -113,6 +113,11 @@ func (a *Adapter) InspectRelease(ctx context.Context, releaseName, namespace, ou
 	detectionContext := image.DetectionContext{
 		SourceRegistries:  []string{}, // Empty for inspection
 		ExcludeRegistries: []string{},
+		ChartMetadata: &image.ChartMetadata{
+			Name:       chartMeta.Name,
+			Version:    chartMeta.Version,
+			AppVersion: chartMeta.AppVersion,
+		},
 	}
 
 	// Initialize detector properly
@@ -213,6 +218,11 @@ func (a *Adapter) OverrideRelease(ctx context.Context, releaseName, namespace st
 		ExcludeRegistries: []string{},
 		GlobalRegistry:    targetRegistry,     // Set the global registry from the parameter
 		Strict:            options.StrictMode, // Use the strict mode option
+		ChartMetadata: &image.ChartMetadata{
+			Name:       chartMeta.Name,
+			Version:    chartMeta.Version,
+			AppVersion: chartMeta.AppVersion,
+		},
 	}
 
 	// Initialize detector properly

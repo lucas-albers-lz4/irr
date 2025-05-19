@@ -51,6 +51,14 @@ type DetectionContext struct {
 	GlobalRegistry    string
 	Strict            bool
 	TemplateMode      bool
+	ChartMetadata     *ChartMetadata
+}
+
+// ChartMetadata holds relevant chart metadata information needed for image detection
+type ChartMetadata struct {
+	AppVersion string
+	Version    string
+	Name       string
 }
 
 // DetectedImage represents an image found during detection

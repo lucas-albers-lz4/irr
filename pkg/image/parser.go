@@ -2,7 +2,7 @@ package image
 
 import (
 	// Need this for port stripping
-	"net"
+
 	"regexp"
 	"strings" // Need this for normalization checks
 
@@ -73,88 +73,63 @@ var (
 // - registry/repository@digest (e.g., docker.io/nginx@sha256:abc...)
 // - repository@digest (e.g., nginx@sha256:abc...)
 //
-// For single-name images like "nginx", it defaults to the "latest" tag.
-//
-// Parameters:
-//   - imageRef: The image reference string to parse
-//
-// Returns:
-//   - *Reference: A Reference struct containing the parsed components
-//   - error: An error if the image reference is invalid or cannot be parsed
-func ParseImageReference(imageRef string) (*Reference, error) {
+// For single-name images like "nginx", it defaults to the "latest" tag unless
+// chartMetadata is provided with a non-empty AppVersion value.
+// If chartMetadata is provided with AppVersion, that value is used as the tag
+// instead of "latest".
+func ParseImageReference(imageRef string, chartMetadata ...*ChartMetadata) (*Reference, error) {
 	log.Debug("Enter: ParseImageReference")
-	defer log.Debug("Exit: ParseImageReference")
-
-	if imageRef == "" {
-		log.Debug("Empty image reference")
-		return nil, ErrEmptyImageReference
-	}
-
 	log.Debug("Parsing image reference: %s", imageRef)
 
-	// Try to parse with distribution/reference library first
-	named, err := reference.ParseAnyReference(imageRef)
+	// Try to parse with the distribution/reference library
+	ref, err := reference.ParseNormalizedNamed(imageRef)
 	if err == nil {
-		log.Debug("Successfully parsed with distribution/reference library")
-		result := &Reference{
-			Original: imageRef,
+		// Successful parse with the canonical library
+		registry := reference.Domain(ref)
+		repository := reference.Path(ref)
+		tag := ""
+		digest := ""
+
+		// Check for tag and digest
+		if tagged, ok := ref.(reference.Tagged); ok {
+			tag = tagged.Tag()
+		}
+		if digested, ok := ref.(reference.Digested); ok {
+			digest = digested.Digest().String()
 		}
 
-		// Extract domain and path
-		if namedRef, ok := named.(reference.Named); ok {
-			result.Registry = reference.Domain(namedRef)
-			result.Repository = reference.Path(namedRef)
+		// If no tag but we have chartMetadata with AppVersion, use that
+		if tag == "" && len(chartMetadata) > 0 && chartMetadata[0] != nil && chartMetadata[0].AppVersion != "" {
+			tag = chartMetadata[0].AppVersion
+			log.Debug("Using Chart.AppVersion for tag: %s", tag)
+		} else if tag == "" && digest == "" {
+			// Default to latest tag only if no tag and no digest
+			tag = LatestTag
+			log.Debug("Setting default tag: %s", tag)
 		}
 
-		// Extract tag if present
-		var hasTag, hasDigest bool
-		if taggedRef, ok := named.(reference.Tagged); ok {
-			result.Tag = taggedRef.Tag()
-			log.Debug("Extracted tag: %s", result.Tag)
-			hasTag = true
+		parsedRef := &Reference{
+			Original:   imageRef,
+			Registry:   registry,
+			Repository: repository,
+			Tag:        tag,
+			Digest:     digest,
+			Detected:   false,
 		}
-
-		// Extract digest if present
-		if digestedRef, ok := named.(reference.Digested); ok {
-			result.Digest = digestedRef.Digest().String()
-			log.Debug("Extracted digest: %s", result.Digest)
-			hasDigest = true
-		}
-
-		// Check if both tag and digest are present (conflicting)
-		if hasTag && hasDigest {
-			log.Debug("Warning: Reference has both tag (%s) and digest (%s)", result.Tag, result.Digest)
-			return nil, ErrTagAndDigestPresent
-		}
-
-		// Strip port from registry domain if present
-		if strings.Contains(result.Registry, ":") {
-			host, _, err := net.SplitHostPort(result.Registry)
-			if err == nil {
-				log.Debug("Stripping port from registry domain: %s → %s", result.Registry, host)
-				result.Registry = host
-			}
-		}
-
-		// Default tag to latest for repository-only references
-		if result.Tag == "" && result.Digest == "" {
-			result.Tag = LatestTag
-			log.Debug("Setting default tag: %s", result.Tag)
-		}
-
-		log.Debug("Parsed reference: %+v", result)
-		return result, nil
+		log.Debug("Parsed reference: %+v", parsedRef)
+		log.Debug("Exit: ParseImageReference")
+		return parsedRef, nil
 	}
 
-	log.Debug("Distribution/reference library failed to parse: %v. Falling back to regex parsing.", err)
-
-	// Fall back to our regex-based parser for better error messages or special cases
-	return parseWithRegex(imageRef)
+	// Fallback to regex-based parsing for better error messages
+	// or to handle edge cases not covered by the canonical library
+	log.Debug("Falling back to regex parsing after canonical parser error: %v", err)
+	return parseWithRegex(imageRef, chartMetadata...)
 }
 
 // parseWithRegex parses an image reference using regular expressions.
 // This is used as a fallback when the distribution library parser fails.
-func parseWithRegex(imageRef string) (*Reference, error) {
+func parseWithRegex(imageRef string, chartMetadata ...*ChartMetadata) (*Reference, error) {
 	log.Debug("Using regex parser for: %s", imageRef)
 
 	// Quick validation for common invalid formats
@@ -166,130 +141,119 @@ func parseWithRegex(imageRef string) (*Reference, error) {
 	// Check for invalid repository name characters
 	invalidChars := []string{" ", "@", "$", "?", "#", "\\"}
 	for _, char := range invalidChars {
-		if strings.Contains(imageRef, char) {
+		if strings.Contains(imageRef, char) && !strings.Contains(imageRef, "@sha256:") {
 			log.Debug("Invalid repository name character detected in: %s", imageRef)
 			return nil, ErrInvalidImageReference
 		}
 	}
 
-	// Check for invalid digest format
-	if strings.Contains(imageRef, "@") {
-		digestParts := strings.Split(imageRef, "@")
-		if len(digestParts) > 1 {
-			digest := digestParts[1]
-			// Valid digest should be algo:hex where algo is usually sha256
-			if !strings.Contains(digest, ":") || !strings.HasPrefix(digest, "sha256:") {
-				log.Debug("Invalid digest format detected: %s", digest)
-				return nil, ErrInvalidImageReference
-			}
-		}
+	// Initialize reference with defaults
+	ref := &Reference{
+		Original: imageRef,
+		Registry: DefaultRegistry, // Default registry (docker.io)
 	}
 
-	// Check for invalid tag format
-	if strings.Contains(imageRef, ":") && !strings.Contains(imageRef, "@") {
-		tagParts := strings.Split(imageRef, ":")
-		if len(tagParts) > 1 {
-			tag := tagParts[len(tagParts)-1]
+	// Check for both tag and digest - this is invalid
+	if strings.Contains(imageRef, ":") && strings.Contains(imageRef, "@") {
+		log.Debug("Both tag and digest found in: %s", imageRef)
+		return nil, ErrTagAndDigestPresent
+	}
 
-			// ADDED CHECK: Ensure tag is not empty if colon is present
-			if tag == "" {
-				log.Debug("Invalid tag format: empty tag after colon in '%s'", imageRef)
-				return nil, ErrInvalidImageReference // Return error for empty tag
-			}
+	// Handle digest format
+	if strings.Contains(imageRef, "@") {
+		parts := strings.SplitN(imageRef, "@", 2)
+		repoPath := parts[0]
+		ref.Digest = parts[1]
 
-			// Quick validation for obviously invalid tag formats
-			if strings.Contains(tag, "/") || strings.Contains(tag, "\\") {
-				log.Debug("Invalid tag format detected: %s", tag)
-				return nil, ErrInvalidImageReference
+		// Extract registry/repository from the part before '@'
+		if strings.Contains(repoPath, "/") {
+			// Check for possible registry prefix
+			pathParts := strings.SplitN(repoPath, "/", 2)
+			if strings.Contains(pathParts[0], ".") || strings.Contains(pathParts[0], ":") || pathParts[0] == "localhost" {
+				// This looks like a registry
+				ref.Registry = pathParts[0]
+				ref.Repository = pathParts[1]
+			} else {
+				// No registry, just a multi-part repository
+				ref.Repository = repoPath
 			}
 		} else {
-			// This case means the string *ended* with a colon, e.g., "myrepo:"
-			log.Debug("Invalid tag format: trailing colon in '%s'", imageRef)
-			return nil, ErrInvalidImageReference
+			// No registry specified and single-part repository
+			ref.Repository = repoPath
 		}
+
+		// Apply Docker Hub library/ prefix for single name repositories
+		if ref.Registry == DefaultRegistry && !strings.Contains(ref.Repository, "/") {
+			ref.Repository = "library/" + ref.Repository
+		}
+
+		return ref, nil
 	}
 
-	// Special case for repository-only references (no tag or digest)
-	if match := repositoryPattern.FindStringSubmatch(imageRef); match != nil && strings.Count(imageRef, "/") == 0 {
-		log.Debug("Matched repository-only pattern")
-		return &Reference{
-			Original:   imageRef,
-			Repository: match[1],
-			Tag:        LatestTag,
-		}, nil
-	}
+	// Handle tag format
+	if strings.Contains(imageRef, ":") {
+		// Split on last colon to handle IPv6 addresses in registry names
+		lastColonIndex := strings.LastIndex(imageRef, ":")
+		repoPath := imageRef[:lastColonIndex]
+		ref.Tag = imageRef[lastColonIndex+1:]
 
-	// Special case for registry/repository format (no tag or digest)
-	if match := registryRepPattern.FindStringSubmatch(imageRef); match != nil && !strings.Contains(imageRef, ":") && !strings.Contains(imageRef, "@") {
-		log.Debug("Matched registry/repository pattern")
-		registry := match[1]
-		repository := match[2]
-
-		// Strip port from registry domain if present
-		if strings.Contains(registry, ":") {
-			host, _, err := net.SplitHostPort(registry)
-			if err == nil {
-				log.Debug("Stripping port from registry domain: %s → %s", registry, host)
-				registry = host
+		// Extract registry/repository from the part before ':'
+		if strings.Contains(repoPath, "/") {
+			// Check for possible registry prefix
+			pathParts := strings.SplitN(repoPath, "/", 2)
+			if strings.Contains(pathParts[0], ".") || strings.Contains(pathParts[0], ":") || pathParts[0] == "localhost" {
+				// This looks like a registry
+				ref.Registry = pathParts[0]
+				ref.Repository = pathParts[1]
+			} else {
+				// No registry, just a multi-part repository
+				ref.Repository = repoPath
 			}
+		} else {
+			// No registry specified and single-part repository
+			ref.Repository = repoPath
 		}
 
-		return &Reference{
-			Original:   imageRef,
-			Registry:   registry,
-			Repository: repository,
-			Tag:        LatestTag,
-		}, nil
+		// Apply Docker Hub library/ prefix for single name repositories
+		if ref.Registry == DefaultRegistry && !strings.Contains(ref.Repository, "/") {
+			ref.Repository = "library/" + ref.Repository
+		}
+
+		return ref, nil
 	}
 
-	// Try matching against the comprehensive reference pattern
-	if match := referencePattern.FindStringSubmatch(imageRef); match != nil {
-		log.Debug("Matched comprehensive reference pattern")
-		result := &Reference{
-			Original:   imageRef,
-			Registry:   match[1],
-			Repository: match[2],
+	// No tag or digest specified, just repository/registry
+	if strings.Contains(imageRef, "/") {
+		// Check for possible registry prefix
+		pathParts := strings.SplitN(imageRef, "/", 2)
+		if strings.Contains(pathParts[0], ".") || strings.Contains(pathParts[0], ":") || pathParts[0] == "localhost" {
+			// This looks like a registry
+			ref.Registry = pathParts[0]
+			ref.Repository = pathParts[1]
+		} else {
+			// No registry, just a multi-part repository
+			ref.Repository = imageRef
 		}
-
-		// Check if both tag and digest are present (conflicting)
-		if match[3] != "" && match[5] != "" {
-			log.Debug("Both tag and digest present in reference")
-			return nil, ErrTagAndDigestPresent
-		}
-
-		// Extract tag if present
-		if match[3] != "" {
-			result.Tag = match[4]
-			log.Debug("Extracted tag: %s", result.Tag)
-		}
-
-		// Extract digest if present
-		if match[5] != "" {
-			result.Digest = match[6]
-			log.Debug("Extracted digest: %s", result.Digest)
-		}
-
-		// Strip port from registry domain if present
-		if strings.Contains(result.Registry, ":") {
-			host, _, err := net.SplitHostPort(result.Registry)
-			if err == nil {
-				log.Debug("Stripping port from registry domain: %s → %s", result.Registry, host)
-				result.Registry = host
-			}
-		}
-
-		// Default tag to latest for repository-only references if neither tag nor digest is present
-		if result.Tag == "" && result.Digest == "" {
-			result.Tag = LatestTag
-			log.Debug("Setting default tag: %s", result.Tag)
-		}
-
-		log.Debug("Regex parsed reference: %+v", result)
-		return result, nil
+	} else {
+		// Single-part repository (e.g., "nginx")
+		ref.Repository = imageRef
 	}
 
-	log.Debug("Failed to match reference against any pattern")
-	return nil, ErrInvalidImageReference
+	// Apply Docker Hub library/ prefix for single name repositories
+	if ref.Registry == DefaultRegistry && !strings.Contains(ref.Repository, "/") {
+		ref.Repository = "library/" + ref.Repository
+	}
+
+	// Set default tag or use AppVersion if available
+	if len(chartMetadata) > 0 && chartMetadata[0] != nil && chartMetadata[0].AppVersion != "" {
+		ref.Tag = chartMetadata[0].AppVersion
+		log.Debug("Using Chart.AppVersion for tag: %s", ref.Tag)
+	} else {
+		ref.Tag = LatestTag
+		log.Debug("Setting default tag: %s", ref.Tag)
+	}
+
+	return ref, nil
 }
 
 // // parseImageReferenceCustom is deprecated. // REMOVED UNUSED

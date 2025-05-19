@@ -93,7 +93,14 @@ func (a *ContextAwareAnalyzer) analyzeSingleValue(key string, value interface{},
 	case map[string]interface{}:
 		return a.analyzeMapValue(val, currentPath, chartAnalysis)
 	case string:
-		return a.analyzeStringValue(key, val, currentPath, chartAnalysis)
+		originPath := "values.yaml" // Default origin file
+		if origin, exists := a.context.Origins[currentPath]; exists {
+			// Use origin.Path if it's a file path, otherwise keep default
+			if strings.HasSuffix(origin.Path, ".yaml") || strings.HasSuffix(origin.Path, ".yml") {
+				originPath = origin.Path
+			}
+		}
+		return a.analyzeStringValue(val, currentPath, originPath, chartAnalysis)
 	case []interface{}:
 		return a.analyzeArrayValue(val, currentPath, chartAnalysis)
 	default:
@@ -199,140 +206,90 @@ func (a *ContextAwareAnalyzer) analyzeMapValue(val map[string]interface{}, curre
 	return a.analyzeValues(val, currentPath, chartAnalysis)
 }
 
-// analyzeStringValue handles analysis of string values for image references using Two-Phase Parsing & Structural Validation.
-func (a *ContextAwareAnalyzer) analyzeStringValue(key, val, currentPath string, chartAnalysis *analysis.ChartAnalysis) error {
-	// 1. Initial Context Check (Optional Optimization)
-	// Quickly skip sections unlikely to contain images based on common Helm/K8s patterns.
-	if !a.isProbableImageKeyPath(key, currentPath) {
+// analyzeStringValue examines a string value that looks like an image.
+// It attempts to parse the string as an image reference and determines which
+// registry and repository it contains.
+func (a *ContextAwareAnalyzer) analyzeStringValue(val string, currentPath string, originPath string, chartAnalysis *analysis.ChartAnalysis) error {
+	// Extract the key from the path for image detection
+	parts := strings.Split(currentPath, ".")
+	key := currentPath
+	if len(parts) > 0 {
+		key = parts[len(parts)-1] // Get the last part of the path as the key
+	}
+
+	// Skip paths that are unlikely to be image references
+	if !a.isProbableImageKeyPath(key, val) {
 		log.Debug("analyzeStringValue: Skipping non-probable image path", "path", currentPath)
 		return nil
 	}
 
-	// 2. Basic Validation
+	// 1. Basic Cleanup
 	trimmedVal := strings.TrimSpace(val)
 	if trimmedVal == "" {
-		log.Debug("analyzeStringValue: Skipping empty value", "path", currentPath)
-		return nil
-	}
-	if strings.HasPrefix(trimmedVal, "/") {
-		log.Debug("analyzeStringValue: Skipping path-like value", "path", currentPath, "value", trimmedVal)
+		log.Debug("analyzeStringValue: Empty value, skipping", "path", currentPath)
 		return nil
 	}
 
-	// 3. Parse WITHOUT Defaults
-	parsedReg, parsedRepo, _ := a.parseImageStringNoDefaults(trimmedVal) // Ignore tag from this parse
+	// 2. Skip Templates
+	if strings.Contains(trimmedVal, "{{") && strings.Contains(trimmedVal, "}}") {
+		log.Debug("analyzeStringValue: Contains template, skipping", "path", currentPath, "value", trimmedVal)
+		return nil
+	}
 
-	// 4. Structural Validation (Core Filter)
-	// Does the string *itself* contain structure suggesting an image (registry or path separator)?
+	// 3. Initial Validation with our quick parser
+	parsedReg, parsedRepo, parsedTag := a.parseImageStringNoDefaults(trimmedVal)
+	if parsedReg == "" && parsedRepo == "" {
+		// Very unlikely to be an image value
+		log.Debug("analyzeStringValue: Not a valid image-like string", "path", currentPath, "value", trimmedVal)
+		return nil
+	}
+	log.Debug("parseImageStringNoDefaults result", "input", trimmedVal, "registry", parsedReg, "repository", parsedRepo, "tag", parsedTag)
+
+	// 4. Validate Structure (more strict)
+	// For string types, we need to make an executive decision on whether this is
+	// intended to be an image reference, as opposed to a general string that happens to
+	// contain slashes, e.g., "input/output" would parse as reg=input, repo=output
+	// This check helps avoid false positives.
 	hasStructure := (parsedReg != "" || strings.Contains(parsedRepo, "/"))
 	if !hasStructure {
-		log.Debug("analyzeStringValue: Skipping value lacking inherent image structure", "path", currentPath, "value", trimmedVal, "parsedReg", parsedReg, "parsedRepo", parsedRepo)
-		return nil // Value only looked like an image due to defaulting, ignore it.
+		log.Debug("analyzeStringValue: Failed structural validation, skipping", "path", currentPath, "value", trimmedVal)
+		return nil
 	}
 
 	// 5. Parse WITH Defaults (for Final Structure)
 	// Now that we have higher confidence, parse with defaults for the final structure.
 	// Use image.ParseImageReference for potentially more robust parsing than our simple internal one.
-	ref, err := image.ParseImageReference(trimmedVal)
+	chartMetadata := &image.ChartMetadata{
+		Name:       a.context.ChartName,
+		Version:    a.context.ChartVersion,
+		AppVersion: a.context.AppVersion,
+	}
+	ref, err := image.ParseImageReference(trimmedVal, chartMetadata)
 	if err != nil {
 		log.Debug("analyzeStringValue: Parse error after structural validation, skipping", "path", currentPath, "value", trimmedVal, "error", err)
 		return nil // Should be rare if step 4 passed, but handle anyway.
 	}
-	// Ensure parsing yielded a repository part.
-	if ref.Repository == "" {
-		log.Debug("analyzeStringValue: Parsed ref (with defaults) has no repository, skipping", "path", currentPath, "value", trimmedVal)
-		return nil
-	}
 
-	// 6. Minimal Keyword Check
-	lowerVal := strings.ToLower(trimmedVal)
-	if lowerVal == "true" || lowerVal == "false" || lowerVal == "null" {
-		log.Debug("analyzeStringValue: Skipping common keyword value after parsing", "path", currentPath, "value", lowerVal)
-		return nil
-	}
-
-	// *** Passed All Checks: Record Image Pattern ***
-	log.Debug("analyzeStringValue: Identified image string via structural validation", "path", currentPath, "value", val)
-
-	// Use the defaulted components from image.ParseImageReference for the final structure
-	registry := ref.Registry
-	repository := ref.Repository
-	tag := ref.Tag
-	// Apply Docker Hub 'library/' normalization explicitly if needed (ParseImageReference might not always do this)
-	if registry == DefaultRegistry && !strings.Contains(repository, "/") {
-		repository = "library/" + repository
-	}
-	// Ensure tag is populated if empty after parsing
-	if tag == "" {
-		tag = defaultImageTag
-	}
-
-	// Create an image pattern
+	// 6. Create Pattern with Structure
+	// Successfully detected an image reference!
 	pattern := analysis.ImagePattern{
-		Type:  analysis.PatternTypeString,
 		Path:  currentPath,
-		Value: val, // Store the original value
-		Count: 1,
+		Type:  analysis.PatternTypeString,
+		Value: trimmedVal,
+		// Added for context-aware analysis and better output
+		SourceOrigin: originPath,
+		Structure: map[string]interface{}{
+			"registry":   ref.Registry,
+			"repository": ref.Repository,
+			"tag":        ref.Tag,
+		},
+		// Add the chart's AppVersion to be used for defaulting
+		SourceChartAppVersion: a.context.AppVersion,
+		Count:                 1,
 	}
 
-	// Add the structure based on successful parsing
-	pattern.Structure = map[string]interface{}{
-		"registry":   registry,
-		"repository": repository,
-		"tag":        tag,
-	}
-
-	// --- Start: Populate OriginalRegistry AND SourceOrigin ---
-	originPath := "values.yaml" // Default origin file
-	sourceChartName := ""       // Default chart name
-	if origin, exists := a.context.Origins[currentPath]; exists {
-		// Use origin.Path if it's a file path, otherwise keep default
-		if strings.HasSuffix(origin.Path, ".yaml") || strings.HasSuffix(origin.Path, ".yml") {
-			originPath = origin.Path
-		}
-		sourceChartName = origin.ChartName // Get chart name from origin
-	}
-	pattern.SourceOrigin = originPath // Set the source origin (file path)
-
-	// Use sourceChartName for OriginalRegistry logic
-	if sourceChartName != "" && sourceChartName != a.context.Chart.Metadata.Name {
-		log.Debug("Value originates from subchart", "path", currentPath, "sourceChart", sourceChartName)
-
-		// --- Find Subchart AppVersion --- START ---
-		var sourceChartAppVersion string
-		for _, dep := range a.context.Chart.Dependencies() {
-			if dep.Metadata.Name == sourceChartName {
-				sourceChartAppVersion = dep.Metadata.AppVersion
-				log.Debug("Found AppVersion for source subchart", "chart", sourceChartName, "appVersion", sourceChartAppVersion)
-				break
-			}
-		}
-		if sourceChartAppVersion != "" {
-			pattern.SourceChartAppVersion = sourceChartAppVersion
-		}
-		// --- Find Subchart AppVersion --- END ---
-
-		// Determine original registry from the raw string value *without* defaults
-		// Use the non-defaulted parse result from step 3
-		originalRegistry := parsedReg // Use registry parsed without defaults
-		if originalRegistry == "" {
-			// If no registry was explicit in the string, the effective original *was* the default
-			originalRegistry = DefaultRegistry
-		}
-		log.Debug("Determined original registry from non-default parse", "path", currentPath, "originalRegistry", originalRegistry)
-
-		// Populate if different from the final *defaulted* registry
-		finalRegistry := registry // From the defaulted parse in step 5
-		if originalRegistry != finalRegistry {
-			pattern.OriginalRegistry = originalRegistry
-			log.Debug("Setting OriginalRegistry in pattern", "path", currentPath, "original", originalRegistry, "final", finalRegistry)
-		}
-	}
-	// --- End: Populate OriginalRegistry AND SourceOrigin ---
-
-	// Add the pattern to the analysis
+	log.Debug("analyzeStringValue: Identified image string via structural validation", "path", currentPath, "value", trimmedVal)
 	chartAnalysis.ImagePatterns = append(chartAnalysis.ImagePatterns, pattern)
-
 	return nil
 }
 
@@ -389,108 +346,99 @@ func (a *ContextAwareAnalyzer) isDirectImageMapDefinition(val map[string]interfa
 
 // isProbableImageKeyPath checks if the key and path suggest the value might be an image.
 // Acts as an optional optimization filter before more detailed parsing.
-func (a *ContextAwareAnalyzer) isProbableImageKeyPath(key, currentPath string) bool {
+func (a *ContextAwareAnalyzer) isProbableImageKeyPath(key string, val string) bool {
 	lowerKey := strings.ToLower(key)
+
+	// If the value contains a registry pattern, it's very likely an image
+	if strings.Contains(val, "quay.io") || strings.Contains(val, "docker.io") ||
+		strings.Contains(val, "gcr.io") || strings.Contains(val, "ghcr.io") ||
+		strings.Contains(val, "registry.k8s.io") {
+		log.Debug("isProbableImageKeyPath: true (contains registry)", "key", key, "value", val)
+		return true
+	}
+
 	// Check for exact key names that almost always indicate an image map or string
 	if lowerKey == "image" || lowerKey == "repository" {
 		log.Debug("isProbableImageKeyPath: true (exact key match)", "key", key)
 		return true
 	}
 
-	// Check for common path suffixes
-	lowerPath := strings.ToLower(currentPath)
-	pathSuffixes := []string{".image", ".repository", ".imageref", ".imageuri"}
-	for _, suffix := range pathSuffixes {
-		if strings.HasSuffix(lowerPath, suffix) {
-			log.Debug("isProbableImageKeyPath: true (path suffix match)", "path", currentPath, "suffix", suffix)
+	// Check for common image path patterns in Helm charts
+	lowerPath := strings.ToLower(key)
+	relevantPatterns := []string{
+		"image.repository", "image.tag", "repository", "imagerepository",
+		"controller.image", "cainjector.image", "webhook.image",
+		"image.registry", "registry", "docker", "container",
+	}
+
+	for _, pattern := range relevantPatterns {
+		if strings.Contains(lowerPath, pattern) {
+			log.Debug("isProbableImageKeyPath: true (path pattern match)", "key", key, "pattern", pattern)
 			return true
 		}
 	}
 
-	// Consider the key itself ending with 'Image' (common pattern)
-	if strings.HasSuffix(key, "Image") {
-		log.Debug("isProbableImageKeyPath: true (key suffix 'Image')", "key", key)
-		return true
+	// Check for key suffix patterns
+	suffixPatterns := []string{"Image", "Repository", "Registry", "Container"}
+	for _, suffix := range suffixPatterns {
+		if strings.HasSuffix(key, suffix) {
+			log.Debug("isProbableImageKeyPath: true (key suffix match)", "key", key, "suffix", suffix)
+			return true
+		}
 	}
 
 	// Default to false if no strong indicator found
-	log.Debug("isProbableImageKeyPath: false (no strong indicators)", "key", key, "path", currentPath)
-	return false // Changed default to false - only proceed if context is suggestive
+	log.Debug("isProbableImageKeyPath: false (no strong indicators)", "key", key, "value", val)
+	return false
 }
 
-// normalizeImageValues extracts and normalizes image components from a map.
+// normalizeImageValues extracts normalized image components from a map structure.
 func (a *ContextAwareAnalyzer) normalizeImageValues(val map[string]interface{}) (registry, repository, tag string) {
-	// Defaults
-	registry = DefaultRegistry // Assume docker.io initially
-	tag = defaultImageTag
-
-	explicitRegistry := ""
-	if r, ok := val["registry"].(string); ok && r != "" {
-		explicitRegistry = r // Store explicitly provided registry
-		log.Debug("normalizeImageValues: Found explicit registry key", "registry", explicitRegistry)
+	// Handle registry (optional)
+	if regVal, ok := val["registry"].(string); ok && regVal != "" {
+		registry = regVal
+	} else {
+		registry = DefaultRegistry // Default to docker.io if not specified
 	}
 
-	// Get repository value
+	// Handle repository (required)
 	if repoVal, ok := val["repository"].(string); ok && repoVal != "" {
-		repository = repoVal // Use repository value directly from map
-	} else {
-		log.Warn("normalizeImageValues: 'repository' key missing, empty, or not a string", "map", val)
-		return "", "", "" // Cannot proceed without repository
-	}
+		repository = repoVal
 
-	// --- Registry Parsing Logic ---
-	// Try parsing the REPOSITORY string itself for a registry component
-	parsedReg, parsedRepo, parsedTagFromRepo := a.parseImageStringNoDefaults(repository)
-
-	if parsedReg != "" {
-		// Registry was found within the repository string
-		log.Debug("normalizeImageValues: Parsed registry from repository string", "parsedRegistry", parsedReg)
-		registry = parsedReg         // Use the parsed registry
-		repository = parsedRepo      // Use the remaining part as repository
-		if parsedTagFromRepo != "" { // If tag was also in repo string
-			tag = parsedTagFromRepo
-			log.Debug("normalizeImageValues: Using tag parsed from repository string", "parsedTag", tag)
-		}
-	} else {
-		// No registry found in the repository string itself
-		// Repository is just the path, keep the initial default registry (docker.io)
-		log.Debug("normalizeImageValues: No registry found in repository string, keeping default/initial", "registry", registry)
-		// Keep the original repository value if no registry was parsed out
-		// Also, check if a tag was embedded in this simple repository string
-		if strings.Contains(repository, ":") {
-			repoParts := strings.SplitN(repository, ":", MaxSplitParts)
-			repository = repoParts[0]
-			if len(repoParts) > 1 {
-				tag = repoParts[1]
-				log.Debug("normalizeImageValues: Using tag parsed from simple repository string", "parsedTag", tag)
+		// If repository contains registry info (e.g. "quay.io/repo"), extract it
+		if strings.Contains(repoVal, "/") {
+			parts := strings.SplitN(repoVal, "/", 2)
+			if strings.Contains(parts[0], ".") || strings.Contains(parts[0], ":") || parts[0] == "localhost" {
+				// Override registry from the repository string
+				registry = parts[0]
+				repository = parts[1]
 			}
 		}
 	}
 
-	// If an EXPLICIT registry key was provided, it OVERRIDES any parsed/default registry
-	if explicitRegistry != "" {
-		if explicitRegistry != registry {
-			log.Warn("normalizeImageValues: Explicit 'registry' key overrides parsed/default registry", "explicit", explicitRegistry, "parsedOrDef", registry)
-			registry = explicitRegistry
-		}
-	}
-	// --- End Registry Parsing Logic ---
-
-	// Get tag value - OVERRIDES tag parsed from repository string if present
-	if tagVal, ok := val["tag"].(string); ok && tagVal != "" {
-		if tagVal != tag {
-			log.Debug("normalizeImageValues: Explicit 'tag' key overrides parsed tag", "explicitTag", tagVal, "parsedTag", tag)
-			tag = tagVal // Use explicit tag from map
-		}
-	}
-
-	// Apply Docker Hub library normalization AFTER determining the final registry and repository
+	// Apply Docker Hub 'library/' normalization for single-name repositories (without slashes)
 	if registry == DefaultRegistry && !strings.Contains(repository, "/") {
-		log.Debug("normalizeImageValues: Applying Docker Hub library/ prefix", "repository", repository)
 		repository = "library/" + repository
 	}
 
-	log.Debug("normalizeImageValues: Final normalized values", "registry", registry, "repository", repository, "tag", tag)
+	// Handle tag (optional)
+	if tagVal, ok := val["tag"].(string); ok && tagVal != "" {
+		tag = tagVal
+	} else if digestVal, ok := val["digest"].(string); ok && digestVal != "" {
+		// If digest is present but no tag, leave tag empty (digest will be used)
+		tag = ""
+	} else {
+		// No tag or digest specified, prefer AppVersion if available
+		if a.context != nil && a.context.AppVersion != "" {
+			tag = a.context.AppVersion
+			log.Debug("Using chart's AppVersion as tag", "path", fmt.Sprintf("%v", val), "appVersion", tag)
+		} else {
+			// Otherwise default to "latest"
+			tag = defaultImageTag
+			log.Debug("Setting default tag", "path", fmt.Sprintf("%v", val), "tag", tag)
+		}
+	}
+
 	return registry, repository, tag
 }
 

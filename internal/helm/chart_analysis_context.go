@@ -22,6 +22,7 @@ type ChartAnalysisContext struct {
 	// Metadata about this analysis
 	ChartName    string
 	ChartVersion string
+	AppVersion   string
 	ValuesFiles  []string
 	SetValues    []string
 }
@@ -97,6 +98,7 @@ func NewChartAnalysisContext(chartData *chart.Chart, values map[string]interface
 		Origins:      origins,
 		ChartName:    chartData.Name(),
 		ChartVersion: chartData.Metadata.Version,
+		AppVersion:   chartData.Metadata.AppVersion,
 		ValuesFiles:  valuesFiles,
 		SetValues:    setValues,
 	}
@@ -110,6 +112,7 @@ func NewChartAnalysisContextFromCoalesced(chartData *chart.Chart, coalesced *Coa
 		Origins:      coalesced.Origins,
 		ChartName:    chartData.Name(),
 		ChartVersion: chartData.Metadata.Version,
+		AppVersion:   chartData.Metadata.AppVersion,
 		ValuesFiles:  valuesFiles,
 		SetValues:    setValues,
 	}
