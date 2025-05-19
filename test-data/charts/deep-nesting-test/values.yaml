@@ -12,6 +12,12 @@ level1:
 # Deeply nested array with image
 services:
   frontend:
+    # Add a primary container that matches the first container in the array
+    primaryContainer:
+      image:
+        registry: quay.io
+        repository: frontend/webapp
+        tag: "stable"
     containers:
       - name: main
         image:

@@ -18,4 +18,4 @@ spec:
         - name: deep-nested
           image: "{{ .Values.level1.level2.level3.level4.level5.image.registry }}/{{ .Values.level1.level2.level3.level4.level5.image.repository }}:{{ .Values.level1.level2.level3.level4.level5.image.tag }}"
         - name: frontend
-          image: "{{ .Values.services.frontend.containers[0].image.registry }}/{{ .Values.services.frontend.containers[0].image.repository }}:{{ .Values.services.frontend.containers[0].image.tag }}" 
+          image: "{{ .Values.services.frontend.primaryContainer.image.registry }}/{{ .Values.services.frontend.primaryContainer.image.repository }}:{{ .Values.services.frontend.primaryContainer.image.tag }}" 
