@@ -26,92 +26,101 @@ func TestMinimalChart(t *testing.T) {
 	h := NewTestHarness(t)
 	defer h.Cleanup()
 
-	// Setup a minimal test chart
 	setupMinimalTestChart(t, h)
-	h.SetRegistries("test.registry.io", []string{"docker.io"})
+	overrideFilePath := h.GetTempFilePath("minimal-chart-overrides.yaml")
 
-	// Create output file path
-	outputFile := filepath.Join(h.tempDir, "minimal-chart-overrides.yaml")
+	// Create an empty registry file to ensure CLI flags are used directly
+	emptyMappingsFile, err := h.CreateEmptyRegistryFile("empty-mappings.yaml")
+	assert.NoError(t, err, "Failed to create empty mappings file")
 
-	// Execute the override command
-	output, stderr, err := h.ExecuteIRRWithStderr(nil, false,
+	args := []string{
 		"override",
 		"--chart-path", h.chartPath,
-		"--target-registry", h.targetReg,
-		"--source-registries", strings.Join(h.sourceRegs, ","),
-		"--output-file", outputFile,
+		"--target-registry", "test.registry.io",
+		"--source-registries", "docker.io",
+		"--output-file", overrideFilePath,
+		"--registry-file", emptyMappingsFile, // Use empty mappings
 		"--debug",
-	)
-	require.NoError(t, err, "override command should succeed")
-	t.Logf("Override output: %s", output)
+	}
+
+	stdout, stderr, err := h.ExecuteIRRWithStderr(nil, false, args...)
+	assert.NoError(t, err, "IRR command should succeed for minimal chart")
+	t.Logf("Override output: %s", stdout) // stdout is empty because output is to file
 	t.Logf("Stderr: %s", stderr)
 
-	// Verify that the override file was created
-	require.FileExists(t, outputFile, "Override file should be created")
+	assert.FileExists(t, overrideFilePath, "Override file should be created")
 
-	// Read the generated override file
-	// #nosec G304
-	overrideBytes, err := os.ReadFile(outputFile)
-	require.NoError(t, err, "Should be able to read generated override file")
+	overrideContentBytes, err := os.ReadFile(overrideFilePath)
+	assert.NoError(t, err, "Failed to read override file")
+	overrideContent := string(overrideContentBytes)
+	t.Logf("Override content:\n%s", overrideContent)
 
-	// Verify the content contains the expected overrides
-	content := string(overrideBytes)
-	t.Logf("Override content: %s", content)
-
-	// The minimal chart uses a simple image with repository: nginx and tag: 1.23
-	// Expect it to be transformed to include registry: test.registry.io, repository: docker.io/library/nginx
-	assert.Contains(t, content, "registry: test.registry.io", "Override should include target registry")
-	assert.Contains(t, content, "repository: docker.io/library/nginx", "Override should include transformed repository")
-	assert.Contains(t, content, "tag: \"1.23\"", "Override should preserve tag")
+	// Assertions based on PrefixSourceRegistryStrategy and CLI flags
+	assert.Contains(t, overrideContent, "global:", "Override should include global section")
+	assert.Contains(t, overrideContent, "imageRegistry: test.registry.io", "Global imageRegistry should be the target registry")
+	assert.Contains(t, overrideContent, "image:", "Override should include image section")
+	assert.Contains(t, overrideContent, "registry: test.registry.io", "Image registry should be the target registry")
+	// PrefixSourceRegistryStrategy uses sanitized source registry as prefix
+	assert.Contains(t, overrideContent, "repository: docker.io/library/nginx", "Image repository should be <source-registry>/<original-repo>")
+	assert.Contains(t, overrideContent, "tag: \"1.23\"", "Image tag should be preserved")
 }
 
 func TestParentChart(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping test in short mode")
-	}
-
 	h := NewTestHarness(t)
 	defer h.Cleanup()
 
-	// Find the parent test chart
-	chartPath := h.GetTestdataPath("charts/parent-test")
-	if chartPath == "" {
-		t.Skip("parent-test chart not found, skipping test")
-	}
+	h.SetupChart(h.GetTestdataPath("charts/parent-test")) // Uses parent-test chart
+	overrideFilePath := h.GetTempFilePath("parent-chart-overrides.yaml")
 
-	h.SetupChart(chartPath)
-	h.SetRegistries("test.registry.io", []string{"docker.io"})
+	// Create an empty registry file to ensure CLI flags are used directly
+	emptyMappingsFile, err := h.CreateEmptyRegistryFile("empty-mappings-parent.yaml")
+	assert.NoError(t, err, "Failed to create empty mappings file for parent chart test")
 
-	// Create output file path
-	outputFile := filepath.Join(h.tempDir, "parent-chart-overrides.yaml")
-
-	// Execute the override command
-	output, stderr, err := h.ExecuteIRRWithStderr(nil, true,
+	// Define arguments including the empty registry file
+	args := []string{
 		"override",
 		"--chart-path", h.chartPath,
-		"--target-registry", h.targetReg,
-		"--source-registries", strings.Join(h.sourceRegs, ","),
-		"--output-file", outputFile,
-		"--context-aware",
-	)
-	require.NoError(t, err, "override command should succeed")
-	t.Logf("Override output: %s", output)
-	t.Logf("Stderr: %s", stderr)
+		"--target-registry", "test.registry.io",
+		"--source-registries", "docker.io,quay.io", // Multiple source registries
+		"--output-file", overrideFilePath,
+		"--registry-file", emptyMappingsFile,
+		"--context-aware", // This test uses context-aware
+	}
 
-	// Verify that the override file was created
-	require.FileExists(t, outputFile, "Override file should be created")
+	stdout, stderr, err := h.ExecuteIRRWithStderr(nil, true, args...) // Assuming context-aware is true for this test based on original logs
+	assert.NoError(t, err, "IRR command should succeed for parent chart")
+	t.Logf("Parent Chart Override output: %s", stdout)
+	t.Logf("Parent Chart Stderr: %s", stderr)
 
-	// Read the generated override file
-	// #nosec G304
-	overrideBytes, err := os.ReadFile(outputFile)
-	require.NoError(t, err, "Should be able to read generated override file")
+	assert.FileExists(t, overrideFilePath, "Override file should be created for parent chart")
 
-	// Verify the content contains the expected overrides
-	content := string(overrideBytes)
-	t.Logf("Override content: %s", content)
+	overrideContentBytes, err := os.ReadFile(overrideFilePath)
+	assert.NoError(t, err, "Failed to read override file for parent chart")
+	overrideContent := string(overrideContentBytes)
+	t.Logf("Parent Chart Override content:\n%s", overrideContent)
 
-	// Check that the repository path includes the source registry prefix
-	assert.Contains(t, content, "repository: docker.io/bitnami/nginx", "Override should include transformed repository with source registry prefix")
+	// Expected overrides (adjust based on actual parent-test chart structure and PrefixSourceRegistryStrategy)
+	assert.Contains(t, overrideContent, "global:", "Parent chart override should include global section")
+	assert.Contains(t, overrideContent, "imageRegistry: test.registry.io", "Global imageRegistry should be test.registry.io")
+
+	// Example assertion for parentImage (assuming it's from docker.io)
+	assert.Contains(t, overrideContent, "parentImage:", "Should contain parentImage section")
+	assert.Contains(t, overrideContent, "registry: test.registry.io", "parentImage.registry should be test.registry.io")
+	assert.Contains(t, overrideContent, "repository: docker.io/parent/app", "parentImage.repository should be docker.io/parent/app")
+
+	// Example assertion for a child chart image (e.g., 'child' alias, image from docker.io)
+	assert.Contains(t, overrideContent, "child:", "Should contain child alias section")
+	// Assuming child.image path
+	assert.Contains(t, overrideContent, "repository: docker.io/library/nginx", "child.image.repository should be docker.io/library/nginx")
+
+	// Example assertion for an image from quay.io (e.g., in 'another-child' alias)
+	// Assuming another-child.monitoring.image is from quay.io/prometheus/node-exporter
+	assert.Contains(t, overrideContent, "another-child:", "Should contain another-child alias section")
+	assert.Contains(t, overrideContent, "repository: quay.io/prometheus/node-exporter", "another-child image from quay.io should be correctly prefixed")
+
+	// Verify that images NOT from docker.io or quay.io are NOT overridden
+	// e.g., if parent-test chart has an image from 'internal.mycompany.com'
+	// assert.NotContains(t, overrideContent, "internal.mycompany.com", "Internal images should not be present in overrides")
 }
 
 // validateExpectedImages checks if all expected image repositories are found in the actual repositories

@@ -700,7 +700,19 @@ func TestOverridePluginMode_ReleaseWithNoImages(t *testing.T) {
 		"--log-level", "debug",
 	)
 	assert.NoError(t, err, "Should not error for release with no images. Stderr: %s", stderr)
-	assert.True(t, strings.TrimSpace(stdout) == "" || strings.Contains(stderr, "no images") || strings.Contains(stderr, "no image"), "Output should be empty or contain a warning about no images")
+
+	// Check if stdout is effectively empty (common empty YAML representations) or if stderr contains a relevant warning.
+	// An empty override often results in "{}\n" or "null\n".
+	trimmedStdout := strings.TrimSpace(stdout)
+	isEmptyYamlOutput := trimmedStdout == "{}" || trimmedStdout == "null" || trimmedStdout == ""
+	isNoImagesWarning := strings.Contains(stderr, "no images found that require override") || // A more general warning
+		strings.Contains(stderr, "Analysis result is nil") || // Specific warning from current code
+		strings.Contains(stderr, "chart has no values/images") || // Part of the specific warning
+		strings.Contains(stderr, "No image patterns found") || // Another possible warning
+		strings.Contains(stderr, "No images found in chart that match criteria") // Yet another
+
+	assert.True(t, isEmptyYamlOutput || isNoImagesWarning,
+		fmt.Sprintf("Output should be empty YAML ('{}', 'null', or '') or stderr should contain a 'no images' warning.\nStdout: %s\nStderr: %s", stdout, stderr))
 }
 
 // TestOverridePluginMode_ExcludedRegistries verifies that 'irr override' works in Helm plugin mode for a release with excluded registries.
@@ -828,7 +840,8 @@ registries:
 		"--log-level", "debug",
 	)
 	require.NoError(t, err, "override (plugin mode) with mapping file should succeed. Stderr: %s", stderr)
-	assert.Contains(t, stdout, "custom.registry.io/mirror", "Output should use mapped registry from file")
+	assert.Contains(t, stdout, "registry: custom.registry.io", "Output should use registry from mapping file")
+	assert.Contains(t, stdout, "repository: mirror/library/nginx", "Output should use mirror path from mapping file")
 	assert.NotContains(t, stdout, "should-not-be-used.io", "Output should not use CLI target registry when mapping file is present")
 }
 

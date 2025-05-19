@@ -43,7 +43,7 @@ func TestDefaultLogLevels(t *testing.T) {
 	baseArgs := []string{
 		"override",
 		"--target-registry", "test.registry.io",
-		"--source-registries", "docker.io",
+		"--source-registries", "unmapped.registry.example.com",
 	}
 
 	runLogLevelTest(
