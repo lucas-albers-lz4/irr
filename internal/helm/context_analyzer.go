@@ -83,7 +83,7 @@ func (a *ContextAwareAnalyzer) analyzeValues(values map[string]interface{}, pref
 }
 
 // analyzeSingleValue analyzes a single key-value pair based on the value type.
-func (a *ContextAwareAnalyzer) analyzeSingleValue(key string, value interface{}, currentPath string, chartAnalysis *analysis.ChartAnalysis) error {
+func (a *ContextAwareAnalyzer) analyzeSingleValue(_ string, value interface{}, currentPath string, chartAnalysis *analysis.ChartAnalysis) error {
 	log.Debug("analyzeSingleValue ENTER", "path", currentPath, "type", fmt.Sprintf("%T", value))
 	defer func() {
 		log.Debug("analyzeSingleValue EXIT", "path", currentPath, "imagePatternsCount", len(chartAnalysis.ImagePatterns))
@@ -209,7 +209,7 @@ func (a *ContextAwareAnalyzer) analyzeMapValue(val map[string]interface{}, curre
 // analyzeStringValue examines a string value that looks like an image.
 // It attempts to parse the string as an image reference and determines which
 // registry and repository it contains.
-func (a *ContextAwareAnalyzer) analyzeStringValue(val string, currentPath string, originPath string, chartAnalysis *analysis.ChartAnalysis) error {
+func (a *ContextAwareAnalyzer) analyzeStringValue(val, currentPath, originPath string, chartAnalysis *analysis.ChartAnalysis) error {
 	// Extract the key from the path for image detection
 	parts := strings.Split(currentPath, ".")
 	key := currentPath
@@ -346,7 +346,7 @@ func (a *ContextAwareAnalyzer) isDirectImageMapDefinition(val map[string]interfa
 
 // isProbableImageKeyPath checks if the key and path suggest the value might be an image.
 // Acts as an optional optimization filter before more detailed parsing.
-func (a *ContextAwareAnalyzer) isProbableImageKeyPath(key string, val string) bool {
+func (a *ContextAwareAnalyzer) isProbableImageKeyPath(key, val string) bool {
 	lowerKey := strings.ToLower(key)
 
 	// If the value contains a registry pattern, it's very likely an image
@@ -412,8 +412,8 @@ func (a *ContextAwareAnalyzer) normalizeImageValues(val map[string]interface{}) 
 
 		// If repository contains registry info (e.g. "quay.io/repo"), extract it
 		if strings.Contains(repoVal, "/") {
-			parts := strings.SplitN(repoVal, "/", 2)
-			if strings.Contains(parts[0], ".") || strings.Contains(parts[0], ":") || parts[0] == "localhost" {
+			parts := strings.SplitN(repoVal, "/", MaxSplitParts)
+			if strings.Contains(parts[0], ".") || strings.Contains(parts[0], ":") || parts[0] == image.LocalhostRegistry {
 				// Override registry from the repository string
 				registry = parts[0]
 				// Strip port from registry if present
