@@ -3,7 +3,6 @@ package image
 import (
 	// Need this for port stripping
 
-	"regexp"
 	"strings" // Need this for normalization checks
 
 	"github.com/distribution/reference"
@@ -46,20 +45,6 @@ const (
 	nameComponentRegexString = alphaNumericRegexString + `(?:` + separatorRegexString + alphaNumericRegexString + `)*`
 )
 */
-
-// Regular expression patterns for image reference parsing
-var (
-	// Removed unused patterns: digestPattern, tagPattern
-	// Removed unused regex constants: alphaNumericRegexString, separatorRegexString, domainComponentRegexString, domainRegexString, portRegexString, nameComponentRegexString
-	// Removed unused var: nameRegex
-
-	// repositoryPattern extracts the repository part of an image reference.
-	repositoryPattern = regexp.MustCompile(`^(.+)$`)
-	// registryRepPattern extracts the registry and repository parts.
-	registryRepPattern = regexp.MustCompile(`^(.+)/(.+)$`)
-	// referencePattern is the comprehensive pattern for image references
-	referencePattern = regexp.MustCompile(`^(.+)/(.+)(@(.+))?(:([^/]+))?$`)
-)
 
 // ParseImageReference parses an image reference string into its components.
 // It attempts to parse using the distribution/reference library first, and falls back
@@ -143,10 +128,14 @@ func ParseImageReference(imageRef string, chartMetadata ...*ChartMetadata) (*Ref
 
 	// Special handling for digest references
 	// This should come before the generic tag+digest check to handle valid digest cases
+	atIndex := strings.Index(imageRef, "@")
 	if strings.Contains(imageRef, "@sha256:") && !strings.Contains(imageRef, ":@") &&
-		!strings.Contains(imageRef[:strings.Index(imageRef, "@")], ":") {
+		// Fix for offBy1 gocritic warning:
+		// Make sure @ exists in the string before slicing with Index
+		atIndex > 0 &&
+		!strings.Contains(imageRef[:atIndex], ":") {
 		// This looks like a valid digest reference without a tag
-		parts := strings.SplitN(imageRef, "@sha256:", 2)
+		parts := strings.SplitN(imageRef, "@sha256:", MaxComponents)
 		repoPath := parts[0]
 		digest := "sha256:" + parts[1]
 
@@ -158,9 +147,9 @@ func ParseImageReference(imageRef string, chartMetadata ...*ChartMetadata) (*Ref
 
 		// Extract registry/repository
 		if strings.Contains(repoPath, "/") {
-			regRepoParts := strings.SplitN(repoPath, "/", 2)
+			regRepoParts := strings.SplitN(repoPath, "/", MaxComponents)
 			// Check if first part looks like a registry
-			if strings.Contains(regRepoParts[0], ".") || strings.Contains(regRepoParts[0], ":") || regRepoParts[0] == "localhost" {
+			if strings.Contains(regRepoParts[0], ".") || strings.Contains(regRepoParts[0], ":") || regRepoParts[0] == LocalhostRegistry {
 				ref.Registry = regRepoParts[0]
 				// Strip port if present
 				if strings.Contains(ref.Registry, ":") {
@@ -254,56 +243,7 @@ func parseWithRegex(imageRef string, chartMetadata ...*ChartMetadata) (*Referenc
 	// Special check for malformed digests
 	// Handle the case where the reference might be valid but the canonical parser rejected it
 	if strings.Contains(imageRef, "@sha256:") && !strings.Contains(imageRef, ":@") {
-		// This is likely a valid digest reference
-		parts := strings.SplitN(imageRef, "@sha256:", 2)
-		namepart := parts[0]
-		digest := "sha256:" + parts[1]
-
-		ref := &Reference{
-			Original: imageRef,
-			Registry: DefaultRegistry, // Default to docker.io
-			Digest:   digest,
-		}
-
-		// Parse the name part (registry/repository)
-		if strings.Contains(namepart, "/") {
-			// Check for registry prefix
-			registryIndex := -1
-			for i, c := range namepart {
-				if c == '/' {
-					registryIndex = i
-					break
-				}
-			}
-			if registryIndex > 0 {
-				registryPart := namepart[:registryIndex]
-				// Check if this looks like a registry
-				if strings.Contains(registryPart, ".") || strings.Contains(registryPart, ":") || registryPart == "localhost" {
-					ref.Registry = registryPart
-					// Strip port if present
-					if strings.Contains(ref.Registry, ":") {
-						portIndex := strings.LastIndex(ref.Registry, ":")
-						ref.Registry = ref.Registry[:portIndex]
-					}
-					ref.Repository = namepart[registryIndex+1:]
-				} else {
-					// Just a multi-part repository
-					ref.Repository = namepart
-				}
-			} else {
-				ref.Repository = namepart
-			}
-		} else {
-			// Just a simple repository
-			ref.Repository = namepart
-		}
-
-		// Apply Docker Hub library/ prefix for single name repositories
-		if ref.Registry == DefaultRegistry && !strings.Contains(ref.Repository, "/") {
-			ref.Repository = "library/" + ref.Repository
-		}
-
-		return ref, nil
+		return parseDigestReference(imageRef)
 	}
 
 	// Quick validation for common invalid formats
@@ -335,15 +275,15 @@ func parseWithRegex(imageRef string, chartMetadata ...*ChartMetadata) (*Referenc
 
 	// Handle digest format
 	if strings.Contains(imageRef, "@") {
-		parts := strings.SplitN(imageRef, "@", 2)
+		parts := strings.SplitN(imageRef, "@", MaxComponents)
 		repoPath := parts[0]
 		ref.Digest = parts[1]
 
 		// Extract registry/repository from the part before '@'
 		if strings.Contains(repoPath, "/") {
 			// Check for possible registry prefix
-			pathParts := strings.SplitN(repoPath, "/", 2)
-			if strings.Contains(pathParts[0], ".") || strings.Contains(pathParts[0], ":") || pathParts[0] == "localhost" {
+			pathParts := strings.SplitN(repoPath, "/", MaxComponents)
+			if strings.Contains(pathParts[0], ".") || strings.Contains(pathParts[0], ":") || pathParts[0] == LocalhostRegistry {
 				// This looks like a registry
 				ref.Registry = pathParts[0]
 				// Strip port from registry if present
@@ -379,8 +319,8 @@ func parseWithRegex(imageRef string, chartMetadata ...*ChartMetadata) (*Referenc
 		// Extract registry/repository from the part before ':'
 		if strings.Contains(repoPath, "/") {
 			// Check for possible registry prefix
-			pathParts := strings.SplitN(repoPath, "/", 2)
-			if strings.Contains(pathParts[0], ".") || strings.Contains(pathParts[0], ":") || pathParts[0] == "localhost" {
+			pathParts := strings.SplitN(repoPath, "/", MaxComponents)
+			if strings.Contains(pathParts[0], ".") || strings.Contains(pathParts[0], ":") || pathParts[0] == LocalhostRegistry {
 				// This looks like a registry
 				ref.Registry = pathParts[0]
 				// Strip port from registry if present
@@ -409,8 +349,8 @@ func parseWithRegex(imageRef string, chartMetadata ...*ChartMetadata) (*Referenc
 	// No tag or digest specified, just repository/registry
 	if strings.Contains(imageRef, "/") {
 		// Check for possible registry prefix
-		pathParts := strings.SplitN(imageRef, "/", 2)
-		if strings.Contains(pathParts[0], ".") || strings.Contains(pathParts[0], ":") || pathParts[0] == "localhost" {
+		pathParts := strings.SplitN(imageRef, "/", MaxComponents)
+		if strings.Contains(pathParts[0], ".") || strings.Contains(pathParts[0], ":") || pathParts[0] == LocalhostRegistry {
 			// This looks like a registry
 			ref.Registry = pathParts[0]
 			// Strip port from registry if present
@@ -440,6 +380,62 @@ func parseWithRegex(imageRef string, chartMetadata ...*ChartMetadata) (*Referenc
 	} else {
 		ref.Tag = LatestTag
 		log.Debug("Setting default tag: %s", ref.Tag)
+	}
+
+	return ref, nil
+}
+
+// parseDigestReference parses an image reference that contains a digest.
+// This is a helper function for parseWithRegex that handles the special case
+// of references with sha256 digests.
+func parseDigestReference(imageRef string) (*Reference, error) {
+	// This is likely a valid digest reference
+	parts := strings.SplitN(imageRef, "@sha256:", MaxComponents)
+	namepart := parts[0]
+	digest := "sha256:" + parts[1]
+
+	ref := &Reference{
+		Original: imageRef,
+		Registry: DefaultRegistry, // Default to docker.io
+		Digest:   digest,
+	}
+
+	// Parse the name part (registry/repository)
+	if strings.Contains(namepart, "/") {
+		// Check for registry prefix
+		registryIndex := -1
+		for i, c := range namepart {
+			if c == '/' {
+				registryIndex = i
+				break
+			}
+		}
+		if registryIndex > 0 {
+			registryPart := namepart[:registryIndex]
+			// Check if this looks like a registry
+			if strings.Contains(registryPart, ".") || strings.Contains(registryPart, ":") || registryPart == LocalhostRegistry {
+				ref.Registry = registryPart
+				// Strip port if present
+				if strings.Contains(ref.Registry, ":") {
+					portIndex := strings.LastIndex(ref.Registry, ":")
+					ref.Registry = ref.Registry[:portIndex]
+				}
+				ref.Repository = namepart[registryIndex+1:]
+			} else {
+				// Just a multi-part repository
+				ref.Repository = namepart
+			}
+		} else {
+			ref.Repository = namepart
+		}
+	} else {
+		// Just a simple repository
+		ref.Repository = namepart
+	}
+
+	// Apply Docker Hub library/ prefix for single name repositories
+	if ref.Registry == DefaultRegistry && !strings.Contains(ref.Repository, "/") {
+		ref.Repository = "library/" + ref.Repository
 	}
 
 	return ref, nil
