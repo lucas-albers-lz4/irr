@@ -616,19 +616,19 @@ func TestGenerator_Generate_AnalyzerError(t *testing.T) {
 // TestGenerator_Generate_ImagePatternError tests generator resilience to bad patterns
 // Reverted to original structure relying on g.Generate() and internal analysis
 func TestGenerator_Generate_ImagePatternError(t *testing.T) {
-	// Setup mocks: Loader succeeds, but analysis should detect one bad image pattern
+	// Setup a chart with a good image and a "bad" image (with an invalid digest)
 	mockLoader := &MockChartLoader{
 		chart: &helmchart.Chart{
 			Metadata: &helmchart.Metadata{Name: "test-chart"},
-			Values: map[string]interface{}{ // Values will be processed by internal analyzer
+			Values: map[string]interface{}{
 				"goodImage": "source.registry.com/app/image1:v1",
-				"badImage":  "docker.io/library/nginx@sha256:invaliddigest", // Invalid digest format
+				"badImage":  "docker.io/library/nginx@sha256:invaliddigest", // Digest is parsed now but generates a warning
 			},
 		},
 	}
 	mockStrategy := &MockPathStrategy{}
 
-	// Provide analysisResult reflecting the values
+	// Provide analysis data
 	chartAnalysis := &analysis.ChartAnalysis{
 		ImagePatterns: []analysis.ImagePattern{
 			{Path: "goodImage", Type: analysis.PatternTypeString, Value: "source.registry.com/app/image1:v1", Count: 1},
@@ -636,41 +636,48 @@ func TestGenerator_Generate_ImagePatternError(t *testing.T) {
 		},
 	}
 
-	// Capture logs using CaptureJSONLogs - REMOVED Log Capture
-	// _, jsonLogs, captureErr := testutil.CaptureJSONLogs(log.LevelWarn, func() {
-	captureErr := func() error { // Use a simple closure to scope err
-		g := NewGenerator(
+	// REMOVED Log Capture
+	// var foundLog bool
+	// logOutput, captureErr := testutil.CaptureLogOutput(log.LevelWarn, func() {
+
+	captureErr := func() error {
+		// Create generator
+		gen := NewGenerator(
 			"test-chart",
 			"target.registry.com",
-			[]string{"source.registry.com", "docker.io"}, // Include both source registries
+			[]string{"source.registry.com", "docker.io"}, // Allow both sources
 			[]string{},
 			mockStrategy,
 			nil,
-			false, // Non-strict mode
-			0,
+			false,
+			0, // 0% threshold
 			mockLoader,
 			false,
 		)
 
-		result, err := g.Generate(mockLoader.chart, chartAnalysis) // Pass the analysisResult
-		require.NoError(t, err, "Generate should succeed by skipping the bad pattern in non-strict mode")
-		require.NotNil(t, result)
+		// Generate overrides
+		result, err := gen.Generate(mockLoader.chart, chartAnalysis)
+		require.NoError(t, err, "Generate should not return an error")
+		require.NotNil(t, result, "Result should not be nil")
 
-		// Check that the good image was processed
-		expectedOverrides := override.File{
-			Values: map[string]interface{}{ // Expect map now due to createOverride
+		// Check overrides contain both images correctly transformed
+		expectedOverrides := &override.File{
+			Values: map[string]interface{}{
 				"global": map[string]interface{}{
 					"imageRegistry": "target.registry.com",
 				},
 				"goodImage": map[string]interface{}{
 					"registry":   "target.registry.com",
 					"repository": "mockpath/app/image1",
-					"tag":        "v1", // Semver tag should be kept
-					// "pullPolicy": "IfNotPresent", // String patterns don't get pullPolicy
+					"tag":        "v1",
+				},
+				"badImage": map[string]interface{}{
+					"registry":   "target.registry.com",
+					"repository": "mockpath/library/nginx",
 				},
 			},
 		}
-		assert.Equal(t, expectedOverrides.Values, result.Values, "Overrides for goodImage mismatch")
+		assert.Equal(t, expectedOverrides.Values, result.Values, "Overrides mismatch")
 		return nil // Return nil from closure if successful
 	}()
 	require.NoError(t, captureErr, "Error during Generate execution")
