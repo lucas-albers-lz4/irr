@@ -68,7 +68,7 @@ func (g *Generator) Generate(_ string, values map[string]interface{}) (map[strin
 		Strict:            g.StrictMode,
 		TemplateMode:      g.TemplateMode,
 	}
-	detector := image.NewDetector(*detectionContext)
+	detector := image.NewDetector(detectionContext)
 
 	detectedImages, unsupportedImages, err := detector.DetectImages(values, []string{})
 	if err != nil {

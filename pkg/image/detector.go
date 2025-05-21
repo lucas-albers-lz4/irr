@@ -19,6 +19,8 @@ var (
 const (
 	// MaxComponents is the maximum number of components to split an image path into
 	MaxComponents = 2
+	// LocalhostRegistry is the constant used for identifying localhost registry references
+	LocalhostRegistry = "localhost" // Constant for localhost registry references
 )
 
 // MapStructureResult holds the result of validating an image map structure.
@@ -60,7 +62,7 @@ type Detector struct {
 
 // NewDetector creates a new Detector with the specified detection context.
 // The context controls filtering behavior, strict mode, and template handling.
-func NewDetector(context DetectionContext) *Detector {
+func NewDetector(context *DetectionContext) *Detector {
 	log.Debug("NewDetector", "context", context)
 
 	// For additional safety, create a new DetectionContext if none is provided
@@ -75,20 +77,27 @@ func NewDetector(context DetectionContext) *Detector {
 	}
 
 	// Use the provided context or create a default one
-	if context.SourceRegistries == nil {
-		// If nil, initialize with empty slices
-		context.SourceRegistries = []string{}
-		log.Debug("NewDetector", "initializing nil SourceRegistries with empty slice")
+	if context == nil {
+		context = &DetectionContext{
+			SourceRegistries:  []string{},
+			ExcludeRegistries: []string{},
+		}
+		log.Debug("NewDetector", "created default DetectionContext", *context)
+	} else {
+		// Initialize fields if nil
+		if context.SourceRegistries == nil {
+			context.SourceRegistries = []string{}
+			log.Debug("NewDetector", "initializing nil SourceRegistries with empty slice")
+		}
+
+		if context.ExcludeRegistries == nil {
+			context.ExcludeRegistries = []string{}
+			log.Debug("NewDetector", "initializing nil ExcludeRegistries with empty slice")
+		}
 	}
 
-	if context.ExcludeRegistries == nil {
-		// If nil, initialize with empty slices
-		context.ExcludeRegistries = []string{}
-		log.Debug("NewDetector", "initializing nil ExcludeRegistries with empty slice")
-	}
-
-	// Store a copy of the context to ensure it's not modified externally
-	detector.context = &context
+	// Store the context
+	detector.context = context
 
 	log.Debug("NewDetector", "initialized Detector with context", *detector.context)
 	return detector
@@ -484,7 +493,8 @@ func (d *Detector) validateMapStructure(m map[string]interface{}, path []string)
 	}
 
 	// Process Tag (optional)
-	if tagOk {
+	switch {
+	case tagOk:
 		tagStr, tagIsString := tagVal.(string)
 		if !tagIsString {
 			// Not a string - invalid structure
@@ -498,6 +508,15 @@ func (d *Detector) validateMapStructure(m map[string]interface{}, path []string)
 			return result
 		}
 		result.Tag = tagStr
+
+	case d.context != nil && d.context.ChartMetadata != nil && d.context.ChartMetadata.AppVersion != "":
+		// If no tag is specified but Chart.AppVersion is available, use that instead of defaulting to "latest"
+		log.Debug("No tag specified in map structure, using Chart.AppVersion", "path", path, "appVersion", d.context.ChartMetadata.AppVersion)
+		result.Tag = d.context.ChartMetadata.AppVersion
+
+	default:
+		// No tag and no AppVersion, will default to latest during parsing
+		log.Debug("No tag specified in map structure and no AppVersion available", "path", path)
 	}
 
 	// Process Digest (optional)
@@ -550,7 +569,7 @@ func (d *Detector) createImageReference(repoStr, regStr, tagStr, digestStr strin
 		// Check length again for safety/linter before accessing index 0
 		if len(parts) > 0 {
 			firstPart := parts[0]
-			hasRegistryPrefix = strings.ContainsAny(firstPart, ".:") || firstPart == "localhost"
+			hasRegistryPrefix = strings.ContainsAny(firstPart, ".:") || firstPart == LocalhostRegistry
 		}
 	}
 
@@ -603,8 +622,14 @@ func (d *Detector) createImageReference(repoStr, regStr, tagStr, digestStr strin
 	candidateStr := builder.String()
 	log.Debug("Assembled candidate string:", "'", candidateStr, "' (Registry Applied:", registryApplied, ")")
 
-	// Parse the constructed candidate string using the canonical parser.
-	ref, err := ParseImageReference(candidateStr)
+	// Get ChartMetadata from context if available
+	var chartMetadata *ChartMetadata
+	if d.context != nil && d.context.ChartMetadata != nil {
+		chartMetadata = d.context.ChartMetadata
+	}
+
+	// Parse the constructed candidate string using the canonical parser with ChartMetadata
+	ref, err := ParseImageReference(candidateStr, chartMetadata)
 	if err != nil {
 		log.Debug("Error parsing assembled reference", "'", candidateStr, "' at path", path, ":", err)
 		return nil, fmt.Errorf("failed to parse assembled reference '%s' from path %v: %w", candidateStr, path, err)
@@ -694,6 +719,21 @@ func (d *Detector) tryExtractImageFromMap(m map[string]interface{}, path []strin
 func (d *Detector) tryExtractImageFromString(s string, path []string) (*DetectedImage, error) {
 	log.Debug("tryExtractImageFromString", "Path", path, "String", s)
 
+	// Debug ChartMetadata
+	if d.context != nil {
+		log.Debug("Context is NOT nil")
+		if d.context.ChartMetadata != nil {
+			log.Debug("ChartMetadata is available",
+				"AppVersion", d.context.ChartMetadata.AppVersion,
+				"Name", d.context.ChartMetadata.Name,
+				"Version", d.context.ChartMetadata.Version)
+		} else {
+			log.Debug("ChartMetadata is NIL")
+		}
+	} else {
+		log.Debug("Context is NIL")
+	}
+
 	// Skip template variables in normal mode
 	if containsTemplate(s) {
 		log.Debug("[DEBUG irr DETECT STRING SKIP] Skipping template string:", s)
@@ -710,7 +750,14 @@ func (d *Detector) tryExtractImageFromString(s string, path []string) (*Detected
 	// DEBUG: Log input to ParseImageReference
 	log.Debug("Calling ParseImageReference with:", s)
 
-	ref, err := ParseImageReference(s)
+	// Get the chart metadata from context if available
+	var chartMetadata *ChartMetadata
+	if d.context != nil && d.context.ChartMetadata != nil {
+		chartMetadata = d.context.ChartMetadata
+	}
+
+	// Pass the chart metadata to use AppVersion as fallback instead of "latest"
+	ref, err := ParseImageReference(s, chartMetadata)
 
 	// DEBUG: Log output from ParseImageReference
 	log.Debug("ParseImageReference returned:", "err", err)

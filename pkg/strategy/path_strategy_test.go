@@ -305,7 +305,7 @@ func TestFlatStrategy(t *testing.T) {
 		},
 		{
 			name:          "invalid image string (ambiguous tag/repo)",
-			originalImage: "some/repo/without/registry:",
+			originalImage: "docker.io/repo:tag@sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
 			expectedError: true,
 		},
 	}

@@ -110,9 +110,14 @@ func (a *Adapter) InspectRelease(ctx context.Context, releaseName, namespace, ou
 
 	// Create detector for image analysis
 	// Fix: Use proper constructor to initialize the detector with a valid context
-	detectionContext := image.DetectionContext{
+	detectionContext := &image.DetectionContext{
 		SourceRegistries:  []string{}, // Empty for inspection
 		ExcludeRegistries: []string{},
+		ChartMetadata: &image.ChartMetadata{
+			Name:       chartMeta.Name,
+			Version:    chartMeta.Version,
+			AppVersion: chartMeta.AppVersion,
+		},
 	}
 
 	// Initialize detector properly
@@ -208,11 +213,16 @@ func (a *Adapter) OverrideRelease(ctx context.Context, releaseName, namespace st
 
 	// Set up options as best we can
 	// Fix: Use proper constructor to initialize the detector with a valid context
-	detectionContext := image.DetectionContext{
+	detectionContext := &image.DetectionContext{
 		SourceRegistries:  sourceRegistries, // Use the source registries from the parameter
 		ExcludeRegistries: []string{},
 		GlobalRegistry:    targetRegistry,     // Set the global registry from the parameter
 		Strict:            options.StrictMode, // Use the strict mode option
+		ChartMetadata: &image.ChartMetadata{
+			Name:       chartMeta.Name,
+			Version:    chartMeta.Version,
+			AppVersion: chartMeta.AppVersion,
+		},
 	}
 
 	// Initialize detector properly
