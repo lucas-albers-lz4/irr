@@ -397,6 +397,11 @@ func (a *ContextAwareAnalyzer) normalizeImageValues(val map[string]interface{}) 
 	// Handle registry (optional)
 	if regVal, ok := val["registry"].(string); ok && regVal != "" {
 		registry = regVal
+		// Strip port from registry if present
+		if strings.Contains(registry, ":") {
+			portIndex := strings.LastIndex(registry, ":")
+			registry = registry[:portIndex]
+		}
 	} else {
 		registry = DefaultRegistry // Default to docker.io if not specified
 	}
@@ -411,6 +416,11 @@ func (a *ContextAwareAnalyzer) normalizeImageValues(val map[string]interface{}) 
 			if strings.Contains(parts[0], ".") || strings.Contains(parts[0], ":") || parts[0] == "localhost" {
 				// Override registry from the repository string
 				registry = parts[0]
+				// Strip port from registry if present
+				if strings.Contains(registry, ":") {
+					portIndex := strings.LastIndex(registry, ":")
+					registry = registry[:portIndex]
+				}
 				repository = parts[1]
 			}
 		}
@@ -474,6 +484,11 @@ func (a *ContextAwareAnalyzer) parseImageStringNoDefaults(val string) (registry,
 		// Simple heuristic: if first part contains '.' or ':', assume it's a registry
 		if strings.Contains(firstPart, ".") || strings.Contains(firstPart, ":") {
 			registry = firstPart
+			// Strip port from registry if present
+			if strings.Contains(registry, ":") {
+				portIndex := strings.LastIndex(registry, ":")
+				registry = registry[:portIndex]
+			}
 			repository = remaining[slashIdx+1:]
 		} else {
 			// No registry marker found, assume default was intended implicitly OR it's just repo
