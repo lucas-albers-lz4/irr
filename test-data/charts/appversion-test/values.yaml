@@ -1,0 +1,29 @@
+# Different image referencing formats to test AppVersion functionality
+
+# Format 1: Standard map with no tag (should use appVersion)
+standardImageMap:
+  registry: docker.io
+  repository: library/nginx
+  # Tag intentionally omitted to use appVersion
+
+# Format 2: Image string with no tag (should use appVersion)
+stringImage: docker.io/nginx
+
+# Format 3: Image map with registry but no tag (should use appVersion)
+namedImage:
+  registry: quay.io
+  repository: prometheus/node-exporter
+  # Tag intentionally omitted to use appVersion
+
+# Format 4: Image with explicit tag (should NOT use appVersion)
+explicitTagImage:
+  registry: docker.io
+  repository: bitnami/redis
+  tag: 6.2.7
+
+# Format 5: Context-aware analyzer object with no tag
+contextAwareObject:
+  image:
+    registry: docker.io
+    repository: bitnami/mysql
+    # Tag intentionally omitted to use appVersion 

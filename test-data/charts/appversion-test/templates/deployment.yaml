@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-appversion-test
+  labels:
+    app: {{ .Release.Name }}-appversion-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-appversion-test
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-appversion-test
+    spec:
+      containers:
+      - name: standard-map-test
+        image: "{{ .Values.standardImageMap.registry }}/{{ .Values.standardImageMap.repository }}:{{ .Values.standardImageMap.tag | default .Chart.AppVersion }}"
+      
+      - name: string-image-test
+        image: "{{ .Values.stringImage }}:{{ .Chart.AppVersion }}"
+        
+      - name: named-image-test
+        image: "{{ .Values.namedImage.registry }}/{{ .Values.namedImage.repository }}:{{ .Values.namedImage.tag | default .Chart.AppVersion }}"
+        
+      - name: explicit-tag-test
+        image: "{{ .Values.explicitTagImage.registry }}/{{ .Values.explicitTagImage.repository }}:{{ .Values.explicitTagImage.tag }}"
+        
+      - name: context-aware-test
+        image: "{{ .Values.contextAwareObject.image.registry }}/{{ .Values.contextAwareObject.image.repository }}:{{ .Values.contextAwareObject.image.tag | default .Chart.AppVersion }}" 
