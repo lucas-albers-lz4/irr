@@ -312,7 +312,7 @@ func runImageDetectorTests(t *testing.T, tests []struct {
 				ctx.GlobalRegistry = "docker.io"
 			}
 
-			detector := NewDetector(*ctx)
+			detector := NewDetector(ctx)
 			gotDetected, gotUnsupported, err := detector.DetectImages(tc.values, []string{})
 			assert.NoError(t, err)
 			assert.Empty(t, gotUnsupported)
@@ -356,7 +356,7 @@ func TestImageDetector_MixedValues(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Context needed for default registry (docker.io)
-			ctx := DetectionContext{
+			ctx := &DetectionContext{
 				SourceRegistries: []string{"docker.io"},
 			}
 			detector := NewDetector(ctx)
@@ -588,7 +588,7 @@ func TestImageDetector_GlobalRegistryBasic(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			detector := NewDetector(*ctx)
+			detector := NewDetector(ctx)
 			gotDetected, gotUnsupported, err := detector.DetectImages(tc.values, []string{})
 			assert.NoError(t, err)
 			assert.Empty(t, gotUnsupported)
@@ -637,7 +637,7 @@ func TestImageDetector_GlobalRegistryOverride(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			detector := NewDetector(*ctx)
+			detector := NewDetector(ctx)
 			gotDetected, gotUnsupported, err := detector.DetectImages(tc.values, []string{})
 			assert.NoError(t, err)
 			assert.Empty(t, gotUnsupported)
@@ -700,7 +700,7 @@ func TestImageDetector_GlobalRegistryMultiImage(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			detector := NewDetector(*ctx)
+			detector := NewDetector(ctx)
 			gotDetected, gotUnsupported, err := detector.DetectImages(tc.values, []string{})
 			assert.NoError(t, err)
 			assert.Empty(t, gotUnsupported)
@@ -725,7 +725,7 @@ func TestImageDetector_TemplateVariables(t *testing.T) {
 	tests := []struct {
 		name                     string
 		values                   map[string]interface{}
-		context                  DetectionContext
+		context                  *DetectionContext
 		expectedCount            int                                                // Expected DETECTED count
 		expectedUnsupportedCount int                                                // Expected UNSUPPORTED count
 		checkError               func(t *testing.T, unsupported []UnsupportedImage) // Function to check unsupported details
@@ -738,7 +738,7 @@ func TestImageDetector_TemplateVariables(t *testing.T) {
 					"tag":        "{{ .Chart.AppVersion }}",
 				},
 			},
-			context: DetectionContext{
+			context: &DetectionContext{
 				SourceRegistries: []string{"docker.io"}, // Assume docker.io for nginx
 				Strict:           true,                  // Enable strict mode
 			},
@@ -754,7 +754,7 @@ func TestImageDetector_TemplateVariables(t *testing.T) {
 					"tag":        "1.23",
 				},
 			},
-			context: DetectionContext{
+			context: &DetectionContext{
 				SourceRegistries: []string{"docker.io"}, // Assume docker.io
 				Strict:           true,                  // Enable strict mode
 			},
@@ -879,7 +879,7 @@ func TestImageDetector_ContainerArrays(t *testing.T) {
 				SourceRegistries: []string{defaultRegistry},
 				TemplateMode:     true, // Enable template mode for container array tests
 			}
-			detector := NewDetector(*ctx)
+			detector := NewDetector(ctx)
 			gotDetected, gotUnsupported, err := detector.DetectImages(tc.values, []string{})
 			assert.NoError(t, err)
 			assert.Empty(t, gotUnsupported)
@@ -977,7 +977,7 @@ func TestDetectImages_BasicDetection(t *testing.T) {
 	}
 
 	// Context needed for multiple registries
-	ctx := DetectionContext{
+	ctx := &DetectionContext{
 		SourceRegistries: []string{"docker.io", "quay.io"},
 	}
 	detector := NewDetector(ctx)
@@ -1026,7 +1026,7 @@ func TestDetectImages_StrictMode(t *testing.T) {
 	}
 
 	// Run with strict mode and docker.io as source
-	ctx := DetectionContext{
+	ctx := &DetectionContext{
 		Strict:           true,
 		SourceRegistries: []string{"docker.io"},
 	}
@@ -1064,7 +1064,7 @@ func TestDetectImages_EmptyValues(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			detector := NewDetector(DetectionContext{})
+			detector := NewDetector(&DetectionContext{})
 			gotDetected, gotUnsupported, err := detector.DetectImages(tt.values, nil)
 			assert.NoError(t, err)
 			assert.Empty(t, gotUnsupported)
@@ -1145,7 +1145,7 @@ func TestDetectImages_WithStartingPath(t *testing.T) {
 	}
 
 	// Context needed for multiple registries
-	ctx := DetectionContext{
+	ctx := &DetectionContext{
 		SourceRegistries: []string{"docker.io", "quay.io"},
 	}
 	detector := NewDetector(ctx)
@@ -1190,7 +1190,7 @@ func TestImageDetector_NonImageConfiguration(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Context needed for default registry (docker.io)
-			ctx := DetectionContext{
+			ctx := &DetectionContext{
 				SourceRegistries: []string{"docker.io"},
 			}
 			detector := NewDetector(ctx)
