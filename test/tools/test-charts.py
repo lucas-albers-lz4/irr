@@ -1379,10 +1379,31 @@ async def test_chart_subchart_analysis(chart_info, target_registry, irr_binary, 
             analyzer_images_data = json.loads(inspect_stdout)
             # Extract image strings into a set for easier comparison later
             analyzer_images_set = set()
+            # Also create a dict mapping of full image reference -> parsed components
+            analyzer_images_detail = {}
+            
             if isinstance(analyzer_images_data.get('images'), list):
                 for img_info in analyzer_images_data['images']:
-                    if isinstance(img_info, dict) and 'image' in img_info:
-                        analyzer_images_set.add(img_info['image'])
+                    if isinstance(img_info, dict):
+                        # Create complete image reference
+                        registry = img_info.get('registry', 'docker.io')
+                        repository = img_info.get('repository', '')
+                        tag = img_info.get('tag', 'latest')
+                        if img_info.get('digest'):
+                            img_ref = f"{registry}/{repository}@{img_info.get('digest')}"
+                        else:
+                            img_ref = f"{registry}/{repository}:{tag}"
+                            
+                        analyzer_images_set.add(img_ref)
+                        analyzer_images_detail[img_ref] = {
+                            "registry": registry,
+                            "repository": repository,
+                            "tag": tag,
+                            "digest": img_info.get('digest', ''),
+                            "source": img_info.get('source', ''),
+                            "valuePath": img_info.get('valuePath', '')
+                        }
+                        
             log_debug(f"Found {len(analyzer_images_set)} unique images via irr inspect.")
         except json.JSONDecodeError as e:
             log_debug(f"Failed to parse irr inspect JSON output: {e}")
@@ -1489,6 +1510,8 @@ async def test_chart_subchart_analysis(chart_info, target_registry, irr_binary, 
         # --- 4. Parse Helm Template Output & Extract Images ---
         log_debug("Parsing helm template output and extracting images...")
         template_images_map: Dict[str, Set[str]] = defaultdict(set) # image -> set(kinds)
+        # Add a new dict to store parsed image details from template
+        template_images_detail = {}
         yaml_parsing_errors = []
 
         if helm_template_rc == 0 and rendered_yaml:
@@ -1517,6 +1540,12 @@ async def test_chart_subchart_analysis(chart_info, target_registry, irr_binary, 
                              current_kind_str = kind or "UnknownKind"
                              for image in extracted_images:
                                  template_images_map[image].add(current_kind_str)
+                                 # Parse the image reference to get components
+                                 if image not in template_images_detail:
+                                     template_images_detail[image] = parse_image_reference(image)
+                                     template_images_detail[image]["kinds"] = [current_kind_str]
+                                 else:
+                                     template_images_detail[image]["kinds"].append(current_kind_str)
 
                     except Exception as e:
                         log_debug(f"Error processing document {doc_index}: {e}")
@@ -1531,12 +1560,44 @@ async def test_chart_subchart_analysis(chart_info, target_registry, irr_binary, 
         # log_debug(f"Found {len(template_images_set)} unique images via helm template (placeholder). Actual extraction pending.")
         log_debug(f"Found {len(template_images_set)} unique images via helm template.")
 
-        # --- 5. Compare Image Sets ---
+        # --- 5. Compare Image Sets and Tags ---
         images_only_in_analyzer = analyzer_images_set - template_images_set
         images_only_in_template = template_images_set - analyzer_images_set
         common_images = analyzer_images_set.intersection(template_images_set)
 
+        # New: Compare image tags and registries for common images
+        tag_mismatches = []
+        registry_mismatches = []
+        
+        for image in common_images:
+            analyzer_info = analyzer_images_detail.get(image, {})
+            template_info = template_images_detail.get(image, {})
+            
+            # Check tag matches (if digest is not used)
+            if not analyzer_info.get("digest") and not template_info.get("digest"):
+                analyzer_tag = analyzer_info.get("tag", "")
+                template_tag = template_info.get("tag", "")
+                if analyzer_tag != template_tag:
+                    tag_mismatches.append({
+                        "image": image,
+                        "analyzer_tag": analyzer_tag,
+                        "template_tag": template_tag
+                    })
+                    log_debug(f"Tag mismatch for {image}: analyzer={analyzer_tag}, template={template_tag}")
+            
+            # Check registry matches
+            analyzer_registry = analyzer_info.get("registry", "")
+            template_registry = template_info.get("registry", "")
+            if analyzer_registry != template_registry:
+                registry_mismatches.append({
+                    "image": image,
+                    "analyzer_registry": analyzer_registry,
+                    "template_registry": template_registry
+                })
+                log_debug(f"Registry mismatch for {image}: analyzer={analyzer_registry}, template={template_registry}")
+
         log_debug(f"Comparison: Common={len(common_images)}, AnalyzerOnly={len(images_only_in_analyzer)}, TemplateOnly={len(images_only_in_template)}")
+        log_debug(f"Mismatches: Tag={len(tag_mismatches)}, Registry={len(registry_mismatches)}")
 
         # --- 6. Determine Status & Prepare Results ---
         analysis_status = "UNKNOWN"
@@ -1544,8 +1605,12 @@ async def test_chart_subchart_analysis(chart_info, target_registry, irr_binary, 
              analysis_status = "ERROR_TEMPLATE_EXEC"
         elif yaml_parsing_errors:
              analysis_status = "ERROR_TEMPLATE_PARSE"
-        elif not images_only_in_analyzer and not images_only_in_template:
+        elif not images_only_in_analyzer and not images_only_in_template and not tag_mismatches and not registry_mismatches:
              analysis_status = "MATCH"
+        elif tag_mismatches:
+             analysis_status = "TAG_MISMATCH"
+        elif registry_mismatches:
+             analysis_status = "REGISTRY_MISMATCH"
         elif images_only_in_analyzer and not images_only_in_template:
              analysis_status = "ANALYZER_EXTRA"
         elif not images_only_in_analyzer and images_only_in_template:
@@ -1578,6 +1643,9 @@ async def test_chart_subchart_analysis(chart_info, target_registry, irr_binary, 
             "discrepancy_warning_found": discrepancy_warning_found,
             "warning_analyzer_count": analyzer_count_from_warning,
             "warning_template_count": template_count_from_warning,
+            # Add new fields for tag and registry mismatches
+            "tag_mismatches": tag_mismatches,
+            "registry_mismatches": registry_mismatches,
         }
 
 
@@ -1626,28 +1694,40 @@ async def test_chart_subchart_analysis(chart_info, target_registry, irr_binary, 
         common_count = len(common_images)
         analyzer_only_count = len(images_only_in_analyzer)
         template_only_count = len(images_only_in_template)
+        tag_mismatch_count = len(tag_mismatches)
+        registry_mismatch_count = len(registry_mismatches)
 
         base_summary = f"Inspect: {analyzer_count}, Template: {template_count}. Common: {common_count}, InspectOnly: {analyzer_only_count}, TemplateOnly: {template_only_count}."
+        mismatch_summary = f"Tag mismatches: {tag_mismatch_count}, Registry mismatches: {registry_mismatch_count}."
 
         if analysis_status.startswith("ERROR"):
             final_status = "SUBCHART_ANALYSIS_ERROR"
             final_category = analysis_status # Use the specific error status
-            final_details = f"Subchart analysis FAILED. Status: {analysis_status}. {base_summary} Check logs."
+            final_details = f"Subchart analysis FAILED. Status: {analysis_status}. {base_summary} {mismatch_summary} Check logs."
+        elif tag_mismatch_count > 0:
+            final_status = "TAG_VERSION_MISMATCH"
+            final_category = "TAG_MISMATCH"
+            first_mismatch = tag_mismatches[0] if tag_mismatches else {"image": "unknown", "analyzer_tag": "?", "template_tag": "?"}
+            final_details = f"MISMATCH: Found {tag_mismatch_count} tag mismatches. Example: {first_mismatch['image']} (Analyzer: {first_mismatch['analyzer_tag']}, Template: {first_mismatch['template_tag']}). {base_summary}"
+        elif registry_mismatch_count > 0:
+            final_status = "REGISTRY_MISMATCH"
+            final_category = "REGISTRY_MISMATCH"
+            final_details = f"MISMATCH: Found {registry_mismatch_count} registry mismatches. {base_summary} {mismatch_summary}"
         elif not analyzer_images_set and template_images_set:
             final_status = "SUBCHART_DISCREPANCY_INSPECT_MISS" # New status for this key scenario
             final_category = "DISCREPANCY"
-            final_details = f"DISCREPANCY: Inspect found 0 images, Template found {template_count} images. {base_summary}"
+            final_details = f"DISCREPANCY: Inspect found 0 images, Template found {template_count} images. {base_summary} {mismatch_summary}"
         elif analyzer_images_set and not template_images_set and helm_template_rc == 0 and not yaml_parsing_errors:
             # This is unusual: inspect found images, but a successful template run found none.
             final_status = "SUBCHART_DISCREPANCY_TEMPLATE_MISS"
             final_category = "DISCREPANCY"
-            final_details = f"DISCREPANCY: Inspect found {analyzer_count} images, Template found 0 images (and template was successful). {base_summary}"
+            final_details = f"DISCREPANCY: Inspect found {analyzer_count} images, Template found 0 images (and template was successful). {base_summary} {mismatch_summary}"
         elif not analyzer_images_set and not template_images_set:
-            final_details = f"MATCH: No images found by Inspect or Template. {base_summary}"
+            final_details = f"MATCH: No images found by Inspect or Template. {base_summary} {mismatch_summary}"
         elif analysis_status != "MATCH":
-            final_details = f"Discrepancy found. Status: {analysis_status}. {base_summary}"
+            final_details = f"Discrepancy found. Status: {analysis_status}. {base_summary} {mismatch_summary}"
         else: # MATCH and both found images
-            final_details = f"MATCH: Image sets are identical. {base_summary}"
+            final_details = f"MATCH: Image sets and tags are identical. {base_summary} {mismatch_summary}"
 
 
         log_debug(f"Subchart analysis finished. Final Status: {final_status}, Details: {final_details[:100]}...")
@@ -2509,6 +2589,68 @@ async def main():
         if worse:
             print("  Charts worse with context-aware:", ", ".join(worse))
         return
+
+
+def parse_image_reference(image_ref: str) -> Dict[str, str]:
+    """
+    Parse an image reference string into its components.
+    Returns a dictionary with registry, repository, and tag/digest.
+    """
+    result = {
+        "original": image_ref,
+        "registry": "docker.io",  # Default registry
+        "repository": "",
+        "tag": "latest",  # Default tag
+        "digest": ""
+    }
+    
+    # Handle empty or None
+    if not image_ref:
+        return result
+        
+    # Handle digest format
+    if "@sha256:" in image_ref:
+        # Split on digest separator
+        parts = image_ref.split("@sha256:", 1)
+        name_part = parts[0]
+        result["digest"] = "sha256:" + parts[1]
+        
+        # The tag part is now empty since we have a digest
+        result["tag"] = ""
+        
+        # Continue processing the name part
+        image_ref = name_part
+    
+    # Handle tag
+    if ":" in image_ref and "@" not in image_ref:
+        # Split on last colon (to handle registries with ports)
+        name_part, tag = image_ref.rsplit(":", 1)
+        result["tag"] = tag
+        image_ref = name_part
+    
+    # Handle registry and repository
+    if "/" in image_ref:
+        # Check if the first part looks like a registry
+        parts = image_ref.split("/", 1)
+        if "." in parts[0] or ":" in parts[0] or parts[0] == "localhost":
+            # This looks like a registry
+            result["registry"] = parts[0]
+            # Strip port if present
+            if ":" in result["registry"]:
+                result["registry"] = result["registry"].split(":", 1)[0]
+            result["repository"] = parts[1]
+        else:
+            # Just a path, likely docker.io
+            result["repository"] = image_ref
+    else:
+        # Single name repository
+        result["repository"] = image_ref
+        
+    # Add library/ prefix for Docker Hub official images
+    if result["registry"] == "docker.io" and "/" not in result["repository"]:
+        result["repository"] = "library/" + result["repository"]
+        
+    return result
 
 
 if __name__ == "__main__":
