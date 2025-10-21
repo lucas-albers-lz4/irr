@@ -20,5 +20,5 @@ jobs:
       - name: Verify install from GitHub release
         run: |
           helm plugin install https://github.com/lucas-albers-lz4/irr
-          helm irr -h
+          helm irr -v
           helm plugin remove irr
