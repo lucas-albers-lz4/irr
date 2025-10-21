@@ -61,29 +61,25 @@ verifySupported() {
     exit 1
   fi
 
-  if ! type "curl" > /dev/null && ! type "wget" > /dev/null; then
-    echo "Either curl or wget is required"
+  if ! type "curl" > /dev/null; then
+    echo "curl is required to install ${PROJECT_NAME}. Please install curl and retry."
     exit 1
   fi
 }
 
 # getDownloadURL checks the latest available version.
 getDownloadURL() {
-  # If there's a local build for this architecture, use it
-  local local_file="_dist/irr-${HELM_PLUGIN_VERSION}-${OS}-${ARCH}.tar.gz"
+  # Prefer a locally built artifact when present
+  local local_file="_dist/helm-irr-${HELM_PLUGIN_VERSION}-${OS}-${ARCH}.tar.gz"
   if [ -f "$local_file" ]; then
     echo "Using local build from $local_file"
     DOWNLOAD_URL="file://$local_file"
     return
   fi
 
-  # Otherwise, use the GitHub API to find the latest version for this project.
-  local latest_url="https://api.github.com/repos/$PROJECT_GH/releases/latest"
-  if type "curl" > /dev/null; then
-    DOWNLOAD_URL=$(curl -s $latest_url | grep $OS | awk '/\"browser_download_url\":/{gsub( /[,\"]/,"", $2); print $2}')
-  elif type "wget" > /dev/null; then
-    DOWNLOAD_URL=$(wget -q -O - $latest_url | awk '/\"browser_download_url\":/{gsub( /[,\"]/,"", $2); print $2}')
-  fi
+  # Construct release URL directly for the detected OS/ARCH and version
+  # File naming follows: helm-irr-<version>-<os>-<arch>.tar.gz
+  DOWNLOAD_URL="https://github.com/$PROJECT_GH/releases/download/v${HELM_PLUGIN_VERSION}/helm-irr-${HELM_PLUGIN_VERSION}-${OS}-${ARCH}.tar.gz"
 }
 
 # downloadFile downloads the latest binary package and also the checksum
@@ -95,8 +91,6 @@ downloadFile() {
     cp "${DOWNLOAD_URL#file://}" "$PLUGIN_TMP_FILE"
   elif type "curl" > /dev/null; then
     curl -L "$DOWNLOAD_URL" -o "$PLUGIN_TMP_FILE"
-  elif type "wget" > /dev/null; then
-    wget -q -O "$PLUGIN_TMP_FILE" "$DOWNLOAD_URL"
   fi
 }
 
