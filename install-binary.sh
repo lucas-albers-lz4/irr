@@ -5,6 +5,9 @@
 PROJECT_NAME="irr"
 PROJECT_GH="lucas-albers-lz4/$PROJECT_NAME"
 
+# Resolve script directory for stable relative paths
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Get plugin path from helm env if HELM_HOME not set
 if [ -z "$HELM_HOME" ]; then
   HELM_PLUGINS=$(helm env | grep HELM_PLUGINS | cut -d'"' -f2)
@@ -17,9 +20,33 @@ else
   HELM_PLUGIN_PATH="$HELM_HOME/plugins/irr"
 fi
 
-# Extract version from plugin.yaml if in the same directory
-if [ -f "plugin.yaml" ]; then
-  HELM_PLUGIN_VERSION=$(grep "version" plugin.yaml | cut -d'"' -f2)
+# Determine plugin version from plugin.yaml located near this script or HELM_PLUGIN_DIR
+if [ -z "${HELM_PLUGIN_VERSION:-}" ]; then
+  for candidate in "$SCRIPT_DIR/plugin.yaml" "${HELM_PLUGIN_DIR:-}/plugin.yaml" "./plugin.yaml"; do
+    if [ -f "$candidate" ]; then
+      HELM_PLUGIN_VERSION=$(awk -F: '
+        BEGIN { v="" }
+        /^version[[:space:]]*:/ {
+          v=$2
+          gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
+          gsub(/^"|"$/, "", v)
+          gsub(/^\x27|\x27$/, "", v) # strip single quotes if used
+          print v
+          exit
+        }
+      ' "$candidate")
+      [ -n "$HELM_PLUGIN_VERSION" ] && break
+    fi
+  done
+fi
+
+# Normalize version (strip leading 'v' if present) and validate
+HELM_PLUGIN_VERSION="${HELM_PLUGIN_VERSION#v}"
+
+if [ -z "$HELM_PLUGIN_VERSION" ]; then
+  echo "Failed to determine plugin version from plugin.yaml."
+  echo "Ensure version is set in $SCRIPT_DIR/plugin.yaml or set HELM_PLUGIN_VERSION."
+  exit 1
 fi
 
 if [[ $SKIP_BIN_INSTALL == "1" ]]; then
