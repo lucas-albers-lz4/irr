@@ -9,6 +9,7 @@
 package log
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -93,22 +94,22 @@ func SetOutput(w io.Writer) (restore func()) {
 
 // Debug logs a debug message with optional key-value pairs
 func Debug(msg string, args ...any) {
-	logger.Debug(msg, args...)
+	logger.DebugContext(context.Background(), msg, args...)
 }
 
 // Info logs an info message with optional key-value pairs
 func Info(msg string, args ...any) {
-	logger.Info(msg, args...)
+	logger.InfoContext(context.Background(), msg, args...)
 }
 
 // Warn logs a warning message with optional key-value pairs
 func Warn(msg string, args ...any) {
-	logger.Warn(msg, args...)
+	logger.WarnContext(context.Background(), msg, args...)
 }
 
 // Error logs an error message with optional key-value pairs
 func Error(msg string, args ...any) {
-	logger.Error(msg, args...)
+	logger.ErrorContext(context.Background(), msg, args...)
 }
 
 // Logger returns the underlying slog.Logger

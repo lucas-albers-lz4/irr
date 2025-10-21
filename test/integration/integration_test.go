@@ -4,6 +4,7 @@
 package integration
 
 import (
+	"context"
 	"flag"
 	"os"
 	"os/exec"
@@ -355,7 +356,7 @@ func TestDryRunFlag(t *testing.T) {
 	}
 
 	// #nosec G204 -- Test harness executes irr binary with test-controlled arguments.
-	cmd := exec.Command("../../bin/irr", args...)
+	cmd := exec.CommandContext(context.Background(), "../../bin/irr", args...)
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "Dry run should succeed")
 

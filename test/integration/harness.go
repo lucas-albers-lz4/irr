@@ -3,6 +3,7 @@ package integration
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -126,7 +127,7 @@ func NewTestHarness(t *testing.T) *TestHarness {
 	h.mappingsPath = mappingsPath
 
 	// Log harness initialization at Debug level
-	h.logger.Debug("Initialized harness in temp dir", "path", h.tempDir)
+	h.logger.DebugContext(context.Background(), "Initialized harness in temp dir", "path", h.tempDir)
 
 	return h
 }
@@ -255,19 +256,19 @@ func (h *TestHarness) setTestingEnv() func() {
 	// Store original value to restore it later
 	originalIrrTesting := os.Getenv("IRR_TESTING")
 	if err := os.Setenv("IRR_TESTING", "true"); err != nil {
-		h.logger.Warn("Failed to set IRR_TESTING environment variable", "error", err)
+		h.logger.WarnContext(context.Background(), "Failed to set IRR_TESTING environment variable", "error", err)
 	}
-	h.logger.Debug("Setting IRR_TESTING=true")
+	h.logger.DebugContext(context.Background(), "Setting IRR_TESTING=true")
 
 	return func() {
-		h.logger.Debug("Unsetting IRR_TESTING")
+		h.logger.DebugContext(context.Background(), "Unsetting IRR_TESTING")
 		if originalIrrTesting == "" {
 			if err := os.Unsetenv("IRR_TESTING"); err != nil {
-				h.logger.Warn("Failed to unset IRR_TESTING environment variable", "error", err)
+				h.logger.WarnContext(context.Background(), "Failed to unset IRR_TESTING environment variable", "error", err)
 			}
 		} else {
 			if err := os.Setenv("IRR_TESTING", originalIrrTesting); err != nil {
-				h.logger.Warn("Failed to restore IRR_TESTING environment variable", "error", err)
+				h.logger.WarnContext(context.Background(), "Failed to restore IRR_TESTING environment variable", "error", err)
 			}
 		}
 	}
@@ -365,7 +366,7 @@ func (h *TestHarness) GenerateOverrides(extraArgs ...string) error {
 // ValidateOverrides checks the generated overrides against expected values.
 // This function performs comprehensive validation of the override file structure.
 func (h *TestHarness) ValidateOverrides() error {
-	h.logger.Info(fmt.Sprintf("Validating overrides for chart: %s", h.chartPath))
+	h.logger.InfoContext(context.Background(), fmt.Sprintf("Validating overrides for chart: %s", h.chartPath))
 
 	mappings, err := h.loadMappings()
 	if err != nil {
@@ -373,7 +374,7 @@ func (h *TestHarness) ValidateOverrides() error {
 	}
 
 	expectedTargets := h.determineExpectedTargets(mappings)
-	h.logger.Info(fmt.Sprintf("Expecting images to use target registries: %v", expectedTargets))
+	h.logger.InfoContext(context.Background(), fmt.Sprintf("Expecting images to use target registries: %v", expectedTargets))
 
 	tempValidationOverridesPath, err := h.readAndWriteOverrides()
 	if err != nil {
@@ -415,14 +416,14 @@ func (h *TestHarness) loadMappings() (*registry.Mappings, error) {
 			}
 			// Convert structured config to mappings format
 			mappings = structConfig.ToMappings()
-			h.logger.Info(fmt.Sprintf("Successfully loaded mappings (structured format) from %s", h.mappingsPath))
+			h.logger.InfoContext(context.Background(), fmt.Sprintf("Successfully loaded mappings (structured format) from %s", h.mappingsPath))
 		case os.IsNotExist(statErr):
-			h.logger.Info(fmt.Sprintf("Mappings file %s does not exist, proceeding without mappings.", h.mappingsPath))
+			h.logger.InfoContext(context.Background(), fmt.Sprintf("Mappings file %s does not exist, proceeding without mappings.", h.mappingsPath))
 		default:
-			h.logger.Info(fmt.Sprintf("Warning: Error stating mappings file %s: %v", h.mappingsPath, statErr))
+			h.logger.InfoContext(context.Background(), fmt.Sprintf("Warning: Error stating mappings file %s: %v", h.mappingsPath, statErr))
 		}
 	} else {
-		h.logger.Info("No mappings file path specified for harness.")
+		h.logger.InfoContext(context.Background(), "No mappings file path specified for harness.")
 	}
 	return mappings, nil
 }
@@ -442,7 +443,7 @@ func (h *TestHarness) determineExpectedTargets(mappings *registry.Mappings) []st
 			}
 		}
 		if len(expectedTargets) == 0 {
-			h.logger.Info("Mappings file loaded but contains no target registries. Falling back to default.")
+			h.logger.InfoContext(context.Background(), "Mappings file loaded but contains no target registries. Falling back to default.")
 			expectedTargets = append(expectedTargets, image.NormalizeRegistry(h.targetReg))
 		}
 	default:
@@ -480,7 +481,7 @@ func (h *TestHarness) buildHelmArgs(tempValidationOverridesPath string) []string
 	args := []string{"template", "test-release", h.chartPath, "-f", tempValidationOverridesPath}
 	if h.chartName == "ingress-nginx" {
 		args = append(args, "--set", "global.security.allowInsecureImages=true")
-		h.logger.Info("Detected ingress-nginx chart, adding --set global.security.allowInsecureImages=true for validation")
+		h.logger.InfoContext(context.Background(), "Detected ingress-nginx chart, adding --set global.security.allowInsecureImages=true for validation")
 	}
 	return args
 }
@@ -656,7 +657,7 @@ func (h *TestHarness) buildEnv(envOverrides map[string]string) []string {
 				envMap[parts[0]] = ""
 			} else {
 				// Log unexpected case where SplitN returned an empty slice
-				h.logger.Warn(fmt.Sprintf("Unexpected empty slice from SplitN on env var: '%s'", envVar))
+				h.logger.WarnContext(context.Background(), fmt.Sprintf("Unexpected empty slice from SplitN on env var: '%s'", envVar))
 			}
 		}
 	}
@@ -687,8 +688,7 @@ func (h *TestHarness) ExecuteIRR(env map[string]string, args ...string) (string,
 	cmdArgs := append([]string{}, args...) // Create a mutable copy
 
 	log.Info("Executing command (capturing stdout)", "command", cmdPath, "args", cmdArgs)
-
-	cmd := exec.Command(cmdPath, cmdArgs...) // #nosec G204 Need to run the built binary
+	cmd := exec.CommandContext(context.Background(), cmdPath, cmdArgs...) // #nosec G204 Need to run the built binary
 
 	// Set environment variables if provided
 	cmd.Env = os.Environ() // Initialize with current environment
@@ -724,7 +724,7 @@ func (h *TestHarness) ExecuteIRRWithStderr(env map[string]string, useContextAwar
 	h.t.Logf("Executing IRR command: %s", cmdString)
 
 	// #nosec G204 - Subprocess launched with variable
-	cmd := exec.Command(h.getIrrBinaryPath(), fullArgs...)
+	cmd := exec.CommandContext(context.Background(), h.getIrrBinaryPath(), fullArgs...)
 	cmd.Dir = h.rootDir // Ensure command runs from the project root
 
 	// Set environment variables
@@ -771,13 +771,13 @@ func (h *TestHarness) getEnvSlice(customEnv map[string]string) []string {
 // ExecuteHelm runs the helm binary with the given arguments.
 func (h *TestHarness) ExecuteHelm(args ...string) (output string, err error) {
 	// #nosec G204 // Test harness executes helm with test-controlled arguments
-	cmd := exec.Command("helm", args...)
+	cmd := exec.CommandContext(context.Background(), "helm", args...)
 	cmd.Dir = h.tempDir // Run in the temp directory context
 	outputBytes, err := cmd.CombinedOutput()
 	outputStr := string(outputBytes)
 
-	h.logger.Info(fmt.Sprintf("[HARNESS EXECUTE_HELM] Command: helm %s", strings.Join(args, " ")))
-	h.logger.Info(fmt.Sprintf("[HARNESS EXECUTE_HELM] Full Output:\n%s", outputStr))
+	h.logger.InfoContext(context.Background(), fmt.Sprintf("[HARNESS EXECUTE_HELM] Command: helm %s", strings.Join(args, " ")))
+	h.logger.InfoContext(context.Background(), fmt.Sprintf("[HARNESS EXECUTE_HELM] Full Output:\n%s", outputStr))
 
 	if err != nil {
 		return outputStr, fmt.Errorf("helm command execution failed: %w", err)
@@ -874,15 +874,15 @@ func (h *TestHarness) AssertExitCode(expected int, args ...string) {
 	cwd, err := os.Getwd() // Check error now
 	if err != nil {
 		// Log the error but don't fail the test just for this
-		h.logger.Info(fmt.Sprintf("[ASSERT_EXIT_CODE WARNING] Failed to get current working directory: %v", err))
+		h.logger.InfoContext(context.Background(), fmt.Sprintf("[ASSERT_EXIT_CODE WARNING] Failed to get current working directory: %v", err))
 		cwd = unknownCWDPlaceholder // Use placeholder
 	}
-	h.logger.Info(fmt.Sprintf("[ASSERT_EXIT_CODE DEBUG] binPath: %s, CWD: %s", binPath, cwd))
+	h.logger.InfoContext(context.Background(), fmt.Sprintf("[ASSERT_EXIT_CODE DEBUG] binPath: %s, CWD: %s", binPath, cwd))
 
 	// G204: Subprocess launched with variable - Acceptable in test code.
-	cmd := exec.Command(binPath, args...) // #nosec G204
-	cmd.Dir = h.tempDir                   // Run from the temp directory
-	cmd.Env = h.buildEnv(nil)             // Use default env (includes IRR_TESTING=true)
+	cmd := exec.CommandContext(context.Background(), binPath, args...) // #nosec G204
+	cmd.Dir = h.tempDir                                                // Run from the temp directory
+	cmd.Env = h.buildEnv(nil)                                          // Use default env (includes IRR_TESTING=true)
 	outputBytes, runErr := cmd.CombinedOutput()
 	outputStr := string(outputBytes)
 
@@ -940,15 +940,15 @@ func (h *TestHarness) AssertErrorContains(substring string, args ...string) {
 	cwd, err := os.Getwd() // Check error now
 	if err != nil {
 		// Log the error but don't fail the test just for this
-		h.logger.Info(fmt.Sprintf("[ASSERT_ERROR_CONTAINS WARNING] Failed to get current working directory: %v", err))
+		h.logger.InfoContext(context.Background(), fmt.Sprintf("[ASSERT_ERROR_CONTAINS WARNING] Failed to get current working directory: %v", err))
 		cwd = unknownCWDPlaceholder // Use placeholder
 	}
-	h.logger.Info(fmt.Sprintf("[ASSERT_ERROR_CONTAINS DEBUG] binPath: %s, CWD: %s", binPath, cwd))
+	h.logger.InfoContext(context.Background(), fmt.Sprintf("[ASSERT_ERROR_CONTAINS DEBUG] binPath: %s, CWD: %s", binPath, cwd))
 
 	// G204: Subprocess launched with variable - Acceptable in test code.
-	cmd := exec.Command(binPath, args...) // #nosec G204
-	cmd.Dir = h.tempDir                   // Run from the temp directory
-	cmd.Env = h.buildEnv(nil)             // Use default env (includes IRR_TESTING=true)
+	cmd := exec.CommandContext(context.Background(), binPath, args...) // #nosec G204
+	cmd.Dir = h.tempDir                                                // Run from the temp directory
+	cmd.Env = h.buildEnv(nil)                                          // Use default env (includes IRR_TESTING=true)
 	var stderr bytes.Buffer
 	var stdout bytes.Buffer // Keep capturing stdout for context if needed, but don't check it
 	cmd.Stderr = &stderr
@@ -960,9 +960,9 @@ func (h *TestHarness) AssertErrorContains(substring string, args ...string) {
 	stderrStr := stderr.String()
 	stdoutStr := stdout.String() // Log stdout too for debugging context
 
-	h.logger.Info(fmt.Sprintf("[ASSERT_ERROR_CONTAINS] Stderr:\n%s", stderrStr))
+	h.logger.InfoContext(context.Background(), fmt.Sprintf("[ASSERT_ERROR_CONTAINS] Stderr:\n%s", stderrStr))
 	if stdoutStr != "" {
-		h.logger.Info(fmt.Sprintf("[ASSERT_ERROR_CONTAINS] Stdout:\n%s", stdoutStr))
+		h.logger.InfoContext(context.Background(), fmt.Sprintf("[ASSERT_ERROR_CONTAINS] Stdout:\n%s", stdoutStr))
 	}
 
 	assert.Contains(
@@ -995,7 +995,7 @@ func (h *TestHarness) BuildIRR() {
 	require.NoError(h.t, err)
 
 	// #nosec G204 -- Building the project's own binary is safe.
-	cmd := exec.Command("go", "build", "-o", binPath, "./cmd/irr")
+	cmd := exec.CommandContext(context.Background(), "go", "build", "-o", binPath, "./cmd/irr")
 	projectRoot, err := getProjectRoot() // Get project root
 	if err != nil {
 		h.t.Fatalf("Failed to get project root for build: %v", err)
@@ -1057,14 +1057,14 @@ func (h *TestHarness) CreateRegistryMappingsFile(mappingType string) string {
 	case mappingType == "":
 		// Handle empty string as a special case
 		content = ""
-		h.logger.Info("Creating empty registry mappings file")
+		h.logger.InfoContext(context.Background(), "Creating empty registry mappings file")
 	case strings.HasPrefix(mappingType, "version:"),
 		strings.HasPrefix(mappingType, "registries:"),
 		strings.HasPrefix(mappingType, "compatibility:"),
 		strings.Contains(mappingType, "\n"):
 		// If it looks like YAML content, use it directly
 		content = mappingType
-		h.logger.Info("Using direct YAML content as registry mappings file")
+		h.logger.InfoContext(context.Background(), "Using direct YAML content as registry mappings file")
 	default:
 		// Otherwise, treat it as a predefined mapping type
 		switch mappingType {
@@ -1101,8 +1101,8 @@ registries:
 		}
 	}
 
-	h.logger.Info(fmt.Sprintf("Writing %s format registry mappings file", mappingType))
-	h.logger.Info(fmt.Sprintf("Registry mappings file content verification:\n%s", content))
+	h.logger.InfoContext(context.Background(), fmt.Sprintf("Writing %s format registry mappings file", mappingType))
+	h.logger.InfoContext(context.Background(), fmt.Sprintf("Registry mappings file content verification:\n%s", content))
 
 	mappingsPath := filepath.Join(h.tempDir, "registry-mappings.yaml")
 	// Declare and assign err in one step
@@ -1171,14 +1171,14 @@ func (h *TestHarness) RunIrrCommandWithOutput(cmdArgs []string) (string, error) 
 	originalWd, wdErr := os.Getwd() // Check error
 	if wdErr != nil {
 		// Log warning but don't fail test
-		h.logger.Warn("Failed to get working directory for logging", "error", wdErr)
+		h.logger.WarnContext(context.Background(), "Failed to get working directory for logging", "error", wdErr)
 		originalWd = unknownCWDPlaceholder
 	}
 	log.Debug("[HARNESS RunIrrCommand] Test process WD before running command", "wd", originalWd)
 	log.Debug("[HARNESS RunIrrCommand] Preparing command", "args", cmdArgs)
 
-	cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...) // #nosec G204 - Args are controlled by test code
-	cmd.Dir = h.tempDir                             // Set the working directory for the command being run
+	cmd := exec.CommandContext(context.Background(), cmdArgs[0], cmdArgs[1:]...) // #nosec G204 - Args are controlled by test code
+	cmd.Dir = h.tempDir                                                          // Set the working directory for the command being run
 
 	log.Debug("[HARNESS RunIrrCommand] Setting cmd.Dir for child process", "dir", cmd.Dir)
 
@@ -1219,7 +1219,7 @@ func (h *TestHarness) RunIrrCommand(args ...string) (stdout, stderr string, exit
 // TODO: Implement the actual command execution and parsing logic.
 func (h *TestHarness) ExecuteAnalysisOnly(chartPath string, extraArgs ...string) (*analysis.ChartAnalysis, error) {
 	h.t.Helper()
-	h.logger.Info("Executing analysis only (placeholder)", "chartPath", chartPath)
+	h.logger.InfoContext(context.Background(), "Executing analysis only (placeholder)", "chartPath", chartPath)
 
 	// Placeholder implementation: Replace with actual command execution
 	args := []string{
@@ -1233,14 +1233,14 @@ func (h *TestHarness) ExecuteAnalysisOnly(chartPath string, extraArgs ...string)
 	// For now, return a dummy result or error
 	stdout, stderr, err := h.ExecuteIRRWithStderr(nil, true, args...)
 	if err != nil {
-		h.logger.Error("Analysis command execution failed", "stderr", stderr, "error", err)
+		h.logger.ErrorContext(context.Background(), "Analysis command execution failed", "stderr", stderr, "error", err)
 		return nil, fmt.Errorf("analysis command failed: %w\nstderr: %s", err, stderr)
 	}
 
 	// Parse stdout JSON into analysis.ChartAnalysis
 	var analysisResult analysis.ChartAnalysis
 	if parseErr := json.Unmarshal([]byte(stdout), &analysisResult); parseErr != nil {
-		h.logger.Error("Failed to parse analysis JSON output", "stdout", stdout, "error", parseErr)
+		h.logger.ErrorContext(context.Background(), "Failed to parse analysis JSON output", "stdout", stdout, "error", parseErr)
 		return nil, fmt.Errorf("failed to parse analysis JSON: %w", parseErr)
 	}
 
@@ -1251,9 +1251,9 @@ func (h *TestHarness) ExecuteAnalysisOnly(chartPath string, extraArgs ...string)
 func (h *TestHarness) UninstallHelmRelease(releaseName, namespace string) error {
 	output, err := h.ExecuteHelm("uninstall", releaseName, "--namespace", namespace)
 	if err != nil {
-		h.logger.Debug("Failed to uninstall Helm release", "release", releaseName, "namespace", namespace, "error", err, "output", output)
+		h.logger.DebugContext(context.Background(), "Failed to uninstall Helm release", "release", releaseName, "namespace", namespace, "error", err, "output", output)
 		return fmt.Errorf("failed to uninstall release %s in namespace %s: %w", releaseName, namespace, err)
 	}
-	h.logger.Debug("Successfully uninstalled Helm release", "release", releaseName, "namespace", namespace)
+	h.logger.DebugContext(context.Background(), "Successfully uninstalled Helm release", "release", releaseName, "namespace", namespace)
 	return nil
 }
