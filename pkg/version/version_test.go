@@ -1,6 +1,7 @@
 package version
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -253,10 +254,10 @@ func TestCheckHelmVersion(t *testing.T) {
 
 // Mock function for exec.Command
 func mockExecCommand(output string, err error) *exec.Cmd {
-	cmd := exec.Command("echo", output)
+	cmd := exec.CommandContext(context.Background(), "echo", output)
 	// If an error is provided, we create a command that will fail
 	if err != nil {
-		cmd = exec.Command("false")
+		cmd = exec.CommandContext(context.Background(), "false")
 	}
 	return cmd
 }

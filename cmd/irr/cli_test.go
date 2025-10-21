@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -60,7 +61,7 @@ func runCommand(t *testing.T, args ...string) (stdout, stderr string, exitCode i
 	t.Helper()
 
 	binPath := findIrrBinary(t)
-	cmd := exec.Command(binPath, args...)
+	cmd := exec.CommandContext(context.Background(), binPath, args...)
 
 	// Set IRR_TESTING environment variable
 	cmd.Env = append(os.Environ(), "IRR_TESTING=true")
