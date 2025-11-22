@@ -556,6 +556,7 @@ func (h *TestHarness) fallbackCheck(mappings *registry.Mappings, output string) 
 }
 
 // getOverrides reads the default generated override file and returns its content as a map.
+//
 // Deprecated: Use getOverridesFromPath for clarity when multiple override files might exist.
 func (h *TestHarness) getOverrides() (overrides map[string]interface{}, err error) {
 	return h.getOverridesFromPath(h.overridePath)
