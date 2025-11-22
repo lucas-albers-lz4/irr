@@ -1,5 +1,4 @@
 //go:build test
-// +build test
 
 // This file contains test helpers that are only used during testing
 
