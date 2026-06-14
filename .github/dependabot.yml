@@ -18,7 +18,7 @@ updates:
     cooldown:
       default-days: 7
 
-  - package-ecosystem: "go" # See documentation for possible values
+  - package-ecosystem: "gomod" # See documentation for possible values
     directory: "/" # Location of package manifests
     schedule:
       interval: "weekly"
