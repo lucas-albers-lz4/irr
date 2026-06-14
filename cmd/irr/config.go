@@ -322,7 +322,7 @@ func saveMappings(mappings *registry.Mappings, originalConfig *registry.Config) 
 		log.Debug("saveMappings: Using original loaded structured config as base")
 	} else {
 		// If no original config (new file or legacy load), create a default structure
-		config.Version = "1.0" // Add a default version
+		config.Version = registry.DefaultConfigVersion // Add a default version
 		// Initialize nested structs if nil
 		config.Registries = registry.RegConfig{}
 		config.Compatibility = registry.CompatibilityConfig{}

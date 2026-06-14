@@ -15,6 +15,11 @@ const (
 	// DefaultLibraryRepoPrefix is the prefix used for official Docker Hub images.
 	DefaultLibraryRepoPrefix = "library" // Duplicated from pkg/analysis to avoid import cycle.
 
+	// StrategyPrefixSourceRegistry names the prefix-source-registry path strategy.
+	StrategyPrefixSourceRegistry = "prefix-source-registry"
+	// StrategyFlat names the flat path strategy.
+	StrategyFlat = "flat"
+
 	// MaxSplitParts is the maximum number of parts when splitting paths.
 	MaxSplitParts = 2
 )
@@ -31,10 +36,10 @@ func GetStrategy(name string, mappings *registry.Mappings) (PathStrategy, error)
 	log.Debug("GetStrategy: Getting strategy for name", "name", name)
 
 	switch name {
-	case "prefix-source-registry":
+	case StrategyPrefixSourceRegistry:
 		log.Debug("GetStrategy: Using PrefixSourceRegistryStrategy")
 		return NewPrefixSourceRegistryStrategy(mappings), nil
-	case "flat":
+	case StrategyFlat:
 		log.Debug("GetStrategy: Using FlatStrategy")
 		return NewFlatStrategy(), nil
 	default:
@@ -154,7 +159,7 @@ func (s *FlatStrategy) GeneratePath(originalRef *image.Reference, targetRegistry
 	log.Debug("FlatStrategy: Using base repository path", "baseRepoPath", baseRepoPath)
 
 	// Handle Docker Hub official images (add library prefix if needed)
-	if (image.NormalizeRegistry(originalRef.Registry) == "docker.io") && !strings.Contains(baseRepoPath, "/") {
+	if (image.NormalizeRegistry(originalRef.Registry) == image.DefaultRegistry) && !strings.Contains(baseRepoPath, "/") {
 		log.Debug("FlatStrategy: Prepending 'library-' to Docker Hub image path", "baseRepoPath", baseRepoPath)
 		baseRepoPath = "library-" + baseRepoPath
 	} else {

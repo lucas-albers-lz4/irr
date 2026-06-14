@@ -191,7 +191,7 @@ func writeOutput(cmd *cobra.Command, analysisResult *ImageAnalysis, flags *Inspe
 	var err error
 
 	switch strings.ToLower(flags.OutputFormat) {
-	case "json":
+	case outputFormatJSON:
 		output, err = json.Marshal(analysisResult)
 		if err != nil {
 			return &exitcodes.ExitCodeError{
@@ -1132,7 +1132,7 @@ func createConfigSkeleton(images []ImageInfo, outputFile string) error {
 
 	// Create config structure using the registry package format
 	config := registry.Config{
-		Version: "1.0",
+		Version: registry.DefaultConfigVersion,
 		Registries: registry.RegConfig{
 			Mappings:      mappings,
 			DefaultTarget: "registry.local/default", // Example default target
@@ -1445,7 +1445,7 @@ func outputMultiReleaseAnalysis(cmd *cobra.Command, results []*ReleaseAnalysisRe
 	var marshalErr error
 
 	switch strings.ToLower(flags.OutputFormat) {
-	case "json":
+	case outputFormatJSON:
 		output, marshalErr = json.Marshal(combinedResult)
 		if marshalErr != nil {
 			return &exitcodes.ExitCodeError{

@@ -160,11 +160,11 @@ func (l Level) String() string {
 	case LevelDebug:
 		return "DEBUG"
 	case LevelInfo:
-		return "INFO"
+		return levelInfoStr
 	case LevelWarn:
-		return "WARN"
+		return levelWarnStr
 	case LevelError:
-		return "ERROR"
+		return levelErrorStr
 	default:
 		return "UNKNOWN"
 	}

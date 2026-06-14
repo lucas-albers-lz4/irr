@@ -37,7 +37,23 @@ const (
 
 	// unknownCWDPlaceholder is used when os.Getwd() fails in logging.
 	unknownCWDPlaceholder = "(unknown)"
+
+	validationOverridesFilename = "validation-overrides.yaml"
+	flagChartPath               = "--chart-path"
+	testInstrumentaTarget     = "quay.io/instrumenta"
 ) // <-- Ensure this closing parenthesis is here
+
+func safeTempFilePath(tempDir, name string) (string, error) {
+	if !filepath.IsLocal(name) {
+		return "", fmt.Errorf("invalid temp file name: %s", name)
+	}
+	path := filepath.Join(tempDir, name)
+	rel, err := filepath.Rel(tempDir, path)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return "", fmt.Errorf("temp file path %q escapes temp dir", path)
+	}
+	return path, nil
+}
 
 const (
 	envSplitCount = 2
@@ -197,12 +213,12 @@ func (h *TestHarness) createDefaultRegistryMappingFile() (mappingsPath string, e
 		Version: "1.0",
 		Registries: registry.RegConfig{
 			Mappings: []registry.RegMapping{
-				{Source: "docker.io", Target: "quay.io/instrumenta", Enabled: true},
-				{Source: "k8s.gcr.io", Target: "quay.io/instrumenta", Enabled: true},
-				{Source: "registry.k8s.io", Target: "quay.io/instrumenta", Enabled: true},
-				{Source: "quay.io/jetstack", Target: "quay.io/instrumenta", Enabled: true},
-				{Source: "ghcr.io/prometheus", Target: "quay.io/instrumenta", Enabled: true},
-				{Source: "grafana", Target: "quay.io/instrumenta", Enabled: true},
+				{Source: image.DefaultRegistry, Target: testInstrumentaTarget, Enabled: true},
+				{Source: "k8s.gcr.io", Target: testInstrumentaTarget, Enabled: true},
+				{Source: "registry.k8s.io", Target: testInstrumentaTarget, Enabled: true},
+				{Source: "quay.io/jetstack", Target: testInstrumentaTarget, Enabled: true},
+				{Source: "ghcr.io/prometheus", Target: testInstrumentaTarget, Enabled: true},
+				{Source: "grafana", Target: testInstrumentaTarget, Enabled: true},
 			},
 		},
 	}
@@ -345,7 +361,7 @@ func (h *TestHarness) GenerateOverrides(extraArgs ...string) error {
 	// h.mappingsPath now holds the absolute path to the file inside h.tempDir
 	args := []string{
 		"override",
-		"--chart-path", h.chartPath,
+		flagChartPath, h.chartPath,
 		"--target-registry", h.targetReg,
 		"--source-registries", strings.Join(h.sourceRegs, ","),
 		"--output-file", h.overridePath, // Absolute path within h.tempDir
@@ -469,7 +485,11 @@ func (h *TestHarness) readAndWriteOverrides() (string, error) {
 		h.t.Logf("Read %d bytes from overrides file: %s", len(currentOverridesBytes), h.overridePath)
 	}
 	h.t.Logf("Generated Overrides Content:\n%s", string(currentOverridesBytes))
-	tempValidationOverridesPath := filepath.Join(h.tempDir, "validation-overrides.yaml")
+	tempValidationOverridesPath, err := safeTempFilePath(h.tempDir, validationOverridesFilename)
+	if err != nil {
+		return "", err
+	}
+	//nolint:gosec // path is validated by safeTempFilePath to stay under the harness temp dir
 	if err := os.WriteFile(tempValidationOverridesPath, currentOverridesBytes, defaultFilePerm); err != nil {
 		return "", fmt.Errorf("failed to write temporary validation overrides file %s: %w", tempValidationOverridesPath, err)
 	}
@@ -1225,7 +1245,7 @@ func (h *TestHarness) ExecuteAnalysisOnly(chartPath string, extraArgs ...string)
 	// Placeholder implementation: Replace with actual command execution
 	args := []string{
 		"inspect",
-		"--chart-path", chartPath,
+		flagChartPath, chartPath,
 		"--output-format", "json", // Assuming JSON output is easiest to parse
 	}
 	args = append(args, extraArgs...)

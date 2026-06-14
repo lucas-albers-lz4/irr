@@ -254,6 +254,7 @@ func TestCheckHelmVersion(t *testing.T) {
 
 // Mock function for exec.Command
 func mockExecCommand(output string, err error) *exec.Cmd {
+	//nolint:gosec // test mock: output is supplied by test cases, not external input
 	cmd := exec.CommandContext(context.Background(), "echo", output)
 	// If an error is provided, we create a command that will fail
 	if err != nil {

@@ -1173,7 +1173,7 @@ func runOverride(cmd *cobra.Command, args []string) error {
 				log.Debug("Using namespace from HELM_NAMESPACE environment variable", "namespace", namespace)
 			} else {
 				// Fallback to "default" if neither flag nor env var is set
-				namespace = "default"
+				namespace = defaultNamespace
 				log.Debug("Falling back to default namespace", "namespace", namespace)
 			}
 		}

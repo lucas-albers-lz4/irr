@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/lucas-albers-lz4/irr/pkg/image"
+	"github.com/lucas-albers-lz4/irr/pkg/keys"
 	"github.com/lucas-albers-lz4/irr/pkg/log"
 	"github.com/lucas-albers-lz4/irr/pkg/override"
 	"github.com/lucas-albers-lz4/irr/pkg/registry"
@@ -154,13 +155,13 @@ func (g *Generator) Generate(_ string, values map[string]interface{}) (map[strin
 
 		// Create the override structure (always map)
 		overrideValue := map[string]interface{}{
-			"registry":   mappedRegistry,
-			"repository": newRepoPath,
+			keys.Registry:   mappedRegistry,
+			keys.Repository: newRepoPath,
 		}
 		if ref.Digest != "" {
-			overrideValue["digest"] = ref.Digest
+			overrideValue[keys.Digest] = ref.Digest
 		} else {
-			overrideValue["tag"] = ref.Tag // Ensure tag is present
+			overrideValue[keys.Tag] = ref.Tag // Ensure tag is present
 		}
 
 		// Set the override value in the generated map
@@ -227,7 +228,7 @@ func normalizeKubeStateMetricsOverrides(
 
 	if len(ksmImageOverride) > 0 {
 		// Construct the final KSM block
-		finalKsmBlock := map[string]interface{}{"image": ksmImageOverride}
+		finalKsmBlock := map[string]interface{}{keys.Image: ksmImageOverride}
 
 		// Check if a KSM block already exists (e.g., from original values)
 		if existingKsmBlock, ok := overrides[KubeStateMetricsKey]; ok {

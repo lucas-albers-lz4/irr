@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/lucas-albers-lz4/irr/pkg/image"
+	"github.com/lucas-albers-lz4/irr/pkg/keys"
 	"github.com/lucas-albers-lz4/irr/pkg/log"
 )
 
@@ -93,7 +94,7 @@ func analyzeValuesRecursive(path string, value interface{}, patterns *[]ImagePat
 	val := reflect.ValueOf(value)
 
 	// Handle pointers by dereferencing
-	if val.Kind() == reflect.Ptr {
+	if val.Kind() == reflect.Pointer {
 		if val.IsNil() {
 			log.Debug("Skipping nil pointer at path '%s'", path)
 			return
@@ -161,7 +162,7 @@ func analyzeMapValue(path string, val reflect.Value, patterns *[]ImagePattern, c
 	isImageMap := false
 	var registry, repository, tag string
 
-	if repoVal, repoOk := mapValue["repository"]; repoOk {
+	if repoVal, repoOk := mapValue[keys.Repository]; repoOk {
 		if repoStr, ok := repoVal.(string); ok && repoStr != "" {
 			isImageMap = true
 			log.Debug("Found 'repository' key at '%s': '%s'", path, repoStr)
@@ -173,7 +174,7 @@ func analyzeMapValue(path string, val reflect.Value, patterns *[]ImagePattern, c
 			tag = ""
 
 			// 1. Check for explicit registry key first
-			if regVal, regOk := mapValue["registry"]; regOk {
+			if regVal, regOk := mapValue[keys.Registry]; regOk {
 				if regStr, ok := regVal.(string); ok && regStr != "" {
 					registry = regStr
 					log.Debug("Using explicit 'registry' key: %s", registry)
@@ -271,7 +272,7 @@ func analyzeMapValue(path string, val reflect.Value, patterns *[]ImagePattern, c
 		// Add the detected image pattern
 		*patterns = append(*patterns, ImagePattern{
 			Path:  path,
-			Type:  "map",
+			Type:  keys.MapType,
 			Value: mapValueStr,
 			Structure: &ImageStructure{
 				Registry:   registry,
@@ -316,20 +317,20 @@ func analyzeStringValue(path string, val reflect.Value, patterns *[]ImagePattern
 	}
 
 	// Check if the path matches known image path patterns or suffixes
-	keys := strings.Split(path, ".")
+	pathSegments := strings.Split(path, ".")
 	lastKey := ""
-	if len(keys) > 0 {
+	if len(pathSegments) > 0 {
 		// Get the last segment, handling array indices like "ports[0]" -> "ports"
-		lastKeyPart := keys[len(keys)-1]
+		lastKeyPart := pathSegments[len(pathSegments)-1]
 		if idx := strings.Index(lastKeyPart, "["); idx != -1 {
 			lastKey = lastKeyPart[:idx]
 		} else {
 			lastKey = lastKeyPart
 		}
 	}
-	isImagePathHeuristic := lastKey == "image" ||
+	isImagePathHeuristic := lastKey == keys.Image ||
 		strings.HasSuffix(lastKey, "Image") ||
-		lastKey == "repository"
+		lastKey == keys.Repository
 
 	// Check if it looks like a Go template
 	isTemplate := strings.Contains(strValue, "{{") && strings.Contains(strValue, "}}")
@@ -348,7 +349,7 @@ func analyzeStringValue(path string, val reflect.Value, patterns *[]ImagePattern
 			// Valid image string format, but standalone (not in a map)
 			// This might be an image string that needs overriding.
 			log.Debug("Analyzer: Found potential standalone image string at path %s: %s", path, strValue)
-			*patterns = append(*patterns, ImagePattern{Path: path, Type: "string", Value: strValue, Count: 1})
+			*patterns = append(*patterns, ImagePattern{Path: path, Type: keys.StringType, Value: strValue, Count: 1})
 		} else {
 			log.Debug("String at path '%s' ('%s') did not pass image reference format validation.", path, strValue)
 		}

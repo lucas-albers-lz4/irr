@@ -8,6 +8,7 @@ import (
 	"errors"
 
 	log "github.com/lucas-albers-lz4/irr/pkg/log"
+	"github.com/lucas-albers-lz4/irr/pkg/keys"
 )
 
 // Add these error declarations at the top of the file, after the import section
@@ -833,7 +834,7 @@ func isImagePath(path []string) bool {
 
 	// In strict mode, also consider standard map keys as known paths
 	switch lastSegment {
-	case "repository", "registry", "tag", "digest":
+	case keys.Repository, keys.Registry, keys.Tag, keys.Digest:
 		// We only consider these known if they are part of a potential parent map.
 		// A simple check: is the path length > 1?
 		if len(path) > 1 {

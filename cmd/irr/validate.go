@@ -396,7 +396,7 @@ func handleStandaloneValidate(cmd *cobra.Command, chartPath string, valuesFiles 
 
 	// If namespace is empty, use default
 	if namespace == "" {
-		namespace = "default"
+		namespace = defaultNamespace
 	}
 
 	// Get Kubernetes version flag

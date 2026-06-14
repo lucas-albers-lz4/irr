@@ -15,6 +15,7 @@ import (
 	"errors"
 
 	log "github.com/lucas-albers-lz4/irr/pkg/log"
+	"github.com/lucas-albers-lz4/irr/pkg/keys"
 	helmchart "helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
 )
@@ -173,9 +174,9 @@ func (a *Analyzer) AnalyzeValues(values map[string]interface{}) (*ChartAnalysis,
 //   - Normalized registry, repository, and tag strings
 func (a *Analyzer) normalizeImageValues(val map[string]interface{}) (registry, repository, tag string) {
 	// Extract map values with type checks
-	registryVal, hasRegistry := ensureString(val["registry"])
-	repositoryVal, hasRepository := ensureString(val["repository"])
-	tagVal, hasTag := ensureString(val["tag"])
+	registryVal, hasRegistry := ensureString(val[keys.Registry])
+	repositoryVal, hasRepository := ensureString(val[keys.Repository])
+	tagVal, hasTag := ensureString(val[keys.Tag])
 	digestVal, hasDigest := ensureString(val["digest"])
 
 	log.Debug(
@@ -327,11 +328,11 @@ func (a *Analyzer) analyzeMapValue(val map[string]interface{}, currentPath strin
 
 		// Construct the normalized structure map
 		normalizedStructure := map[string]interface{}{
-			"registry":   registry,
-			"repository": repository,
+			keys.Registry:   registry,
+			keys.Repository: repository,
 		}
 		if tag != "" { // Only include tag if it's not empty after normalization
-			normalizedStructure["tag"] = tag
+			normalizedStructure[keys.Tag] = tag
 		}
 		// Potentially add digest here if needed in the future
 
@@ -501,7 +502,7 @@ func (a *Analyzer) analyzeMapItemInArray(v map[string]interface{}, itemPath stri
 			pattern := ImagePattern{
 				Path:      itemPath, // Path is the array index
 				Type:      PatternTypeMap,
-				Structure: map[string]interface{}{"registry": registry, "repository": repository, "tag": tag},
+				Structure: map[string]interface{}{keys.Registry: registry, keys.Repository: repository, keys.Tag: tag},
 				Value:     fmt.Sprintf("%s/%s:%s", registry, repository, tag),
 				Count:     1,
 			}
@@ -544,7 +545,7 @@ func (a *Analyzer) analyzeMapItemInArray(v map[string]interface{}, itemPath stri
 // It primarily checks for the presence of a "repository" key, and optionally
 // "registry" and "tag" or "digest" keys.
 func (a *Analyzer) isImageMap(val map[string]interface{}) bool {
-	_, hasRepo := val["repository"]
+	_, hasRepo := val[keys.Repository]
 	// Basic check: must have a repository key
 	if !hasRepo {
 		return false

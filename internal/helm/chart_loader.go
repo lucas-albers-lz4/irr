@@ -206,7 +206,7 @@ func trackValueOrigins(loadedChart *chart.Chart, opts *ChartLoaderOptions, _, _ 
 	log.Debug("trackValueOrigins: Tracking origins from parent defaults...")
 	if loadedChart.Values != nil {
 		flattenAndTrackValues(loadedChart.Values, origins, ValueOrigin{
-			Type: OriginChartDefault, ChartName: loadedChart.Name(), Path: "values.yaml",
+			Type: OriginChartDefault, ChartName: loadedChart.Name(), Path: ValuesYAML,
 		}, "")
 	}
 
@@ -364,7 +364,7 @@ func trackAllSubchartValues(parentChart *chart.Chart, origins map[string]ValueOr
 			flattenAndTrackValues(dep.Values, origins, ValueOrigin{
 				Type:      OriginChartDefault,
 				ChartName: dep.Name(), // Origin is the subchart itself
-				Path:      "values.yaml",
+				Path:      ValuesYAML,
 			}, fullPrefix) // Use the calculated prefix
 		}
 

@@ -16,6 +16,7 @@ import (
 	"github.com/lucas-albers-lz4/irr/pkg/fileutil"
 	"github.com/lucas-albers-lz4/irr/pkg/image"
 	log "github.com/lucas-albers-lz4/irr/pkg/log"
+	"github.com/lucas-albers-lz4/irr/pkg/strategy"
 	"github.com/spf13/afero"
 	"gopkg.in/yaml.v3"
 	"helm.sh/helm/v3/pkg/action"
@@ -296,7 +297,7 @@ func (a *Adapter) OverrideRelease(ctx context.Context, releaseName, namespace st
 		// Implement simple prefix-based path strategy
 		imgRef := *img.Reference
 		newRepo := imgRef.Repository
-		if pathStrategy == "prefix-source-registry" {
+		if pathStrategy == strategy.StrategyPrefixSourceRegistry {
 			// Sanitize registry for path
 			registrySanitized := sanitizeRegistryForPath(imgRef.Registry)
 			newRepo = registrySanitized + "/" + imgRef.Repository

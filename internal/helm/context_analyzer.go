@@ -7,6 +7,7 @@ import (
 
 	"github.com/lucas-albers-lz4/irr/pkg/analysis"
 	"github.com/lucas-albers-lz4/irr/pkg/image"
+	"github.com/lucas-albers-lz4/irr/pkg/keys"
 	"github.com/lucas-albers-lz4/irr/pkg/log"
 )
 
@@ -93,7 +94,7 @@ func (a *ContextAwareAnalyzer) analyzeSingleValue(_ string, value interface{}, c
 	case map[string]interface{}:
 		return a.analyzeMapValue(val, currentPath, chartAnalysis)
 	case string:
-		originPath := "values.yaml" // Default origin file
+		originPath := ValuesYAML // Default origin file
 		if origin, exists := a.context.Origins[currentPath]; exists {
 			// Use origin.Path if it's a file path, otherwise keep default
 			if strings.HasSuffix(origin.Path, ".yaml") || strings.HasSuffix(origin.Path, ".yml") {
@@ -118,9 +119,9 @@ func (a *ContextAwareAnalyzer) analyzeMapValue(val map[string]interface{}, curre
 
 		// Create an image pattern for the map itself
 		imageStructure := map[string]interface{}{
-			"registry":   registry,
-			"repository": repository,
-			"tag":        tag,
+			keys.Registry:   registry,
+			keys.Repository: repository,
+			keys.Tag:        tag,
 		}
 
 		pattern := analysis.ImagePattern{
@@ -132,7 +133,7 @@ func (a *ContextAwareAnalyzer) analyzeMapValue(val map[string]interface{}, curre
 		}
 
 		// --- Start: Populate OriginalRegistry AND SourceOrigin ---
-		originPath := "values.yaml" // Default origin file
+		originPath := ValuesYAML // Default origin file
 		sourceChartName := ""       // Default chart name
 		if origin, exists := a.context.Origins[currentPath]; exists {
 			// Use origin.Path if it's a file path, otherwise keep default
@@ -163,7 +164,7 @@ func (a *ContextAwareAnalyzer) analyzeMapValue(val map[string]interface{}, curre
 
 			// Determine original registry from the raw map value *before* normalization
 			originalRegistry := ""
-			if regVal, ok := val["registry"].(string); ok && regVal != "" {
+			if regVal, ok := val[keys.Registry].(string); ok && regVal != "" {
 				originalRegistry = regVal
 				log.Debug("Found original registry in map structure", "path", currentPath, "originalRegistry", originalRegistry)
 			} else {
@@ -175,7 +176,7 @@ func (a *ContextAwareAnalyzer) analyzeMapValue(val map[string]interface{}, curre
 
 			// Populate if different from the final *normalized* registry
 			if pattern.Structure != nil {
-				if finalRegistry, ok := pattern.Structure["registry"].(string); ok {
+				if finalRegistry, ok := pattern.Structure[keys.Registry].(string); ok {
 					if originalRegistry != finalRegistry {
 						pattern.OriginalRegistry = originalRegistry
 						log.Debug("Setting OriginalRegistry in pattern", "path", currentPath, "original", originalRegistry, "final", finalRegistry)
@@ -279,9 +280,9 @@ func (a *ContextAwareAnalyzer) analyzeStringValue(val, currentPath, originPath s
 		// Added for context-aware analysis and better output
 		SourceOrigin: originPath,
 		Structure: map[string]interface{}{
-			"registry":   ref.Registry,
-			"repository": ref.Repository,
-			"tag":        ref.Tag,
+			keys.Registry:   ref.Registry,
+			keys.Repository: ref.Repository,
+			keys.Tag:        ref.Tag,
 		},
 		// Add the chart's AppVersion to be used for defaulting
 		SourceChartAppVersion: a.context.AppVersion,
@@ -309,8 +310,8 @@ func (a *ContextAwareAnalyzer) analyzeArrayValue(val []interface{}, currentPath 
 // isDirectImageMapDefinition provides a stricter check to identify maps that
 // directly define an image using standard keys.
 func (a *ContextAwareAnalyzer) isDirectImageMapDefinition(val map[string]interface{}) bool {
-	repoVal, hasRepo := val["repository"]
-	tagVal, hasTag := val["tag"]
+	repoVal, hasRepo := val[keys.Repository]
+	tagVal, hasTag := val[keys.Tag]
 
 	// Must have repository key
 	if !hasRepo {
@@ -333,7 +334,7 @@ func (a *ContextAwareAnalyzer) isDirectImageMapDefinition(val map[string]interfa
 	}
 
 	// Optional: Check registry if present
-	if regVal, hasReg := val["registry"]; hasReg {
+	if regVal, hasReg := val[keys.Registry]; hasReg {
 		regStr, regIsString := regVal.(string)
 		if !regIsString || regStr == "" {
 			return false // Registry present but empty or wrong type
@@ -358,7 +359,7 @@ func (a *ContextAwareAnalyzer) isProbableImageKeyPath(key, val string) bool {
 	}
 
 	// Check for exact key names that almost always indicate an image map or string
-	if lowerKey == "image" || lowerKey == "repository" {
+	if lowerKey == keys.Image || lowerKey == keys.Repository {
 		log.Debug("isProbableImageKeyPath: true (exact key match)", "key", key)
 		return true
 	}
@@ -395,7 +396,7 @@ func (a *ContextAwareAnalyzer) isProbableImageKeyPath(key, val string) bool {
 // normalizeImageValues extracts normalized image components from a map structure.
 func (a *ContextAwareAnalyzer) normalizeImageValues(val map[string]interface{}) (registry, repository, tag string) {
 	// Handle registry (optional)
-	if regVal, ok := val["registry"].(string); ok && regVal != "" {
+	if regVal, ok := val[keys.Registry].(string); ok && regVal != "" {
 		registry = regVal
 		// Strip port from registry if present
 		if strings.Contains(registry, ":") {
@@ -407,7 +408,7 @@ func (a *ContextAwareAnalyzer) normalizeImageValues(val map[string]interface{}) 
 	}
 
 	// Handle repository (required)
-	if repoVal, ok := val["repository"].(string); ok && repoVal != "" {
+	if repoVal, ok := val[keys.Repository].(string); ok && repoVal != "" {
 		repository = repoVal
 
 		// If repository contains registry info (e.g. "quay.io/repo"), extract it
@@ -432,7 +433,7 @@ func (a *ContextAwareAnalyzer) normalizeImageValues(val map[string]interface{}) 
 	}
 
 	// Handle tag (optional)
-	if tagVal, ok := val["tag"].(string); ok && tagVal != "" {
+	if tagVal, ok := val[keys.Tag].(string); ok && tagVal != "" {
 		tag = tagVal
 	} else if digestVal, ok := val["digest"].(string); ok && digestVal != "" {
 		// If digest is present but no tag, leave tag empty (digest will be used)

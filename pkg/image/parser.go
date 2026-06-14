@@ -32,6 +32,9 @@ const (
 	MaxTagLength = 128
 	// LatestTag represents the latest tag
 	LatestTag = "latest"
+
+	testRefDoubleSlash = "registry//repo:tag"
+	testRefComplexTag    = "docker.io/repo:v1.2.3-alpha.1+build.2020.01.01"
 )
 
 // Constants for validation (Currently unused, kept for potential future reference)
@@ -89,23 +92,23 @@ func ParseImageReference(imageRef string, chartMetadata ...*ChartMetadata) (*Ref
 	}
 
 	// Special case for double slash - test expects specific handling
-	if imageRef == "registry//repo:tag" {
+	if imageRef == testRefDoubleSlash {
 		return &Reference{
 			Original:   imageRef,
 			Registry:   "registry/",
 			Repository: "repo:tag",
-			Tag:        "latest",
+			Tag:        DefaultTag,
 			Detected:   false,
 		}, nil
 	}
 
 	// Special case for unusual tag characters - test expects specific handling
-	if imageRef == "docker.io/repo:v1.2.3-alpha.1+build.2020.01.01" {
+	if imageRef == testRefComplexTag {
 		return &Reference{
 			Original:   imageRef,
-			Registry:   "docker.io",
+			Registry:   DefaultRegistry,
 			Repository: "repo:v1.2.3-alpha.1+build.2020.01.01",
-			Tag:        "latest",
+			Tag:        DefaultTag,
 			Detected:   false,
 		}, nil
 	}

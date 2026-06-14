@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/lucas-albers-lz4/irr/pkg/image"
+	"github.com/lucas-albers-lz4/irr/pkg/keys"
 	"github.com/lucas-albers-lz4/irr/pkg/log"
 	"sigs.k8s.io/yaml"
 )
@@ -58,16 +59,16 @@ func GenerateOverrides(ref *image.Reference, path []string) (map[string]interfac
 	// This will be stored at the location specified by 'path'
 	ref = normalizeRegistry(ref)
 	valueToSet := map[string]interface{}{
-		"registry":   ref.Registry,
-		"repository": ref.Repository,
+		keys.Registry:   ref.Registry,
+		keys.Repository: ref.Repository,
 	}
 
 	if ref.Tag != "" {
-		valueToSet["tag"] = ref.Tag
+		valueToSet[keys.Tag] = ref.Tag
 	}
 
 	if ref.Digest != "" {
-		valueToSet["digest"] = ref.Digest
+		valueToSet[keys.Digest] = ref.Digest
 	}
 
 	// Set the value at the specified path in the overrides map
@@ -90,7 +91,7 @@ func normalizeRegistry(ref *image.Reference) *image.Reference {
 
 	// Docker Hub special case - convert 'docker.io' to registry.hub.docker.com
 	// which is how Helm charts frequently represent it
-	if ref.Registry == "docker.io" {
+	if ref.Registry == image.DefaultRegistry {
 		result.Registry = "registry.hub.docker.com"
 	}
 
@@ -103,7 +104,7 @@ func normalizeRegistry(ref *image.Reference) *image.Reference {
 // If the format is 'helm-set', it returns a list of --set arguments.
 func GenerateYAMLOverrides(overrides map[string]interface{}, format string) ([]byte, error) {
 	switch format {
-	case "values":
+	case keys.Values:
 		// Convert directly to YAML
 		yamlBytes, err := yaml.Marshal(overrides)
 		if err != nil {
@@ -111,7 +112,7 @@ func GenerateYAMLOverrides(overrides map[string]interface{}, format string) ([]b
 		}
 		return yamlBytes, nil
 
-	case "json":
+	case keys.JSON:
 		// Convert to JSON
 		jsonBytes, err := json.Marshal(overrides)
 		if err != nil {
@@ -119,7 +120,7 @@ func GenerateYAMLOverrides(overrides map[string]interface{}, format string) ([]b
 		}
 		return jsonBytes, nil
 
-	case "helm-set":
+	case keys.HelmSet:
 		// Convert to --set format
 		jsonBytes, err := json.Marshal(overrides)
 		if err != nil {

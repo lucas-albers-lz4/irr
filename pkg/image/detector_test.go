@@ -97,29 +97,22 @@ func assertDetectedImages(t *testing.T, expected, actual []DetectedImage, checkO
 	SortDetectedImages(actual)
 
 	assert.Equal(t, len(expected), len(actual), "Detected image count mismatch")
-	if len(expected) == len(actual) {
-		for i := range actual {
-			// Add nil checks for Reference field using require for early failure
-			require.NotNil(t, actual[i].Reference, fmt.Sprintf("actual[%d].Reference should not be nil", i))
-			// Check expected as well, though less likely to be the source of panic if test is written correctly
-			require.NotNil(t, expected[i].Reference, fmt.Sprintf("expected[%d].Reference should not be nil (check test definition)", i))
+	for i, exp := range expected {
+		act := actual[i]
+		require.NotNil(t, act.Reference, fmt.Sprintf("actual[%d].Reference should not be nil", i))
+		require.NotNil(t, exp.Reference, fmt.Sprintf("expected[%d].Reference should not be nil (check test definition)", i))
 
-			// Proceed with assertions only if References are not nil (require already checked)
-			assert.Equal(t, expected[i].Reference.Registry, actual[i].Reference.Registry, fmt.Sprintf("detected[%d] Registry mismatch", i))
-			assert.Equal(t, expected[i].Reference.Repository, actual[i].Reference.Repository, fmt.Sprintf("detected[%d] Repository mismatch", i))
-			assert.Equal(t, expected[i].Reference.Tag, actual[i].Reference.Tag, fmt.Sprintf("detected[%d] Tag mismatch", i))
-			assert.Equal(t, expected[i].Reference.Digest, actual[i].Reference.Digest, fmt.Sprintf("detected[%d] Digest mismatch", i))
-			assert.Equal(t, expected[i].Path, actual[i].Path, fmt.Sprintf("detected[%d] path mismatch", i))
-			assert.Equal(t, expected[i].Pattern, actual[i].Pattern, fmt.Sprintf("detected[%d] pattern mismatch", i))
-			if checkOriginal {
-				assert.Equal(t, expected[i].Original, actual[i].Original, fmt.Sprintf("detected[%d] original mismatch", i))
-			}
-
-			// Validate reference against distribution/reference library
-			validateReferenceWithDistribution(t, actual[i].Reference)
+		assert.Equal(t, exp.Reference.Registry, act.Reference.Registry, fmt.Sprintf("detected[%d] Registry mismatch", i))
+		assert.Equal(t, exp.Reference.Repository, act.Reference.Repository, fmt.Sprintf("detected[%d] Repository mismatch", i))
+		assert.Equal(t, exp.Reference.Tag, act.Reference.Tag, fmt.Sprintf("detected[%d] Tag mismatch", i))
+		assert.Equal(t, exp.Reference.Digest, act.Reference.Digest, fmt.Sprintf("detected[%d] Digest mismatch", i))
+		assert.Equal(t, exp.Path, act.Path, fmt.Sprintf("detected[%d] path mismatch", i))
+		assert.Equal(t, exp.Pattern, act.Pattern, fmt.Sprintf("detected[%d] pattern mismatch", i))
+		if checkOriginal {
+			assert.Equal(t, exp.Original, act.Original, fmt.Sprintf("detected[%d] original mismatch", i))
 		}
-	} else {
-		assert.Equal(t, expected, actual, "Detected images mismatch (fallback diff)") // Fallback for detailed diff on length mismatch
+
+		validateReferenceWithDistribution(t, act.Reference)
 	}
 }
 

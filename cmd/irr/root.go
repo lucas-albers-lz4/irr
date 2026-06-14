@@ -120,7 +120,7 @@ type ChartSource struct {
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:   "irr",
+	Use:   cliName,
 	Short: "Image Relocation and Rewrite tool for Helm Charts and K8s YAML",
 	Long: `irr (Image Relocation and Rewrite) is a tool for generating Helm override values
 that redirect container image references from public registries to a private registry.
@@ -176,7 +176,7 @@ It also supports linting image references for potential issues.`,
 			// 4. Default level if nothing else set it
 			if levelSource == unknownLogLevelSource { // Check against initial value
 				// Check flags AND the environment variable set by the test harness
-				isTestRun := integrationTestMode || TestAnalyzeMode || (os.Getenv("IRR_TESTING") == "true")
+				isTestRun := integrationTestMode || TestAnalyzeMode || (os.Getenv("IRR_TESTING") == trueString)
 				if isTestRun {
 					finalLevel = log.LevelInfo // Default to Info for test runs
 				} else {

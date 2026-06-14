@@ -9,6 +9,9 @@ import (
 	"helm.sh/helm/v3/pkg/chart"
 )
 
+// BitnamiAllowInsecureImagesPath is the Helm values path for Bitnami insecure image bypass.
+const BitnamiAllowInsecureImagesPath = "global.security.allowInsecureImages"
+
 // BitnamiSecurityBypassPriority is the priority assigned to the Bitnami security bypass rule.
 // Higher numbers mean higher priority.
 const BitnamiSecurityBypassPriority = 100
@@ -27,7 +30,7 @@ func NewBitnamiSecurityBypassRule() *BitnamiSecurityBypassRule {
 			"Adds global.security.allowInsecureImages=true to override files for Bitnami charts",
 			[]Parameter{
 				{
-					Path:        "global.security.allowInsecureImages",
+					Path:        BitnamiAllowInsecureImagesPath,
 					Value:       true,
 					Type:        TypeDeploymentCritical,
 					Description: "Bypasses Bitnami security checks for modified image references",
@@ -84,7 +87,7 @@ func (h *BitnamiFallbackHandler) ShouldRetryWithSecurityBypass(err error) bool {
 
 // ApplySecurityBypass adds the global.security.allowInsecureImages=true parameter to overrides
 func (h *BitnamiFallbackHandler) ApplySecurityBypass(overrides map[string]interface{}) error {
-	path := "global.security.allowInsecureImages"
+	path := BitnamiAllowInsecureImagesPath
 	pathParts := ParsePath(path)
 	value := true
 

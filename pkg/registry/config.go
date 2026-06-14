@@ -10,6 +10,9 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
+// DefaultConfigVersion is the default version string for new registry mapping configs.
+const DefaultConfigVersion = "1.0"
+
 // Config represents the top-level structure for the new structured config YAML format.
 type Config struct {
 	// Registries contains the registry mappings configuration

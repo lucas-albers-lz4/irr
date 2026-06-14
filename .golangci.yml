@@ -3,7 +3,7 @@
 #   value : 2
 version: "2"
 run:
-  go: "1.24"
+  go: "1.26"
   timeout: 5m
   issues-exit-code: 1
   tests: true
@@ -136,7 +136,7 @@ linters:
       min-len: 3 # Default is 3, adjust if needed
       # Minimum occurrences of a string literal to report
       min-occurrences: 3 # Default is 3, adjust if needed
-      # ignore-tests: true # Optionally ignore strings in test files
+      ignore-tests: true # Test fixtures repeat CLI/YAML literals by design
     dupl:
       # Threshold for code duplication token sequence length
       threshold: 100 # Default is 100, adjust based on findings (lower finds more duplicates)

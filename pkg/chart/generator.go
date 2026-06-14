@@ -18,6 +18,7 @@ import (
 
 	"github.com/lucas-albers-lz4/irr/pkg/analysis"
 	image "github.com/lucas-albers-lz4/irr/pkg/image"
+	"github.com/lucas-albers-lz4/irr/pkg/keys"
 	log "github.com/lucas-albers-lz4/irr/pkg/log"
 	"github.com/lucas-albers-lz4/irr/pkg/override"
 	"github.com/lucas-albers-lz4/irr/pkg/registry"
@@ -409,7 +410,7 @@ func (g *Generator) processImage(pattern *analysis.ImagePattern, overrides map[s
 
 	// *** Add explicit type check ***
 	if overrideMap, ok := overrideValue.(map[string]interface{}); ok {
-		if repoVal, repoOk := overrideMap["repository"]; repoOk {
+		if repoVal, repoOk := overrideMap[keys.Repository]; repoOk {
 			log.Debug("Type check BEFORE setOverridePath", "path", pattern.Path, "repo_type", fmt.Sprintf("%T", repoVal))
 		} else {
 			log.Warn("Repository key missing in overrideValue BEFORE setOverridePath", "path", pattern.Path)
@@ -1002,21 +1003,21 @@ func (g *Generator) createOverride(pattern *analysis.ImagePattern, imgRef *image
 	// This assumes the standard {registry: ..., repository: ..., tag: ...} structure.
 	// Adapt if different structures are needed based on chart conventions.
 	overrideMap := map[string]interface{}{
-		"registry":   targetReg,
-		"repository": finalRepository,
+		keys.Registry:   targetReg,
+		keys.Repository: finalRepository,
 	}
 
 	// Only include the tag field in the map if finalTag is not empty
 	if finalTag != "" {
 		log.Debug("Including tag in override map", "tag", finalTag)
-		overrideMap["tag"] = finalTag
+		overrideMap[keys.Tag] = finalTag
 	} else {
 		log.Debug("Omitting tag from override map as it's empty (either originally or after fallback logic).", "path", pattern.Path)
 	}
 
 	// Preserve/add pullPolicy if original pattern indicates a map structure
 	if pattern.Structure != nil || pattern.Type == analysis.PatternTypeMap {
-		pullPolicy := "IfNotPresent" // Default pull policy
+		pullPolicy := keys.IfNotPresent // Default pull policy
 		if pattern.Structure != nil {
 			if pp, ok := pattern.Structure["pullPolicy"].(string); ok && pp != "" {
 				pullPolicy = pp // Use original pullPolicy if found
@@ -1036,7 +1037,7 @@ func (g *Generator) createOverride(pattern *analysis.ImagePattern, imgRef *image
 
 	log.Debug("Returning override structure", "overrideMap", overrideMap)
 	// *** Add final check inside createOverride ***
-	if repoVal, ok := overrideMap["repository"]; ok {
+	if repoVal, ok := overrideMap[keys.Repository]; ok {
 		log.Debug("Final check createOverride", "path", pattern.Path, "repo_type", fmt.Sprintf("%T", repoVal), "repo_value", repoVal)
 	} else {
 		log.Warn("Final check createOverride: Repository key missing", "path", pattern.Path)
@@ -1047,11 +1048,11 @@ func (g *Generator) createOverride(pattern *analysis.ImagePattern, imgRef *image
 
 // Helper function (assuming not already present)
 func mapKeys(m map[string]interface{}) []string {
-	keys := make([]string, 0, len(m))
+	keyList := make([]string, 0, len(m))
 	for k := range m {
-		keys = append(keys, k)
+		keyList = append(keyList, k)
 	}
-	return keys
+	return keyList
 }
 
 // setOverridePath sets the value at the specified path within the overrides map.

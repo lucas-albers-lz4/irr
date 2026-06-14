@@ -51,7 +51,7 @@ func NewMockHelmClient() *MockHelmClient {
 		ReleaseCharts:    make(map[string]*ChartMetadata),
 		TemplateResults:  make(map[string]string),
 		FindChartResults: make(map[string]string),
-		CurrentNamespace: "default",
+		CurrentNamespace: DefaultNamespace,
 		MockReleases:     []*ReleaseElement{},
 	}
 }
@@ -238,7 +238,7 @@ func (m *MockHelmClient) LoadChart(_ /* chartPath */ string) (*chart.Chart, erro
 	return &chart.Chart{
 		Metadata: &chart.Metadata{
 			Name:    "mock-chart",
-			Version: "1.0.0",
+			Version: DefaultChartVersion,
 		},
 	}, nil
 }

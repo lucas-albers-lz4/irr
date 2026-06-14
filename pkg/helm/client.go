@@ -15,6 +15,8 @@ import (
 	"github.com/lucas-albers-lz4/irr/pkg/log"
 )
 
+const defaultChartVersion = "1.0.0"
+
 // ClientInterface defines the interface for interacting with Helm.
 // This interface allows for real and mock implementations to be used interchangeably.
 type ClientInterface interface {
@@ -207,7 +209,7 @@ func NewMockHelmClient() *MockHelmClient {
 			return &chart.Chart{
 				Metadata: &chart.Metadata{
 					Name:    "mock-chart",
-					Version: "1.0.0",
+					Version: defaultChartVersion,
 				},
 			}, nil
 		},

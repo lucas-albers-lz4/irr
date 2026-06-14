@@ -40,21 +40,21 @@ func main() {
 // isRunningAsHelmPlugin checks if the program is being run as a Helm plugin
 func isRunningAsHelmPlugin() bool {
 	// Check for environment variables set by Helm when running a plugin
-	return os.Getenv("HELM_PLUGIN_NAME") != "" || os.Getenv("HELM_PLUGIN_DIR") != ""
+	return os.Getenv(envHelmPluginName) != "" || os.Getenv(envHelmPluginDir) != ""
 }
 
 // logHelmEnvironment logs Helm-related environment variables for debugging
 func logHelmEnvironment() {
 	helmEnvVars := []string{
-		"HELM_PLUGIN_DIR",
-		"HELM_PLUGIN_NAME",
-		"HELM_NAMESPACE",
-		"HELM_BIN",
-		"HELM_DEBUG", // Note: This is the Helm binary debug flag, not IRR's
-		"HELM_PLUGINS",
-		"HELM_REGISTRY_CONFIG",
-		"HELM_REPOSITORY_CACHE",
-		"HELM_REPOSITORY_CONFIG",
+		envHelmPluginDir,
+		envHelmPluginName,
+		envHelmNamespace,
+		envHelmBin,
+		envHelmDebug, // Note: This is the Helm binary debug flag, not IRR's
+		envHelmPlugins,
+		envHelmRegistryConfig,
+		envHelmRepositoryCache,
+		envHelmRepositoryConfig,
 	}
 
 	log.Debug("Helm Environment Variables:")
