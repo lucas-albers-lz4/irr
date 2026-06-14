@@ -1,4 +1,6 @@
 name: Post-Release Install Test
+permissions:
+  contents: read
 
 on:
   release:
