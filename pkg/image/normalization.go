@@ -39,7 +39,7 @@ func NormalizeRegistry(registry string) string {
 	firstSlash := strings.Index(hostname, "/")
 	if firstSlash != -1 {
 		hostname = hostname[:firstSlash]
-		log.Debug("NormalizeRegistry: Stripped path component from '%s', result: '%s'", lowerRegistry, hostname)
+		log.Debug("NormalizeRegistry: Stripped path component", "original", lowerRegistry, "hostname", hostname)
 	}
 
 	// Strip port number from the hostname part if present
@@ -47,16 +47,16 @@ func NormalizeRegistry(registry string) string {
 		potentialPort := hostname[portIndex+1:]
 		// Use regex to ensure it's only digits
 		if portRegex.MatchString(potentialPort) {
-			log.Debug("NormalizeRegistry: Stripped port '%s' from hostname '%s'", potentialPort, hostname)
+			log.Debug("NormalizeRegistry: Stripped port", "port", potentialPort, "hostname", hostname)
 			hostname = hostname[:portIndex]
 		} else {
-			log.Debug("NormalizeRegistry: ':' found in hostname '%s' but part after it ('%s') is not numeric, not stripping.", hostname, potentialPort)
+			log.Debug("NormalizeRegistry: ':' found in hostname but part after it is not numeric, not stripping", "hostname", hostname, "potential_port", potentialPort)
 		}
 	}
 
 	// Note: No need to remove trailing slashes as path component is already removed.
 
-	log.Debug("NormalizeRegistry: Input '%s' -> Normalized '%s'", registry, hostname)
+	log.Debug("NormalizeRegistry: Normalized input", "input", registry, "normalized", hostname)
 	return hostname
 }
 
@@ -82,8 +82,7 @@ func SanitizeRegistryForPath(registry string) string {
 		if _, err := fmt.Sscan(potentialPort, new(int)); err == nil {
 			registry = registry[:portIndex]
 		} else {
-			log.Debug("SanitizeRegistryForPath: ':' found in '%s' but part after it ('%s') "+
-				"is not numeric, not treating as port.", registry, potentialPort)
+			log.Debug("SanitizeRegistryForPath: ':' found but part after it is not numeric, not treating as port", "registry", registry, "potential_port", potentialPort)
 		}
 	}
 
@@ -119,7 +118,7 @@ func IsSourceRegistry(ref *Reference, sourceRegistries, excludeRegistries []stri
 		excludeNorm := NormalizeRegistry(exclude)
 		log.Debug("Checking against excluded registry", "value", exclude, "normalized", excludeNorm)
 		if registry == excludeNorm {
-			log.Debug("Registry %s is excluded", registry)
+			log.Debug("Registry is excluded", "registry", registry)
 			return false
 		}
 	}
@@ -129,12 +128,12 @@ func IsSourceRegistry(ref *Reference, sourceRegistries, excludeRegistries []stri
 		sourceNorm := NormalizeRegistry(source)
 		log.Debug("Checking against source registry", "value", source, "normalized", sourceNorm)
 		if registry == sourceNorm {
-			log.Debug("Registry %s matches source %s", registry, source)
+			log.Debug("Registry matches source", "registry", registry, "source", source)
 			return true
 		}
 	}
 
-	log.Debug("Registry %s does not match any source registries", registry)
+	log.Debug("Registry does not match any source registries", "registry", registry)
 	return false
 }
 
@@ -169,17 +168,17 @@ func NormalizeImageReference(ref *Reference) {
 	named, err := distref.ParseNormalizedNamed(refStr)
 	if err != nil {
 		// If there's a parsing error, fall back to manual normalization
-		log.Debug("Warning: ParseNormalizedNamed failed for '%s'", "value", refStr)
+		log.Debug("ParseNormalizedNamed failed", "value", refStr)
 		log.Debug("Falling back to manual normalization")
 
 		// 1. Default Registry
 		if ref.Registry == "" {
 			ref.Registry = defaultRegistry
-			log.Debug("Normalized: Registry defaulted to %s", defaultRegistry)
+			log.Debug("Normalized: Registry defaulted", "registry", defaultRegistry)
 		} else {
 			// Normalize existing registry name (lowercase, handle index.docker.io, strip port/suffix)
 			ref.Registry = NormalizeRegistry(ref.Registry)
-			log.Debug("Normalized: Registry processed to %s", ref.Registry)
+			log.Debug("Normalized: Registry processed", "registry", ref.Registry)
 		}
 
 		// 2. Default Tag (only if no digest)
@@ -191,7 +190,7 @@ func NormalizeImageReference(ref *Reference) {
 		// 3. Add "library/" namespace for docker.io if repository has no slashes
 		if ref.Registry == defaultRegistry && !strings.Contains(ref.Repository, "/") {
 			ref.Repository = libraryNamespace + "/" + ref.Repository
-			log.Debug("Normalized: Added '%s/' prefix to repository", "value", libraryNamespace, "repository", ref.Repository)
+			log.Debug("Normalized: Added prefix to repository", "prefix", libraryNamespace, "repository", ref.Repository)
 		}
 	} else {
 		// Successful parsing - use the normalized components from the library
@@ -208,7 +207,7 @@ func NormalizeImageReference(ref *Reference) {
 		} else if ref.Digest == "" {
 			// If neither tag nor digest, set default tag
 			ref.Tag = defaultTag
-			log.Debug("No tag or digest after normalization, defaulting to %s", defaultTag)
+			log.Debug("No tag or digest after normalization, defaulting", "tag", defaultTag)
 		}
 
 		if digestedRef, isDigested := named.(distref.Digested); isDigested {

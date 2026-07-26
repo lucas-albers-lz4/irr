@@ -26,7 +26,7 @@ func NewRegistry() *Registry {
 	// Register default rules
 	registry.AddRule(NewBitnamiSecurityBypassRule())
 
-	log.Debug("Created rule registry with %d default rules", len(registry.rules))
+	log.Debug("Created rule registry", "default_rule_count", len(registry.rules))
 	return registry
 }
 
@@ -42,7 +42,7 @@ func (r *Registry) AddRule(rule Rule) {
 		return r.rules[i].Priority() > r.rules[j].Priority()
 	})
 
-	log.Debug("Added rule '%s' to registry", rule.Name())
+	log.Debug("Added rule to registry", "rule_name", rule.Name())
 }
 
 // GetRules returns all registered rules
@@ -68,7 +68,7 @@ func (r *Registry) SetEnabled(enabled bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.enabled = enabled
-	log.Debug("Rules system enabled: %v", enabled)
+	log.Debug("Rules system enabled", "enabled", enabled)
 }
 
 // ApplyRules applies all matching rules to the chart's override map

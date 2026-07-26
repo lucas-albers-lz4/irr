@@ -67,7 +67,7 @@ const (
 // instead of "latest".
 func ParseImageReference(imageRef string, chartMetadata ...*ChartMetadata) (*Reference, error) {
 	log.Debug("Enter: ParseImageReference")
-	log.Debug("Parsing image reference: %s", imageRef)
+	log.Debug("Parsing image reference", "image_ref", imageRef)
 
 	// Check for empty reference - must be done first
 	if imageRef == "" {
@@ -115,7 +115,7 @@ func ParseImageReference(imageRef string, chartMetadata ...*ChartMetadata) (*Ref
 
 	// Quick validation for common invalid formats
 	if strings.Contains(imageRef, ":::") || strings.Contains(imageRef, "::") {
-		log.Debug("Invalid image reference format detected: %s", imageRef)
+		log.Debug("Invalid image reference format detected", "image_ref", imageRef)
 		return nil, ErrInvalidImageReference
 	}
 
@@ -205,11 +205,11 @@ func ParseImageReference(imageRef string, chartMetadata ...*ChartMetadata) (*Ref
 		if tag == "" && digest == "" {
 			if len(chartMetadata) > 0 && chartMetadata[0] != nil && chartMetadata[0].AppVersion != "" {
 				tag = chartMetadata[0].AppVersion
-				log.Debug("Using Chart.AppVersion for tag: %s", tag)
+				log.Debug("Using Chart.AppVersion for tag", "tag", tag)
 			} else {
 				// Default to latest tag
 				tag = LatestTag
-				log.Debug("Setting default tag: %s", tag)
+				log.Debug("Setting default tag", "tag", tag)
 			}
 		}
 
@@ -227,21 +227,21 @@ func ParseImageReference(imageRef string, chartMetadata ...*ChartMetadata) (*Ref
 			Digest:     digest,
 			Detected:   false,
 		}
-		log.Debug("Parsed reference: %+v", parsedRef)
+		log.Debug("Parsed reference", "reference", parsedRef)
 		log.Debug("Exit: ParseImageReference")
 		return parsedRef, nil
 	}
 
 	// Fallback to regex-based parsing for better error messages
 	// or to handle edge cases not covered by the canonical library
-	log.Debug("Falling back to regex parsing after canonical parser error: %v", err)
+	log.Debug("Falling back to regex parsing after canonical parser error", "error", err)
 	return parseWithRegex(imageRef, chartMetadata...)
 }
 
 // parseWithRegex parses an image reference using regular expressions.
 // This is used as a fallback when the distribution library parser fails.
 func parseWithRegex(imageRef string, chartMetadata ...*ChartMetadata) (*Reference, error) {
-	log.Debug("Using regex parser for: %s", imageRef)
+	log.Debug("Using regex parser", "image_ref", imageRef)
 
 	// Special check for malformed digests
 	// Handle the case where the reference might be valid but the canonical parser rejected it
@@ -251,7 +251,7 @@ func parseWithRegex(imageRef string, chartMetadata ...*ChartMetadata) (*Referenc
 
 	// Quick validation for common invalid formats
 	if strings.Contains(imageRef, "///") || strings.Contains(imageRef, "::") {
-		log.Debug("Invalid image reference format detected: %s", imageRef)
+		log.Debug("Invalid image reference format detected", "image_ref", imageRef)
 		return nil, ErrInvalidImageReference
 	}
 
@@ -259,7 +259,7 @@ func parseWithRegex(imageRef string, chartMetadata ...*ChartMetadata) (*Referenc
 	invalidChars := []string{" ", "@", "$", "?", "#", "\\"}
 	for _, char := range invalidChars {
 		if strings.Contains(imageRef, char) && !strings.Contains(imageRef, "@sha256:") {
-			log.Debug("Invalid repository name character detected in: %s", imageRef)
+			log.Debug("Invalid repository name character detected", "image_ref", imageRef)
 			return nil, ErrInvalidImageReference
 		}
 	}
@@ -272,7 +272,7 @@ func parseWithRegex(imageRef string, chartMetadata ...*ChartMetadata) (*Referenc
 
 	// Check for both tag and digest - this is invalid
 	if strings.Contains(imageRef, ":") && strings.Contains(imageRef, "@") {
-		log.Debug("Both tag and digest found in: %s", imageRef)
+		log.Debug("Both tag and digest found", "image_ref", imageRef)
 		return nil, ErrTagAndDigestPresent
 	}
 
@@ -379,10 +379,10 @@ func parseWithRegex(imageRef string, chartMetadata ...*ChartMetadata) (*Referenc
 	// Set default tag or use AppVersion if available
 	if len(chartMetadata) > 0 && chartMetadata[0] != nil && chartMetadata[0].AppVersion != "" {
 		ref.Tag = chartMetadata[0].AppVersion
-		log.Debug("Using Chart.AppVersion for tag: %s", ref.Tag)
+		log.Debug("Using Chart.AppVersion for tag", "tag", ref.Tag)
 	} else {
 		ref.Tag = LatestTag
-		log.Debug("Setting default tag: %s", ref.Tag)
+		log.Debug("Setting default tag", "tag", ref.Tag)
 	}
 
 	return ref, nil
