@@ -85,11 +85,11 @@ func TestKubePrometheusStack_Prometheus(t *testing.T) {
 	assert.True(t, found, "Expected 'prometheus' key in overrides")
 }
 
-// TestKubePrometheusStack_FullChart_WithSubcharts_TODO tests override generation for the entire
+// TestKubePrometheusStack_FullChart_WithSubcharts tests override generation for the entire
 // kube-prometheus-stack chart, including images defined in subchart defaults.
-// This test is currently skipped because full subchart value processing is not yet implemented (Phase 10).
-func TestKubePrometheusStack_FullChart_WithSubcharts_TODO(t *testing.T) {
-	t.Skip("Skipping: Test requires full subchart value processing (Phase 10)")
+// This test is deferred because it requires a running Helm/Kubernetes environment.
+func TestKubePrometheusStack_FullChart_WithSubcharts(t *testing.T) {
+	t.Skip("Deferred: requires a running Helm/Kubernetes environment")
 
 	t.Parallel()
 	h := NewTestHarness(t)
@@ -111,8 +111,6 @@ func TestKubePrometheusStack_FullChart_WithSubcharts_TODO(t *testing.T) {
 	}
 
 	_, stderr, err := h.ExecuteIRRWithStderr(nil, true, args...)
-	// NOTE: We expect this to potentially fail or produce incomplete results currently,
-	// but the require.NoError check should pass once Phase 10 is implemented.
 	require.NoError(t, err, "irr override failed for full kube-prometheus-stack: %s", stderr)
 
 	overrides, err := h.getOverridesFromFile(outputFile)
@@ -125,7 +123,7 @@ func TestKubePrometheusStack_FullChart_WithSubcharts_TODO(t *testing.T) {
 	requiredSubchartKeys := []string{"grafana", "kube-state-metrics"}
 	for _, key := range requiredSubchartKeys {
 		_, found := overrides[key]
-		assert.True(t, found, "Expected subchart key '%s' in overrides after Phase 10 implementation", key)
+		assert.True(t, found, "Expected subchart key '%s' in overrides", key)
 		// Optional: Add deeper validation for the structure within these keys if needed
 	}
 

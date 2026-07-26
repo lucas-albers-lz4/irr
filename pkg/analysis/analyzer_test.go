@@ -737,8 +737,8 @@ func TestAnalyzeValues(t *testing.T) {
 	}
 }
 
-// TODO: Add tests for analyzeArray function
-
+// TestAnalyzeArray verifies the analyzeArray function with table-driven cases covering
+// container arrays, non-container arrays, string elements in arrays, and mixed element types.
 func TestAnalyzeArray(t *testing.T) {
 	analyzer := NewAnalyzer("", nil) // Path doesn't matter, loader not used directly
 
@@ -812,6 +812,50 @@ func TestAnalyzeArray(t *testing.T) {
 			},
 		},
 		{
+			name: "Non-Container Array with Image Maps",
+			inputArray: []interface{}{
+				map[string]interface{}{"repository": "app/server", "tag": "v1"},
+				map[string]interface{}{"repository": "app/worker", "tag": "v2"},
+			},
+			pathPrefix: "deployments",
+			expectedImages: []ImagePattern{
+				{
+					Path:  "deployments[0]",
+					Type:  PatternTypeMap,
+					Value: "docker.io/app/server:v1",
+					Structure: map[string]interface{}{
+						"registry":   "docker.io",
+						"repository": "app/server",
+						"tag":        "v1",
+					},
+					Count: 1,
+				},
+				{
+					Path:  "deployments[1]",
+					Type:  PatternTypeMap,
+					Value: "docker.io/app/worker:v2",
+					Structure: map[string]interface{}{
+						"registry":   "docker.io",
+						"repository": "app/worker",
+						"tag":        "v2",
+					},
+					Count: 1,
+				},
+			},
+		},
+		{
+			name: "Container Array with Image Field Maps",
+			inputArray: []interface{}{
+				map[string]interface{}{"name": "app", "image": "docker.io/app/one:1"},
+				map[string]interface{}{"name": "sidecar", "image": "docker.io/app/two:2"},
+			},
+			pathPrefix: "containers",
+			expectedImages: []ImagePattern{
+				{Path: "containers[0].image", Type: PatternTypeString, Value: "docker.io/app/one:1", Count: 1},
+				{Path: "containers[1].image", Type: PatternTypeString, Value: "docker.io/app/two:2", Count: 1},
+			},
+		},
+		{
 			name: "Array with Mixed Types",
 			inputArray: []interface{}{
 				map[string]interface{}{"name": "worker", "image": "jobs/worker:prod"},
@@ -823,7 +867,6 @@ func TestAnalyzeArray(t *testing.T) {
 			pathPrefix: "sidecars",
 			expectedImages: []ImagePattern{
 				{Path: "sidecars[0].image", Type: PatternTypeString, Value: "jobs/worker:prod", Count: 1},
-				// {Path: "sidecars[1]", Type: PatternTypeString, Value: "config-image:util", Count: 1}, // Removing expectation for bare string
 				{
 					Path:  "sidecars[4].service.image",
 					Type:  PatternTypeMap,
@@ -837,7 +880,15 @@ func TestAnalyzeArray(t *testing.T) {
 				},
 			},
 		},
-		// TODO: Add nested array cases if needed
+		{
+			name: "String Elements in Non-Image Array Are Ignored",
+			inputArray: []interface{}{
+				"plain-string",
+				"another-value",
+			},
+			pathPrefix: "items",
+			expectedImages: []ImagePattern{},
+		},
 	}
 
 	for _, tt := range tests {
