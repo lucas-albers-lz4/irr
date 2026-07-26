@@ -62,6 +62,17 @@ func NewChartAnalysis() *ChartAnalysis {
 	}
 }
 
+// Config holds configuration options for the Analyzer.
+// It allows customizing the analysis process through configuration settings.
+type Config struct {
+	// IncludePatterns are glob patterns for paths to include during analysis
+	IncludePatterns []string
+	// ExcludePatterns are glob patterns for paths to exclude from analysis
+	ExcludePatterns []string
+	// KnownPaths are specific dot-notation paths known to contain images
+	KnownPaths []string
+}
+
 // Options configures the analysis process.
 // It contains parameters that control how chart analysis is performed.
 type Options struct {

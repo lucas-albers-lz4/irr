@@ -22,7 +22,6 @@ import (
 
 	"github.com/lucas-albers-lz4/irr/internal/helm"
 	"github.com/lucas-albers-lz4/irr/pkg/analysis"
-	"github.com/lucas-albers-lz4/irr/pkg/analyzer"
 	"github.com/lucas-albers-lz4/irr/pkg/exitcodes"
 	"github.com/lucas-albers-lz4/irr/pkg/fileutil"
 	"github.com/lucas-albers-lz4/irr/pkg/image"
@@ -66,7 +65,7 @@ type InspectFlags struct {
 	OutputFile             string
 	OutputFormat           string
 	GenerateConfigSkeleton bool
-	AnalyzerConfig         *analyzer.Config
+	AnalyzerConfig         *analysis.Config
 	SourceRegistries       []string
 	AllNamespaces          bool
 	OverwriteSkeleton      bool
@@ -634,19 +633,18 @@ func inspectHelmRelease(cmd *cobra.Command, flags *InspectFlags, releaseName, na
 
 	// Analyze the release values using the provided analyzer config
 	log.Debug("Analyzing release values...")
-	analysisPatterns, analysisErr := analyzer.AnalyzeHelmValues(releaseValues, flags.AnalyzerConfig)
+	analysisPatterns, analysisErr := analysis.AnalyzeHelmValues(releaseValues, flags.AnalyzerConfig)
 	if analysisErr != nil {
 		return &exitcodes.ExitCodeError{
 			Code: exitcodes.ExitChartProcessingFailed,
 			Err:  fmt.Errorf("release values analysis failed: %w", analysisErr),
 		}
 	}
-	convertedPatterns := convertAnalyzerPatternsToAnalysis(analysisPatterns)
-	images, skipped := processImagePatterns(convertedPatterns)
+	images, skipped := processImagePatterns(analysisPatterns)
 	analysisResult := &ImageAnalysis{
 		Chart:         chartInfo,
 		Images:        images,
-		ImagePatterns: convertedPatterns,
+		ImagePatterns: analysisPatterns,
 		Skipped:       skipped,
 	}
 
@@ -846,7 +844,7 @@ func getInspectFlags(cmd *cobra.Command, releaseNameProvided bool) (*InspectFlag
 		}
 	}
 
-	config := &analyzer.Config{
+	config := &analysis.Config{
 		IncludePatterns: includePatterns,
 		ExcludePatterns: excludePatterns,
 	}
@@ -1733,36 +1731,3 @@ func extractImagesFromContainers(podSpec map[string]interface{}, containerType s
 	}
 }
 
-// Helper to convert *analyzer.ImageStructure to map[string]interface{}
-func analyzerImageStructureToMap(s *analyzer.ImageStructure) map[string]interface{} {
-	if s == nil {
-		return nil
-	}
-	m := make(map[string]interface{})
-	if s.Registry != "" {
-		m["registry"] = s.Registry
-	}
-	if s.Repository != "" {
-		m["repository"] = s.Repository
-	}
-	if s.Tag != "" {
-		m["tag"] = s.Tag
-	}
-	return m
-}
-
-// Helper to convert []analyzer.ImagePattern to []analysis.ImagePattern (only common fields)
-func convertAnalyzerPatternsToAnalysis(src []analyzer.ImagePattern) []analysis.ImagePattern {
-	result := make([]analysis.ImagePattern, len(src))
-	for i, p := range src {
-		result[i] = analysis.ImagePattern{
-			Path:      p.Path,
-			Type:      analysis.PatternType(p.Type),
-			Structure: analyzerImageStructureToMap(p.Structure),
-			Value:     p.Value,
-			Count:     p.Count,
-			// analyzer.ImagePattern does not have OriginalRegistry, SourceOrigin, SourceChartAppVersion
-		}
-	}
-	return result
-}
