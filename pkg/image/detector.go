@@ -121,7 +121,7 @@ func (d *Detector) DetectImages(values interface{}, path []string) ([]DetectedIm
 
 	// Add nil check for context
 	if d.context == nil {
-		log.Error("Context is nil in Detector at path %v, this is likely a configuration error", path)
+		log.Error("Context is nil in Detector, this is likely a configuration error", "path", path)
 		return nil, nil, fmt.Errorf("detector context is nil (configuration error)")
 	}
 
@@ -184,7 +184,7 @@ func (d *Detector) processMapValue(v map[string]interface{}, path []string) ([]D
 
 	// Add nil check for context
 	if d.context == nil {
-		log.Error("Context is nil in Detector at path %v, this is likely a configuration error", path)
+		log.Error("Context is nil in Detector, this is likely a configuration error", "path", path)
 		return nil, nil, fmt.Errorf("detector context is nil (configuration error)")
 	}
 
@@ -225,7 +225,7 @@ func (d *Detector) handleImageMap(detectedImage *DetectedImage, isPotentialMap b
 
 	// Add nil check for context
 	if d.context == nil {
-		log.Error("Context is nil in Detector at path %v, this is likely a configuration error", path)
+		log.Error("Context is nil in Detector, this is likely a configuration error", "path", path)
 		return nil, nil, fmt.Errorf("detector context is nil (configuration error)")
 	}
 
@@ -286,7 +286,7 @@ func (d *Detector) processSliceValue(v []interface{}, path []string) ([]Detected
 
 	// Add nil check for context
 	if d.context == nil {
-		log.Error("Context is nil in Detector at path %v, this is likely a configuration error", path)
+		log.Error("Context is nil in Detector, this is likely a configuration error", "path", path)
 		return nil, nil, fmt.Errorf("detector context is nil (configuration error)")
 	}
 
@@ -319,7 +319,7 @@ func (d *Detector) processStringValue(v string, path []string) ([]DetectedImage,
 
 	// Add nil check for context
 	if d.context == nil {
-		log.Error("Context is nil in Detector at path %v, this is likely a configuration error", path)
+		log.Error("Context is nil in Detector, this is likely a configuration error", "path", path)
 		return nil, nil, fmt.Errorf("detector context is nil (configuration error)")
 	}
 
@@ -336,7 +336,7 @@ func (d *Detector) processStringValue(v string, path []string) ([]DetectedImage,
 		return nil, nil, nil
 	} else if d.shouldProcessValue == nil {
 		// If shouldProcessValue is nil, log a warning and continue processing
-		log.Warn("shouldProcessValue function is nil in Detector, skipping filter check at path %v", path)
+		log.Warn("shouldProcessValue function is nil in Detector, skipping filter check", "path", path)
 	}
 
 	if d.context.Strict {
@@ -379,7 +379,7 @@ func (d *Detector) processStringValueStrict(v string, path []string, isKnownImag
 
 	// Add nil check for context
 	if d.context == nil {
-		log.Error("Context is nil in Detector at path %v, this is likely a configuration error", path)
+		log.Error("Context is nil in Detector, this is likely a configuration error", "path", path)
 		return nil, nil, fmt.Errorf("detector context is nil (configuration error)")
 	}
 

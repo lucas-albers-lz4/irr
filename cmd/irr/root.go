@@ -269,8 +269,6 @@ func Execute() error {
 
 // init sets up the root command and its flags.
 func init() {
-	cobra.OnInitialize()
-
 	// Add global flags
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.irr.yaml)")
 	rootCmd.PersistentFlags().BoolVar(&debugEnabled, "debug", false, "enable debug logging")
@@ -365,51 +363,6 @@ func executeCommand(root *cobra.Command, args ...string) (stdout, stderr string,
 	err = root.Execute()
 
 	return stdoutBuf.String(), stderrBuf.String(), err
-}
-
-// initConfig reads in config file and ENV variables if set.
-// Called by cobra.OnInitialize in init()
-//
-//nolint:unused // Called by cobra.OnInitialize, but linter doesn't detect it.
-func initConfig() {
-	// Only run initConfig once
-	if viper.IsSet("config.read") {
-		return
-	}
-
-	if cfgFile != "" {
-		// Use config file from the flag.
-		viper.SetConfigFile(cfgFile)
-	} else {
-		// Find home directory.
-		home, err := os.UserHomeDir()
-		cobra.CheckErr(err) // This will exit on error
-
-		// Search config in home directory with name ".irr" (without extension).
-		viper.AddConfigPath(home)
-		viper.SetConfigType("yaml")
-		viper.SetConfigName(".irr")
-	}
-
-	viper.AutomaticEnv() // read in environment variables that match
-
-	// Attempt to read the config file
-	if err := viper.ReadInConfig(); err == nil {
-		// Use slog for logging config file usage
-		log.Debug("Using configuration file", "file", viper.ConfigFileUsed())
-	} else {
-		// Log the error only if it's not a "file not found" error, or if a specific file was requested
-		if !errors.As(err, &viper.ConfigFileNotFoundError{}) || cfgFile != "" {
-			// Use slog for logging config file errors
-			log.Warn("Error reading configuration file", "file", viper.ConfigFileUsed(), "error", err)
-		} else {
-			// Use slog for logging when no config file is found (debug level)
-			log.Debug("No configuration file found or specified, using defaults.")
-		}
-	}
-
-	// Mark config as read to prevent re-running
-	viper.Set("config.read", true)
 }
 
 // setupLogging configures the logger based on settings in Viper.

@@ -64,12 +64,12 @@ func LoadStructuredConfig(fs afero.Fs, path string, skipCWDRestriction bool) (*C
 		return nil, err
 	}
 
-	log.Debug("LoadStructuredConfig: Attempting to parse file content:\n%s", string(data))
+	log.Debug("LoadStructuredConfig: Attempting to parse file content", "content", string(data))
 
 	// Parse the YAML content as structured Config
 	var config Config
 	if err := yaml.Unmarshal(data, &config); err != nil {
-		log.Debug("LoadStructuredConfig: Failed to parse as structured config: %v", err)
+		log.Debug("LoadStructuredConfig: Failed to parse as structured config", "error", err)
 		return nil, fmt.Errorf("failed to parse config file '%s' as structured format: %w", path, err)
 	}
 
