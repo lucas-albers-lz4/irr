@@ -469,7 +469,7 @@ func handleHelmPluginValidate(cmd *cobra.Command, releaseName, namespace string,
 
 	// Resolve the chart path if not already provided
 	if chartPath == "" {
-		resolvedPath, err := resolveHelmPluginChartPath(releaseName, kubeVersion)
+		resolvedPath, err := resolveHelmPluginChartPath(releaseName)
 		if err != nil {
 			return err
 		}
@@ -504,41 +504,53 @@ func handleHelmPluginValidate(cmd *cobra.Command, releaseName, namespace string,
 
 // resolveHelmPluginChartPath attempts to locate the chart for the given release name.
 // It searches Helm's SDK, repository cache, and platform cache directories.
-func resolveHelmPluginChartPath(releaseName, kubeVersion string) (string, error) {
-	// Initialize Helm settings
+func resolveHelmPluginChartPath(releaseName string) (string, error) {
+	found, err := findChartInHelmCaches(releaseName, "")
+	if err != nil {
+		return "", err
+	}
+	if found != "" {
+		return found, nil
+	}
+	return "", &exitcodes.ExitCodeError{
+		Code: exitcodes.ExitChartNotFound,
+		Err:  fmt.Errorf("chart.yaml not found for release %s. Please provide the correct chart path using --chart-path", releaseName),
+	}
+}
+
+// findChartInHelmCaches searches Helm SDK + repository/platform caches for a chart.
+// chartVersion is a Helm chart version (not a Kubernetes version); empty means any version.
+// Returns ("", nil) when no chart is found without an I/O failure that should abort search.
+func findChartInHelmCaches(chartName, chartVersion string) (string, error) {
 	settings := cli.New()
 	chartPathOptions := &action.ChartPathOptions{
-		Version: kubeVersion,
+		Version: chartVersion,
 	}
 
-	// Try to locate chart using Helm's built-in functionality
-	log.Debug("Attempting to locate chart using Helm SDK", "release", releaseName)
-	locatedPath, err := chartPathOptions.LocateChart(releaseName, settings)
+	log.Debug("Attempting to locate chart using Helm SDK", "chart", chartName, "version", chartVersion)
+	locatedPath, err := chartPathOptions.LocateChart(chartName, settings)
 	if err == nil {
 		log.Info("Found chart using Helm SDK at", "path", locatedPath)
 		return locatedPath, nil
 	}
 	log.Debug("Failed to locate chart using Helm SDK", "error", err)
 
-	// Try to find the chart in Helm's repository cache
 	cacheDir := settings.RepositoryCache
 	if cacheDir != "" {
 		log.Debug("Checking Helm repository cache", "path", cacheDir)
 
-		// Try exact match first if we have a version
-		if kubeVersion != "" {
-			cachePath := filepath.Join(cacheDir, fmt.Sprintf("%s-%s.tgz", releaseName, kubeVersion))
+		if chartVersion != "" {
+			cachePath := filepath.Join(cacheDir, fmt.Sprintf("%s-%s.tgz", chartName, chartVersion))
 			if _, err := AppFs.Stat(cachePath); err == nil {
 				log.Info("Found chart in Helm repository cache", "path", cachePath)
 				return cachePath, nil
 			}
 		}
 
-		// Try to find matching chart files
 		entries, err := afero.ReadDir(AppFs, cacheDir)
 		if err == nil {
 			for _, entry := range entries {
-				if !entry.IsDir() && strings.HasPrefix(entry.Name(), releaseName+"-") {
+				if !entry.IsDir() && strings.HasPrefix(entry.Name(), chartName+"-") {
 					chartPath := filepath.Join(cacheDir, entry.Name())
 					log.Info("Found chart in Helm repository cache", "path", chartPath)
 					return chartPath, nil
@@ -547,41 +559,32 @@ func resolveHelmPluginChartPath(releaseName, kubeVersion string) (string, error)
 		}
 	}
 
-	// Try to find the chart in Helm's cache directory first
 	helmCachePaths := []string{
-		// macOS Helm cache path
 		filepath.Join(os.Getenv("HOME"), "Library", "Caches", "helm", "repository"),
-		// Linux/Unix Helm cache path
 		filepath.Join(os.Getenv("HOME"), ".cache", "helm", "repository"),
-		// Windows Helm cache path - uses APPDATA
 		filepath.Join(os.Getenv("APPDATA"), "helm", "repository"),
 	}
 
-	log.Debug("Looking for chart in Helm cache directories", "release", releaseName)
+	log.Debug("Looking for chart in Helm cache directories", "chart", chartName)
 
-	// Try to find the chart in Helm's cache
 	for _, cachePath := range helmCachePaths {
-		// Skip if this is the same as repository cache we already checked
 		if cachePath == cacheDir {
 			continue
 		}
 
-		// Check if cache path exists
 		if _, err := AppFs.Stat(cachePath); os.IsNotExist(err) {
 			log.Debug("Helm cache path does not exist", "path", cachePath)
 			continue
 		}
 
-		// Try to find an exact match for the chart
 		entries, err := afero.ReadDir(AppFs, cachePath)
 		if err != nil {
 			log.Debug("Failed to read Helm cache directory", "path", cachePath, "error", err)
 			continue
 		}
 
-		// Look for matching chart files
 		for _, entry := range entries {
-			if !entry.IsDir() && strings.HasPrefix(entry.Name(), releaseName+"-") || entry.Name() == releaseName+".tgz" {
+			if !entry.IsDir() && (strings.HasPrefix(entry.Name(), chartName+"-") || entry.Name() == chartName+".tgz") {
 				chartPath := filepath.Join(cachePath, entry.Name())
 				log.Info("Found chart in Helm cache", "path", chartPath)
 				return chartPath, nil
@@ -589,11 +592,7 @@ func resolveHelmPluginChartPath(releaseName, kubeVersion string) (string, error)
 		}
 	}
 
-	// No valid chart path found, provide helpful error message
-	return "", &exitcodes.ExitCodeError{
-		Code: exitcodes.ExitChartNotFound,
-		Err:  fmt.Errorf("chart.yaml not found for release %s. Please provide the correct chart path using --chart-path", releaseName),
-	}
+	return "", nil
 }
 
 // handleChartYamlMissingErrors detects and handles "Chart.yaml file is missing" errors.
@@ -602,7 +601,7 @@ func resolveHelmPluginChartPath(releaseName, kubeVersion string) (string, error)
 func handleChartYamlMissingErrors(originalErr error, originalChartPath string) (string, error) {
 	// Check if this is a Chart.yaml missing error (exit code 16)
 	if strings.Contains(originalErr.Error(), "Chart.yaml file is missing") {
-		log.Debug("Detected Chart.yaml missing error for path: %s", originalChartPath)
+		log.Debug("Detected Chart.yaml missing error", "path", originalChartPath)
 
 		// Try to extract chart name and version from the path
 		chartName := filepath.Base(originalChartPath)
@@ -626,88 +625,10 @@ func handleChartYamlMissingErrors(originalErr error, originalChartPath string) (
 
 		log.Debug("Extracted chart name", "name", chartName, "version", chartVersion)
 
-		// First, try to use Helm SDK to locate the chart
-		settings := cli.New()
-		chartPathOptions := &action.ChartPathOptions{
-			Version: chartVersion,
-		}
-
-		// Try to locate chart using Helm's built-in functionality
-		log.Debug("Attempting to locate chart %s using Helm SDK", chartName)
-		locatedPath, err := chartPathOptions.LocateChart(chartName, settings)
-		if err == nil {
-			log.Info("Found chart using Helm SDK at", "path", locatedPath)
-			return locatedPath, nil
-		}
-		log.Debug("Failed to locate chart using Helm SDK", "error", err)
-
-		// Try to find the chart in Helm's repository cache
-		cacheDir := settings.RepositoryCache
-		if cacheDir != "" {
-			log.Debug("Checking Helm repository cache at", "path", cacheDir)
-
-			// Try exact match first if we have a version
-			if chartVersion != "" {
-				cachePath := filepath.Join(cacheDir, fmt.Sprintf("%s-%s.tgz", chartName, chartVersion))
-				if _, err := AppFs.Stat(cachePath); err == nil {
-					log.Info("Found chart in Helm repository cache", "path", cachePath)
-					return cachePath, nil
-				}
-			}
-
-			// Try to find matching chart files
-			entries, err := afero.ReadDir(AppFs, cacheDir)
-			if err == nil {
-				for _, entry := range entries {
-					if !entry.IsDir() && strings.HasPrefix(entry.Name(), chartName+"-") {
-						chartPath := filepath.Join(cacheDir, entry.Name())
-						log.Info("Found chart in Helm repository cache", "path", chartPath)
-						return chartPath, nil
-					}
-				}
-			}
-		}
-
-		// Try to find the chart in Helm's cache directory first
-		helmCachePaths := []string{
-			// macOS Helm cache path
-			filepath.Join(os.Getenv("HOME"), "Library", "Caches", "helm", "repository"),
-			// Linux/Unix Helm cache path
-			filepath.Join(os.Getenv("HOME"), ".cache", "helm", "repository"),
-			// Windows Helm cache path - uses APPDATA
-			filepath.Join(os.Getenv("APPDATA"), "helm", "repository"),
-		}
-
-		log.Debug("Looking for chart %s in Helm cache directories", chartName)
-
-		// Try to find the chart in Helm's cache
-		for _, cachePath := range helmCachePaths {
-			// Skip if this is the same as repository cache we already checked
-			if cachePath == cacheDir {
-				continue
-			}
-
-			// Check if cache path exists
-			if _, err := AppFs.Stat(cachePath); os.IsNotExist(err) {
-				log.Debug("Helm cache path does not exist", "path", cachePath)
-				continue
-			}
-
-			// Try to find an exact match for the chart
-			entries, err := afero.ReadDir(AppFs, cachePath)
-			if err != nil {
-				log.Debug("Failed to read Helm cache directory", "path", cachePath, "error", err)
-				continue
-			}
-
-			// Look for matching chart files
-			for _, entry := range entries {
-				if !entry.IsDir() && strings.HasPrefix(entry.Name(), chartName+"-") || entry.Name() == chartName+".tgz" {
-					chartPath := filepath.Join(cachePath, entry.Name())
-					log.Info("Found chart in Helm cache", "path", chartPath)
-					return chartPath, nil
-				}
-			}
+		if found, err := findChartInHelmCaches(chartName, chartVersion); err != nil {
+			return "", err
+		} else if found != "" {
+			return found, nil
 		}
 
 		// List of possible locations to check relative to original path
