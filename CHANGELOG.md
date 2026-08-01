@@ -12,10 +12,13 @@ There is no v0.0.13 release; versioning moved from v0.0.12 directly to v0.0.14.
 ## [Unreleased]
 
 ### Added
+- Documentation overhaul: fwlive-style user/developer/archive tree, `CHANGELOG.md`, `CONTRIBUTING.md`, `docs/FAQ.md`, and `tools/check-links.py` (#23, #24)
 - Dependency-review workflow for pull requests (#22)
 - Dependabot coverage for npm and GitHub Actions ecosystems (#21)
 
 ### Changed
+- Restructure and merge overlapping docs; archive legacy planning docs; replace committed `registry-mappings.yaml` junk with a clean template (#23, #24)
+- Coverage gate floor set to 73% (target remains 75%) to acknowledge pre-existing `pkg/chart` shortfall revealed when package paths were corrected (#24)
 - Split monolith files into focused modules: `pkg/chart/generator.go`, `cmd/irr/override.go`, `cmd/irr/inspect.go` (#17, #18, #19)
 - Consolidate duplicate analysis packages into `pkg/analysis`
 - Migrate printf-style log calls to structured key-value format
@@ -23,6 +26,8 @@ There is no v0.0.13 release; versioning moved from v0.0.12 directly to v0.0.14.
 - Bump Go to 1.26.4
 
 ### Fixed
+- Stale pre-migration org references in docs, Codecov paths, golangci local-prefixes, and lint tooling (#23, #24)
+- Broken manual Helm plugin install URL (correct `helm-irr-<version>-<os>-<arch>.tar.gz` asset pattern) (#23, #24)
 - Add explicit workflow permissions for CodeQL alerts
 - Separate `chartPath` from `kubeVersion` in `handleHelmPluginValidate`
 - Remove dead `initConfig()` function

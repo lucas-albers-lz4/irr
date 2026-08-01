@@ -12,6 +12,12 @@ IRR has three test layers:
 | Integration tests | End-to-end CLI flows (`test/integration/...`) | `make test-integration` |
 | Chart validation | Real Helm charts from `test-data/` | `make test-charts` |
 
+## Coverage thresholds
+
+CI (`.github/workflows/test-coverage.yml`) and `tools/codecov.sh` enforce a floor on five core packages: `pkg/chart`, `pkg/override`, `pkg/rules`, `pkg/analysis`, and `pkg/image`.
+
+The intended target is **75%**. The enforced floor is currently **73%** because `pkg/chart` measures about **73.7%**. That shortfall is **pre-existing debt**: until the docs overhaul corrected Codecov/`CORE_PACKAGES` paths from the pre-migration module path to `github.com/lucas-albers-lz4/irr/...`, the threshold step did not match any coverage lines and did not fail. Raise the floor back to 75% after adding tests that close the `pkg/chart` gap.
+
 ## Running Tests
 
 The Makefile provides the main entry points:
