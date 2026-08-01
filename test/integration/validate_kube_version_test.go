@@ -7,7 +7,7 @@ import (
 	// Add necessary imports for test execution, assertions, and potentially test chart setup
 	// "github.com/stretchr/testify/assert"
 	// "github.com/stretchr/testify/require"
-	// "github.com/lalbers/irr/pkg/testutil"
+	// "github.com/lucas-albers-lz4/irr/pkg/testutil"
 )
 
 // TestValidateWithKubeVersionFlag validates that the --kube-version flag works correctly

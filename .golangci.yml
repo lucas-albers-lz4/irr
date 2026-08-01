@@ -61,13 +61,13 @@ linters:
     #   fileperm:
     #     path: tools/lint/fileperm/cmd/fileperm-lint
     #     description: Checks for hardcoded file permissions (0o600) instead of using constants
-    #     original-url: github.com/lalbers/irr/tools/lint/fileperm
+    #     original-url: github.com/lucas-albers-lz4/irr/tools/lint/fileperm
     depguard:
       rules:
         Main:
           allow:
             - $standard
-            - "github.com/lalbers/irr/pkg"
+            - "github.com/lucas-albers-lz4/irr/pkg"
             - "github.com/spf13/cobra"
             - "github.com/spf13/pflag"
             - "os"
@@ -77,7 +77,7 @@ linters:
         Pkg:
           allow:
             - $standard
-            - "github.com/lalbers/irr/pkg"
+            - "github.com/lucas-albers-lz4/irr/pkg"
             - "helm.sh/helm/v3"
             - "sigs.k8s.io/yaml"
             - "gopkg.in/yaml.v3"
@@ -85,7 +85,7 @@ linters:
         Test:
           allow:
             - $standard
-            - "github.com/lalbers/irr/pkg"
+            - "github.com/lucas-albers-lz4/irr/pkg"
             - "github.com/stretchr/testify"
             - "helm.sh/helm/v3"
             - "sigs.k8s.io/yaml"

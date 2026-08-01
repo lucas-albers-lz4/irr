@@ -1,3 +1,7 @@
+> **ARCHIVED** — historical planning record; may not reflect current behavior.
+>
+> Live guidance: [docs/developer/README.md](../developer/README.md)
+
 Phase 13: Code Documentation Review and Alignment
 Goal: Ensure all Go code documentation (godoc, comments) accurately reflects current functionality, removing or correcting outdated information.
 

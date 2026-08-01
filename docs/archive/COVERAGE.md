@@ -1,3 +1,7 @@
+> **ARCHIVED** — historical planning record; may not reflect current behavior.
+>
+> Live guidance: [docs/developer/build-and-test.md](../developer/build-and-test.md)
+
 # Test Coverage Improvement Plan
 
 Based on the output from `go tool cover -func=coverage.out`, several functions currently have 0% test coverage. This plan outlines a strategy to increase coverage, focusing on critical areas and leveraging existing testing frameworks.
@@ -5,7 +9,7 @@ Based on the output from `go tool cover -func=coverage.out`, several functions c
 ## General Strategy
 
 1.  **Prioritize**: Focus on increasing coverage for core logic (`pkg/...`), Helm interaction components (`internal/helm/`, `pkg/helm/`), and CLI command execution (`cmd/irr/...`). Utility functions and internal tooling can be addressed afterwards.
-2.  **Leverage Existing Frameworks**: Utilize the established testing patterns outlined in `docs/TESTING.md`:
+2.  **Leverage Existing Frameworks**: Utilize the established testing patterns outlined in `../developer/build-and-test.md`:
     *   **Unit Tests**: For isolated logic, utility functions, and components testable with mocks (e.g., using `testify/mock` for Helm interactions, `afero` for filesystem operations). Ensure error paths are explicitly tested.
     *   **Integration Tests (`test/integration`)**: Use the existing test harness (`test/integration/harness.go`) to test the end-to-end behavior of CLI commands (`irr inspect`, `irr override`, `irr validate`). These tests are crucial for covering the `cmd/irr/` package functions and their interaction with other components.
 3.  **Targeted Testing**:
@@ -98,7 +102,7 @@ To maximize impact and efficiency, follow this order when working through files 
      - Maintain consistent code style ✓
      - Document changes in code comments where appropriate ✓
      - **For filesystem mocking changes:**
-       - Implement changes package by package following the guidelines in `docs/TESTING-FILESYSTEM-MOCKING.md`
+       - Implement changes package by package following the guidelines in `../developer/filesystem-mocking.md`
        - Start with simpler packages before tackling complex ones
        - Always provide test helpers for swapping the filesystem implementation
        - Run tests frequently to catch issues early
@@ -132,14 +136,14 @@ To maximize impact and efficiency, follow this order when working through files 
     *   **All Go unit tests (`make test`) are currently passing.**
     *   **All `make lint` checks are passing.**
 *   **Coverage Breakdown (Current - Sorted Lowest to Highest Priority):**
-    *   `github.com/lalbers/irr/test/mocks`: **0.0%** (Low Priority - Test Helpers)
-    *   `github.com/lalbers/irr/tools/lint/fileperm`: **0.0%** (Low Priority Tooling)
-    *   `github.com/lalbers/irr/tools/lint/fileperm/cmd`: **0.0%** (Low Priority Tooling)
-    *   `github.com/lalbers/irr/test/integration`: **41.5%** (High Priority)
-    *   `github.com/lalbers/irr/cmd/irr`: **54.1%** (High Priority)
-    *   `github.com/lalbers/irr/internal/helm`: **54.5%** (High Priority)
-    *   `github.com/lalbers/irr/pkg/helm`: **73.4%** (Medium Priority - Approaching Target!)
-    *   `github.com/lalbers/irr/pkg/log`: **95.7%** (Target Met - Exceeded!)
+    *   `github.com/lucas-albers-lz4/irr/test/mocks`: **0.0%** (Low Priority - Test Helpers)
+    *   `github.com/lucas-albers-lz4/irr/tools/lint/fileperm`: **0.0%** (Low Priority Tooling)
+    *   `github.com/lucas-albers-lz4/irr/tools/lint/fileperm/cmd`: **0.0%** (Low Priority Tooling)
+    *   `github.com/lucas-albers-lz4/irr/test/integration`: **41.5%** (High Priority)
+    *   `github.com/lucas-albers-lz4/irr/cmd/irr`: **54.1%** (High Priority)
+    *   `github.com/lucas-albers-lz4/irr/internal/helm`: **54.5%** (High Priority)
+    *   `github.com/lucas-albers-lz4/irr/pkg/helm`: **73.4%** (Medium Priority - Approaching Target!)
+    *   `github.com/lucas-albers-lz4/irr/pkg/log`: **95.7%** (Target Met - Exceeded!)
 *   **Next Priorities:**
     1.  Increase coverage in **`internal/helm`** (critical helper package, 54.5%). Focus on 0% functions (`GetReleaseValues`, `GetReleaseChart`, `TemplateChart`, `command.go: Template`, `command.go: GetValues`).
     2.  Increase coverage in **`cmd/irr`** (CLI entry points, 54.1%). Focus on 0% functions (e.g., `main`, `Execute`, `inspectHelmRelease`, `getRequiredFlags`, `setupGeneratorConfig`, `createAndExecuteGenerator`, `createGenerator`, `runOverrideStandaloneMode`, multiple functions in `validate.go`, `initConfig`). **Prioritize command-level (black-box) testing and Helm plugin mode testing.**

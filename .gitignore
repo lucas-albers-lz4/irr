@@ -113,8 +113,9 @@ tools/bin/
 tools/build/
 tools/temp/
 
-# Registry mappings (if these should be user-specific)
-registry-mappings.yaml *.tgz
+# Nilaway scanner output
+tools/lint/nilaway/*.txt
+
 test/overrides/*.yaml
 test/pull-logs
 irr.code-workspace

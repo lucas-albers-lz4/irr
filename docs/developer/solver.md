@@ -140,6 +140,6 @@ The rule generation system (Phase 6, Step 2) must explicitly filter solver resul
 
 ## References
 
-- [TODO.md](TODO.md) - Detailed implementation plan (Phase 6).
-- [TESTING.md](TESTING.md) - General testing guidelines.
+- [TODO.md](../archive/TODO.md) - Detailed implementation plan (Phase 6).
+- [TESTING.md](../archive/TESTING-plan.md) - General testing guidelines.
 - [Parameter Categorization](#parameter-categorization-deployment-critical-vs-testvalidation-only) (This document) 
