@@ -1,3 +1,7 @@
+> **ARCHIVED** — historical planning record; may not reflect current behavior.
+>
+> Live guidance: [docs/developer/build-and-test.md](../developer/build-and-test.md)
+
 # Helm Image Override Testing Plan
 
 ## Objective

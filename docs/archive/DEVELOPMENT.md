@@ -1,3 +1,7 @@
+> **ARCHIVED** — historical planning record; may not reflect current behavior.
+>
+> Live guidance: [docs/developer/architecture.md](../developer/architecture.md) and [docs/developer/build-and-test.md](../developer/build-and-test.md)
+
 # Helm Image Override Design Document
 
 **Version:** 0.1.4
@@ -7,7 +11,7 @@
 
 This document outlines the design for a command-line tool, `irr` (Image Relocation and Rewrite), intended to automate the generation of Helm override `values.yaml` files. The primary goal is to redirect container image pulls specified within a Helm chart from various public registries to a designated local or private registry, initially focusing on Harbor configured as a pull-through cache. This addresses the manual effort and potential errors involved in modifying Helm deployments for environments requiring centralized, proxied, or private image access. Additionally, this helps organizations maintain compliance with air-gapped environments and enforce image provenance requirements.
 
-See [Tool Documentation](#) for installation and advanced usage. The main documentation structure includes:
+See [CLI Reference](../user/cli-reference.md) for installation and advanced usage. The main documentation structure includes:
 *   Installation Guide (Covered in `README.md` and `USE-CASES.md`)
 *   Quick Start & Usage Guide (Covered in `README.md` and `USE-CASES.md`)
 *   CLI Reference (Covered in `cli-reference.md`)
@@ -258,7 +262,7 @@ The tool's sole output is the generated override file. It does *not* directly in
 
 ### 6.4. Debugging Tests
 
-The IRR tool provides comprehensive debug logging capabilities that are especially useful during test development and troubleshooting. For detailed information about debugging tests, refer to the [Debug Control section in TESTING.md](docs/TESTING.md#10-debug-control-in-tests).
+The IRR tool provides comprehensive debug logging capabilities that are especially useful during test development and troubleshooting. For detailed information about debugging tests, refer to the [Logging Control in Tests](../developer/build-and-test.md#logging-control-in-tests) section.
 
 The primary way to enable debug logging is by setting the `LOG_LEVEL=DEBUG` environment variable.
 
@@ -271,7 +275,7 @@ Key points about debug control in tests:
    LOG_LEVEL=DEBUG go test -v ./pkg/specific -run TestSpecific
    ```
 
-Refer to the comprehensive Debug Logging section in [TESTING.md](docs/TESTING.md#debug-logging) for more detailed information about capturing debug output, testing debug behavior, and best practices for debug testing.
+Refer to the comprehensive Debug Logging section in [build-and-test.md](../developer/build-and-test.md#logging-control-in-tests) for more detailed information about capturing debug output, testing debug behavior, and best practices for debug testing.
 
 ## 7. Command-Line Interface (Phase 4)
 

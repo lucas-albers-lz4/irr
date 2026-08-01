@@ -36,7 +36,7 @@ When hardcoded permissions are found, update the code to use the appropriate con
 err = os.WriteFile(filePath, data, 0o600)
 
 // After:
-import "github.com/lalbers/irr/pkg/fileutil"
+import "github.com/lucas-albers-lz4/irr/pkg/fileutil"
 
 err = os.WriteFile(filePath, data, fileutil.ReadWriteUserPermission)
 ```

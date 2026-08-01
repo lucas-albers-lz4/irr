@@ -1,3 +1,7 @@
+> **ARCHIVED** — historical planning record; may not reflect current behavior.
+>
+> Live guidance: [docs/developer/README.md](../developer/README.md)
+
 # TODO.md - Helm Image Override Implementation Plan
 
 # Usability Improvement , CLI Refactor
@@ -34,7 +38,7 @@
      - Maintain consistent code style ✓
      - Document changes in code comments where appropriate ✓
      - **For filesystem mocking changes:**
-       - Implement changes package by package following the guidelines in `docs/TESTING-FILESYSTEM-MOCKING.md`
+       - Implement changes package by package following the guidelines in `../developer/filesystem-mocking.md`
        - Start with simpler packages before tackling complex ones
        - Always provide test helpers for swapping the filesystem implementation
        - Run tests frequently to catch issues early
@@ -56,7 +60,7 @@
      - `make build` builds product, `make update-plugin` updates the plugin copy so we test that build
        `make test-filter` runs the test but filters the output, if this fails you can run the normal test to get more detail
 
-     - default behavior: fail if file exists (per section 3.4 in PLUGIN-SPECIFIC.md)
+     - default behavior: fail if file exists (per section 3.4 in `../user/plugin-specific.md`)
      - Use file permissions constants for necessaary permission set, those are defined in this file : `pkg/fileutil/constants.go`
 
 ##END REMINDER On the Implementation Process:
@@ -71,8 +75,8 @@
     - Unit tests and component-level integration tests that verify specific functions and modules within `irr` itself (e.g., `pkg/analyzer`, `pkg/generator`, `pkg/helm`, and especially the `cmd/irr` command implementations).
     - Enable testing of how `irr` sources its initial data (chart values, metadata) depending on the execution mode (e.g., from local files vs. Helm release).
   - **Design Rationale & References:**
-    - **Need for Abstraction:** As highlighted in `docs/DEVELOPMENT.MD` (Sections 6.1, 7.1, 7.2) and `docs/PLUGIN-SPECIFIC.MD` (Sections 3, 5.2, 8.1), `irr` sources chart values and metadata differently when operating on a local chart path versus a Helm release name. A robust abstraction layer is needed to mock these varied data sourcing mechanisms for isolated testing.
-    - **Existing Model:** `docs/FILESYSTEM-MOCKING.MD` details a successful strategy for abstracting filesystem interactions using `afero` and Dependency Injection (DI). This DI approach is the preferred model for the Helm interaction layer.
+    - **Need for Abstraction:** As highlighted in `DEVELOPMENT.md` (Sections 6.1, 7.1, 7.2) and `../user/plugin-specific.md` (Sections 3, 5.2, 8.1), `irr` sources chart values and metadata differently when operating on a local chart path versus a Helm release name. A robust abstraction layer is needed to mock these varied data sourcing mechanisms for isolated testing.
+    - **Existing Model:** `../developer/filesystem-mocking.md` details a successful strategy for abstracting filesystem interactions using `afero` and Dependency Injection (DI). This DI approach is the preferred model for the Helm interaction layer.
     - **Consistency:** The aim is to establish a standard, reusable set of interfaces and mock implementations for Helm interactions, similar to how filesystem interactions are handled, promoting consistency across tests.
   - **Concept:** Develop a comprehensive mock implementation of a new Helm interaction abstraction layer. This layer will define interfaces for operations like loading chart data (from path or release), fetching release values, and invoking `helm template`.
   - **Tasks:**

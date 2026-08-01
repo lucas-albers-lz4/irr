@@ -32,7 +32,7 @@ else
     echo
     echo "   Suggestion: Replace the hardcoded octal value (e.g., 0o644, 0o755) with an appropriate"
     echo "               semantic constant from 'pkg/fileutil'. Ensure the package is imported:"
-    echo "               'github.com/lalbers/irr/pkg/fileutil'"
+    echo "               'github.com/lucas-albers-lz4/irr/pkg/fileutil'"
     echo
     echo "   Available constants in pkg/fileutil/constants.go:"
     if [ -n "$DEFINED_CONSTANTS" ]; then
