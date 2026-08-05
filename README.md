@@ -1,5 +1,8 @@
 # IRR — Image Registry Rewrite
 
+[![Tests](https://github.com/lucas-albers-lz4/irr/actions/workflows/ci.yml/badge.svg)](https://github.com/lucas-albers-lz4/irr/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A command-line tool that generates Helm chart override files to redirect container images to private or local registries.
 
 ## What it does
